@@ -12,15 +12,17 @@ Clones the local player GameObject and syncs position/rotation/animation over th
 
 ### Networking (LiteNetLib)
 - `LanNetworkManager` — main net logic, host/client, send/receive
-- `NetMessages` — protocol messages (Handshake, PlayerState)
+- `NetMessages` — protocol messages (Handshake, PlayerState, DoorState)
 - `ClientEntityInterpolationService` — interpolation of received positions
 - `PlayerPositionManager` — host-side position tracking
 - `EntityStateBroadcastService` — entity sync (disabled for alpha)
+- `DoorSyncService` — tracks Doorway_Double open/locked state, sends changes to peer
 
 ### Players
 - `PlayerProxyBuilder` — clones source player GameObject, disables all MBs
 - `RemotePlayerProxy` — wrapper around the cloned GameObject
 - `RemoteAnimatorDriver` — drives Animator params + armature rotation
+- `ProxyAudioSync` — plays positional audio at proxy position (weapon shots, footsteps, hurt, reload, swap)
 
 ### Sync
 - `EntityProxy` — base class for network proxies
@@ -37,10 +39,19 @@ Clones the local player GameObject and syncs position/rotation/animation over th
 - **Facing sync** via `_facingPivot.localEulerAngles = Vector3(0, angle, 0)` — child transform (same as `Character3DAnimator.trans`), not root. Root tilt preserved.
 - **No freeze on alt-tab** — `Application.runInBackground = true`, `Time.deltaTime` clamped ≤ 0.1f, `try-catch` around network calls
 - **Model stands correctly** — root tilt is NOT touched (preserves Euler(312, y, 90)), only facing child rotates
+- **Door state sync** — `Doorway_Double.open`/`locked` synced via `DoorSyncService` every 0.5s (native code plays FMOD open/close SFX and animates door panels)
+- **Proxy positional audio** — `ProxyAudioSync` plays weapon shots (from `AnWeapon.shotSound` AudioClip), footsteps (noise), hurt/reload/swap tones at proxy world position via `AudioSource.PlayClipAtPoint`
+
+### What's Working (New)
+- **Door state sync**: `Doorway_Double.open`/`locked` synced via `DoorSyncService` every 0.5s
+- **Proxy positional audio**: Weapon shots via `AnWeapon.shotSound` (Unity AudioClip), generated footsteps/hurt/reload/swap tones at proxy world position
 
 ### What's Broken
 1. **Animation sync** — proxy plays wrong animations or twitches on connect
 2. **Proxy renders wrong character model** — rarely, 3D model on proxy shows different visual than source player
+3. **Door sync limited** — only `Doorway_Double`; `ConnectedDoors` traversal state (`inProgress`, `forwards`) and `EventSlidingDoor` not synced
+4. **Audio is basic** — generated tones for most sounds, real weapon AudioClips only if `Resources.FindObjectsOfTypeAll<AnWeapon>()` succeeds
+5. ~~**ProxyAudioSync crash**: `AudioClip.SetData()` throws `ObjectCollectedException` in IL2CPP — the managed `float[]` gets GC-collected before the native call completes.~~ **FIXED**: `GC.KeepAlive(data)` after `clip.SetData()` prevents premature collection.
 
 ### Key Constraints
 - SIGNALIS is **full 3D** (top-down 2.5D perspective, 3D character models with SkinnedMeshRenderers)
@@ -105,16 +116,101 @@ Key files:
 8. Destroy dummy
 
 ### RemoteAnimatorDriver
-- `Tick()` — sets Animator params (Speed, Forward, Turn, Aiming, Shooting, Running)
+- `Tick()` — sets all Animator params: 9 floats + 22 bools from AnimBools bitfield + resets 8 weapon bools then sets active one
 - `LateTick()` — calls `ApplyFacing()`: `_facingPivot.localEulerAngles = (0, _currentFacing, 0)`
 - `Initialize()` — calls `FindFacingPivot(root)`: finds first child of root that has a SkinnedMeshRenderer in its subtree
-- `ApplyState()` — snap sets `_currentFacing = rotY`, calls ApplyFacing
-- `PreTick()` — interpolates `_currentFacing` toward `_targetFacing`
+- `ApplyState(PlayerStateMessage)` — snap sets all params (first packet) or just targets (subsequent)
+- `PreTick()` — interpolates forward/turn/aimingTime/facing toward targets
+- `ApplyPendingTriggers()` — sets all 16 trigger types
+
+### SourceAnimReader
+- `ReadFromPlayer(GameObject player, ref PlayerStateMessage msg)` — reads 9 floats + 22 bools from source player's Animator using individual GetFloat/GetBool calls (avoids IL2CPP TypeLoadException on a.parameters)
+- Detects triggers from bool leading-edge transitions (false→true)
+- `AccumulateTrigger(AnimTriggers)` — manual trigger injection
+- `Reset()` — clears state for scene changes / disconnects
+
+### Full Synced Animator Parameter Table (ElsterNewController)
+
+**Floats (9)** — synced every packet:
+| Param | Source | Description |
+|-------|--------|-------------|
+| Forward | `ThirdPersonCharacter.m_ForwardAmount` (reflection) | Movement speed blend |
+| Turn | `ThirdPersonCharacter.m_TurnAmount` (reflection) | Turn blend |
+| AimingTime | `PlayerAttack.anim_AimingTime` | Aim transition blend |
+| Stamina | `PlayerAttack.anim_Stamina` | Stamina level |
+| Blend | `LAB_PatternPond.anim_Blend` | Animation blend |
+| IKwalk | `ShieldBreaker.anim_IKwalk` | IK walking blend |
+| X | `ElsterHurtAnimation.anim_X` | Input/hurt direction X |
+| Y | `ElsterHurtAnimation.anim_Y` | Input/hurt direction Y |
+| HurtTime | `ElsterHurtAnimation.anim_HurtTime` | Hurt animation blend |
+
+**Bools from AnimBools bitfield (22)** — synced every packet:
+| Bit | Param | Class | Description |
+|-----|-------|-------|-------------|
+| 0 | Aiming | PlayerAttack | Is aiming |
+| 1 | Shooting | PlayerAttack | Is shooting |
+| 2 | Running | PlayerState.charState | Is running |
+| 3 | Grounded | ThirdPersonCharacter | Is on ground |
+| 4 | Crouch | TPC (inferred) | Is crouching |
+| 5 | Blocked | PlayerAttack | Weapon blocked by wall |
+| 6 | Dead | ValidTarget | Is dead |
+| 7 | Inventory | PlayerAttack | Inventory is open |
+| 8 | Attack | PlayerAttack | Is attacking |
+| 9 | Injured | PlayerAttack / ElsterHurtAnimation | Is injured |
+| 10 | Stomp | PlayerAttack / ElsterHurtAnimation | Stomp attack |
+| 11 | Push | PlayerAttack | Push |
+| 12 | Melee | PlayerAttack | Melee weapon equipped |
+| 13 | Snap | ThirdPersonCharacter | Snap turning |
+| 14 | Reload | PlayerAttack | Is reloading |
+| 15 | Swap | PlayerAttack | Is swapping weapons |
+| 16 | Burst | PlayerAttack | Burst fire |
+| 17 | Taser | ToolManager | Taser equipped |
+| 18 | Random | RandomSubstate | Random substate selection |
+| 19 | Hugged | ElsterHurtAnimation | Grabbed by enemy |
+| 20 | ReloadRounds | PlayerAttack | Reload phase — rounds |
+| 21 | ReloadChamber | PlayerAttack | Reload phase — chamber |
+
+**Weapon bools (8, mutually exclusive)** — reset all then set active per packet:
+Handgun, Pistol, Revolver, Shotgun, Rifle, SMG, Flare, CAR.  
+Melee and Taser handled via AnimBools bits above.  
+WeaponType → Anim bool mapping via `InventoryManager.EquippedWeapon.parentItem._item`.
+
+**Triggers via AnimTriggers bitfield (16)** — detected from bool leading edges + AccumulateTrigger:
+| Bit | Trigger | Source Class | Detected From |
+|-----|---------|-------------|---------------|
+| 0 | Hurt | ElsterHurtAnimation | Injured false→true |
+| 1 | Die | ElsterDeathHandler | Dead false→true |
+| 2 | Fire | EnemyController | (manual) |
+| 3 | Pickup | ItemPickup / ToolManager | (manual) |
+| 4 | Radio | LAB_PatternPond | (manual) |
+| 5 | Drop | CutsceneHelper / Ladder | (manual) |
+| 6 | Sleep | EnemyManager | (manual) |
+| 7 | Injector | ToolManager | (manual) |
+| 8 | InjectorCancel | ToolManager | (manual) |
+| 9 | Reload | PlayerAttack | Reload false→true |
+| 10 | Attack | PlayerAttack | Attack false→true |
+| 11 | Swap | PlayerAttack | Swap false→true |
+| 12 | Burst | PlayerAttack | Burst false→true |
+| 13 | Stomp | PlayerAttack | Stomp false→true |
+| 14 | Push | PlayerAttack | Push false→true |
+| 15 | Snap | ThirdPersonCharacter | Snap false→true |
 
 ### ClientEntityInterpolationService
 - `ApplyPlayerState(pos, rotY)` — stores target with interpolation timing
 - `TickLateUpdate()` — for id==0 (player proxy): sets `proxy.position = pos` only (rotation handled by RemoteAnimatorDriver)
 
+### ProxyAudioSync
+- `Tick(state, bools, triggers)` — called from `RemotePlayerProxy.ApplyState`
+- Detects shooting (bool leading edge), plays weapon shot at proxy pos (`_shootTone` fallback or real clip from cache)
+- Detects moving (Running || Forward>0.1 && Grounded), plays footstep noise every 0.45s
+- Detects ReloadTrigger / Hurt trigger with cooldowns
+- Detects weapon swap (change in `state.Weapon`), plays swap tone
+- `BuildWeaponCache()` scans `Resources.FindObjectsOfTypeAll<AnWeapon>()` once, maps `parentItem._item` enum to `WeaponType`, caches `shotSound`/`reloadSound`
+- Clip generation uses `AudioClip.Create + SetData()` with `GC.KeepAlive(data)` to prevent IL2CPP `ObjectCollectedException`
+- All generated clips stored in instance fields to keep them alive
+- Uses `AudioSource.PlayClipAtPoint()` for all sounds (creates temp GameObject + AudioSource automatically)
+
 ## Next Steps
-- Fix "wrong model": could be animation state mismatch or material/shader issues on clone
-- Fix animation sync/twitch: RemoteAnimatorDriver animation params may conflict with frozen Animator state
+- Test comprehensive sync in multiplayer — verify all weapons, walk/run, crouch, inventory, death states
+- Add enemy aggro: re-add `Player` tag and enable colliders on proxy, verify doors still work
+- Push to GitHub if user wants remote backup

@@ -98,6 +98,10 @@
       <HintPath>$(ManagedDir)\UnityEngine.AudioModule.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    <Reference Include="FMODUnity">
+      <HintPath>$(ManagedDir)\FMODUnity.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
     <Reference Include="UnityEngine.UI">
       <HintPath>$(ManagedDir)\UnityEngine.UI.dll</HintPath>
       <Private>False</Private>
@@ -118,6 +122,9 @@
     <Compile Include="Players\PlayerProxyBuilder.cs" />
     <Compile Include="Players\PlayerAnimationSnapshot.cs" />
     <Compile Include="Players\RemoteAnimatorDriver.cs" />
+    <Compile Include="Players\SourceAnimReader.cs" />
+    <Compile Include="Players\ProxyAudioSync.cs" />
+    <Compile Include="Networking\DoorSyncService.cs" />
     <Compile Include="Sync\GameObjectEntityTracker.cs" />
     <Compile Include="Sync\Proxies\EntityProxy.cs" />
     <Compile Include="Patches\PlayerPatches.cs" />

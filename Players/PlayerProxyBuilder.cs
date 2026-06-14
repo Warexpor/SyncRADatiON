@@ -61,22 +61,24 @@ namespace SyncRADation.Players
 
             proxy.tag = "Untagged";
 
+            // Animator is on the source ROOT, not on the cloned facing-pivot child.
+            // Clone it explicitly so the proxy has an Animator to drive.
+            Animator srcAnim = source.GetComponentInChildren<Animator>(true);
+            if (srcAnim != null && srcAnim.runtimeAnimatorController != null)
+            {
+                Animator pa = proxy.AddComponent<Animator>();
+                pa.runtimeAnimatorController = srcAnim.runtimeAnimatorController;
+                pa.avatar = srcAnim.avatar;
+                pa.applyRootMotion = false;
+                pa.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+                pa.speed = 1f;
+                pa.enabled = true;
+            }
+
             foreach (var mb in proxy.GetComponentsInChildren<MonoBehaviour>(true))
             {
                 if (mb != null)
                     mb.enabled = false;
-            }
-
-            // Re-enable Animators so the driver can set params
-            foreach (var anim in proxy.GetComponentsInChildren<Animator>(true))
-            {
-                if (anim != null)
-                {
-                    anim.enabled = true;
-                    anim.applyRootMotion = false;
-                    anim.cullingMode = AnimatorCullingMode.AlwaysAnimate;
-                    anim.speed = 1f;
-                }
             }
 
             // Disable ALL colliders

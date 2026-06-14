@@ -11,7 +11,8 @@ namespace SyncRADation.Networking
         PlayerAnimation = 5,
         PlayerFacing = 6,
         PlayerAction = 7,
-        _Highest = 8
+        DoorState = 8,
+        _Highest = 9
     }
 
     public struct HandshakeMessage
@@ -50,6 +51,69 @@ namespace SyncRADation.Networking
         }
     }
 
+    public enum WeaponType : byte
+    {
+        None = 0,
+        Handgun = 1,
+        Melee = 2,
+        Pistol = 3,
+        Revolver = 4,
+        Shotgun = 5,
+        Rifle = 6,
+        SMG = 7,
+        Flare = 8,
+        CAR = 9,
+    }
+
+    [System.Flags]
+    public enum AnimBools : uint
+    {
+        Aiming = 1 << 0,
+        Shooting = 1 << 1,
+        Running = 1 << 2,
+        Grounded = 1 << 3,
+        Crouch = 1 << 4,
+        Blocked = 1 << 5,
+        Dead = 1 << 6,
+        Inventory = 1 << 7,
+        Attack = 1 << 8,
+        Injured = 1 << 9,
+        Stomp = 1 << 10,
+        Push = 1 << 11,
+        Melee = 1 << 12,
+        Snap = 1 << 13,
+        Reload = 1 << 14,
+        Swap = 1 << 15,
+        Burst = 1 << 16,
+        Taser = 1 << 17,
+        Random = 1 << 18,
+        Hugged = 1 << 19,
+        ReloadRounds = 1 << 20,
+        ReloadChamber = 1 << 21,
+    }
+
+    [System.Flags]
+    public enum AnimTriggers : ushort
+    {
+        None = 0,
+        Hurt = 1 << 0,
+        Die = 1 << 1,
+        Fire = 1 << 2,
+        Pickup = 1 << 3,
+        Radio = 1 << 4,
+        Drop = 1 << 5,
+        Sleep = 1 << 6,
+        Injector = 1 << 7,
+        InjectorCancel = 1 << 8,
+        ReloadTrigger = 1 << 9,
+        AttackTrigger = 1 << 10,
+        SwapTrigger = 1 << 11,
+        BurstTrigger = 1 << 12,
+        StompTrigger = 1 << 13,
+        PushTrigger = 1 << 14,
+        SnapTrigger = 1 << 15,
+    }
+
     public struct PlayerStateMessage
     {
         public float PosX;
@@ -59,11 +123,22 @@ namespace SyncRADation.Networking
         public float RootY;
         public float VelX;
         public float VelZ;
+        public float Forward;
+        public float Turn;
+        public float AimingTime;
+        public float Stamina;
+        public float Blend;
+        public float IKwalk;
+        public float InputX;
+        public float InputY;
+        public float HurtTime;
         public byte CharState;
         public byte Facing;
-        public bool Aiming;
-        public bool Shooting;
-        public bool Running;
+        public WeaponType Weapon;
+        public AnimBools AnimBools;
+        public AnimTriggers AnimTriggers;
+        public bool StepHappened;
+        public bool Climbing;
 
         public void Serialize(NetDataWriter w)
         {
@@ -74,11 +149,22 @@ namespace SyncRADation.Networking
             w.Put(RootY);
             w.Put(VelX);
             w.Put(VelZ);
+            w.Put(Forward);
+            w.Put(Turn);
+            w.Put(AimingTime);
+            w.Put(Stamina);
+            w.Put(Blend);
+            w.Put(IKwalk);
+            w.Put(InputX);
+            w.Put(InputY);
+            w.Put(HurtTime);
             w.Put(CharState);
             w.Put(Facing);
-            w.Put(Aiming);
-            w.Put(Shooting);
-            w.Put(Running);
+            w.Put((byte)Weapon);
+            w.Put((uint)AnimBools);
+            w.Put((ushort)AnimTriggers);
+            w.Put(StepHappened);
+            w.Put(Climbing);
         }
 
         public static PlayerStateMessage Deserialize(NetDataReader r)
@@ -92,11 +178,22 @@ namespace SyncRADation.Networking
                 RootY = r.GetFloat(),
                 VelX = r.GetFloat(),
                 VelZ = r.GetFloat(),
+                Forward = r.GetFloat(),
+                Turn = r.GetFloat(),
+                AimingTime = r.GetFloat(),
+                Stamina = r.GetFloat(),
+                Blend = r.GetFloat(),
+                IKwalk = r.GetFloat(),
+                InputX = r.GetFloat(),
+                InputY = r.GetFloat(),
+                HurtTime = r.GetFloat(),
                 CharState = r.GetByte(),
                 Facing = r.GetByte(),
-                Aiming = r.GetBool(),
-                Shooting = r.GetBool(),
-                Running = r.GetBool()
+                Weapon = (WeaponType)r.GetByte(),
+                AnimBools = (AnimBools)r.GetUInt(),
+                AnimTriggers = (AnimTriggers)r.GetUShort(),
+                StepHappened = r.GetBool(),
+                Climbing = r.GetBool()
             };
         }
     }
@@ -221,6 +318,40 @@ namespace SyncRADation.Networking
                 PosX = r.GetFloat(),
                 PosY = r.GetFloat(),
                 PosZ = r.GetFloat()
+            };
+        }
+    }
+
+    public enum DoorType : byte
+    {
+        DoorwayDouble = 0,
+        DoorwaySimple = 1,
+        EventSlidingDoor = 2,
+    }
+
+    public struct DoorStateMessage
+    {
+        public DoorType Type;
+        public short Index;
+        public bool Open;
+        public bool Locked;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put((byte)Type);
+            w.Put(Index);
+            w.Put(Open);
+            w.Put(Locked);
+        }
+
+        public static DoorStateMessage Deserialize(NetDataReader r)
+        {
+            return new DoorStateMessage
+            {
+                Type = (DoorType)r.GetByte(),
+                Index = r.GetShort(),
+                Open = r.GetBool(),
+                Locked = r.GetBool()
             };
         }
     }

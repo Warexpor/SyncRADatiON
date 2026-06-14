@@ -9,19 +9,14 @@ namespace SyncRADation.Players
 
         public GameObject GameObject { get; }
         public RemoteAnimatorDriver AnimDriver { get; }
-
-        public Vector3 LastVelocity { get; private set; }
-        public bool LastAiming { get; private set; }
-        public bool LastShooting { get; private set; }
-        public bool LastRunning { get; private set; }
-        public byte LastFacing { get; private set; }
-        public byte LastCharState { get; private set; }
+        public ProxyAudioSync AudioSync { get; }
 
         public RemotePlayerProxy(GameObject go)
         {
             GameObject = go;
             AnimDriver = new RemoteAnimatorDriver(go);
             AnimDriver.Initialize(go);
+            AudioSync = new ProxyAudioSync(go);
             ModRuntime.RegisterAnimDriver(AnimDriver);
             Instance = this;
             var arms = go.GetComponentsInChildren<SkinnedMeshRenderer>(true);
@@ -42,22 +37,8 @@ namespace SyncRADation.Players
 
         public void ApplyState(PlayerStateMessage state)
         {
-            LastVelocity = new Vector3(state.VelX, 0, state.VelZ);
-            LastAiming = state.Aiming;
-            LastShooting = state.Shooting;
-            LastRunning = state.Running;
-            LastFacing = state.Facing;
-            LastCharState = state.CharState;
-
-            float rawSpeed = LastVelocity.magnitude;
-            float speed;
-            if (LastRunning)
-                speed = 1.0f;
-            else if (rawSpeed > 0.5f)
-                speed = 0.4f;
-            else
-                speed = 0f;
-            AnimDriver.ApplyState(speed, LastAiming, LastShooting, LastRunning, LastFacing, LastCharState, state.RotY);
+            AnimDriver.ApplyState(state);
+            AudioSync.Tick(state, state.AnimBools, state.AnimTriggers);
         }
     }
 }

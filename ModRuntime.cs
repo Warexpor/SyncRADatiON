@@ -28,10 +28,16 @@ namespace SyncRADation
                 ModConfig.Bind();
                 _harmony.PatchAll();
 
-                Log.Msg("================================================");
+                Log.Msg("=============================================");
                 Log.Msg("  " + PluginInfo.Name + " v" + PluginInfo.Version);
-                Log.Msg("  F2=menu, F3=debug");
-                Log.Msg("================================================");
+                Log.Msg("  " + PluginInfo.Description);
+                Log.Msg("");
+                Log.Msg("  Controls:");
+                Log.Msg("    F2 - Multiplayer menu");
+                Log.Msg("    F3 - Quick Connect");
+                Log.Msg("");
+                Log.Msg("  Protocol v" + PluginInfo.ProtocolVersion + " | Port " + PluginInfo.DefaultPort);
+                Log.Msg("=============================================");
 
                 Application.runInBackground = true;
                 EnsureRunning();
@@ -63,6 +69,8 @@ namespace SyncRADation
         private static bool _lastSuspendInput;
         private static bool _lastTraversing;
         private static bool _diagDumped;
+        private static bool _animDiagDumped;
+        private static float _animDiagTime;
         private static float _lastDoorLogTime;
 
         public static void OnUpdate()
@@ -165,6 +173,22 @@ namespace SyncRADation
                 _lastCharStateLog = Time.time;
             }
 
+            // Dump source player Animator params — first at gs==0, then again after 3s of gameplay
+            if (pObj != null && gs == 0)
+            {
+                if (!_animDiagDumped)
+                {
+                    _animDiagDumped = true;
+                    _animDiagTime = Time.time;
+                    DumpAnimatorParams(pObj, "");
+                }
+                else if (Time.time - _animDiagTime > 3f && _animDiagTime > 0f)
+                {
+                    _animDiagTime = 0f;
+                    DumpAnimatorParams(pObj, " (3s delay)");
+                }
+            }
+
             // Log all nearby AutoTraverseDoors (by their A/B transform positions) every 3s
             if (pObj != null && Time.time - _lastDoorLogTime > 3f)
             {
@@ -217,6 +241,45 @@ namespace SyncRADation
             Log?.Msg("[Runtime] Scene changed, resetting local references");
             Network?.OnSceneChanged();
             _animDrivers.Clear();
+        }
+
+        private static readonly string[] _animFloatNames = new string[] { "Forward", "Turn", "AimingTime", "Stamina", "Blend", "IKwalk", "X", "Y", "HurtTime", "frame" };
+        private static readonly string[] _animBoolNames = new string[] { "Aiming", "Shooting", "Running", "Grounded", "Crouch", "Snap", "Blocked", "Injured", "Dead", "Attack", "Reload", "Swap", "Burst", "Inventory", "Stomp", "Push", "Melee", "Taser", "Handgun", "CAR", "Flare" };
+        private static readonly string[] _animTriggerNames = new string[] { "Die", "Hurt", "Fire", "Pickup", "Radio", "Drop", "Sleep", "Injector", "InjectorCancel" };
+
+        private static void DumpAnimatorParams(GameObject pObj, string suffix)
+        {
+            try
+            {
+                foreach (var a in pObj.GetComponentsInChildren<Animator>(true))
+                {
+                    if (a == null || a.runtimeAnimatorController == null) continue;
+                    Log?.Msg("[ANIM] Animator on " + a.name + " controller=" + a.runtimeAnimatorController.name + suffix);
+                    Log?.Msg("[ANIM]   parameterCount=" + a.parameterCount);
+                    foreach (var pn in _animFloatNames)
+                    {
+                        try
+                        {
+                            float val = a.GetFloat(pn);
+                            Log?.Msg("[ANIM]   float " + pn + " = " + val.ToString("F3"));
+                        }
+                        catch { Log?.Msg("[ANIM]   float " + pn + " = THROWS"); }
+                    }
+                    foreach (var pn in _animBoolNames)
+                    {
+                        try
+                        {
+                            bool val = a.GetBool(pn);
+                            Log?.Msg("[ANIM]   bool " + pn + " = " + val);
+                        }
+                        catch { Log?.Msg("[ANIM]   bool " + pn + " = THROWS"); }
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Log?.Msg("[ANIM] Dump error: " + ex.Message);
+            }
         }
 
         public static void RegisterAnimDriver(RemoteAnimatorDriver driver)

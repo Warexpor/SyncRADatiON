@@ -83,6 +83,8 @@ namespace SyncRADation.Networking
             _localPlayer = null;
             _proxyGameObject = null;
             DestroyRemoteProxy();
+            DoorSyncService.Reset();
+            SourceAnimReader.Reset();
             _handshakeComplete = false;
             _peer = null;
             _sendTimer = 0f;
@@ -119,6 +121,8 @@ namespace SyncRADation.Networking
             // {
             //     EntityStateBroadcastService.Tick();
             // }
+
+            DoorSyncService.Tick();
 
             if (_sendTimer < PluginInfo.SendInterval)
                 return;
@@ -173,6 +177,47 @@ namespace SyncRADation.Networking
                 rotY = player.transform.eulerAngles.y;
             }
 
+            float forwardAmount = 0f, turnAmount = 0f, aimingTime = -1f;
+            try
+            {
+                var tpc = player.GetComponent<ThirdPersonCharacter>();
+                if (tpc != null)
+                {
+                    var tpcType = typeof(ThirdPersonCharacter);
+                    var fwd = tpcType.GetField("m_ForwardAmount", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                    if (fwd != null) forwardAmount = (float)fwd.GetValue(tpc);
+                    var trn = tpcType.GetField("m_TurnAmount", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                    if (trn != null) turnAmount = (float)trn.GetValue(tpc);
+                }
+            }
+            catch { }
+
+            WeaponType weapon = WeaponType.None;
+            try
+            {
+                var eq = InventoryManager.EquippedWeapon;
+                if (eq != null)
+                {
+                    var pi = eq.parentItem;
+                    if (pi != null)
+                    {
+                switch (pi._item)
+                {
+                    case Items.itemlist.Pistol: weapon = WeaponType.Pistol; break;
+                    case Items.itemlist.Revolver: weapon = WeaponType.Revolver; break;
+                    case Items.itemlist.Shotgun: weapon = WeaponType.Shotgun; break;
+                    case Items.itemlist.Rifle: weapon = WeaponType.Rifle; break;
+                    case Items.itemlist.SMG: weapon = WeaponType.SMG; break;
+                    case Items.itemlist.FlareGun: weapon = WeaponType.Flare; break;
+                    case Items.itemlist.FlakGun: weapon = WeaponType.CAR; break;
+                    case Items.itemlist.Machete: weapon = WeaponType.Melee; break;
+                    case Items.itemlist.Taser: weapon = WeaponType.Handgun; break;
+                }
+                    }
+                }
+            }
+            catch { }
+
             var msg = new PlayerStateMessage
             {
                 PosX = pos.x,
@@ -182,12 +227,22 @@ namespace SyncRADation.Networking
                 RootY = player.transform.eulerAngles.y,
                 VelX = vel.x,
                 VelZ = vel.z,
+                Forward = forwardAmount,
+                Turn = turnAmount,
+                AimingTime = aimingTime,
                 CharState = (byte)PlayerState.charState,
                 Facing = facing,
-                Aiming = PlayerState.aiming,
-                Shooting = PlayerState.shooting,
-                Running = PlayerState.charState == PlayerState.charStates.run
+                Weapon = weapon,
+                AnimBools = 0
             };
+
+            // Read animator params from source player (fills floats + AnimBools from Animator)
+            SourceAnimReader.ReadFromPlayer(player, ref msg);
+
+            // Ensure game state bools override any Animator-derived values
+            if (PlayerState.aiming) msg.AnimBools |= AnimBools.Aiming;
+            if (PlayerState.shooting) msg.AnimBools |= AnimBools.Shooting;
+            if (PlayerState.charState == PlayerState.charStates.run) msg.AnimBools |= AnimBools.Running;
             Send(NetMessageType.PlayerState, w => msg.Serialize(w));
 
             if (_role == NetworkRole.Host)
@@ -262,6 +317,9 @@ namespace SyncRADation.Networking
                 break;
             case NetMessageType.PlayerState:
                 HandlePlayerState(PlayerStateMessage.Deserialize(reader));
+                break;
+            case NetMessageType.DoorState:
+                DoorSyncService.HandleMessage(DoorStateMessage.Deserialize(reader));
                 break;
             }
         }
@@ -372,10 +430,12 @@ namespace SyncRADation.Networking
         {
             _localPlayer = null;
             _lastSentPosition = Vector3.zero;
+            SourceAnimReader.Reset();
             _sendTimer = 0f;
             _lastStateTime = 0f;
             DestroyRemoteProxy();
             ClientEntityInterpolationService.Reset();
+            DoorSyncService.RefreshScene();
         }
 
         private void DestroyRemoteProxy()

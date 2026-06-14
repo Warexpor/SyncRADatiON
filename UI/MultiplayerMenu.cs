@@ -22,7 +22,7 @@ namespace SyncRADation.UI
             if (!_showMenu)
                 return;
 
-            GUI.Box(_windowRect, "SyncRADation Alpha");
+            GUI.Box(_windowRect, "SyncRADation v" + PluginInfo.Version);
 
             var net = LanNetworkManager.Instance;
             if (net == null)
@@ -56,6 +56,8 @@ namespace SyncRADation.UI
 
             if (GUI.Button(CR(10, 220, 300, 25), "Close (F2)"))
                 _showMenu = false;
+
+            GUI.Label(CR(10, 250, 300, 20), "F3 = quick connect to saved IP");
         }
 
         private static Rect CR(float x, float y, float w, float h)

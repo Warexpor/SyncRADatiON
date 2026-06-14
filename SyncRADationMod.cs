@@ -18,6 +18,24 @@ namespace SyncRADation
 
             if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F2))
                 UI.MultiplayerMenu.Toggle();
+
+            if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F3))
+                QuickConnect();
+        }
+
+        private void QuickConnect()
+        {
+            var net = Networking.LanNetworkManager.Instance;
+            if (net == null || net.Role != Networking.NetworkRole.Offline)
+            {
+                LoggerInstance.Msg("[QuickConnect] Already connected or network offline");
+                return;
+            }
+
+            string addr = Config.ModConfig.ConnectAddress?.Value ?? "127.0.0.1";
+            int port = Config.ModConfig.ConnectPort?.Value ?? PluginInfo.DefaultPort;
+            LoggerInstance.Msg("[QuickConnect] Connecting to " + addr + ":" + port + " (F3)");
+            net.ConnectToHost(addr, port);
         }
 
         public override void OnLateUpdate()
