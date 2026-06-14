@@ -1,4 +1,5 @@
 using LiteNetLib.Utils;
+using UnityEngine;
 
 namespace SyncRADation.Networking
 {
@@ -12,7 +13,9 @@ namespace SyncRADation.Networking
         PlayerFacing = 6,
         PlayerAction = 7,
         DoorState = 8,
-        _Highest = 9
+        DropItemSpawn = 9,
+        ItemPickedUp = 10,
+        _Highest = 11
     }
 
     public struct HandshakeMessage
@@ -139,6 +142,7 @@ namespace SyncRADation.Networking
         public AnimTriggers AnimTriggers;
         public bool StepHappened;
         public bool Climbing;
+        public float[] BoneRotations;
 
         public void Serialize(NetDataWriter w)
         {
@@ -165,11 +169,15 @@ namespace SyncRADation.Networking
             w.Put((ushort)AnimTriggers);
             w.Put(StepHappened);
             w.Put(Climbing);
+            int bc = (BoneRotations != null) ? BoneRotations.Length : 0;
+            w.Put(bc);
+            for (int i = 0; i < bc; i++)
+                w.Put(EncodeAngle(BoneRotations[i]));
         }
 
         public static PlayerStateMessage Deserialize(NetDataReader r)
         {
-            return new PlayerStateMessage
+            var msg = new PlayerStateMessage
             {
                 PosX = r.GetFloat(),
                 PosY = r.GetFloat(),
@@ -195,6 +203,24 @@ namespace SyncRADation.Networking
                 StepHappened = r.GetBool(),
                 Climbing = r.GetBool()
             };
+            int bc = r.GetInt();
+            if (bc > 0)
+            {
+                msg.BoneRotations = new float[bc];
+                for (int i = 0; i < bc; i++)
+                    msg.BoneRotations[i] = DecodeAngle(r.GetUShort());
+            }
+            return msg;
+        }
+
+        public static ushort EncodeAngle(float angle)
+        {
+            return (ushort)(Mathf.Clamp(angle, 0f, 360f) / 360f * 65535f);
+        }
+
+        public static float DecodeAngle(ushort encoded)
+        {
+            return (float)encoded / 65535f * 360f;
         }
     }
 
@@ -352,6 +378,72 @@ namespace SyncRADation.Networking
                 Index = r.GetShort(),
                 Open = r.GetBool(),
                 Locked = r.GetBool()
+            };
+        }
+    }
+
+    public struct DropItemSpawnMessage
+    {
+        public byte SenderID;
+        public ushort LocalIndex;
+        public ushort ItemEnum;
+        public int Count;
+        public float PosX;
+        public float PosY;
+        public float PosZ;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(SenderID);
+            w.Put(LocalIndex);
+            w.Put(ItemEnum);
+            w.Put(Count);
+            w.Put(PosX);
+            w.Put(PosY);
+            w.Put(PosZ);
+        }
+
+        public static DropItemSpawnMessage Deserialize(NetDataReader r)
+        {
+            return new DropItemSpawnMessage
+            {
+                SenderID = r.GetByte(),
+                LocalIndex = r.GetUShort(),
+                ItemEnum = r.GetUShort(),
+                Count = r.GetInt(),
+                PosX = r.GetFloat(),
+                PosY = r.GetFloat(),
+                PosZ = r.GetFloat()
+            };
+        }
+    }
+
+    public struct ItemPickedUpMessage
+    {
+        public byte SenderID;
+        public ushort LocalIndex;
+        public ushort ItemEnum;
+        public int Count;
+        public bool GrantToReceiver;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(SenderID);
+            w.Put(LocalIndex);
+            w.Put(ItemEnum);
+            w.Put(Count);
+            w.Put(GrantToReceiver);
+        }
+
+        public static ItemPickedUpMessage Deserialize(NetDataReader r)
+        {
+            return new ItemPickedUpMessage
+            {
+                SenderID = r.GetByte(),
+                LocalIndex = r.GetUShort(),
+                ItemEnum = r.GetUShort(),
+                Count = r.GetInt(),
+                GrantToReceiver = r.GetBool()
             };
         }
     }

@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using LiteNetLib;
 using LiteNetLib.Utils;
+using SyncRADation.ItemSystem;
 using SyncRADation.Players;
 using UnityEngine;
 
@@ -19,12 +20,15 @@ namespace SyncRADation.Networking
         private GameObject _localPlayer;
         private GameObject _proxyGameObject;
         private float _sendTimer;
+        private int _boneSendCounter;
         private Vector3 _lastSentPosition;
         private float _lastStateTime;
 
         private bool _handshakeComplete;
         private float _lastSendLogTime;
         private float _lastRecvLogTime;
+
+        private ushort _nextItemIndex = 1;
         public NetworkRole Role => _role;
         public bool IsConnected => _peer != null && _peer.ConnectionState == ConnectionState.Connected;
         public string StatusText { get; private set; } = "Offline";
@@ -85,6 +89,8 @@ namespace SyncRADation.Networking
             DestroyRemoteProxy();
             DoorSyncService.Reset();
             SourceAnimReader.Reset();
+            DroppedItemManager.SaveToFile();
+            DroppedItemManager.ClearAll();
             _handshakeComplete = false;
             _peer = null;
             _sendTimer = 0f;
@@ -124,6 +130,21 @@ namespace SyncRADation.Networking
 
             DoorSyncService.Tick();
 
+            // Pickup nearby dropped item (both host and client can pick up)
+            if (Input.GetKeyDown(KeyCode.E) && WorldItem.NearbyID >= 0
+                && PlayerState.gameState == PlayerState.gameStates.play)
+            {
+                int localID = WorldItem.NearbyID;
+                WorldItem.NearbyID = -1;
+                DoPickupItem(localID);
+            }
+
+            if (Input.GetKeyDown(KeyCode.G) && PlayerState.gameState == PlayerState.gameStates.play)
+            {
+                TryDropCurrentItem();
+            }
+
+            _sendTimer += Mathf.Min(Time.deltaTime, 0.1f);
             if (_sendTimer < PluginInfo.SendInterval)
                 return;
 
@@ -239,11 +260,16 @@ namespace SyncRADation.Networking
             // Read animator params from source player (fills floats + AnimBools from Animator)
             SourceAnimReader.ReadFromPlayer(player, ref msg);
 
+            // Throttle bone data: send every Nth packet (save bandwidth)
+            _boneSendCounter++;
+            if (_boneSendCounter % PluginInfo.BoneSendDivider != 0)
+                msg.BoneRotations = null;
+
             // Ensure game state bools override any Animator-derived values
             if (PlayerState.aiming) msg.AnimBools |= AnimBools.Aiming;
             if (PlayerState.shooting) msg.AnimBools |= AnimBools.Shooting;
             if (PlayerState.charState == PlayerState.charStates.run) msg.AnimBools |= AnimBools.Running;
-            Send(NetMessageType.PlayerState, w => msg.Serialize(w));
+            Send(NetMessageType.PlayerState, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
 
             if (_role == NetworkRole.Host)
                 PlayerPositionManager.ReportHostPosition(pos);
@@ -258,6 +284,125 @@ namespace SyncRADation.Networking
             }
 
             ClientEntityInterpolationService.TickLateUpdate();
+        }
+
+        private void TryDropCurrentItem()
+        {
+            if (_localPlayer == null) return;
+            var pos = _localPlayer.transform.position;
+
+            Items.itemlist itemToDrop = Items.itemlist.None;
+            int count = 1;
+
+            // Try dropping InventoryManager.CurrentItem
+            try
+            {
+                var current = InventoryManager.CurrentItem;
+                if (current != null && current._item != Items.itemlist.None && current._item != Items.itemlist.Injector)
+                {
+                    itemToDrop = current._item;
+                    // Can't drop equipped items keyed to story progress; allow keys/objects/health
+                }
+            }
+            catch { }
+
+            if (itemToDrop == Items.itemlist.None)
+            {
+                ModRuntime.Log?.Msg("[Drop] No item to drop (CurrentItem is null or invalid)");
+                return;
+            }
+
+            // Remove from local inventory
+            try
+            {
+                var anItem = InventoryManager.getItem(itemToDrop);
+                if (anItem == null) return;
+                if (InventoryManager.getCount(anItem) <= 0) return;
+                InventoryManager.RemoveItem(anItem, count);
+            }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[Drop] RemoveItem failed: " + ex.Message);
+                return;
+            }
+
+            ushort idx = _nextItemIndex++;
+            int key = (_role == NetworkRole.Host ? 0 : 1) << 16 | idx;
+            DroppedItemManager.SpawnLocalItem(itemToDrop, count, key, pos);
+
+            // Send to other player
+            byte sid = (byte)(_role == NetworkRole.Host ? 0 : 1);
+            Send(NetMessageType.DropItemSpawn, w => new DropItemSpawnMessage
+            {
+                SenderID = sid,
+                LocalIndex = idx,
+                ItemEnum = (ushort)itemToDrop,
+                Count = count,
+                PosX = pos.x,
+                PosY = pos.y,
+                PosZ = pos.z
+            }.Serialize(w), DeliveryMethod.ReliableOrdered);
+
+            ModRuntime.Log?.Msg("[Drop] Dropped " + itemToDrop + " x" + count);
+        }
+
+        private static bool IsSharedItem(Items.itemlist itemEnum)
+        {
+            try
+            {
+                var itemData = InventoryManager.getItem(itemEnum);
+                if (itemData == null) return false;
+                return itemData.type == AnItem.AnItemType.Object;
+            }
+            catch { return false; }
+        }
+
+        private void DoPickupItem(int itemKey)
+        {
+            // Find the WorldItem we're picking up
+            var go = DroppedItemManager.GetItem(itemKey);
+            if (go == null)
+            {
+                ModRuntime.Log?.Warning("[Pickup] WorldItem not found for key " + itemKey);
+                return;
+            }
+            var wi = go.GetComponent<WorldItem>();
+            if (wi == null) return;
+
+            // Add to local inventory
+            try
+            {
+                var item = InventoryManager.getItem(wi.ItemEnum);
+                if (item == null)
+                {
+                    ModRuntime.Log?.Warning("[Pickup] Unknown item enum " + wi.ItemEnum);
+                    return;
+                }
+                InventoryManager.AddItem(item, wi.Count);
+                ModRuntime.Log?.Msg("[Pickup] Picked up " + wi.ItemEnum + " x" + wi.Count + " shared=" + IsSharedItem(wi.ItemEnum));
+            }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[Pickup] AddItem failed: " + ex.Message);
+                return;
+            }
+
+            // Notify other player to despawn (before despawning, so we still have wi info)
+            byte sid = (byte)(_role == NetworkRole.Host ? 0 : 1);
+            int senderID = (itemKey >> 16) & 0xFF;
+            ushort localIdx = (ushort)(itemKey & 0xFFFF);
+            bool shared = IsSharedItem(wi.ItemEnum);
+            Send(NetMessageType.ItemPickedUp, w => new ItemPickedUpMessage
+            {
+                SenderID = (byte)senderID,
+                LocalIndex = localIdx,
+                ItemEnum = (ushort)wi.ItemEnum,
+                Count = wi.Count,
+                GrantToReceiver = shared
+            }.Serialize(w), DeliveryMethod.ReliableOrdered);
+
+            // Despawn locally
+            DroppedItemManager.DespawnItem(itemKey);
         }
 
         public void Send(NetMessageType type, Action<NetDataWriter> writeBody, DeliveryMethod method = DeliveryMethod.Unreliable)
@@ -320,6 +465,12 @@ namespace SyncRADation.Networking
                 break;
             case NetMessageType.DoorState:
                 DoorSyncService.HandleMessage(DoorStateMessage.Deserialize(reader));
+                break;
+            case NetMessageType.DropItemSpawn:
+                HandleDropItemSpawn(DropItemSpawnMessage.Deserialize(reader));
+                break;
+            case NetMessageType.ItemPickedUp:
+                HandleItemPickedUp(ItemPickedUpMessage.Deserialize(reader));
                 break;
             }
         }
@@ -385,6 +536,39 @@ namespace SyncRADation.Networking
             }
         }
 
+        private void HandleDropItemSpawn(DropItemSpawnMessage msg)
+        {
+            int key = (msg.SenderID << 16) | msg.LocalIndex;
+            var pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            DroppedItemManager.SpawnLocalItem((Items.itemlist)msg.ItemEnum, msg.Count, key, pos);
+            ModRuntime.Log?.Msg("[Drop] Remote dropped " + (Items.itemlist)msg.ItemEnum + " at " + pos.ToString("F1"));
+        }
+
+        private void HandleItemPickedUp(ItemPickedUpMessage msg)
+        {
+            int key = (msg.SenderID << 16) | msg.LocalIndex;
+            DroppedItemManager.DespawnItem(key);
+
+            if (msg.GrantToReceiver)
+            {
+                try
+                {
+                    var item = InventoryManager.getItem((Items.itemlist)msg.ItemEnum);
+                    if (item != null)
+                    {
+                        InventoryManager.AddItem(item, msg.Count);
+                        ModRuntime.Log?.Msg("[Drop] Shared item granted: " + (Items.itemlist)msg.ItemEnum + " x" + msg.Count);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    ModRuntime.Log?.Warning("[Drop] Grant shared item failed: " + ex.Message);
+                }
+            }
+
+            ModRuntime.Log?.Msg("[Drop] Remote picked up key=" + key + " shared=" + msg.GrantToReceiver);
+        }
+
         private void EnsureRemoteProxy()
         {
             if (_remoteProxy != null)
@@ -434,6 +618,8 @@ namespace SyncRADation.Networking
             _sendTimer = 0f;
             _lastStateTime = 0f;
             DestroyRemoteProxy();
+            DroppedItemManager.ClearAll(); // saves + destroys
+            DroppedItemManager.LoadFromFile(); // restore items for the new scene
             ClientEntityInterpolationService.Reset();
             DoorSyncService.RefreshScene();
         }

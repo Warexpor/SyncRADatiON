@@ -6,7 +6,9 @@ Clones the local player GameObject and syncs position/rotation/animation over th
 
 ## Controls
 - F2 — open/close multiplayer menu
-- F3 — debug (not implemented)
+- F3 — quick connect to saved IP/port
+- G — drop currently selected inventory item at player position
+- E — pick up dropped item (when near world pickup sprite)
 
 ## Architecture
 
@@ -52,6 +54,19 @@ Clones the local player GameObject and syncs position/rotation/animation over th
 3. **Door sync limited** — only `Doorway_Double`; `ConnectedDoors` traversal state (`inProgress`, `forwards`) and `EventSlidingDoor` not synced
 4. **Audio is basic** — generated tones for most sounds, real weapon AudioClips only if `Resources.FindObjectsOfTypeAll<AnWeapon>()` succeeds
 5. ~~**ProxyAudioSync crash**: `AudioClip.SetData()` throws `ObjectCollectedException` in IL2CPP — the managed `float[]` gets GC-collected before the native call completes.~~ **FIXED**: `GC.KeepAlive(data)` after `clip.SetData()` prevents premature collection.
+
+### Item Drop System (v0.3.0-alpha)
+- `DroppedItemManager` — static manager, spawns/despawns world pickups
+- `WorldItem` — MonoBehaviour on dropped item sprites (billboard + trigger + interaction)
+- `DropItemSpawnMessage` — sent from dropper to other player (includes senderID, localIndex, itemEnum, count, pos)
+- `ItemPickedUpMessage` — sent from picker to other player (includes senderID, localIndex)
+- Item ID scheme: `key = (senderID << 16) | localIndex` (senderID 0=host, 1=client)
+- Pickup GameObject: empty GameObject + SpriteRenderer (AnItem.worldSprite) + BoxCollider trigger + Rigidbody(kinematic)
+- Billboard: rotates to face Camera.main every frame
+- Drop trigger: G key drops InventoryManager.CurrentItem at player position
+- Pickup trigger: E key near WorldItem → adds to local inventory → sends ItemPickedUp to other
+- No host authority — each player manages own inventory, sends notifications P2P
+- No journal sharing yet — all items are exclusive pickups for v1
 
 ### Key Constraints
 - SIGNALIS is **full 3D** (top-down 2.5D perspective, 3D character models with SkinnedMeshRenderers)

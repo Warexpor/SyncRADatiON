@@ -151,5 +151,6 @@ namespace SyncRADation.Networking
 
             ModRuntime.Log?.Msg("[DoorSync] Applied Doorway_Double " + msg.Index + " open=" + msg.Open);
         }
+
     }
 }

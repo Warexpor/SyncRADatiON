@@ -124,7 +124,13 @@
     <Compile Include="Players\RemoteAnimatorDriver.cs" />
     <Compile Include="Players\SourceAnimReader.cs" />
     <Compile Include="Players\ProxyAudioSync.cs" />
+    <Compile Include="Players\RemoteWeaponSync.cs" />
+    <Compile Include="Players\BoneSyncManager.cs" />
     <Compile Include="Networking\DoorSyncService.cs" />
+    <Compile Include="Items\WorldItem.cs" />
+    <Compile Include="Items\DroppedItemManager.cs" />
+    <Compile Include="Cheats\ItemGiver.cs" />
+    <Compile Include="Cheats\EntitySpawner.cs" />
     <Compile Include="Sync\GameObjectEntityTracker.cs" />
     <Compile Include="Sync\Proxies\EntityProxy.cs" />
     <Compile Include="Patches\PlayerPatches.cs" />

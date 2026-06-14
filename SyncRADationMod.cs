@@ -7,6 +7,8 @@ namespace SyncRADation
 {
     public class SyncRADationMod : MelonMod
     {
+        private bool _autoActionDone;
+
         public override void OnInitializeMelon()
         {
             ModRuntime.Start(LoggerInstance, HarmonyInstance);
@@ -16,11 +18,22 @@ namespace SyncRADation
         {
             ModRuntime.OnUpdate();
 
+            if (!_autoActionDone)
+            {
+                _autoActionDone = true;
+                ProcessCommandLine();
+            }
+
             if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F2))
                 UI.MultiplayerMenu.Toggle();
 
             if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F3))
                 QuickConnect();
+
+            if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F6))
+                Cheats.ItemGiver.ShowMenu = !Cheats.ItemGiver.ShowMenu;
+            if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F7))
+                Cheats.EntitySpawner.ShowMenu = !Cheats.EntitySpawner.ShowMenu;
         }
 
         private void QuickConnect()
@@ -38,6 +51,30 @@ namespace SyncRADation
             net.ConnectToHost(addr, port);
         }
 
+        private void ProcessCommandLine()
+        {
+            var args = System.Environment.GetCommandLineArgs();
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (args[i] == "--sync-host")
+                {
+                    LoggerInstance.Msg("[Auto] Hosting on port " + PluginInfo.DefaultPort);
+                    var net = Networking.LanNetworkManager.Instance;
+                    if (net != null) net.StartHost(PluginInfo.DefaultPort);
+                    return;
+                }
+                if (args[i] == "--sync-connect" && i + 2 < args.Length)
+                {
+                    string addr = args[i + 1];
+                    int port = int.Parse(args[i + 2]);
+                    LoggerInstance.Msg("[Auto] Connecting to " + addr + ":" + port);
+                    var net = Networking.LanNetworkManager.Instance;
+                    if (net != null) net.ConnectToHost(addr, port);
+                    return;
+                }
+            }
+        }
+
         public override void OnLateUpdate()
         {
             ModRuntime.OnLateUpdate();
@@ -46,6 +83,8 @@ namespace SyncRADation
         public override void OnGUI()
         {
             UI.MultiplayerMenu.OnGUI();
+            Cheats.ItemGiver.OnGUI();
+            Cheats.EntitySpawner.OnGUI();
         }
 
         public override void OnSceneWasLoaded(int buildIndex, string sceneName)

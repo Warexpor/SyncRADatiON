@@ -65,7 +65,6 @@ namespace SyncRADation
         private static float _gameStateStuckTime;
         private static int _lastGameState;
         private static Vector3 _lastPlayerPos;
-        private static float _lastPlayerPosLogTime;
         private static bool _lastSuspendInput;
         private static bool _lastTraversing;
         private static bool _diagDumped;
@@ -158,13 +157,7 @@ namespace SyncRADation
                     _lastTraversing = apc.traversing;
                 }
 
-                Vector3 ppos = pObj.transform.position;
-                if ((ppos - _lastPlayerPos).sqrMagnitude > 0.01f && Time.time - _lastPlayerPosLogTime > 0.5f)
-                {
-                    Log?.Msg("[DIAG] player pos: " + ppos.ToString("F1") + " gs=" + gs + " cs=" + cs);
-                    _lastPlayerPos = ppos;
-                    _lastPlayerPosLogTime = Time.time;
-                }
+                _lastPlayerPos = pObj.transform.position;
             }
 
             if (Time.time - _lastCharStateLog > 5f)

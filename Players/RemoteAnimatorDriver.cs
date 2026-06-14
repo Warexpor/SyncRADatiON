@@ -24,11 +24,16 @@ namespace SyncRADation.Players
         private float _inputX;
         private float _inputY;
         private float _hurtTime;
-        private AnimBools _animBools;
-        private AnimTriggers _pendingTriggers;
-        private Networking.WeaponType _weapon;
-        private byte _facing;
-        private bool _snappedToFirst;
+    private AnimBools _animBools;
+    private AnimTriggers _pendingTriggers;
+    private Networking.WeaponType _weapon;
+    private byte _facing;
+    private bool _snappedToFirst;
+    private BoneSyncManager _boneSync;
+    private float[] _prevBones;
+    private float[] _curBones;
+    private float _prevBoneTime;
+    private float _curBoneTime;
 
         private const float SmoothRate = 6f;
 
@@ -46,6 +51,12 @@ namespace SyncRADation.Players
             _spriteRenderers = target.GetComponentsInChildren<SpriteRenderer>(true);
             _facingPivot = FindFacingPivot(_rootTransform);
             _smoothedForward = 0f;
+            _boneSync = new BoneSyncManager();
+            // Use facing pivot (same hierarchy as source) for consistent bone indices
+            if (_facingPivot != null)
+                _boneSync.FindArmature(_facingPivot.gameObject);
+            else
+                _boneSync.FindArmature(target);
             SyncRADation.ModRuntime.Log?.Msg("[DRV] Init: animators=" + (_animators != null ? _animators.Length.ToString() : "null")
                 + " sprites=" + (_spriteRenderers != null ? _spriteRenderers.Length.ToString() : "null")
                 + " facingPivot=" + (_facingPivot != null ? _facingPivot.name : "NULL"));
@@ -67,6 +78,18 @@ namespace SyncRADation.Players
             _weapon = state.Weapon;
             _facing = state.Facing;
             _targetFacing = state.RotY;
+            // Store bone snapshot for interpolation — use fixed 50ms window for smooth blending
+            if (state.BoneRotations != null && state.BoneRotations.Length > 0)
+            {
+                if (_boneSync != null && _boneSync.BoneCount > 0 && _boneSync.BoneCount != state.BoneRotations.Length / 3)
+                {
+                    SyncRADation.ModRuntime.Log?.Msg("[DRV] BONE COUNT MISMATCH! proxy=" + _boneSync.BoneCount + " source=" + (state.BoneRotations.Length / 3));
+                }
+                _prevBones = _curBones;
+                _curBones = state.BoneRotations;
+                _prevBoneTime = Time.time;
+                _curBoneTime = Time.time + 0.05f; // fixed 50ms window for 20Hz bone rate
+            }
 
             if (!_snappedToFirst)
             {
@@ -85,8 +108,12 @@ namespace SyncRADation.Players
                 foreach (var anim in _animators)
                 {
                     if (anim == null) continue;
-                    ApplyAllAnimParams(anim, state.Forward, state.Turn, state.AimingTime, state.Stamina, state.Blend, state.IKwalk, state.InputX, state.InputY, state.HurtTime, state.AnimBools, state.Weapon);
+                    ApplyAnimParams(anim, state.Forward, state.Turn, state.AimingTime, state.Stamina, state.Blend, state.IKwalk, state.InputX, state.InputY, state.HurtTime, state.AnimBools);
+                    ApplyWeaponParams(anim);
                     ApplyPendingTriggers(anim);
+                    // Snap bones directly on first state (no interpolation yet)
+                    if (_boneSync != null && state.BoneRotations != null)
+                        _boneSync.ApplyRotationsSnap(state.BoneRotations);
                     anim.Update(0f);
                 }
 
@@ -118,16 +145,16 @@ namespace SyncRADation.Players
             foreach (var anim in _animators)
             {
                 if (anim == null) continue;
-                ApplyAllAnimParams(anim, forwardAmount, _smoothedTurn, _smoothedAimingTime, _stamina, _blend, _ikWalk, _inputX, _inputY, _hurtTime, _animBools, _weapon);
+                ApplyAnimParams(anim, forwardAmount, _smoothedTurn, _smoothedAimingTime, _stamina, _blend, _ikWalk, _inputX, _inputY, _hurtTime, _animBools);
+                ApplyWeaponParams(anim);
                 ApplyPendingTriggers(anim);
             }
 
             _pendingTriggers = 0;
         }
 
-        private static void ApplyAllAnimParams(Animator anim, float forward, float turn, float aimingTime, float stamina, float blend, float ikWalk, float inputX, float inputY, float hurtTime, AnimBools bools, Networking.WeaponType weapon)
+        private static void ApplyAnimParams(Animator anim, float forward, float turn, float aimingTime, float stamina, float blend, float ikWalk, float inputX, float inputY, float hurtTime, AnimBools bools)
         {
-            // Floats
             anim.SetFloat("Forward", forward);
             anim.SetFloat("Turn", turn);
             anim.SetFloat("AimingTime", aimingTime);
@@ -138,7 +165,6 @@ namespace SyncRADation.Players
             anim.SetFloat("Y", inputY);
             anim.SetFloat("HurtTime", hurtTime);
 
-            // Action/movement/state bools
             anim.SetBool("Aiming", bools.HasFlag(AnimBools.Aiming));
             anim.SetBool("Shooting", bools.HasFlag(AnimBools.Shooting));
             anim.SetBool("Running", bools.HasFlag(AnimBools.Running));
@@ -161,27 +187,24 @@ namespace SyncRADation.Players
             anim.SetBool("Hugged", bools.HasFlag(AnimBools.Hugged));
             anim.SetBool("ReloadRounds", bools.HasFlag(AnimBools.ReloadRounds));
             anim.SetBool("ReloadChamber", bools.HasFlag(AnimBools.ReloadChamber));
+        }
 
-            // Weapon bools: reset all, then set active one
-            anim.SetBool("Handgun", false);
-            anim.SetBool("Pistol", false);
-            anim.SetBool("Revolver", false);
-            anim.SetBool("Shotgun", false);
-            anim.SetBool("Rifle", false);
-            anim.SetBool("SMG", false);
-            anim.SetBool("Flare", false);
-            anim.SetBool("CAR", false);
-            switch (weapon)
+        private void ApplyWeaponParams(Animator anim)
+        {
+            string[] wpnNames = { "Handgun", "Pistol", "Revolver", "Shotgun", "Rifle", "SMG", "Flare", "CAR" };
+            string activeName = null;
+            if (_weapon == Networking.WeaponType.Handgun) activeName = "Handgun";
+            else if (_weapon == Networking.WeaponType.Pistol) activeName = "Pistol";
+            else if (_weapon == Networking.WeaponType.Revolver) activeName = "Revolver";
+            else if (_weapon == Networking.WeaponType.Shotgun) activeName = "Shotgun";
+            else if (_weapon == Networking.WeaponType.Rifle) activeName = "Rifle";
+            else if (_weapon == Networking.WeaponType.SMG) activeName = "SMG";
+            else if (_weapon == Networking.WeaponType.Flare) activeName = "Flare";
+            else if (_weapon == Networking.WeaponType.CAR) activeName = "CAR";
+            foreach (var name in wpnNames)
             {
-                case Networking.WeaponType.Handgun: anim.SetBool("Handgun", true); break;
-                case Networking.WeaponType.Melee: break; // already set via Melee bool above
-                case Networking.WeaponType.Pistol: anim.SetBool("Pistol", true); break;
-                case Networking.WeaponType.Revolver: anim.SetBool("Revolver", true); break;
-                case Networking.WeaponType.Shotgun: anim.SetBool("Shotgun", true); break;
-                case Networking.WeaponType.Rifle: anim.SetBool("Rifle", true); break;
-                case Networking.WeaponType.SMG: anim.SetBool("SMG", true); break;
-                case Networking.WeaponType.Flare: anim.SetBool("Flare", true); break;
-                case Networking.WeaponType.CAR: anim.SetBool("CAR", true); break;
+                bool active = (name == activeName);
+                anim.SetBool(name, active);
             }
         }
 
@@ -214,10 +237,28 @@ namespace SyncRADation.Players
         }
 
         private float _lastLog;
-
         public void LateTick()
         {
             ApplyFacing();
+            foreach (var anim in _animators)
+            {
+                if (anim == null) continue;
+                ApplyWeaponParams(anim);
+            }
+
+            // Apply bone rotations — interpolate between snapshots
+            if (_boneSync != null && _curBones != null)
+            {
+                if (_prevBones != null && _curBoneTime > _prevBoneTime)
+                {
+                    float t = Mathf.Clamp01((Time.time - _prevBoneTime) / (_curBoneTime - _prevBoneTime));
+                    _boneSync.ApplyRotationsInterpolated(_prevBones, _curBones, t);
+                }
+                else
+                {
+                    _boneSync.ApplyRotationsSnap(_curBones);
+                }
+            }
 
             if (Time.time - _lastLog > 3f)
             {
@@ -227,6 +268,7 @@ namespace SyncRADation.Players
                 sb.Append(_facingPivot != null ? _facingPivot.localEulerAngles.ToString("F1") : "NULL");
                 sb.Append(" curFacing="); sb.Append(_currentFacing.ToString("F1"));
                 sb.Append(" target="); sb.Append(_targetFacing.ToString("F1"));
+                sb.Append(" bones="); sb.Append(_boneSync != null ? _boneSync.BoneCount.ToString() : "0");
                 for (int i = 0; i < _animators.Length; i++)
                 {
                     var a = _animators[i];
@@ -235,6 +277,31 @@ namespace SyncRADation.Players
                     sb.Append("] fwd="); sb.Append(a.GetFloat("Forward").ToString("F2"));
                     sb.Append(" turn="); sb.Append(a.GetFloat("Turn").ToString("F2"));
                     sb.Append(" aimT="); sb.Append(a.GetFloat("AimingTime").ToString("F2"));
+                    sb.Append(" aim="); sb.Append(a.GetBool("Aiming") ? "1" : "0");
+                    sb.Append(" shoot="); sb.Append(a.GetBool("Shooting") ? "1" : "0");
+                    sb.Append(" run="); sb.Append(a.GetBool("Running") ? "1" : "0");
+                    sb.Append(" inv="); sb.Append(a.GetBool("Inventory") ? "1" : "0");
+                    string[] wpnNames = { "Handgun", "Pistol", "Revolver", "Shotgun", "Rifle", "SMG", "Flare", "CAR" };
+                    foreach (var w in wpnNames)
+                    {
+                        sb.Append(" ").Append(w).Append("=");
+                        try { sb.Append(a.GetBool(w) ? "1" : "0"); }
+                        catch { sb.Append("E"); }
+                    }
+                    try
+                    {
+                        var si = a.GetCurrentAnimatorStateInfo(0);
+                        sb.Append(" s0=").Append(si.shortNameHash);
+                        sb.Append(" t0=").Append(si.normalizedTime.ToString("F2"));
+                    }
+                    catch { }
+                    try
+                    {
+                        var si1 = a.GetCurrentAnimatorStateInfo(1);
+                        sb.Append(" s1=").Append(si1.shortNameHash);
+                        sb.Append(" t1=").Append(si1.normalizedTime.ToString("F2"));
+                    }
+                    catch { }
                 }
                 SyncRADation.ModRuntime.Log?.Msg(sb.ToString());
                 _lastLog = Time.time;

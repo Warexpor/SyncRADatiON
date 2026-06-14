@@ -9,7 +9,7 @@ namespace SyncRADation.UI
         private static bool _showMenu;
         private static string _address = "127.0.0.1";
         private static int _port = PluginInfo.DefaultPort;
-        private static Rect _windowRect = new Rect(100f, 100f, 320f, 260f);
+        private static Rect _windowRect = new Rect(100f, 100f, 320f, 280f);
         private static Rect _contentRect = new Rect(0f, 0f, 300f, 20f);
 
         public static void Toggle()
@@ -52,6 +52,13 @@ namespace SyncRADation.UI
             {
                 if (GUI.Button(CR(10, 150, 140, 30), "Disconnect"))
                     net.StopNetwork();
+            }
+
+            if (net.Role != NetworkRole.Offline)
+            {
+                bool hasDropItem = false;
+                try { hasDropItem = InventoryManager.CurrentItem != null; } catch { }
+                GUI.Label(CR(10, 190, 200, 20), hasDropItem ? "G = drop current item" : "G = drop (no item)");
             }
 
             if (GUI.Button(CR(10, 220, 300, 25), "Close (F2)"))

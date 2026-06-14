@@ -21,6 +21,7 @@ namespace SyncRADation.Players
         private string _reloadFMODPath;
         private AudioClip _footstepClip;
         private bool _pathsRetried;
+        private bool _hasReceivedFirst;
 
         private const float ReloadCooldown = 1.5f;
         private const float HurtCooldown = 1f;
@@ -177,8 +178,8 @@ namespace SyncRADation.Players
             if (localPlayer != null)
                 distToLocal = Vector3.Distance(_proxyTransform.position, localPlayer.transform.position);
 
-            // Log every ~50 ticks
-            if (_tickCount % 50 == 0)
+            // Log every ~500 ticks
+            if (_tickCount % 500 == 0)
                 ModRuntime.Log?.Msg("[Audio] Tick#" + _tickCount + " step=" + state.StepHappened
                     + " dist=" + distToLocal.ToString("F1"));
 
@@ -219,11 +220,15 @@ namespace SyncRADation.Players
             // Weapon swap — medium range
             if (farRange && state.Weapon != _lastWeapon)
             {
-                if (state.Weapon == WeaponType.None)
-                    PlayFMOD(_holsterSound, _proxyTransform.position, 0.3f);
-                else
-                    PlayFMOD(_drawSound, _proxyTransform.position, 0.3f);
+                if (_hasReceivedFirst)
+                {
+                    if (state.Weapon == WeaponType.None)
+                        PlayFMOD(_holsterSound, _proxyTransform.position, 0.3f);
+                    else
+                        PlayFMOD(_drawSound, _proxyTransform.position, 0.3f);
+                }
                 _lastWeapon = state.Weapon;
+                _hasReceivedFirst = true;
             }
 
             // Ladder climbing — rhythmic footsteps at proxy position

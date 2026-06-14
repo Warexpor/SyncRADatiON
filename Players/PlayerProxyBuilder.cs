@@ -32,13 +32,12 @@ namespace SyncRADation.Players
                 return null;
             }
 
-            // --- Model-only approach: clone only the facing-pivot child (skinned model).
-            //     This avoids duplicating PlayerState / AlternatePlayerController etc.
-            //     which have static fields that Awake corrupts. ---
+            // Model-only approach: clone only the facing-pivot child (skinned model).
+            // Full-clone duplicates door scripts → "single-use door" bug.
             Transform facingChild = FindFacingPivotRoot(source.transform);
             if (facingChild == null)
             {
-                log?.Warning("Cannot find facing-pivot child — falling back to full clone (may break doors)");
+                log?.Warning("Cannot find facing-pivot child — falling back to full clone");
                 return CreateFullClone(source, objectName, positionOffset, log);
             }
 
@@ -46,12 +45,11 @@ namespace SyncRADation.Players
             var savedModelInstance = CharacterModelType.instance;
             var savedWearHat = CharacterModelType.wearHat;
 
-            // Create bare root — no MonoBehaviours at all
             GameObject proxy = new GameObject(objectName);
+            proxy.SetActive(false);
             proxy.transform.position = source.transform.position + positionOffset;
             proxy.transform.rotation = source.transform.rotation;
 
-            // Clone ONLY the model hierarchy (no game-logic scripts)
             GameObject modelClone = Object.Instantiate(facingChild.gameObject, proxy.transform, true);
             modelClone.name = facingChild.name;
 
@@ -61,27 +59,47 @@ namespace SyncRADation.Players
 
             proxy.tag = "Untagged";
 
-            // Animator is on the source ROOT, not on the cloned facing-pivot child.
-            // Clone it explicitly so the proxy has an Animator to drive.
-            Animator srcAnim = source.GetComponentInChildren<Animator>(true);
-            if (srcAnim != null && srcAnim.runtimeAnimatorController != null)
-            {
-                Animator pa = proxy.AddComponent<Animator>();
-                pa.runtimeAnimatorController = srcAnim.runtimeAnimatorController;
-                pa.avatar = srcAnim.avatar;
-                pa.applyRootMotion = false;
-                pa.cullingMode = AnimatorCullingMode.AlwaysAnimate;
-                pa.speed = 1f;
-                pa.enabled = true;
-            }
-
-            foreach (var mb in proxy.GetComponentsInChildren<MonoBehaviour>(true))
+            // Destroy ALL MonoBehaviours while proxy is still inactive (prevents Awake from ever running)
+            var allMbs = proxy.GetComponentsInChildren<MonoBehaviour>(true);
+            foreach (var mb in allMbs)
             {
                 if (mb != null)
-                    mb.enabled = false;
+                    Object.DestroyImmediate(mb);
             }
 
-            // Disable ALL colliders
+            // Also destroy the source's Animator clones on modelClone (we'll add a fresh one)
+            var animators = modelClone.GetComponentsInChildren<Animator>(true);
+            foreach (var anim in animators)
+            {
+                if (anim != null && anim.gameObject != modelClone)
+                    Object.DestroyImmediate(anim);
+            }
+
+            // Now safe to activate proxy — no Awake runs (no MBs left)
+            proxy.SetActive(true);
+
+            // Find source Animator and copy controller + avatar to a fresh Animator on proxy root
+            Animator sourceAnim = source.GetComponentInChildren<Animator>(true);
+            if (sourceAnim != null)
+            {
+                Animator proxyAnim = proxy.AddComponent<Animator>();
+                proxyAnim.runtimeAnimatorController = sourceAnim.runtimeAnimatorController;
+                proxyAnim.avatar = sourceAnim.avatar;
+                proxyAnim.applyRootMotion = false;
+                proxyAnim.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+                proxyAnim.updateMode = sourceAnim.updateMode;
+                proxyAnim.speed = 1f;
+                proxyAnim.enabled = false;
+                try { proxyAnim.Rebind(); proxyAnim.Update(0f); } catch { }
+                log?.Msg("[Proxy] Added Animator: ctrl=" + sourceAnim.runtimeAnimatorController
+                    + " avatar=" + sourceAnim.avatar
+                    + " updateMode=" + sourceAnim.updateMode);
+            }
+            else
+            {
+                log?.Warning("[Proxy] No source Animator found!");
+            }
+
             foreach (var col in proxy.GetComponentsInChildren<Collider>(true))
             {
                 if (col != null)
@@ -99,6 +117,31 @@ namespace SyncRADation.Players
             if (rb3 != null) { rb3.useGravity = false; rb3.isKinematic = true; rb3.Sleep(); }
 
             log?.Msg("Model-only proxy created: " + proxy.name + " at " + proxy.transform.position.ToString("F1"));
+
+            // --- Fix IL2CPP: copy sharedMesh from source SMRs to proxy SMRs ---
+            var sourceSmrs = facingChild.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+            var proxySmrs = modelClone.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+            int copyCount = 0;
+            for (int si = 0; si < sourceSmrs.Length && si < proxySmrs.Length; si++)
+            {
+                if (sourceSmrs[si] != null && proxySmrs[si] != null
+                    && proxySmrs[si].sharedMesh == null && sourceSmrs[si].sharedMesh != null)
+                {
+                    proxySmrs[si].sharedMesh = sourceSmrs[si].sharedMesh;
+                    copyCount++;
+                }
+            }
+            for (int si = 0; si < sourceSmrs.Length && si < proxySmrs.Length; si++)
+            {
+                if (sourceSmrs[si] != null && proxySmrs[si] != null
+                    && proxySmrs[si].sharedMaterial == null && sourceSmrs[si].sharedMaterial != null)
+                {
+                    proxySmrs[si].sharedMaterial = sourceSmrs[si].sharedMaterial;
+                }
+            }
+            if (copyCount > 0)
+                log?.Msg("[Proxy] Copied " + copyCount + " sharedMeshes from source to proxy");
+
             return proxy;
         }
 
@@ -116,6 +159,21 @@ namespace SyncRADation.Players
                     if (t != null && t.parent == root)
                         return t;
                 }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Returns the first direct child of root (or grandchild via intermediate transforms) matching name.
+        /// </summary>
+        private static Transform FindChildByName(Transform root, string name)
+        {
+            for (int i = 0; i < root.childCount; i++)
+            {
+                Transform c = root.GetChild(i);
+                if (c.name == name) return c;
+                Transform sub = FindChildByName(c, name);
+                if (sub != null) return sub;
             }
             return null;
         }
@@ -147,6 +205,8 @@ namespace SyncRADation.Players
 
             proxy.tag = "Untagged";
 
+            var proxyAnimators = proxy.GetComponentsInChildren<Animator>(true);
+
             foreach (var mb in proxy.GetComponentsInChildren<MonoBehaviour>(true))
             {
                 if (mb != null)
@@ -164,13 +224,15 @@ namespace SyncRADation.Players
                     col.enabled = false;
             }
 
-            foreach (var anim in proxy.GetComponentsInChildren<Animator>(true))
+            foreach (var anim in proxyAnimators)
             {
                 if (anim != null)
                 {
                     anim.applyRootMotion = false;
                     anim.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+                    anim.updateMode = AnimatorUpdateMode.Normal;
                     anim.speed = 1f;
+                    anim.enabled = true;
                 }
             }
 

@@ -1,3 +1,4 @@
+using MelonLoader;
 using SyncRADation.Networking;
 using UnityEngine;
 
@@ -5,10 +6,14 @@ namespace SyncRADation.Players
 {
     public static class SourceAnimReader
     {
+        private static BoneSyncManager _boneReader;
+        private static Transform _facingPivotCache;
+        private static Transform _lastPlayerRoot;
         private static AnimBools _lastBools;
         private static AnimTriggers _accumulatedTriggers;
         private static bool _hasLast;
         private static float _prevNormTime;
+        private static Networking.WeaponType _lastWeaponRead;
 
         public static void ReadFromPlayer(GameObject player, ref PlayerStateMessage msg)
         {
@@ -55,13 +60,20 @@ namespace SyncRADation.Players
             msg.Climbing = false;
             try
             {
-                if (PlayerState.gameState == PlayerState.gameStates.traversing
-                    && PlayerState.charState == PlayerState.charStates.animation)
+                if (PlayerState.gameState == PlayerState.gameStates.traversing)
                 {
                     msg.Climbing = true;
                 }
             }
             catch { }
+
+            // Read weapon type from InventoryManager (direct, bypasses Animator)
+            msg.Weapon = ReadWeaponFromInventory();
+            if (msg.Weapon != _lastWeaponRead)
+            {
+                ModRuntime.Log?.Msg("[WeaponSync] Source weapon: " + _lastWeaponRead + " -> " + msg.Weapon);
+                _lastWeaponRead = msg.Weapon;
+            }
 
             // Read bools
             AnimBools b = 0;
@@ -88,6 +100,21 @@ namespace SyncRADation.Players
             if (SafeGetBool(anim, "ReloadRounds")) b |= AnimBools.ReloadRounds;
             if (SafeGetBool(anim, "ReloadChamber")) b |= AnimBools.ReloadChamber;
             msg.AnimBools = b;
+
+            // Read all armature bone rotations from the facing pivot child only
+            // (same hierarchy that model-only proxy clones — ensures indices match)
+            if (_lastPlayerRoot != player.transform)
+            {
+                _lastPlayerRoot = player.transform;
+                _facingPivotCache = FindFacingPivot(player.transform);
+                if (_facingPivotCache != null)
+                {
+                    _boneReader = new BoneSyncManager();
+                    _boneReader.FindArmature(_facingPivotCache.gameObject);
+                }
+            }
+            if (_boneReader != null)
+                msg.BoneRotations = _boneReader.ReadRotations();
 
             // Detect triggers: if a bool changed from false→true, fire the trigger
             AnimTriggers triggers = 0;
@@ -130,6 +157,34 @@ namespace SyncRADation.Players
             _lastBools = 0;
             _accumulatedTriggers = 0;
             _prevNormTime = 0f;
+            _facingPivotCache = null;
+            _lastPlayerRoot = null;
+            _boneReader = null;
+            _lastWeaponRead = 0;
+        }
+
+        private static Transform FindFacingPivot(Transform root)
+        {
+            if (root == null) return null;
+            for (int i = 0; i < root.childCount; i++)
+            {
+                Transform child = root.GetChild(i);
+                if (HasSkinnedMeshInDescendants(child))
+                    return child;
+            }
+            return null;
+        }
+
+        private static bool HasSkinnedMeshInDescendants(Transform t)
+        {
+            if (t == null) return false;
+            if (t.GetComponent<SkinnedMeshRenderer>() != null) return true;
+            for (int i = 0; i < t.childCount; i++)
+            {
+                if (HasSkinnedMeshInDescendants(t.GetChild(i)))
+                    return true;
+            }
+            return false;
         }
 
         private static float SafeGetFloat(Animator a, string name)
@@ -142,6 +197,31 @@ namespace SyncRADation.Players
         {
             try { return a.GetBool(name); }
             catch { return false; }
+        }
+
+        private static Networking.WeaponType ReadWeaponFromInventory()
+        {
+            try
+            {
+                var equipped = InventoryManager.EquippedWeapon;
+                if (equipped == null) return Networking.WeaponType.None;
+                if (equipped.parentItem == null) return Networking.WeaponType.None;
+                var item = equipped.parentItem._item;
+                switch (item)
+                {
+                    case Items.itemlist.Pistol: return Networking.WeaponType.Pistol;
+                    case Items.itemlist.Revolver: return Networking.WeaponType.Revolver;
+                    case Items.itemlist.Shotgun: return Networking.WeaponType.Shotgun;
+                    case Items.itemlist.Rifle: return Networking.WeaponType.Rifle;
+                    case Items.itemlist.SMG: return Networking.WeaponType.SMG;
+                    case Items.itemlist.FlareGun: return Networking.WeaponType.Flare;
+                    case Items.itemlist.FlakGun: return Networking.WeaponType.CAR;
+                    case Items.itemlist.Machete: return Networking.WeaponType.Melee;
+                    case Items.itemlist.Taser: return Networking.WeaponType.Handgun;
+                    default: return Networking.WeaponType.None;
+                }
+            }
+            catch { return Networking.WeaponType.None; }
         }
     }
 }
