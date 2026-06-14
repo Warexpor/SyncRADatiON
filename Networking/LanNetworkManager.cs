@@ -1,4 +1,6 @@
+// SyncRADation � LiteNetLib host/client, N-peer management, message routing+relay, state building
 using System;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using LiteNetLib;
@@ -14,25 +16,32 @@ namespace SyncRADation.Networking
         public static LanNetworkManager Instance { get; private set; }
 
         private NetManager _net;
-        private NetPeer _peer;
         private NetworkRole _role = NetworkRole.Offline;
-        private RemotePlayerProxy _remoteProxy;
+        private int _localPlayerId;
+        private int _nextClientId = 1;
+        private readonly Dictionary<int, NetPeer> _peers = new Dictionary<int, NetPeer>(); // playerId -> peer
+        private readonly Dictionary<NetPeer, int> _peerToId = new Dictionary<NetPeer, int>(); // peer -> playerId
+        private readonly PlayerProxyManager _proxyManager = new PlayerProxyManager();
+        private readonly EnemySyncService _enemySync = new EnemySyncService();
+        private readonly PuzzleSyncService _puzzleSync = new PuzzleSyncService();
+        private readonly BossSyncService _bossSync = new BossSyncService();
         private GameObject _localPlayer;
-        private GameObject _proxyGameObject;
         private float _sendTimer;
         private int _boneSendCounter;
         private Vector3 _lastSentPosition;
         private float _lastStateTime;
 
         private bool _handshakeComplete;
-        private float _lastSendLogTime;
-        private float _lastRecvLogTime;
 
         private ushort _nextItemIndex = 1;
         public NetworkRole Role => _role;
-        public bool IsConnected => _peer != null && _peer.ConnectionState == ConnectionState.Connected;
+        public bool IsConnected => _peers.Count > 0 && _handshakeComplete;
+        public int LocalPlayerId => _localPlayerId;
         public string StatusText { get; private set; } = "Offline";
-        public RemotePlayerProxy RemoteProxy => _remoteProxy;
+        public PlayerProxyManager ProxyManager => _proxyManager;
+        public EnemySyncService EnemySync => _enemySync;
+        public PuzzleSyncService PuzzleSync => _puzzleSync;
+        public BossSyncService BossSync => _bossSync;
         public GameObject GetLocalPlayer() => _localPlayer;
         public void SetLocalPlayer(GameObject go) { _localPlayer = go; }
 
@@ -60,6 +69,7 @@ namespace SyncRADation.Networking
         {
             StopNetwork();
             _role = NetworkRole.Host;
+            _localPlayerId = 0;
             _net = new NetManager(this) { UnconnectedMessagesEnabled = true, DisconnectTimeout = 5000 };
             if (!_net.Start(port))
             {
@@ -77,7 +87,10 @@ namespace SyncRADation.Networking
             _role = NetworkRole.Client;
             _net = new NetManager(this) { UnconnectedMessagesEnabled = true, DisconnectTimeout = 5000 };
             _net.Start();
-            _peer = _net.Connect(address, port, "SyncRADation");
+            var peer = _net.Connect(address, port, "SyncRADation");
+            // Client initially connects with unknown playerId; host will assign in handshake
+            _peers.Clear();
+            _peerToId.Clear();
             StatusText = "Connecting to " + address + ":" + port;
             ModRuntime.Log?.Msg("[Network] Connecting to " + address + ":" + port);
         }
@@ -85,15 +98,17 @@ namespace SyncRADation.Networking
         public void StopNetwork()
         {
             _localPlayer = null;
-            _proxyGameObject = null;
-            DestroyRemoteProxy();
+            _proxyManager.DestroyAll();
             DoorSyncService.Reset();
+            _puzzleSync.Reset();
             SourceAnimReader.Reset();
             DroppedItemManager.SaveToFile();
             DroppedItemManager.ClearAll();
             _handshakeComplete = false;
-            _peer = null;
+            _peers.Clear();
+            _peerToId.Clear();
             _sendTimer = 0f;
+            _nextClientId = 1;
 
             if (_net != null)
             {
@@ -109,7 +124,6 @@ namespace SyncRADation.Networking
             }
 
             _role = NetworkRole.Offline;
-
             StatusText = "Offline";
         }
 
@@ -120,17 +134,12 @@ namespace SyncRADation.Networking
             if (!IsConnected || !_handshakeComplete)
                 return;
 
-            _sendTimer += Mathf.Min(Time.deltaTime, 0.1f);
-
-            /* entity sync disabled for alpha - causes visual jitter */
-            // if (_role == NetworkRole.Host)
-            // {
-            //     EntityStateBroadcastService.Tick();
-            // }
-
             DoorSyncService.Tick();
+            _enemySync.TickHost(this);
+            _puzzleSync.TickHost(this);
+            _bossSync.TickHost(this);
 
-            // Pickup nearby dropped item (both host and client can pick up)
+            // Pickup nearby dropped item
             if (Input.GetKeyDown(KeyCode.E) && WorldItem.NearbyID >= 0
                 && PlayerState.gameState == PlayerState.gameStates.play)
             {
@@ -147,7 +156,6 @@ namespace SyncRADation.Networking
             _sendTimer += Mathf.Min(Time.deltaTime, 0.1f);
             if (_sendTimer < PluginInfo.SendInterval)
                 return;
-
             _sendTimer = 0f;
 
             if (_localPlayer == null && PlayerState.player != null)
@@ -156,18 +164,25 @@ namespace SyncRADation.Networking
                 ModRuntime.Log?.Msg("[DIAG] Initial player: " + _localPlayer.name);
             }
 
-            if (_localPlayer != null && PlayerState.player != null
-                && PlayerState.player != _localPlayer && PlayerState.player != _proxyGameObject)
-            {
-                _localPlayer = PlayerState.player;
-                ClientEntityInterpolationService.ResetPlayerState();
-                ModRuntime.Log?.Msg("[DIAG] Player changed to: " + _localPlayer.name);
-            }
-
+            // Send local player state to ALL connected peers
             GameObject player = _localPlayer;
             if (player == null)
                 return;
 
+            var msg = BuildPlayerStateMessage(player);
+            SendToAll(msg, DeliveryMethod.ReliableOrdered, excludePlayerId: -1); // -1 means send to all
+
+            // Host also needs to relay states it received from clients — but that's handled
+            // in OnReceive: the host stores the state and re-sends to all other peers
+        }
+
+        public void LateUpdate()
+        {
+            _proxyManager.LateUpdate();
+        }
+
+        private PlayerStateMessage BuildPlayerStateMessage(GameObject player)
+        {
             var pos = player.transform.position;
             Vector3 vel = (pos - _lastSentPosition) / PluginInfo.SendInterval;
             _lastSentPosition = pos;
@@ -181,11 +196,6 @@ namespace SyncRADation.Networking
             {
                 facing = (byte)apc.facing;
                 rotY = apc.fAngle;
-                if (Time.time - _lastSendLogTime > 5f)
-                {
-                    ModRuntime.Log?.Msg("[SEND] fAngle=" + rotY.ToString("F1") + " pos=" + pos.ToString("F1"));
-                    _lastSendLogTime = Time.time;
-                }
             }
             else if (pc8 != null)
             {
@@ -213,34 +223,9 @@ namespace SyncRADation.Networking
             }
             catch { }
 
-            WeaponType weapon = WeaponType.None;
-            try
-            {
-                var eq = InventoryManager.EquippedWeapon;
-                if (eq != null)
-                {
-                    var pi = eq.parentItem;
-                    if (pi != null)
-                    {
-                switch (pi._item)
-                {
-                    case Items.itemlist.Pistol: weapon = WeaponType.Pistol; break;
-                    case Items.itemlist.Revolver: weapon = WeaponType.Revolver; break;
-                    case Items.itemlist.Shotgun: weapon = WeaponType.Shotgun; break;
-                    case Items.itemlist.Rifle: weapon = WeaponType.Rifle; break;
-                    case Items.itemlist.SMG: weapon = WeaponType.SMG; break;
-                    case Items.itemlist.FlareGun: weapon = WeaponType.Flare; break;
-                    case Items.itemlist.FlakGun: weapon = WeaponType.CAR; break;
-                    case Items.itemlist.Machete: weapon = WeaponType.Melee; break;
-                    case Items.itemlist.Taser: weapon = WeaponType.Handgun; break;
-                }
-                    }
-                }
-            }
-            catch { }
-
             var msg = new PlayerStateMessage
             {
+                SenderPlayerId = _localPlayerId,
                 PosX = pos.x,
                 PosY = pos.y,
                 PosZ = pos.z,
@@ -253,37 +238,220 @@ namespace SyncRADation.Networking
                 AimingTime = aimingTime,
                 CharState = (byte)PlayerState.charState,
                 Facing = facing,
-                Weapon = weapon,
                 AnimBools = 0
             };
 
-            // Read animator params from source player (fills floats + AnimBools from Animator)
             SourceAnimReader.ReadFromPlayer(player, ref msg);
 
-            // Throttle bone data: send every Nth packet (save bandwidth)
             _boneSendCounter++;
             if (_boneSendCounter % PluginInfo.BoneSendDivider != 0)
                 msg.BoneRotations = null;
 
-            // Ensure game state bools override any Animator-derived values
             if (PlayerState.aiming) msg.AnimBools |= AnimBools.Aiming;
             if (PlayerState.shooting) msg.AnimBools |= AnimBools.Shooting;
             if (PlayerState.charState == PlayerState.charStates.run) msg.AnimBools |= AnimBools.Running;
-            Send(NetMessageType.PlayerState, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
 
-            if (_role == NetworkRole.Host)
-                PlayerPositionManager.ReportHostPosition(pos);
+            return msg;
         }
 
-        public void LateUpdate()
+        public int GetPlayerCount()
         {
-            if (_remoteProxy != null && _lastStateTime > 0f && Time.time - _lastStateTime > 5f)
+            int count = 1; // local player
+            foreach (var kvp in _peers)
             {
-                ModRuntime.Log?.Msg("[Net] No state for 5s, destroying proxy");
-                DestroyRemoteProxy();
+                if (kvp.Key != _localPlayerId)
+                    count++;
             }
+            return count;
+        }
 
-            ClientEntityInterpolationService.TickLateUpdate();
+        public IEnumerable<int> GetRemotePlayerIds()
+        {
+            foreach (var kvp in _peers)
+            {
+                if (kvp.Key != _localPlayerId)
+                    yield return kvp.Key;
+            }
+        }
+
+        public NetPeer GetPeer(int playerId)
+        {
+            _peers.TryGetValue(playerId, out var peer);
+            return peer;
+        }
+
+        // Send PlayerStateMessage to ALL peers (for host) or to the single connected peer (for client)
+        private void SendToAll(PlayerStateMessage msg, DeliveryMethod method, int excludePlayerId = -1)
+        {
+            foreach (var kvp in _peers)
+            {
+                if (kvp.Key == excludePlayerId) continue;
+                var peer = kvp.Value;
+                if (peer.ConnectionState != ConnectionState.Connected) continue;
+                var writer = new NetDataWriter();
+                writer.Put((byte)NetMessageType.PlayerState);
+                msg.Serialize(writer);
+                peer.Send(writer, method);
+            }
+        }
+
+        public void SendDoorState(DoorStateMessage msg)
+        {
+            foreach (var kvp in _peers)
+            {
+                var peer = kvp.Value;
+                if (peer.ConnectionState != ConnectionState.Connected) continue;
+                var writer = new NetDataWriter();
+                writer.Put((byte)NetMessageType.DoorState);
+                msg.Serialize(writer);
+                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+            }
+        }
+
+        public void SendDropItem(DropItemSpawnMessage msg)
+        {
+            foreach (var kvp in _peers)
+            {
+                var peer = kvp.Value;
+                if (peer.ConnectionState != ConnectionState.Connected) continue;
+                var writer = new NetDataWriter();
+                writer.Put((byte)NetMessageType.DropItemSpawn);
+                msg.Serialize(writer);
+                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+            }
+        }
+
+        public void SendItemPickedUp(ItemPickedUpMessage msg)
+        {
+            foreach (var kvp in _peers)
+            {
+                var peer = kvp.Value;
+                if (peer.ConnectionState != ConnectionState.Connected) continue;
+                var writer = new NetDataWriter();
+                writer.Put((byte)NetMessageType.ItemPickedUp);
+                msg.Serialize(writer);
+                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+            }
+        }
+
+        public void SendFriendlyFire(int targetPlayerId, float damage, Vector3 hitPos)
+        {
+            var msg = new FriendlyFireMessage
+            {
+                TargetPlayerId = targetPlayerId,
+                AttackerPlayerId = _localPlayerId,
+                Damage = damage,
+                HitPosX = hitPos.x,
+                HitPosY = hitPos.y,
+                HitPosZ = hitPos.z
+            };
+            foreach (var kvp in _peers)
+            {
+                if (kvp.Key != targetPlayerId) continue;
+                var peer = kvp.Value;
+                if (peer.ConnectionState != ConnectionState.Connected) continue;
+                var writer = new NetDataWriter();
+                writer.Put((byte)NetMessageType.FriendlyFire);
+                msg.Serialize(writer);
+                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+                ModRuntime.Log?.Msg("[FF] Sent damage=" + damage.ToString("F0") + " to player " + targetPlayerId);
+            }
+        }
+
+        public void SendEnemyState(EnemySnapshotNet[] snaps)
+        {
+            var msg = new EnemyStateMessage { Enemies = snaps };
+            foreach (var kvp in _peers)
+            {
+                var peer = kvp.Value;
+                if (peer.ConnectionState != ConnectionState.Connected) continue;
+                var writer = new NetDataWriter();
+                writer.Put((byte)NetMessageType.EnemyState);
+                msg.Serialize(writer);
+                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+            }
+        }
+
+        public void SendEnemyDamage(int targetPlayerId, int hostEnemyInstanceID, float damage, bool stagger)
+        {
+            var msg = new EnemyDamageMessage
+            {
+                AttackerPlayerId = -1,
+                TargetPlayerId = targetPlayerId,
+                HostEnemyInstanceID = hostEnemyInstanceID,
+                Damage = damage,
+                IsStagger = stagger
+            };
+            foreach (var kvp in _peers)
+            {
+                if (kvp.Key != targetPlayerId) continue;
+                var peer = kvp.Value;
+                if (peer.ConnectionState != ConnectionState.Connected) continue;
+                var writer = new NetDataWriter();
+                writer.Put((byte)NetMessageType.EnemyDamage);
+                msg.Serialize(writer);
+                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+            }
+        }
+
+        public void SendPuzzleState(PuzzleStateEntry[] entries, bool fullRefresh)
+        {
+            var msg = new PuzzleStateMessage
+            {
+                SenderPlayerId = _localPlayerId,
+                Entries = entries,
+                FullRefresh = fullRefresh
+            };
+            foreach (var kvp in _peers)
+            {
+                var peer = kvp.Value;
+                if (peer.ConnectionState != ConnectionState.Connected) continue;
+                var writer = new NetDataWriter();
+                writer.Put((byte)NetMessageType.PuzzleState);
+                msg.Serialize(writer);
+                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+            }
+        }
+
+        public void SendBossState(BossSnapshotNet[] snaps)
+        {
+            var msg = new BossStateMessage { Bosses = snaps };
+            foreach (var kvp in _peers)
+            {
+                var peer = kvp.Value;
+                if (peer.ConnectionState != ConnectionState.Connected) continue;
+                var writer = new NetDataWriter();
+                writer.Put((byte)NetMessageType.BossState);
+                msg.Serialize(writer);
+                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+            }
+        }
+
+        public void SendPlayerShotEnemy(int hostEnemyInstanceID, float damage)
+        {
+            var msg = new EnemyDamageMessage
+            {
+                AttackerPlayerId = _localPlayerId,
+                TargetPlayerId = -1,
+                HostEnemyInstanceID = hostEnemyInstanceID,
+                Damage = damage,
+                IsStagger = false
+            };
+            foreach (var kvp in _peers)
+            {
+                if (kvp.Key != 0) continue; // only send to host
+                var peer = kvp.Value;
+                if (peer.ConnectionState != ConnectionState.Connected) continue;
+                var writer = new NetDataWriter();
+                writer.Put((byte)NetMessageType.EnemyDamage);
+                msg.Serialize(writer);
+                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+            }
+        }
+
+        public ushort AllocateItemIndex()
+        {
+            return _nextItemIndex++;
         }
 
         private void TryDropCurrentItem()
@@ -294,25 +462,20 @@ namespace SyncRADation.Networking
             Items.itemlist itemToDrop = Items.itemlist.None;
             int count = 1;
 
-            // Try dropping InventoryManager.CurrentItem
             try
             {
                 var current = InventoryManager.CurrentItem;
                 if (current != null && current._item != Items.itemlist.None && current._item != Items.itemlist.Injector)
-                {
                     itemToDrop = current._item;
-                    // Can't drop equipped items keyed to story progress; allow keys/objects/health
-                }
             }
             catch { }
 
             if (itemToDrop == Items.itemlist.None)
             {
-                ModRuntime.Log?.Msg("[Drop] No item to drop (CurrentItem is null or invalid)");
+                ModRuntime.Log?.Msg("[Drop] No item to drop");
                 return;
             }
 
-            // Remove from local inventory
             try
             {
                 var anItem = InventoryManager.getItem(itemToDrop);
@@ -327,23 +490,64 @@ namespace SyncRADation.Networking
             }
 
             ushort idx = _nextItemIndex++;
-            int key = (_role == NetworkRole.Host ? 0 : 1) << 16 | idx;
+            int key = (_localPlayerId << 16) | idx;
             DroppedItemManager.SpawnLocalItem(itemToDrop, count, key, pos);
 
-            // Send to other player
-            byte sid = (byte)(_role == NetworkRole.Host ? 0 : 1);
-            Send(NetMessageType.DropItemSpawn, w => new DropItemSpawnMessage
+            SendDropItem(new DropItemSpawnMessage
             {
-                SenderID = sid,
+                SenderID = (byte)_localPlayerId,
                 LocalIndex = idx,
                 ItemEnum = (ushort)itemToDrop,
                 Count = count,
                 PosX = pos.x,
                 PosY = pos.y,
                 PosZ = pos.z
-            }.Serialize(w), DeliveryMethod.ReliableOrdered);
+            });
 
             ModRuntime.Log?.Msg("[Drop] Dropped " + itemToDrop + " x" + count);
+        }
+
+        private void DoPickupItem(int itemKey)
+        {
+            var go = DroppedItemManager.GetItem(itemKey);
+            if (go == null)
+            {
+                ModRuntime.Log?.Warning("[Pickup] WorldItem not found for key " + itemKey);
+                return;
+            }
+            var wi = go.GetComponent<WorldItem>();
+            if (wi == null) return;
+
+            try
+            {
+                var item = InventoryManager.getItem(wi.ItemEnum);
+                if (item == null)
+                {
+                    ModRuntime.Log?.Warning("[Pickup] Unknown item enum " + wi.ItemEnum);
+                    return;
+                }
+                InventoryManager.AddItem(item, wi.Count);
+                ModRuntime.Log?.Msg("[Pickup] Picked up " + wi.ItemEnum + " x" + wi.Count);
+            }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[Pickup] AddItem failed: " + ex.Message);
+                return;
+            }
+
+            int senderID = (itemKey >> 16) & 0xFF;
+            ushort localIdx = (ushort)(itemKey & 0xFFFF);
+
+            SendItemPickedUp(new ItemPickedUpMessage
+            {
+                SenderID = (byte)senderID,
+                LocalIndex = localIdx,
+                ItemEnum = (ushort)wi.ItemEnum,
+                Count = wi.Count,
+                GrantToReceiver = IsSharedItem(wi.ItemEnum)
+            });
+
+            DroppedItemManager.DespawnItem(itemKey);
         }
 
         private static bool IsSharedItem(Items.itemlist itemEnum)
@@ -357,89 +561,57 @@ namespace SyncRADation.Networking
             catch { return false; }
         }
 
-        private void DoPickupItem(int itemKey)
-        {
-            // Find the WorldItem we're picking up
-            var go = DroppedItemManager.GetItem(itemKey);
-            if (go == null)
-            {
-                ModRuntime.Log?.Warning("[Pickup] WorldItem not found for key " + itemKey);
-                return;
-            }
-            var wi = go.GetComponent<WorldItem>();
-            if (wi == null) return;
-
-            // Add to local inventory
-            try
-            {
-                var item = InventoryManager.getItem(wi.ItemEnum);
-                if (item == null)
-                {
-                    ModRuntime.Log?.Warning("[Pickup] Unknown item enum " + wi.ItemEnum);
-                    return;
-                }
-                InventoryManager.AddItem(item, wi.Count);
-                ModRuntime.Log?.Msg("[Pickup] Picked up " + wi.ItemEnum + " x" + wi.Count + " shared=" + IsSharedItem(wi.ItemEnum));
-            }
-            catch (Exception ex)
-            {
-                ModRuntime.Log?.Warning("[Pickup] AddItem failed: " + ex.Message);
-                return;
-            }
-
-            // Notify other player to despawn (before despawning, so we still have wi info)
-            byte sid = (byte)(_role == NetworkRole.Host ? 0 : 1);
-            int senderID = (itemKey >> 16) & 0xFF;
-            ushort localIdx = (ushort)(itemKey & 0xFFFF);
-            bool shared = IsSharedItem(wi.ItemEnum);
-            Send(NetMessageType.ItemPickedUp, w => new ItemPickedUpMessage
-            {
-                SenderID = (byte)senderID,
-                LocalIndex = localIdx,
-                ItemEnum = (ushort)wi.ItemEnum,
-                Count = wi.Count,
-                GrantToReceiver = shared
-            }.Serialize(w), DeliveryMethod.ReliableOrdered);
-
-            // Despawn locally
-            DroppedItemManager.DespawnItem(itemKey);
-        }
-
-        public void Send(NetMessageType type, Action<NetDataWriter> writeBody, DeliveryMethod method = DeliveryMethod.Unreliable)
-        {
-            if (_peer == null) return;
-            var writer = new NetDataWriter();
-            writer.Put((byte)type);
-            writeBody(writer);
-            _peer.Send(writer, method);
-        }
+        // --- Network events ---
 
         void INetEventListener.OnPeerConnected(NetPeer peer)
         {
-            _peer = peer;
-            _handshakeComplete = false;
-            StatusText = "Peer connected";
-            ModRuntime.Log?.Msg("[Network] Peer connected");
-
-            Send(NetMessageType.Handshake, w =>
-            {
-                new HandshakeMessage { ProtocolVersion = PluginInfo.ProtocolVersion }.Serialize(w);
-            });
-
+            int playerId;
             if (_role == NetworkRole.Host)
             {
-                EntityStateBroadcastService.SetPeer(peer);
-            }
+                playerId = _nextClientId++;
+                _peers[playerId] = peer;
+                _peerToId[peer] = playerId;
+                ModRuntime.Log?.Msg("[Network] Client connected, assigned playerId=" + playerId);
 
-            var c = _connected;
-            if (c != null)
-                c();
+                // Send handshake with assigned ID
+                var w = new NetDataWriter();
+                w.Put((byte)NetMessageType.Handshake);
+                new HandshakeMessage { ProtocolVersion = PluginInfo.ProtocolVersion, AssignedPlayerId = playerId }.Serialize(w);
+                peer.Send(w, DeliveryMethod.ReliableOrdered);
+
+                // If this is the first client, fire Connected event
+                var c = _connected;
+                if (c != null) c();
+            }
+            else
+            {
+                // Client connected to host
+                _peers[0] = peer; // host is playerId 0
+                _peerToId[peer] = 0;
+                ModRuntime.Log?.Msg("[Network] Connected to host");
+
+                // Send handshake to host
+                var w = new NetDataWriter();
+                w.Put((byte)NetMessageType.Handshake);
+                new HandshakeMessage { ProtocolVersion = PluginInfo.ProtocolVersion, AssignedPlayerId = -1 }.Serialize(w);
+                peer.Send(w, DeliveryMethod.ReliableOrdered);
+            }
         }
 
         void INetEventListener.OnPeerDisconnected(NetPeer peer, DisconnectInfo disconnectInfo)
         {
-            ModRuntime.Log?.Msg("[Network] Peer disconnected: " + disconnectInfo.Reason);
-            StopNetwork();
+            if (_peerToId.TryGetValue(peer, out int playerId))
+            {
+                ModRuntime.Log?.Msg("[Network] Player " + playerId + " disconnected: " + disconnectInfo.Reason);
+                _proxyManager.DestroyProxy(playerId);
+                _peers.Remove(playerId);
+                _peerToId.Remove(peer);
+            }
+
+            if (_role != NetworkRole.Host)
+            {
+                StopNetwork();
+            }
         }
 
         void INetEventListener.OnNetworkError(IPEndPoint endPoint, SocketError socketError)
@@ -454,6 +626,7 @@ namespace SyncRADation.Networking
                 return;
 
             var type = (NetMessageType)messageType;
+            int senderId = _peerToId.TryGetValue(peer, out int id) ? id : -1;
 
             switch (type)
             {
@@ -471,6 +644,27 @@ namespace SyncRADation.Networking
                 break;
             case NetMessageType.ItemPickedUp:
                 HandleItemPickedUp(ItemPickedUpMessage.Deserialize(reader));
+                break;
+            case NetMessageType.FriendlyFire:
+                HandleFriendlyFire(FriendlyFireMessage.Deserialize(reader));
+                break;
+            case NetMessageType.EnemyState:
+                _enemySync.OnEnemyStateReceived(EnemyStateMessage.Deserialize(reader));
+                break;
+            case NetMessageType.EnemyDamage:
+                HandleEnemyDamage(EnemyDamageMessage.Deserialize(reader));
+                break;
+            case NetMessageType.SceneSync:
+                HandleSceneSync(SceneSyncMessage.Deserialize(reader));
+                break;
+            case NetMessageType.PuzzleState:
+                _puzzleSync.ApplyPuzzleState(PuzzleStateMessage.Deserialize(reader));
+                break;
+            case NetMessageType.BossState:
+                _bossSync.OnBossStateReceived(BossStateMessage.Deserialize(reader));
+                break;
+            default:
+                ModRuntime.Log?.Warning("[Network] Unhandled message type: " + type + " (" + messageType + ")");
                 break;
             }
         }
@@ -496,43 +690,57 @@ namespace SyncRADation.Networking
             if (handshake.ProtocolVersion != PluginInfo.ProtocolVersion)
             {
                 ModRuntime.Log?.Error("[Network] Protocol mismatch: local=" + PluginInfo.ProtocolVersion + " remote=" + handshake.ProtocolVersion);
-                _peer?.Disconnect();
+                foreach (var kvp in _peers)
+                    kvp.Value.Disconnect();
                 return;
             }
+
+            if (_role == NetworkRole.Client)
+            {
+                // Host tells us our assigned player ID
+                _localPlayerId = handshake.AssignedPlayerId;
+                ModRuntime.Log?.Msg("[Network] Host assigned playerId=" + _localPlayerId);
+            }
+
             _handshakeComplete = true;
-            StatusText = _role == NetworkRole.Host ? "Client joined" : "Connected to host";
-            ModRuntime.Log?.Msg("[Network] Handshake OK");
             _lastStateTime = Time.time;
+            StatusText = _role == NetworkRole.Host ? "Clients connected" : "Connected to host";
+            ModRuntime.Log?.Msg("[Network] Handshake OK, local playerId=" + _localPlayerId);
         }
 
         private void HandlePlayerState(PlayerStateMessage state)
         {
-            EnsureRemoteProxy();
-            if (_remoteProxy == null)
+            int senderId = state.SenderPlayerId;
+
+            // Ensure we have a proxy for this player
+            if (!_proxyManager.HasProxy(senderId))
             {
-                ModRuntime.Log?.Warning("[Net] HandlePlayerState: no proxy, cannot apply state");
-                return;
+                GameObject source = PlayerState.player;
+                if (source == null)
+                {
+                    ModRuntime.Log?.Warning("[Net] Cannot create proxy: no local player");
+                    return;
+                }
+                _proxyManager.CreateProxy(senderId, source);
             }
 
-            var go = _remoteProxy.GameObject;
-            if (go == null)
-            {
-                ModRuntime.Log?.Warning("[Net] HandlePlayerState: proxy GameObject destroyed, recreating");
-                DestroyRemoteProxy();
-                EnsureRemoteProxy();
-                if (_remoteProxy == null) return;
-                go = _remoteProxy.GameObject;
-            }
-
-            var targetPos = new Vector3(state.PosX, state.PosY, state.PosZ);
+            _proxyManager.ApplyState(senderId, state);
             _lastStateTime = Time.time;
 
-            ClientEntityInterpolationService.ApplyPlayerState(targetPos, state.RotY);
-            _remoteProxy.ApplyState(state);
-            if (Time.time - _lastRecvLogTime > 5f)
+            // Host: relay to all OTHER peers (not back to sender)
+            if (_role == NetworkRole.Host)
             {
-                ModRuntime.Log?.Msg("[Recv] pos=" + targetPos.ToString("F1") + " rotY=" + state.RotY.ToString("F1"));
-                _lastRecvLogTime = Time.time;
+                foreach (var kvp in _peers)
+                {
+                    if (kvp.Key == senderId) continue;
+                    if (kvp.Key == _localPlayerId) continue; // don't send to self
+                    var peer = kvp.Value;
+                    if (peer.ConnectionState != ConnectionState.Connected) continue;
+                    var writer = new NetDataWriter();
+                    writer.Put((byte)NetMessageType.PlayerState);
+                    state.Serialize(writer);
+                    peer.Send(writer, DeliveryMethod.ReliableOrdered);
+                }
             }
         }
 
@@ -541,7 +749,7 @@ namespace SyncRADation.Networking
             int key = (msg.SenderID << 16) | msg.LocalIndex;
             var pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
             DroppedItemManager.SpawnLocalItem((Items.itemlist)msg.ItemEnum, msg.Count, key, pos);
-            ModRuntime.Log?.Msg("[Drop] Remote dropped " + (Items.itemlist)msg.ItemEnum + " at " + pos.ToString("F1"));
+            ModRuntime.Log?.Msg("[Drop] Remote dropped " + (Items.itemlist)msg.ItemEnum);
         }
 
         private void HandleItemPickedUp(ItemPickedUpMessage msg)
@@ -557,7 +765,7 @@ namespace SyncRADation.Networking
                     if (item != null)
                     {
                         InventoryManager.AddItem(item, msg.Count);
-                        ModRuntime.Log?.Msg("[Drop] Shared item granted: " + (Items.itemlist)msg.ItemEnum + " x" + msg.Count);
+                        ModRuntime.Log?.Msg("[Drop] Shared item granted: " + (Items.itemlist)msg.ItemEnum);
                     }
                 }
                 catch (Exception ex)
@@ -565,48 +773,54 @@ namespace SyncRADation.Networking
                     ModRuntime.Log?.Warning("[Drop] Grant shared item failed: " + ex.Message);
                 }
             }
-
-            ModRuntime.Log?.Msg("[Drop] Remote picked up key=" + key + " shared=" + msg.GrantToReceiver);
         }
 
-        private void EnsureRemoteProxy()
+        private void HandleFriendlyFire(FriendlyFireMessage msg)
         {
-            if (_remoteProxy != null)
-                return;
-
-            GameObject clone = null;
-            try
+            if (msg.TargetPlayerId == _localPlayerId)
             {
-                GameObject source = PlayerState.player;
-                if (source == null)
-                {
-                    ModRuntime.Log?.Warning("Cannot spawn remote proxy: no local player.");
-                    return;
-                }
-
-                _localPlayer = source;
-                clone = PlayerProxyBuilder.CreatePlayerClone(source, "RemotePlayer", Vector3.zero, ModRuntime.Log);
-                if (clone == null)
-                {
-                    ModRuntime.Log?.Warning("Failed to create player clone");
-                    _localPlayer = null;
-                    return;
-                }
-
-                _proxyGameObject = clone;
-                _remoteProxy = new RemotePlayerProxy(clone);
-                ModRuntime.Log?.Msg("Remote proxy spawned");
+                Vector3 hitPos = new Vector3(msg.HitPosX, msg.HitPosY, msg.HitPosZ);
+                ModRuntime.Log?.Msg("[FF] Received damage=" + msg.Damage.ToString("F0") + " from player " + msg.AttackerPlayerId);
+                NetworkDamageSystem.ApplyDamage(msg.Damage, hitPos, Vector3.zero);
             }
-            catch (System.Exception ex)
+        }
+
+        private void HandleEnemyDamage(EnemyDamageMessage msg)
+        {
+            if (msg.TargetPlayerId == _localPlayerId)
             {
-                ModRuntime.Log?.Error("Failed to spawn remote proxy: " + ex);
-                if (clone != null)
+                ModRuntime.Log?.Msg("[Enemy] Received damage=" + msg.Damage.ToString("F0") + " from enemy " + msg.HostEnemyInstanceID);
+                if (msg.IsStagger)
+                    NetworkDamageSystem.ApplyDamage(msg.Damage, Vector3.zero, Vector3.zero);
+                else
+                    NetworkDamageSystem.ApplyDamage(msg.Damage, Vector3.zero, Vector3.zero);
+            }
+            else if (msg.AttackerPlayerId != -1 && _role == NetworkRole.Host)
+            {
+                // Host: a player shot an enemy — modify fields directly (IL2CPP-safe)
+                var enemies = GameObject.FindObjectsOfType<EnemyController>();
+                foreach (var e in enemies)
                 {
-                    UnityEngine.Object.Destroy(clone);
-                    clone = null;
+                    if (e != null && e.gameObject.GetInstanceID() == msg.HostEnemyInstanceID)
+                    {
+                        if (e.hitbox != null)
+                        {
+                            e.hitbox.HP -= (int)msg.Damage;
+                            if (e.hitbox.HP <= 0)
+                                e.state = EnemyController.enemystate.dead;
+                        }
+                        ModRuntime.Log?.Msg("[Enemy] Player " + msg.AttackerPlayerId + " damaged enemy " + msg.HostEnemyInstanceID + " HP=" + (e.hitbox != null ? e.hitbox.HP.ToString() : "?"));
+                        break;
+                    }
                 }
-                _localPlayer = null;
-                _remoteProxy = null;
+            }
+        }
+
+        private void HandleSceneSync(SceneSyncMessage msg)
+        {
+            if (msg.SenderPlayerId != _localPlayerId)
+            {
+                ModRuntime.Log?.Msg("[Scene] Player " + msg.SenderPlayerId + " is in scene '" + msg.SceneName + "'");
             }
         }
 
@@ -617,23 +831,13 @@ namespace SyncRADation.Networking
             SourceAnimReader.Reset();
             _sendTimer = 0f;
             _lastStateTime = 0f;
-            DestroyRemoteProxy();
-            DroppedItemManager.ClearAll(); // saves + destroys
-            DroppedItemManager.LoadFromFile(); // restore items for the new scene
-            ClientEntityInterpolationService.Reset();
+            _proxyManager.DestroyAll();
+            DroppedItemManager.ClearAll();
+            DroppedItemManager.LoadFromFile();
             DoorSyncService.RefreshScene();
-        }
-
-        private void DestroyRemoteProxy()
-        {
-            if (_remoteProxy != null)
-            {
-                _remoteProxy.Destroy();
-                UnityEngine.Object.Destroy(_remoteProxy.GameObject);
-                _remoteProxy = null;
-            }
-            _proxyGameObject = null;
-            ClientEntityInterpolationService.Reset();
+            _enemySync.OnSceneChanged();
+            _puzzleSync.RefreshScene();
+            _bossSync.OnSceneChanged();
         }
     }
 }

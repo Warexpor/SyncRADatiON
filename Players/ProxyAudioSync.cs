@@ -1,3 +1,4 @@
+// SyncRADation � positional FMOD audio on proxy via PlayOneShotAttached, combat SFX cache
 using System;
 using System.Collections.Generic;
 using FMODUnity;
@@ -9,6 +10,7 @@ namespace SyncRADation.Players
     public sealed class ProxyAudioSync
     {
         private Transform _proxyTransform;
+        private GameObject _audioAnchor;
         private bool _lastShooting;
         private float _lastReloadTime;
         private float _lastHurtTime;
@@ -29,6 +31,10 @@ namespace SyncRADation.Players
         private const string LadderUpPath = "event:/Elster/Ladder/Up";
         private const string LadderDownPath = "event:/Elster/Ladder/Down";
 
+        // Pump/action sound scheduling
+        private float _actionSoundTimer;
+        private string _pendingActionPath;
+
         private float _climbTimer;
         private Vector3 _lastPos;
         private bool _wasClimbing;
@@ -37,9 +43,29 @@ namespace SyncRADation.Players
         private static readonly Dictionary<WeaponType, string> _shootFMOD = new Dictionary<WeaponType, string>();
         private static readonly Dictionary<WeaponType, string> _reloadFMOD = new Dictionary<WeaponType, string>();
 
+        // CombatSfxManager paths — weapon secondary action sounds
+        private static bool _combatSfxCached;
+        private static string _shotgunPumpPath;
+        private static string _shotgunInsertPath;
+        private static string _fgunEjectPath;
+        private static string _fgunSnapPath;
+        private static string _fgunInsertPath;
+        private static string _pistolSlideForwardPath;
+        private static string _pistolMagDropPath;
+        private static string _pistolInsertMagPath;
+        private static string _revolverSnapPath;
+        private static string _revolverEjectPath;
+        private static string _revolverInsertPath;
+        private static string _rifleSnapPath;
+        private static string _rifleEjectPath;
+        private static string _rifleInsertPath;
+
         public ProxyAudioSync(GameObject proxy)
         {
             _proxyTransform = proxy.transform;
+            _audioAnchor = new GameObject("ProxyAudioAnchor");
+            _audioAnchor.transform.SetParent(_proxyTransform, false);
+            _audioAnchor.transform.localPosition = Vector3.zero;
             ReadFMODPaths();
         }
 
@@ -138,19 +164,7 @@ namespace SyncRADation.Players
 
             ModRuntime.Log?.Msg(sb.ToString());
 
-            // Test FMOD PlayOneShot with a known path if available
-            if (!string.IsNullOrEmpty(_footstepPath))
-            {
-                try
-                {
-                    RuntimeManager.PlayOneShot(_footstepPath, player.transform.position);
-                    ModRuntime.Log?.Msg("[Audio] FMOD test PlayOneShot(" + _footstepPath + ") succeeded");
-                }
-                catch
-                {
-                    ModRuntime.Log?.Warning("[Audio] FMOD test PlayOneShot(" + _footstepPath + ") FAILED!");
-                }
-            }
+            // Test sound removed — was playing footstep on every proxy init
         }
 
         private int _tickCount;
@@ -198,7 +212,7 @@ namespace SyncRADation.Players
                 float vol = 0.4f + Mathf.Abs(state.Forward) * 0.2f;
                 if (vol > 1f) vol = 1f;
                 if (!string.IsNullOrEmpty(_footstepPath))
-                    PlayFMOD(_footstepPath, _proxyTransform.position, vol);
+                    PlayFMODAttached(_footstepPath, vol);
                 else if (_footstepClip != null)
                     AudioSource.PlayClipAtPoint(_footstepClip, _proxyTransform.position, vol * 0.6f);
             }
@@ -213,7 +227,7 @@ namespace SyncRADation.Players
             // Hurt — nearby
             if (nearby && triggers.HasFlag(AnimTriggers.Hurt) && Time.time - _lastHurtTime > HurtCooldown)
             {
-                PlayFMOD(_hurtPath, _proxyTransform.position, 0.5f);
+                PlayFMODAttached(_hurtPath, 0.5f);
                 _lastHurtTime = Time.time;
             }
 
@@ -223,9 +237,9 @@ namespace SyncRADation.Players
                 if (_hasReceivedFirst)
                 {
                     if (state.Weapon == WeaponType.None)
-                        PlayFMOD(_holsterSound, _proxyTransform.position, 0.3f);
+                        PlayFMODAttached(_holsterSound, 0.3f);
                     else
-                        PlayFMOD(_drawSound, _proxyTransform.position, 0.3f);
+                        PlayFMODAttached(_drawSound, 0.3f);
                 }
                 _lastWeapon = state.Weapon;
                 _hasReceivedFirst = true;
@@ -240,7 +254,7 @@ namespace SyncRADation.Players
                     if (nearby)
                     {
                         bool goingUp = (_proxyTransform.position.y - _lastPos.y) >= -0.01f;
-                        PlayFMOD(goingUp ? LadderUpPath : LadderDownPath, _proxyTransform.position, 0.5f);
+                        PlayFMODAttached(goingUp ? LadderUpPath : LadderDownPath, 0.5f);
                     }
                     _climbTimer = LadderClimbInterval;
                 }
@@ -251,29 +265,56 @@ namespace SyncRADation.Players
                 _climbTimer = 0f;
                 _wasClimbing = false;
             }
+            // Action sound timer (pump, eject, etc.)
+            if (_actionSoundTimer > 0f)
+            {
+                _actionSoundTimer -= Mathf.Min(Time.deltaTime, 0.1f);
+                if (_actionSoundTimer <= 0f && !string.IsNullOrEmpty(_pendingActionPath))
+                {
+                    PlayFMODAttached(_pendingActionPath, 0.4f);
+                    _pendingActionPath = null;
+                }
+            }
+
             _lastPos = _proxyTransform.position;
+        }
+
+        public void OnWeaponShot(WeaponType weapon)
+        {
+            if (!_combatSfxCached) BuildCombatSfxCache();
+
+            switch (weapon)
+            {
+                case WeaponType.Shotgun:
+                    _pendingActionPath = _shotgunPumpPath;
+                    _actionSoundTimer = 0.45f;
+                    break;
+                case WeaponType.CAR:
+                    _pendingActionPath = _fgunEjectPath;
+                    _actionSoundTimer = 0.25f;
+                    break;
+            }
         }
 
         private void PlayShootSound(WeaponType weapon)
         {
             string path;
             if (_shootFMOD.TryGetValue(weapon, out path))
-                PlayFMOD(path, _proxyTransform.position, 0.5f);
+                PlayFMODAttached(path, 0.5f);
         }
 
         private void PlayReloadSound(WeaponType weapon)
         {
             string path;
             if (_reloadFMOD.TryGetValue(weapon, out path))
-                PlayFMOD(path, _proxyTransform.position, 0.4f);
+                PlayFMODAttached(path, 0.4f);
             else
-                PlayFMOD(_reloadFMODPath, _proxyTransform.position, 0.4f);
+                PlayFMODAttached(_reloadFMODPath, 0.4f);
         }
 
         private static void PlayFMOD(string path, Vector3 pos, float volume)
         {
             if (string.IsNullOrEmpty(path)) return;
-            ModRuntime.Log?.Msg("[Audio] PlayFMOD(" + path + ")");
             try
             {
                 RuntimeManager.PlayOneShot(path, pos);
@@ -281,6 +322,19 @@ namespace SyncRADation.Players
             catch
             {
                 ModRuntime.Log?.Warning("[Audio] FMOD PlayOneShot(" + path + ") FAILED (no exception detail)");
+            }
+        }
+
+        private void PlayFMODAttached(string path, float volume)
+        {
+            if (string.IsNullOrEmpty(path) || _audioAnchor == null) return;
+            try
+            {
+                RuntimeManager.PlayOneShotAttached(path, _audioAnchor);
+            }
+            catch
+            {
+                ModRuntime.Log?.Warning("[Audio] FMOD PlayOneShotAttached(" + path + ") FAILED");
             }
         }
 
@@ -326,21 +380,44 @@ namespace SyncRADation.Players
             }
         }
 
+        private static void BuildCombatSfxCache()
+        {
+            _combatSfxCached = true;
+            try
+            {
+                var all = Resources.FindObjectsOfTypeAll<CombatSfxManager>();
+                if (all == null || all.Length == 0)
+                {
+                    ModRuntime.Log?.Msg("[Audio] CombatSfxManager not found");
+                    return;
+                }
+                var mgr = all[0];
+                _shotgunPumpPath = mgr.ShotgunPump;
+                _shotgunInsertPath = mgr.ShotgunInsert;
+                _fgunEjectPath = mgr.FGunEject;
+                _fgunSnapPath = mgr.FGunSnapClosed;
+                _fgunInsertPath = mgr.FGunInsert;
+                _pistolSlideForwardPath = mgr.PistolSlideForward;
+                _pistolMagDropPath = mgr.PistolMagDrop;
+                _pistolInsertMagPath = mgr.PistolInsertMag;
+                _revolverSnapPath = mgr.RevolverSnapClosed;
+                _revolverEjectPath = mgr.RevolverEject;
+                _revolverInsertPath = mgr.RevolverInsert;
+                _rifleSnapPath = mgr.RifleSnapClosed;
+                _rifleEjectPath = mgr.RifleEject;
+                _rifleInsertPath = mgr.RifleInsert;
+                ModRuntime.Log?.Msg("[Audio] Cached CombatSfxManager: ShotgunPump=" + (_shotgunPumpPath ?? "null")
+                    + " FGunEject=" + (_fgunEjectPath ?? "null"));
+            }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[Audio] BuildCombatSfxCache failed: " + ex.Message);
+            }
+        }
+
         private static WeaponType ItemToWeaponType(Items.itemlist item)
         {
-            switch (item)
-            {
-                case Items.itemlist.Pistol: return WeaponType.Pistol;
-                case Items.itemlist.Revolver: return WeaponType.Revolver;
-                case Items.itemlist.Shotgun: return WeaponType.Shotgun;
-                case Items.itemlist.Rifle: return WeaponType.Rifle;
-                case Items.itemlist.SMG: return WeaponType.SMG;
-                case Items.itemlist.FlareGun: return WeaponType.Flare;
-                case Items.itemlist.FlakGun: return WeaponType.CAR;
-                case Items.itemlist.Machete: return WeaponType.Melee;
-                case Items.itemlist.Taser: return WeaponType.Handgun;
-                default: return WeaponType.None;
-            }
+            return WeaponUtils.ItemToWeaponType(item);
         }
     }
 }

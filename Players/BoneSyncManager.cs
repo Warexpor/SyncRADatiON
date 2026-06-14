@@ -1,3 +1,4 @@
+// SyncRADation — armature bone Euler read/apply at 20Hz (every 3rd packet)
 using System.Collections.Generic;
 using UnityEngine;
 

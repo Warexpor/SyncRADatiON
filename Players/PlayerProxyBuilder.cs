@@ -1,3 +1,4 @@
+// SyncRADation — model-only clone: MB removal, mesh/material fix (IL2CPP), CapsuleCollider+Rigidbody
 using MelonLoader;
 using UnityEngine;
 
@@ -141,6 +142,23 @@ namespace SyncRADation.Players
             }
             if (copyCount > 0)
                 log?.Msg("[Proxy] Copied " + copyCount + " sharedMeshes from source to proxy");
+
+            // Set layer for friendly fire detection (match model layer)
+            var anyRenderer = proxy.GetComponentInChildren<Renderer>(true);
+            if (anyRenderer != null)
+                proxy.layer = anyRenderer.gameObject.layer;
+
+            // Add physics for push/friendly fire
+            var proxyRb = proxy.AddComponent<Rigidbody>();
+            proxyRb.useGravity = false;
+            proxyRb.isKinematic = false;
+            proxyRb.constraints = RigidbodyConstraints.FreezeRotation;
+            var proxyCol = proxy.AddComponent<CapsuleCollider>();
+            proxyCol.radius = 0.3f;
+            proxyCol.height = 1.8f;
+            proxyCol.center = new Vector3(0, 0.9f, 0);
+            proxyCol.isTrigger = false;
+            log?.Msg("[Proxy] Added physics collider+rigidbody for push/friendly fire");
 
             return proxy;
         }

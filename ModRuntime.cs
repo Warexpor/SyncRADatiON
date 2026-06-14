@@ -1,3 +1,4 @@
+// SyncRADation — main orchestrator: proxy guard, charState watchdog, friendly fire, network lifecycle
 using MelonLoader;
 using SyncRADation.Config;
 using SyncRADation.Networking;
@@ -12,11 +13,18 @@ namespace SyncRADation
         public static MelonLogger.Instance Log;
         public static LanNetworkManager Network { get; private set; }
         public static bool VerboseLogging { get; set; }
-        public static bool TraversalActive { get; private set; }
 
         private static bool _running;
         private static HarmonyLib.Harmony _harmony;
-        private static readonly List<RemoteAnimatorDriver> _animDrivers = new List<RemoteAnimatorDriver>();
+
+        private static float _lastCharStateLog;
+        private static int _lastCharState;
+        private static float _charStateStuckTime;
+        private static int _lastGameState;
+        private static float _gameStateStuckTime;
+        private static bool _lastSuspendInput;
+        private static bool _lastLocalShooting;
+        private static float _ffCooldown;
 
         public static void Start(MelonLogger.Instance log, HarmonyLib.Harmony harmony)
         {
@@ -59,40 +67,27 @@ namespace SyncRADation
             Network = new LanNetworkManager();
         }
 
-        private static float _lastCharStateLog;
-        private static float _charStateStuckTime;
-        private static int _lastCharState;
-        private static float _gameStateStuckTime;
-        private static int _lastGameState;
-        private static Vector3 _lastPlayerPos;
-        private static bool _lastSuspendInput;
-        private static bool _lastTraversing;
-        private static bool _diagDumped;
-        private static bool _animDiagDumped;
-        private static float _animDiagTime;
-        private static float _lastDoorLogTime;
-
         public static void OnUpdate()
         {
-            var proxy = Players.RemotePlayerProxy.Instance;
+            var pm = Network?.ProxyManager;
             var net = Network;
 
-            if (proxy != null && proxy.GameObject != null && PlayerState.player == proxy.GameObject)
+            // Guard: ensure PlayerState.player never points to a proxy
+            if (pm != null)
             {
                 var local = net?.GetLocalPlayer();
-                if (local != null)
-                    PlayerState.player = local;
-            }
-
-            if (!_diagDumped && proxy != null)
-            {
-                _diagDumped = true;
-                var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;
-                foreach (var f in typeof(PlayerState).GetFields(flags))
+                if (local != null && PlayerState.player != null && PlayerState.player != local)
                 {
-                    object val = null;
-                    try { val = f.GetValue(null); } catch { val = "??"; }
-                    Log?.Msg("[DIAG] PlayerState." + f.Name + " = " + val);
+                    foreach (int pid in GetProxyIds(pm))
+                    {
+                        var p = pm.GetProxy(pid);
+                        if (p != null && p.GameObject == PlayerState.player)
+                        {
+                            PlayerState.player = local;
+                            Log?.Msg("[Guard] Fixed PlayerState.player pointing to proxy, restored to local player");
+                            break;
+                        }
+                    }
                 }
             }
 
@@ -148,17 +143,6 @@ namespace SyncRADation
             }
 
             GameObject pObj = PlayerState.player;
-            if (pObj != null)
-            {
-                var apc = pObj.GetComponent<AlternatePlayerController>();
-                if (apc != null && apc.traversing != _lastTraversing)
-                {
-                    Log?.Msg("[DIAG] APC.traversing changed: " + _lastTraversing + " -> " + apc.traversing + " playing=" + apc.playing);
-                    _lastTraversing = apc.traversing;
-                }
-
-                _lastPlayerPos = pObj.transform.position;
-            }
 
             if (Time.time - _lastCharStateLog > 5f)
             {
@@ -166,52 +150,71 @@ namespace SyncRADation
                 _lastCharStateLog = Time.time;
             }
 
-            // Dump source player Animator params â€” first at gs==0, then again after 3s of gameplay
-            if (pObj != null && gs == 0)
+            // PreTick all proxy drivers (interpolation of animator params toward targets)
+            if (pm != null)
             {
-                if (!_animDiagDumped)
+                foreach (int pid in GetProxyIds(pm))
                 {
-                    _animDiagDumped = true;
-                    _animDiagTime = Time.time;
-                    DumpAnimatorParams(pObj, "");
-                }
-                else if (Time.time - _animDiagTime > 3f && _animDiagTime > 0f)
-                {
-                    _animDiagTime = 0f;
-                    DumpAnimatorParams(pObj, " (3s delay)");
+                    var driver = pm.GetProxy(pid)?.AnimDriver;
+                    driver?.PreTick();
                 }
             }
 
-            // Log all nearby AutoTraverseDoors (by their A/B transform positions) every 3s
-            if (pObj != null && Time.time - _lastDoorLogTime > 3f)
+            // Friendly fire: detect local player's shot hitting a proxy
+            if (net != null && net.IsConnected)
             {
-                Vector3 pp = pObj.transform.position;
-                foreach (var atd in GameObject.FindObjectsOfType<AutoTraverseDoor>())
+                _ffCooldown -= Mathf.Min(Time.deltaTime, 0.1f);
+                bool curShooting = PlayerState.shooting;
+                if (curShooting && !_lastLocalShooting && _ffCooldown <= 0f)
                 {
-                    if (atd == null) continue;
-                    Vector3? nearPos = null;
-                    if (atd.A != null) nearPos = atd.A.position;
-                    else if (atd.B != null) nearPos = atd.B.position;
-                    else continue;
-                    float d = Vector3.Distance(nearPos.Value, pp);
-                    if (d > 25f) continue;
-                    string side = atd.A != null && Vector3.Distance(atd.A.position, pp) < Vector3.Distance(atd.B.position, pp) ? "A" : "B";
-                    Log?.Msg("[DOOR] ATD=" + atd.name + " con=" + (atd.connection != null ? atd.connection.name : "NULL")
-                        + " side=" + side + " d=" + d.ToString("F1")
-                        + " BA=" + atd.BA + " dir=" + atd.direction
-                        + " c.inProg=" + (atd.connection != null ? atd.connection.inProgress.ToString() : "?")
-                        + " c.single=" + (atd.connection != null ? atd.connection.singleUse.ToString() : "?")
-                        + " c.fwd=" + (atd.connection != null ? atd.connection.forwards.ToString() : "?")
-                        + " c.BT=" + (atd.connection != null ? atd.connection.BacktrackDoor.ToString() : "?")
-                        + " c.BD=" + (atd.connection != null ? ((int)atd.connection.BacktrackingDirection).ToString() : "?"));
+                    GameObject pl = PlayerState.player;
+                    if (pl != null)
+                    {
+                        Vector3 origin = pl.transform.position + Vector3.up * 0.8f;
+                        Quaternion facingRot;
+                        var apc = pl.GetComponent<AlternatePlayerController>();
+                        if (apc != null)
+                            facingRot = Quaternion.Euler(0, apc.fAngle, 0);
+                        else
+                            facingRot = Quaternion.Euler(0, pl.transform.eulerAngles.y, 0);
+                        Vector3 dir = facingRot * Vector3.forward;
+                        // Use WallMask from PlayerAttack to prevent shooting through walls
+                        // OR in proxy layer so we can detect proxy colliders
+                        int wallMask = GetWallMask();
+                        if (pm.ProxyLayer >= 0)
+                            wallMask |= (1 << pm.ProxyLayer);
+                        RaycastHit hit;
+                        if (Physics.Raycast(origin, dir, out hit, 50f, wallMask))
+                        {
+                            int hitPid = pm.GetPlayerIdByCollider(hit.collider);
+                            if (hitPid >= 0)
+                            {
+                                float dmg = RemoteWeaponSync.GetDamage(ReadWeaponFromInventory());
+                                net.SendFriendlyFire(hitPid, dmg, hit.point);
+                                _ffCooldown = 0.2f;
+                            }
+                            else
+                            {
+                                // Check if hit an enemy
+                                var hb = hit.collider.GetComponentInChildren<Hitbox>(true);
+                                if (hb != null)
+                                {
+                                    var ec = hb.GetComponentInParent<EnemyController>();
+                                    if (ec != null)
+                                    {
+                                        float dmg = RemoteWeaponSync.GetDamage(ReadWeaponFromInventory());
+                                        net.SendPlayerShotEnemy(ec.gameObject.GetInstanceID(), dmg);
+                                        _ffCooldown = 0.2f;
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-                Log?.Msg("[DOOR] lastExitDoorA=" + PlayerState.lastExitDoorA.ToString("F1")
-                    + " lastExitDoorB=" + PlayerState.lastExitDoorB.ToString("F1"));
-                _lastDoorLogTime = Time.time;
+                _lastLocalShooting = curShooting;
             }
 
-            for (int i = 0; i < _animDrivers.Count; i++)
-                _animDrivers[i]?.PreTick();
+            NetworkDamageSystem.TickRespawn();
 
             try { net?.Update(); }
             catch (System.Exception ex) { Log?.Error("Network.Update crashed: " + ex); }
@@ -221,75 +224,51 @@ namespace SyncRADation
         {
             try { Network?.LateUpdate(); }
             catch (System.Exception ex) { Log?.Error("Network.LateUpdate crashed: " + ex); }
-
-            for (int i = 0; i < _animDrivers.Count; i++)
-                _animDrivers[i]?.Tick();
-
-            for (int i = 0; i < _animDrivers.Count; i++)
-                _animDrivers[i]?.LateTick();
         }
 
         public static void OnSceneChanged()
         {
             Log?.Msg("[Runtime] Scene changed, resetting local references");
+            NetworkDamageSystem.Reset();
+            _lastLocalShooting = false;
+            _ffCooldown = 0f;
             Network?.OnSceneChanged();
-            _animDrivers.Clear();
         }
 
-        private static readonly string[] _animFloatNames = new string[] { "Forward", "Turn", "AimingTime", "Stamina", "Blend", "IKwalk", "X", "Y", "HurtTime", "frame" };
-        private static readonly string[] _animBoolNames = new string[] { "Aiming", "Shooting", "Running", "Grounded", "Crouch", "Snap", "Blocked", "Injured", "Dead", "Attack", "Reload", "Swap", "Burst", "Inventory", "Stomp", "Push", "Melee", "Taser", "Handgun", "CAR", "Flare" };
-        private static readonly string[] _animTriggerNames = new string[] { "Die", "Hurt", "Fire", "Pickup", "Radio", "Drop", "Sleep", "Injector", "InjectorCancel" };
+        private static IEnumerable<int> GetProxyIds(PlayerProxyManager pm)
+        {
+            for (int i = 0; i < 256; i++)
+            {
+                if (pm.HasProxy(i))
+                    yield return i;
+            }
+        }
 
-        private static void DumpAnimatorParams(GameObject pObj, string suffix)
+        private static Networking.WeaponType ReadWeaponFromInventory()
         {
             try
             {
-                foreach (var a in pObj.GetComponentsInChildren<Animator>(true))
-                {
-                    if (a == null || a.runtimeAnimatorController == null) continue;
-                    Log?.Msg("[ANIM] Animator on " + a.name + " controller=" + a.runtimeAnimatorController.name + suffix);
-                    Log?.Msg("[ANIM]   parameterCount=" + a.parameterCount);
-                    foreach (var pn in _animFloatNames)
-                    {
-                        try
-                        {
-                            float val = a.GetFloat(pn);
-                            Log?.Msg("[ANIM]   float " + pn + " = " + val.ToString("F3"));
-                        }
-                        catch { Log?.Msg("[ANIM]   float " + pn + " = THROWS"); }
-                    }
-                    foreach (var pn in _animBoolNames)
-                    {
-                        try
-                        {
-                            bool val = a.GetBool(pn);
-                            Log?.Msg("[ANIM]   bool " + pn + " = " + val);
-                        }
-                        catch { Log?.Msg("[ANIM]   bool " + pn + " = THROWS"); }
-                    }
-                }
+                var equipped = InventoryManager.EquippedWeapon;
+                if (equipped == null || equipped.parentItem == null) return 0;
+                return Networking.WeaponUtils.ItemToWeaponType(equipped.parentItem._item);
             }
-            catch (System.Exception ex)
+            catch { return 0; }
+        }
+
+        private static int GetWallMask()
+        {
+            try
             {
-                Log?.Msg("[ANIM] Dump error: " + ex.Message);
+                var pa = PlayerState.player?.GetComponentInChildren<PlayerAttack>(true);
+                if (pa != null) return pa.WallMask;
             }
-        }
-
-        public static void RegisterAnimDriver(RemoteAnimatorDriver driver)
-        {
-            if (driver != null && !_animDrivers.Contains(driver))
-                _animDrivers.Add(driver);
-        }
-
-        public static void UnregisterAnimDriver(RemoteAnimatorDriver driver)
-        {
-            _animDrivers.Remove(driver);
+            catch { }
+            return ~0;
         }
 
         public static void Stop()
         {
             Network?.StopNetwork();
-            _animDrivers.Clear();
             _harmony?.UnpatchSelf();
             _running = false;
         }

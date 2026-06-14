@@ -1,3 +1,4 @@
+// SyncRADation — weapon model clone with mesh/material fix, damage cache from AnWeapon.Damage
 using SyncRADation.Networking;
 using System.Collections.Generic;
 using UnityEngine;
@@ -6,11 +7,49 @@ namespace SyncRADation.Players
 {
     public sealed class RemoteWeaponSync
     {
+        private static bool _damageCacheBuilt;
+        private static readonly Dictionary<WeaponType, float> _weaponDamageCache = new Dictionary<WeaponType, float>();
+
+        private static void BuildDamageCache()
+        {
+            if (_damageCacheBuilt) return;
+            _damageCacheBuilt = true;
+            try
+            {
+                var allWeapons = Resources.FindObjectsOfTypeAll<AnWeapon>();
+                foreach (var w in allWeapons)
+                {
+                    if (w == null || w.parentItem == null) continue;
+                    var wt = MapItemToWeaponType(w.parentItem._item);
+                    if (wt != WeaponType.None && !_weaponDamageCache.ContainsKey(wt))
+                        _weaponDamageCache[wt] = w.Damage;
+                }
+                ModRuntime.Log?.Msg("[WeaponSync] Damage cache built: " + _weaponDamageCache.Count + " weapons");
+            }
+            catch { }
+        }
+
+        private static WeaponType MapItemToWeaponType(Items.itemlist item)
+        {
+            return WeaponUtils.ItemToWeaponType(item);
+        }
+
+        public static float GetDamage(WeaponType wt)
+        {
+            BuildDamageCache();
+            if (_weaponDamageCache.TryGetValue(wt, out float d)) return d;
+            return 30f; // fallback
+        }
+
         private readonly GameObject _proxy;
         private readonly Dictionary<WeaponType, GameObject> _weapons = new Dictionary<WeaponType, GameObject>();
+        private readonly Dictionary<WeaponType, RemoteWeaponEffects> _effects = new Dictionary<WeaponType, RemoteWeaponEffects>();
         private WeaponType _currentWeapon = WeaponType.None;
         private int _targetLayer;
         private GameObject _source;
+        private AnimBools _lastBools;
+        private Vector3 _facingDir = Vector3.forward;
+        private Vector3 _muzzlePos;
 
         public RemoteWeaponSync(GameObject proxy)
         {
@@ -44,6 +83,48 @@ namespace SyncRADation.Players
             _currentWeapon = weapon;
         }
 
+        public System.Action<WeaponType> OnShotFired; // callback for secondary sounds (pump, eject)
+
+        public void Tick(PlayerStateMessage state, AnimBools bools, AnimTriggers triggers, Vector3 proxyPos, float facingAngle)
+        {
+            // Update muzzle position from proxy + facing
+            _muzzlePos = proxyPos + Vector3.up * 0.8f;
+            _facingDir = Quaternion.Euler(0, facingAngle, 0) * Vector3.forward;
+
+            // Tick current weapon effects
+            if (_currentWeapon != WeaponType.None && _effects.TryGetValue(_currentWeapon, out var fx))
+            {
+                fx.Tick(Time.deltaTime);
+
+                // Shot detection (leading edge)
+                bool curShoot = bools.HasFlag(AnimBools.Shooting);
+                if (curShoot && !_lastBools.HasFlag(AnimBools.Shooting))
+                {
+                    fx.OnShot();
+                    DoImpactRaycast(GetDamage(_currentWeapon));
+                    var cb = OnShotFired;
+                    if (cb != null) cb(_currentWeapon);
+                }
+
+                // Reload trigger
+                if (triggers.HasFlag(AnimTriggers.ReloadTrigger))
+                    fx.OnReload();
+
+                // Laser
+                bool aiming = bools.HasFlag(AnimBools.Aiming);
+                fx.UpdateLaser(aiming, _muzzlePos, _facingDir, 30f);
+            }
+
+            _lastBools = bools;
+        }
+
+        private void DoImpactRaycast(float damage)
+        {
+            if (_currentWeapon == WeaponType.None) return;
+            if (!_effects.TryGetValue(_currentWeapon, out var fx)) return;
+            fx.DoImpactRaycast(_muzzlePos, _facingDir, damage);
+        }
+
         private void HideCurrent()
         {
             if (_currentWeapon != WeaponType.None && _weapons.TryGetValue(_currentWeapon, out var old) && old != null)
@@ -65,7 +146,6 @@ namespace SyncRADation.Players
                 if (MatchesWeapon(t.name, weapon))
                 {
                     candidates++;
-                    // Prefer exact match over partial
                     string low = t.name.ToLowerInvariant();
                     string wepLow = weapon.ToString().ToLowerInvariant();
                     bool exact = low == wepLow || low == wepLow + "(clone)" || low.StartsWith(wepLow + "(");
@@ -81,7 +161,6 @@ namespace SyncRADation.Players
 
             if (sourceWeaponTransform == null)
             {
-                // Dump first 20 transforms with SMR but no name match
                 int dumped = 0;
                 foreach (var t in all)
                 {
@@ -100,21 +179,18 @@ namespace SyncRADation.Players
                 return null;
             }
 
-            // Find matching parent bone on proxy
             Transform proxyParent = FindMatchingBone(sourceWeaponTransform.parent);
             if (proxyParent == null)
             {
                 ModRuntime.Log?.Msg("[WeaponSync] No matching parent on proxy for " + sourceWeaponTransform.parent.name);
-                proxyParent = _proxy.transform; // fallback to proxy root
+                proxyParent = _proxy.transform;
             }
 
-            // Clone weapon from source
             GameObject clone;
             try { clone = Object.Instantiate(sourceWeaponTransform.gameObject, proxyParent, false); }
             catch (System.Exception ex) { ModRuntime.Log?.Msg("[WeaponSync] Instantiate failed: " + ex.Message); return null; }
             clone.name = weapon.ToString();
 
-            // Copy sharedMesh + sharedMaterial from source renderers
             var srcSmrs = sourceWeaponTransform.GetComponentsInChildren<SkinnedMeshRenderer>(true);
             var dstSmrs = clone.GetComponentsInChildren<SkinnedMeshRenderer>(true);
             var srcMfs = sourceWeaponTransform.GetComponentsInChildren<MeshFilter>(true);
@@ -140,8 +216,11 @@ namespace SyncRADation.Players
             }
             ModRuntime.Log?.Msg("[WeaponSync] Cloned " + weapon + " (from '" + sourceWeaponTransform.name + "') fixed " + fixedCount + " meshes");
 
-            // Layer
             SetLayerRecursive(clone, _targetLayer);
+
+            // Create effects for this weapon
+            var fx = new RemoteWeaponEffects(clone, sourceWeaponTransform.gameObject);
+            _effects[weapon] = fx;
 
             clone.SetActive(false);
             return clone;
@@ -169,7 +248,7 @@ namespace SyncRADation.Players
                 case WeaponType.Rifle: return low.Contains("rifle");
                 case WeaponType.SMG: return low.Contains("smg") || low.Contains("machine");
                 case WeaponType.Flare: return low.Contains("flaregun");
-                case WeaponType.CAR: return low.Contains("flaregun");
+                case WeaponType.CAR: return low.Contains("car") && !low.Contains("flare");
                 case WeaponType.Melee: return low.Contains("machete") || low.Contains("melee");
                 default: return false;
             }
@@ -199,6 +278,14 @@ namespace SyncRADation.Players
             }
             catch { }
             return null;
+        }
+
+        public void Cleanup()
+        {
+            foreach (var fx in _effects.Values)
+                fx.Cleanup();
+            _effects.Clear();
+            _weapons.Clear();
         }
     }
 }

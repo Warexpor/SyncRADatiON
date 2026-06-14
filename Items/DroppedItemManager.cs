@@ -1,3 +1,4 @@
+// SyncRADation — persistent dropped items: save/restore to file, key=(senderID<<16)|localIndex
 using System.Collections.Generic;
 using System.IO;
 using SyncRADation.Networking;

@@ -1,3 +1,4 @@
+// SyncRADation — drives proxy Animator params (9 floats, 22 bools, 16 triggers), facing pivot, bone lerp
 using SyncRADation.Networking;
 using UnityEngine;
 
@@ -35,7 +36,8 @@ namespace SyncRADation.Players
     private float _prevBoneTime;
     private float _curBoneTime;
 
-        private const float SmoothRate = 6f;
+        private const float SmoothRate = 4f;
+        private const float FacingSmoothRate = 8f;
 
         public RemoteAnimatorDriver(GameObject target)
         {
@@ -127,7 +129,7 @@ namespace SyncRADation.Players
             _smoothedForward = Mathf.Lerp(_smoothedForward, _targetForward, dt * SmoothRate);
             _smoothedTurn = Mathf.Lerp(_smoothedTurn, _targetTurn, dt * SmoothRate);
             _smoothedAimingTime = Mathf.Lerp(_smoothedAimingTime, _targetAimingTime, dt * SmoothRate);
-            _currentFacing = Mathf.LerpAngle(_currentFacing, _targetFacing, dt * 12f);
+            _currentFacing = Mathf.LerpAngle(_currentFacing, _targetFacing, dt * FacingSmoothRate);
             if (Mathf.Abs(Mathf.DeltaAngle(_currentFacing, _targetFacing)) < 0.5f)
                 _currentFacing = _targetFacing;
         }
@@ -262,48 +264,52 @@ namespace SyncRADation.Players
 
             if (Time.time - _lastLog > 3f)
             {
-                var sb = new System.Text.StringBuilder("[DRV] root=");
-                sb.Append(_rootTransform.eulerAngles.ToString("F1"));
-                sb.Append(" pivot=");
-                sb.Append(_facingPivot != null ? _facingPivot.localEulerAngles.ToString("F1") : "NULL");
-                sb.Append(" curFacing="); sb.Append(_currentFacing.ToString("F1"));
-                sb.Append(" target="); sb.Append(_targetFacing.ToString("F1"));
-                sb.Append(" bones="); sb.Append(_boneSync != null ? _boneSync.BoneCount.ToString() : "0");
-                for (int i = 0; i < _animators.Length; i++)
+                try
                 {
-                    var a = _animators[i];
-                    if (a == null) continue;
-                    sb.Append(" [a"); sb.Append(i);
-                    sb.Append("] fwd="); sb.Append(a.GetFloat("Forward").ToString("F2"));
-                    sb.Append(" turn="); sb.Append(a.GetFloat("Turn").ToString("F2"));
-                    sb.Append(" aimT="); sb.Append(a.GetFloat("AimingTime").ToString("F2"));
-                    sb.Append(" aim="); sb.Append(a.GetBool("Aiming") ? "1" : "0");
-                    sb.Append(" shoot="); sb.Append(a.GetBool("Shooting") ? "1" : "0");
-                    sb.Append(" run="); sb.Append(a.GetBool("Running") ? "1" : "0");
-                    sb.Append(" inv="); sb.Append(a.GetBool("Inventory") ? "1" : "0");
-                    string[] wpnNames = { "Handgun", "Pistol", "Revolver", "Shotgun", "Rifle", "SMG", "Flare", "CAR" };
-                    foreach (var w in wpnNames)
+                    var sb = new System.Text.StringBuilder("[DRV] root=");
+                    sb.Append(_rootTransform.eulerAngles.ToString("F1"));
+                    sb.Append(" pivot=");
+                    sb.Append(_facingPivot != null ? _facingPivot.localEulerAngles.ToString("F1") : "NULL");
+                    sb.Append(" curFacing="); sb.Append(_currentFacing.ToString("F1"));
+                    sb.Append(" target="); sb.Append(_targetFacing.ToString("F1"));
+                    sb.Append(" bones="); sb.Append(_boneSync != null ? _boneSync.BoneCount.ToString() : "0");
+                    for (int i = 0; i < _animators.Length; i++)
                     {
-                        sb.Append(" ").Append(w).Append("=");
-                        try { sb.Append(a.GetBool(w) ? "1" : "0"); }
-                        catch { sb.Append("E"); }
+                        var a = _animators[i];
+                        if (a == null) continue;
+                        sb.Append(" [a"); sb.Append(i);
+                        sb.Append("] fwd="); sb.Append(a.GetFloat("Forward").ToString("F2"));
+                        sb.Append(" turn="); sb.Append(a.GetFloat("Turn").ToString("F2"));
+                        sb.Append(" aimT="); sb.Append(a.GetFloat("AimingTime").ToString("F2"));
+                        sb.Append(" aim="); sb.Append(a.GetBool("Aiming") ? "1" : "0");
+                        sb.Append(" shoot="); sb.Append(a.GetBool("Shooting") ? "1" : "0");
+                        sb.Append(" run="); sb.Append(a.GetBool("Running") ? "1" : "0");
+                        sb.Append(" inv="); sb.Append(a.GetBool("Inventory") ? "1" : "0");
+                        string[] wpnNames = { "Handgun", "Pistol", "Revolver", "Shotgun", "Rifle", "SMG", "Flare", "CAR" };
+                        foreach (var w in wpnNames)
+                        {
+                            sb.Append(" ").Append(w).Append("=");
+                            try { sb.Append(a.GetBool(w) ? "1" : "0"); }
+                            catch { sb.Append("E"); }
+                        }
+                        try
+                        {
+                            var si = a.GetCurrentAnimatorStateInfo(0);
+                            sb.Append(" s0=").Append(si.shortNameHash);
+                            sb.Append(" t0=").Append(si.normalizedTime.ToString("F2"));
+                        }
+                        catch { }
+                        try
+                        {
+                            var si1 = a.GetCurrentAnimatorStateInfo(1);
+                            sb.Append(" s1=").Append(si1.shortNameHash);
+                            sb.Append(" t1=").Append(si1.normalizedTime.ToString("F2"));
+                        }
+                        catch { }
                     }
-                    try
-                    {
-                        var si = a.GetCurrentAnimatorStateInfo(0);
-                        sb.Append(" s0=").Append(si.shortNameHash);
-                        sb.Append(" t0=").Append(si.normalizedTime.ToString("F2"));
-                    }
-                    catch { }
-                    try
-                    {
-                        var si1 = a.GetCurrentAnimatorStateInfo(1);
-                        sb.Append(" s1=").Append(si1.shortNameHash);
-                        sb.Append(" t1=").Append(si1.normalizedTime.ToString("F2"));
-                    }
-                    catch { }
+                    SyncRADation.ModRuntime.Log?.Msg(sb.ToString());
                 }
-                SyncRADation.ModRuntime.Log?.Msg(sb.ToString());
+                catch { }
                 _lastLog = Time.time;
             }
         }

@@ -1,3 +1,4 @@
+// SyncRADation — IMGUI connection UI: host, connect, disconnect
 using SyncRADation.Config;
 using SyncRADation.Networking;
 using UnityEngine;

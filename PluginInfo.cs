@@ -1,3 +1,4 @@
+// SyncRADation — constants: version, protocol, port, send rates
 namespace SyncRADation
 {
     public static class PluginInfo
@@ -8,8 +9,8 @@ namespace SyncRADation
         public const string Description = "LAN multiplayer mod for SIGNALIS â€” proxy sync, doors, audio, item drops";
         public const int ProtocolVersion = 1;
         public const int DefaultPort = 7777;
-        public const float SendInterval = 1f / 60f;
-        public const int BoneSendDivider = 3; // send bones every 3rd state packet (20Hz)
+        public const float SendInterval = 1f / 30f;
+        public const int BoneSendDivider = 2; // send bones every 2nd state packet (15Hz)
         public const float EntitySendInterval = 1f / 30f;
     }
 }

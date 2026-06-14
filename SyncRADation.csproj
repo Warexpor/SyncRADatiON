@@ -98,6 +98,22 @@
       <HintPath>$(ManagedDir)\UnityEngine.AudioModule.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    <Reference Include="UnityEngine.ParticleSystemModule">
+      <HintPath>$(ManagedDir)\UnityEngine.ParticleSystemModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="AstarPathfindingProject">
+      <HintPath>$(ManagedDir)\AstarPathfindingProject.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp-firstpass">
+      <HintPath>$(ManagedDir)\Assembly-CSharp-firstpass.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Sirenix.Serialization">
+      <HintPath>$(ManagedDir)\Sirenix.Serialization.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
     <Reference Include="FMODUnity">
       <HintPath>$(ManagedDir)\FMODUnity.dll</HintPath>
       <Private>False</Private>
@@ -115,25 +131,26 @@
     <Compile Include="Networking\NetworkRole.cs" />
     <Compile Include="Networking\NetMessages.cs" />
     <Compile Include="Networking\LanNetworkManager.cs" />
-    <Compile Include="Networking\PlayerPositionManager.cs" />
-    <Compile Include="Networking\EntityStateBroadcastService.cs" />
-    <Compile Include="Networking\ClientEntityInterpolationService.cs" />
+
     <Compile Include="Players\RemotePlayerProxy.cs" />
     <Compile Include="Players\PlayerProxyBuilder.cs" />
-    <Compile Include="Players\PlayerAnimationSnapshot.cs" />
+    <Compile Include="Players\PlayerProxyManager.cs" />
+    <Compile Include="Players\NetworkDamageSystem.cs" />
     <Compile Include="Players\RemoteAnimatorDriver.cs" />
     <Compile Include="Players\SourceAnimReader.cs" />
     <Compile Include="Players\ProxyAudioSync.cs" />
     <Compile Include="Players\RemoteWeaponSync.cs" />
+    <Compile Include="Players\RemoteWeaponEffects.cs" />
     <Compile Include="Players\BoneSyncManager.cs" />
     <Compile Include="Networking\DoorSyncService.cs" />
+    <Compile Include="Networking\EnemySyncService.cs" />
+    <Compile Include="Networking\PuzzleSyncService.cs" />
+    <Compile Include="Networking\BossSyncService.cs" />
+    <Compile Include="Networking\WeaponUtils.cs" />
     <Compile Include="Items\WorldItem.cs" />
     <Compile Include="Items\DroppedItemManager.cs" />
     <Compile Include="Cheats\ItemGiver.cs" />
     <Compile Include="Cheats\EntitySpawner.cs" />
-    <Compile Include="Sync\GameObjectEntityTracker.cs" />
-    <Compile Include="Sync\Proxies\EntityProxy.cs" />
-    <Compile Include="Patches\PlayerPatches.cs" />
     <Compile Include="UI\MultiplayerMenu.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>

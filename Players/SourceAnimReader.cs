@@ -1,3 +1,4 @@
+// SyncRADation — reads Animator state from local player via individual GetFloat/GetBool (IL2CPP-safe)
 using MelonLoader;
 using SyncRADation.Networking;
 using UnityEngine;
@@ -48,7 +49,6 @@ namespace SyncRADation.Players
                 msg.StepHappened = false;
                 if (msg.Forward > 0.05f)
                 {
-                    // Two steps per cycle: at 0.0 (wrap) and 0.5 (mid)
                     if ((_prevNormTime < 0.5f && nt >= 0.5f) || (nt < _prevNormTime && nt < 0.3f))
                         msg.StepHappened = true;
                 }
@@ -56,18 +56,14 @@ namespace SyncRADation.Players
             }
             catch { }
 
-            // Detect ladder climbing from game state
             msg.Climbing = false;
             try
             {
                 if (PlayerState.gameState == PlayerState.gameStates.traversing)
-                {
                     msg.Climbing = true;
-                }
             }
             catch { }
 
-            // Read weapon type from InventoryManager (direct, bypasses Animator)
             msg.Weapon = ReadWeaponFromInventory();
             if (msg.Weapon != _lastWeaponRead)
             {
@@ -204,22 +200,8 @@ namespace SyncRADation.Players
             try
             {
                 var equipped = InventoryManager.EquippedWeapon;
-                if (equipped == null) return Networking.WeaponType.None;
-                if (equipped.parentItem == null) return Networking.WeaponType.None;
-                var item = equipped.parentItem._item;
-                switch (item)
-                {
-                    case Items.itemlist.Pistol: return Networking.WeaponType.Pistol;
-                    case Items.itemlist.Revolver: return Networking.WeaponType.Revolver;
-                    case Items.itemlist.Shotgun: return Networking.WeaponType.Shotgun;
-                    case Items.itemlist.Rifle: return Networking.WeaponType.Rifle;
-                    case Items.itemlist.SMG: return Networking.WeaponType.SMG;
-                    case Items.itemlist.FlareGun: return Networking.WeaponType.Flare;
-                    case Items.itemlist.FlakGun: return Networking.WeaponType.CAR;
-                    case Items.itemlist.Machete: return Networking.WeaponType.Melee;
-                    case Items.itemlist.Taser: return Networking.WeaponType.Handgun;
-                    default: return Networking.WeaponType.None;
-                }
+                if (equipped == null || equipped.parentItem == null) return Networking.WeaponType.None;
+                return Networking.WeaponUtils.ItemToWeaponType(equipped.parentItem._item);
             }
             catch { return Networking.WeaponType.None; }
         }

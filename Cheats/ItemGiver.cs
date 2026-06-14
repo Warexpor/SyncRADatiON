@@ -1,3 +1,4 @@
+// SyncRADation — IMGUI debug window: add any game item to inventory
 using System.Collections.Generic;
 using UnityEngine;
 

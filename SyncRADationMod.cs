@@ -1,3 +1,4 @@
+// SyncRADation — MelonMod entry point, input bindings (F2/F3/F6/F7), command-line auto-host/connect
 using MelonLoader;
 
 [assembly: MelonInfo(typeof(SyncRADation.SyncRADationMod), SyncRADation.PluginInfo.Name, SyncRADation.PluginInfo.Version, SyncRADation.PluginInfo.Author)]

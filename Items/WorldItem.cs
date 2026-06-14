@@ -1,3 +1,4 @@
+// SyncRADation — MonoBehaviour: billboard sprite, pickup trigger, DontDestroyOnLoad
 using UnityEngine;
 
 namespace SyncRADation.ItemSystem
