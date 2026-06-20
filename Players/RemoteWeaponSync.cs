@@ -1,4 +1,4 @@
-// SyncRADation � weapon model clone with mesh/material fix, damage cache from AnWeapon.Damage
+// SyncRADation � weapon model clone with mesh/material fix, damage cache from AnWeapon.Damage
 using SyncRADation.Networking;
 using System.Collections.Generic;
 using UnityEngine;
@@ -79,7 +79,13 @@ namespace SyncRADation.Players
                 if (go != null) _weapons[weapon] = go;
             }
 
-            if (go != null) go.SetActive(true);
+            if (go != null)
+            {
+                go.SetActive(true);
+                // Stop auto-playing particles (PlayOnAwake on weapon switch)
+                if (_effects.TryGetValue(weapon, out var fx))
+                    fx.ResetAll();
+            }
             _currentWeapon = weapon;
         }
 
@@ -214,12 +220,45 @@ namespace SyncRADation.Players
                 if (mr != null && srcMr != null && mr.sharedMaterial == null && srcMr.sharedMaterial != null)
                     mr.sharedMaterial = srcMr.sharedMaterial;
             }
+            // Fix MeshRenderers without MeshFilter (Quad, MuzzleFlash — IL2CPP nulls sharedMaterial)
+            var srcMrs = sourceWeaponTransform.GetComponentsInChildren<MeshRenderer>(true);
+            var dstMrs = clone.GetComponentsInChildren<MeshRenderer>(true);
+            for (int i = 0; i < srcMrs.Length && i < dstMrs.Length; i++)
+            {
+                if (srcMrs[i] == null || dstMrs[i] == null) continue;
+                if (dstMrs[i].sharedMaterial == null && srcMrs[i].sharedMaterial != null)
+                    dstMrs[i].sharedMaterial = srcMrs[i].sharedMaterial;
+            }
+            // Fix LineRenderer + ParticleSystemRenderer materials (null after IL2CPP Instantiate)
+            var srcLrs = sourceWeaponTransform.GetComponentsInChildren<LineRenderer>(true);
+            var dstLrs = clone.GetComponentsInChildren<LineRenderer>(true);
+            for (int i = 0; i < srcLrs.Length && i < dstLrs.Length; i++)
+            {
+                if (srcLrs[i] == null || dstLrs[i] == null) continue;
+                if (dstLrs[i].sharedMaterial == null && srcLrs[i].sharedMaterial != null)
+                    dstLrs[i].sharedMaterial = srcLrs[i].sharedMaterial;
+            }
+            var srcPsrs = sourceWeaponTransform.GetComponentsInChildren<ParticleSystemRenderer>(true);
+            var dstPsrs = clone.GetComponentsInChildren<ParticleSystemRenderer>(true);
+            for (int i = 0; i < srcPsrs.Length && i < dstPsrs.Length; i++)
+            {
+                if (srcPsrs[i] == null || dstPsrs[i] == null) continue;
+                if (dstPsrs[i].sharedMaterial == null && srcPsrs[i].sharedMaterial != null)
+                    dstPsrs[i].sharedMaterial = srcPsrs[i].sharedMaterial;
+            }
             ModRuntime.Log?.Msg("[WeaponSync] Cloned " + weapon + " (from '" + sourceWeaponTransform.name + "') fixed " + fixedCount + " meshes");
 
             SetLayerRecursive(clone, _targetLayer);
 
-            // Create effects for this weapon
+            // Create effects BEFORE destroying MBs (needs component refs for precise finding)
             var fx = new RemoteWeaponEffects(clone, sourceWeaponTransform.gameObject);
+
+            // Destroy all MBs on weapon clone — IL2CPP native methods (Awake/Start/Update)
+            // would try to read null serialized fields and interfere with manual effect driving
+#if true
+            int mbsKilled = DestroyAllMBs(clone);
+            ModRuntime.Log?.Msg("[WeaponSync] Destroyed " + mbsKilled + " MBs on " + weapon + " clone");
+#endif
             _effects[weapon] = fx;
 
             clone.SetActive(false);
@@ -259,6 +298,19 @@ namespace SyncRADation.Players
             obj.layer = layer;
             for (int i = 0; i < obj.transform.childCount; i++)
                 SetLayerRecursive(obj.transform.GetChild(i).gameObject, layer);
+        }
+
+        private static int DestroyAllMBs(GameObject obj)
+        {
+            int count = 0;
+            var mbs = obj.GetComponentsInChildren<MonoBehaviour>(true);
+            foreach (var mb in mbs)
+            {
+                if (mb == null) continue;
+                Object.DestroyImmediate(mb, true);
+                count++;
+            }
+            return count;
         }
 
         private static string GetPath(Transform t)

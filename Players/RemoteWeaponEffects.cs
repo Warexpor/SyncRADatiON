@@ -1,4 +1,4 @@
-// SyncRADation — per-weapon FX: muzzle flash, smoke, case eject, laser, ricochet, slide
+// SyncRADation ï¿½ per-weapon FX: muzzle flash, smoke, case eject, laser, ricochet, slide
 using System;
 using System.Collections.Generic;
 using SyncRADation.Networking;
@@ -20,14 +20,17 @@ namespace SyncRADation.Players
         private float _flashTimer;
         private int _wallMask = ~0;
 
-        private const float FlashDuration = 0.06f;
+        private const float FlashDuration = 0.03f;
         private const float SlideTravel = 0.02f;
         private const float SlideReturn = 0.08f;
+        private readonly GameObject _weaponRoot;
 
         public RemoteWeaponEffects(GameObject weapon, GameObject sourceWeapon)
         {
             _weapon = weapon;
+            _weaponRoot = weapon;
             CacheEffects(sourceWeapon);
+            ResetAll(); // prevent PlayOnAwake before first activation
             TryReadWallMask();
         }
 
@@ -48,104 +51,137 @@ namespace SyncRADation.Players
 
         private void CacheEffects(GameObject source)
         {
-            // IL2CPP-proof: serialized fields (muzzle, particles, line, slide) are NULL in IL2CPP.
-            // We find components by TYPE on source, then match children by NAME on clone.
+            // Pure name/hierarchy search â€” no dependency on MonoBehaviour components.
+            // After this, all MBs can be destroyed without losing effect references.
+            // Runs BEFORE MB destruction (component-based search still works but we don't rely on it).
 
-            try
+            // DIAG: dump clone hierarchy
+            ModRuntime.Log?.Msg("[FX] === CLONE HIERARCHY: " + _weapon.name + " ===");
+            DumpHierarchy(_weapon.transform, 0);
+
+            // Gather all transforms once for name-based search
+            var allTransforms = _weapon.GetComponentsInChildren<Transform>(true);
+
+            // Muzzle flash: Quad MeshRenderer is the actual visual
+            _muzzleFlash = FindMuzzleVisualTarget(allTransforms, _weaponRoot);
+            ModRuntime.Log?.Msg("[FX] MuzzleFlash " + (_muzzleFlash != null ? "FOUND at " + GetPath(_muzzleFlash.transform) : "NOT FOUND"));
+
+            // Muzzle smoke: ParticleSystem named "Smoke" under Muzzle subtree
+            _muzzleSmoke = FindParticleSystemByName(allTransforms, "Smoke");
+            ModRuntime.Log?.Msg("[FX] MuzzleSmoke " + (_muzzleSmoke != null ? "FOUND" : "NOT FOUND"));
+
+            // Laser: LineRenderer (on TestLaser for Pistol)
+            _laser = FindLineRenderer(allTransforms);
+            if (_laser != null) _laser.enabled = false;
+            ModRuntime.Log?.Msg("[FX] Laser " + (_laser != null ? "FOUND" : "NOT FOUND"));
+
+            // Missed shot / ricochet: ParticleSystems under TestLaser
+            _missedShot = FindParticleSystemByName(allTransforms, "Miss");
+            _ricochet = FindParticleSystemByName(allTransforms, "Ricochet");
+            ModRuntime.Log?.Msg("[FX] MissedShot " + (_missedShot != null ? "FOUND" : "NOT FOUND")
+                + " Ricochet " + (_ricochet != null ? "FOUND" : "NOT FOUND"));
+
+            // Case eject: ParticleSystem named "Case" (Pistol has this without ReloadCaseEject component)
+            _caseEject = FindParticleSystemByName(allTransforms, "Case");
+            ModRuntime.Log?.Msg("[FX] CaseEject " + (_caseEject != null ? "FOUND" : "NOT FOUND"));
+
+            // Slide: Transform named "Slide"
+            _slide = FindTransformByName(allTransforms, "Slide");
+            if (_slide != null) _slideRestPos = _slide.localPosition.z;
+            ModRuntime.Log?.Msg("[FX] PistolSlide " + (_slide != null ? "FOUND" : "NOT FOUND"));
+        }
+
+        private static void DumpHierarchy(Transform t, int depth)
+        {
+            if (t == null) return;
+            string indent = new string(' ', depth * 2);
+            string tags = "";
+            if (t.GetComponent<MuzzleFlash>() != null) tags += " MF";
+            if (t.GetComponent<AimLaser>() != null) tags += " AL";
+            if (t.GetComponent<ReloadCaseEject>() != null) tags += " CE";
+            if (t.GetComponent<PistolSlide>() != null) tags += " PS";
+            if (t.GetComponent<MuzzleSmoke>() != null) tags += " MS";
+            if (t.GetComponent<LineRenderer>() != null) tags += " LR";
+            if (t.GetComponent<ParticleSystem>() != null) tags += " PSys";
+            if (t.GetComponent<Renderer>() != null) tags += " Rend";
+            if (t.GetComponent<MeshRenderer>() != null) tags += " MR";
+            ModRuntime.Log?.Msg("[FX] " + indent + t.name + " children=" + t.childCount + tags);
+            for (int i = 0; i < t.childCount; i++)
+                DumpHierarchy(t.GetChild(i), depth + 1);
+        }
+
+        // Muzzle flash: find the Quad MeshRenderer that MuzzleFlash.muzzle normally points to.
+        // Quad (1) path: .../Muzzle/Halo/Quad (1). Score by name to prefer Quad over MuzzleFlash's own MR.
+        private static GameObject FindMuzzleVisualTarget(Transform[] allTransforms, GameObject weaponRoot)
+        {
+            GameObject best = null;
+            int bestScore = -1;
+            foreach (var t in allTransforms)
             {
-                var mf = source.GetComponentInChildren<MuzzleFlash>(true);
-                if (mf != null)
-                {
-                    string goName = mf.gameObject.name;
-                    var go = FindChildRecursive(_weapon.transform, goName);
-                    if (go != null)
-                    {
-                        var mr = go.GetComponentInChildren<MeshRenderer>(true);
-                        _muzzleFlash = mr != null ? mr.gameObject : go.gameObject;
-                    }
-                    ModRuntime.Log?.Msg("[FX] MuzzleFlash '" + goName + "' " + (_muzzleFlash != null ? "FOUND" : "NOT FOUND"));
-                }
+                if (t == null) continue;
+                var mr = t.GetComponent<MeshRenderer>();
+                if (mr == null || mr.gameObject == weaponRoot) continue;
+                int score = 0;
+                string n = t.name.ToLowerInvariant();
+                if (n.Contains("quad")) score += 30;
+                if (n.Contains("flash")) score += 5;
+                if (n.Contains("muzzle")) score += 2;
+                if (n.Contains("halo")) score -= 1;
+                if (score > bestScore) { bestScore = score; best = mr.gameObject; }
             }
-            catch { }
+            return best;
+        }
 
-            try
+        // Find first LineRenderer in the hierarchy
+        private static LineRenderer FindLineRenderer(Transform[] allTransforms)
+        {
+            foreach (var t in allTransforms)
             {
-                var ms = source.GetComponentInChildren<MuzzleSmoke>(true);
-                if (ms != null)
-                {
-                    string goName = ms.gameObject.name;
-                    var go = FindChildRecursive(_weapon.transform, goName);
-                    if (go != null)
-                    {
-                        _muzzleSmoke = go.GetComponentInChildren<ParticleSystem>(true);
-                    }
-                    ModRuntime.Log?.Msg("[FX] MuzzleSmoke '" + goName + "' " + (_muzzleSmoke != null ? "FOUND" : "NOT FOUND"));
-                }
+                if (t == null) continue;
+                var lr = t.GetComponent<LineRenderer>();
+                if (lr != null) return lr;
             }
-            catch { }
+            return null;
+        }
 
-            try
+        // Find first ParticleSystem whose name (or parent's name) contains the hint
+        private static ParticleSystem FindParticleSystemByName(Transform[] allTransforms, string hint)
+        {
+            if (string.IsNullOrEmpty(hint)) return null;
+            // First pass: exact name match on the PS's own transform or parent
+            foreach (var t in allTransforms)
             {
-                var al = source.GetComponentInChildren<AimLaser>(true);
-                if (al != null)
-                {
-                    string goName = al.gameObject.name;
-                    var go = FindChildRecursive(_weapon.transform, goName);
-                    if (go != null)
-                    {
-                        _laser = go.GetComponentInChildren<LineRenderer>(true);
-                        if (_laser != null) _laser.enabled = false;
-
-                        var allPS = go.GetComponentsInChildren<ParticleSystem>(true);
-                        foreach (var ps in allPS)
-                        {
-                            if (ps == null) continue;
-                            string low = ps.name.ToLowerInvariant();
-                            if (low.Contains("miss") || low.Contains("missed"))
-                                _missedShot = ps;
-                            if (low.Contains("ricochet"))
-                                _ricochet = ps;
-                        }
-                    }
-                    ModRuntime.Log?.Msg("[FX] AimLaser '" + goName + "' laser=" + (_laser != null ? "FOUND" : "NOT FOUND")
-                        + " missed=" + (_missedShot != null ? "FOUND" : "NOT FOUND")
-                        + " ricochet=" + (_ricochet != null ? "FOUND" : "NOT FOUND"));
-                }
+                var ps = t.GetComponent<ParticleSystem>();
+                if (ps == null) continue;
+                if (t.name.IndexOf(hint, StringComparison.OrdinalIgnoreCase) >= 0) return ps;
+                if (t.parent != null && t.parent.name.IndexOf(hint, StringComparison.OrdinalIgnoreCase) >= 0) return ps;
             }
-            catch { }
-
-            try
+            // Second pass: any ParticleSystem
+            foreach (var t in allTransforms)
             {
-                var ce = source.GetComponentInChildren<ReloadCaseEject>(true);
-                if (ce != null)
-                {
-                    string goName = ce.gameObject.name;
-                    var go = FindChildRecursive(_weapon.transform, goName);
-                    if (go != null)
-                    {
-                        _caseEject = go.GetComponentInChildren<ParticleSystem>(true);
-                    }
-                    ModRuntime.Log?.Msg("[FX] CaseEject '" + goName + "' " + (_caseEject != null ? "FOUND" : "NOT FOUND"));
-                }
+                var ps = t.GetComponent<ParticleSystem>();
+                if (ps != null) return ps;
             }
-            catch { }
+            return null;
+        }
 
-            try
+        // Find first Transform whose name matches (case-insensitive)
+        private static Transform FindTransformByName(Transform[] allTransforms, string name)
+        {
+            foreach (var t in allTransforms)
             {
-                var ps = source.GetComponentInChildren<PistolSlide>(true);
-                if (ps != null)
-                {
-                    string goName = ps.gameObject.name;
-                    var go = FindChildRecursive(_weapon.transform, goName);
-                    if (go != null)
-                    {
-                        _slide = go;
-                        _slideRestPos = _slide.localPosition.z;
-                    }
-                    ModRuntime.Log?.Msg("[FX] PistolSlide '" + goName + "' " + (_slide != null ? "FOUND" : "NOT FOUND"));
-                }
+                if (t == null) continue;
+                if (t.name.Equals(name, StringComparison.OrdinalIgnoreCase)) return t;
             }
-            catch { }
+            return null;
+        }
+
+        private static string GetPath(Transform t)
+        {
+            if (t == null) return "";
+            string p = t.name;
+            while (t.parent != null) { t = t.parent; p = t.name + "/" + p; }
+            return p;
         }
 
         public void OnShot()
@@ -156,9 +192,15 @@ namespace SyncRADation.Players
                 _flashTimer = FlashDuration;
             }
             if (_muzzleSmoke != null)
+            {
+                _muzzleSmoke.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
                 _muzzleSmoke.Play();
+            }
             if (_caseEject != null)
+            {
+                _caseEject.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
                 _caseEject.Play();
+            }
             if (_slide != null)
             {
                 Vector3 p = _slide.localPosition;
@@ -261,9 +303,27 @@ namespace SyncRADation.Players
             }
         }
 
+        // Stop all particles (prevents PlayOnAwake from causing infinite emission on weapon switch)
+        public void ResetAll()
+        {
+            StopPS(ref _muzzleSmoke);
+            StopPS(ref _caseEject);
+            StopPS(ref _missedShot);
+            StopPS(ref _ricochet);
+        }
+
+        private static void StopPS(ref ParticleSystem ps)
+        {
+            if (ps != null)
+            {
+                ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+            }
+        }
+
         public void Cleanup()
         {
             if (_laser != null) _laser.enabled = false;
+            ResetAll();
             _muzzleFlash = null;
             _muzzleSmoke = null;
             _caseEject = null;
@@ -271,16 +331,6 @@ namespace SyncRADation.Players
             _slide = null;
         }
 
-        private static Transform FindChildRecursive(Transform parent, string name)
-        {
-            for (int i = 0; i < parent.childCount; i++)
-            {
-                Transform child = parent.GetChild(i);
-                if (child.name == name) return child;
-                var found = FindChildRecursive(child, name);
-                if (found != null) return found;
-            }
-            return null;
-        }
+
     }
 }

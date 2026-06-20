@@ -1,4 +1,4 @@
-// SyncRADation — main orchestrator: proxy guard, charState watchdog, friendly fire, network lifecycle
+// SyncRADation ï¿½ main orchestrator: proxy guard, charState watchdog, friendly fire, network lifecycle
 using MelonLoader;
 using SyncRADation.Config;
 using SyncRADation.Networking;
@@ -164,7 +164,9 @@ namespace SyncRADation
             if (net != null && net.IsConnected)
             {
                 _ffCooldown -= Mathf.Min(Time.deltaTime, 0.1f);
-                bool curShooting = PlayerState.shooting;
+                // PlayerState.shooting is NEVER set by the game (IL2CPP field never updated).
+                // Use Input.GetMouseButton(0) / Fire1 directly instead.
+                bool curShooting = Input.GetButton("Fire1") || Input.GetMouseButton(0);
                 if (curShooting && !_lastLocalShooting && _ffCooldown <= 0f)
                 {
                     GameObject pl = PlayerState.player;

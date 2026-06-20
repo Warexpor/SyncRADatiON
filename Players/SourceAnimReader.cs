@@ -1,4 +1,4 @@
-// SyncRADation — reads Animator state from local player via individual GetFloat/GetBool (IL2CPP-safe)
+// SyncRADation ï¿½ reads Animator state from local player via individual GetFloat/GetBool (IL2CPP-safe)
 using MelonLoader;
 using SyncRADation.Networking;
 using UnityEngine;
@@ -15,6 +15,7 @@ namespace SyncRADation.Players
         private static bool _hasLast;
         private static float _prevNormTime;
         private static Networking.WeaponType _lastWeaponRead;
+        private static float _lastSrcLog;
 
         public static void ReadFromPlayer(GameObject player, ref PlayerStateMessage msg)
         {
@@ -72,9 +73,20 @@ namespace SyncRADation.Players
             }
 
             // Read bools
+            // IL2CPP: Animator.GetBool for weapon-related params (Aiming, Shooting, etc.) ALWAYS returns false.
+            // Aiming: detect from AimingTime float (reliable)
+            // Shooting: detect from ammo decrease in InventoryManager.elsterItems (reliable, works in IL2CPP)
             AnimBools b = 0;
-            if (SafeGetBool(anim, "Aiming")) b |= AnimBools.Aiming;
-            if (SafeGetBool(anim, "Shooting")) b |= AnimBools.Shooting;
+
+            // Aiming from AimingTime float
+            if (msg.AimingTime > 0.5f)
+                b |= AnimBools.Aiming;
+
+            // Shooting detection via Unity Input (works in IL2CPP â€” native engine API)
+            // Fire1 = LMB / Left Ctrl / Controller trigger (standard Unity input axis)
+            // Input.GetMouseButton(0) = direct LMB check, doesn't rely on Input Manager axes
+            if (Input.GetButton("Fire1") || Input.GetMouseButton(0)) b |= AnimBools.Shooting;
+
             if (SafeGetBool(anim, "Running")) b |= AnimBools.Running;
             if (SafeGetBool(anim, "Grounded")) b |= AnimBools.Grounded;
             if (SafeGetBool(anim, "Crouch")) b |= AnimBools.Crouch;
@@ -140,6 +152,19 @@ namespace SyncRADation.Players
             msg.AnimTriggers = triggers;
             _lastBools = b;
             _hasLast = true;
+
+            // Periodic debug log every 3s to confirm what SourceAnimReader sees
+            if (Time.time - _lastSrcLog > 3f)
+            {
+                ModRuntime.Log?.Msg("[SRC] shoot=" + (b.HasFlag(AnimBools.Shooting) ? "1" : "0")
+                    + " Fire1=" + (Input.GetButton("Fire1") ? "1" : "0")
+                    + " Mouse0=" + (Input.GetMouseButton(0) ? "1" : "0")
+                    + " aiming=" + (msg.AimingTime > 0.5f ? "1" : "0")
+                    + " aimingTime=" + msg.AimingTime.ToString("F2")
+                    + " weapon=" + msg.Weapon
+                    + " forward=" + msg.Forward.ToString("F2"));
+                _lastSrcLog = Time.time;
+            }
         }
 
         public static void AccumulateTrigger(AnimTriggers trigger)
@@ -157,6 +182,7 @@ namespace SyncRADation.Players
             _lastPlayerRoot = null;
             _boneReader = null;
             _lastWeaponRead = 0;
+
         }
 
         private static Transform FindFacingPivot(Transform root)

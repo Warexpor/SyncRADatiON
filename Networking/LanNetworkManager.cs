@@ -247,8 +247,8 @@ namespace SyncRADation.Networking
             if (_boneSendCounter % PluginInfo.BoneSendDivider != 0)
                 msg.BoneRotations = null;
 
+            // Ammo-based shooting detection is handled in SourceAnimReader.ReadFromPlayer
             if (PlayerState.aiming) msg.AnimBools |= AnimBools.Aiming;
-            if (PlayerState.shooting) msg.AnimBools |= AnimBools.Shooting;
             if (PlayerState.charState == PlayerState.charStates.run) msg.AnimBools |= AnimBools.Running;
 
             return msg;
