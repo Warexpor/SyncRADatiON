@@ -43,6 +43,8 @@ namespace SyncRADation.Networking
 
         public static void ApplyMessage(PartyKeyRingMessage msg)
         {
+            var net = LanNetworkManager.Instance;
+            if (net != null && net.Role == NetworkRole.Host) return;
             _keys.Clear();
             if (msg.ItemEnums == null) return;
             for (int i = 0; i < msg.ItemEnums.Length; i++)

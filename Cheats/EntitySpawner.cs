@@ -1,4 +1,4 @@
-// SyncRADation ó IMGUI debug window: find and clone enemies at player position
+// SyncRADation ù IMGUI debug window: find and clone enemies at player position
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -89,6 +89,12 @@ namespace SyncRADation.Cheats
         {
             try
             {
+                if (Sync.NetGate.Live && !Sync.NetGate.Host)
+                {
+                    SetStatus("Host-only while connected", true);
+                    return;
+                }
+
                 var playerPos = GetPlayerPos();
                 var playerFwd = GetPlayerForward();
                 var spawnPos = playerPos + playerFwd * 5f + Vector3.up * 0.1f;
@@ -107,6 +113,13 @@ namespace SyncRADation.Cheats
                 if (ec != null)
                 {
                     try { ec.WakeUp(); } catch { }
+                }
+
+                if (Sync.NetGate.Live && Sync.NetGate.Host)
+                {
+                    SyncRADation.Sync.WorldRegistry.Rebuild();
+                    var net = SyncRADation.Networking.LanNetworkManager.Instance;
+                    net?.EnemySync.OnSceneChanged();
                 }
 
                 SetStatus("Spawned: " + entry.Name + " at " + spawnPos.ToString("F1"));

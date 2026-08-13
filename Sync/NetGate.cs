@@ -16,6 +16,8 @@ namespace SyncRADation.Sync
             if (_applying > 0) _applying--;
         }
 
+        public static void Reset() => _applying = 0;
+
         public static bool Live
         {
             get

@@ -179,6 +179,8 @@ namespace SyncRADation.Cheats
 
             try
             {
+                if (Sync.NetGate.Live)
+                    throw new System.InvalidOperationException("skip SceneManager while connected");
                 UnityEngine.SceneManagement.SceneManager.LoadScene(loc.Scene);
                 SetStatus("Loading via SceneManager: " + loc.Scene);
                 ShowMenu = false;
@@ -191,6 +193,8 @@ namespace SyncRADation.Cheats
 
             try
             {
+                if (Sync.NetGate.Live)
+                    throw new System.InvalidOperationException("skip cheat lvl while connected");
                 global::Cheats.cheat("lvl " + loc.Scene);
                 SetStatus("Sent cheat lvl " + loc.Scene + " (may no-op if console locked)");
                 ShowMenu = false;
@@ -208,6 +212,12 @@ namespace SyncRADation.Cheats
         {
             try
             {
+                if (Sync.NetGate.Live)
+                {
+                    SetStatus("Rooms disabled while connected", true);
+                    return;
+                }
+
                 string name = !string.IsNullOrEmpty(room.roomName) ? room.roomName : room.gameObject.name;
 
                 // Native goto first

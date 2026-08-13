@@ -156,7 +156,7 @@ namespace SyncRADation.Players
                 if (srcCmt != null && proxyCmt != null)
                 {
                     proxyCmt.modelState = srcCmt.modelState;
-                    CharacterModelType.wearHat = CharacterModelType.wearHat;
+                    CharacterModelType.wearHat = savedWearHat;
                     CharacterModelType.ApplyType();
                 }
             }
@@ -276,6 +276,26 @@ namespace SyncRADation.Players
             if (rb2 != null) { rb2.gravityScale = 0f; rb2.isKinematic = true; rb2.Sleep(); }
             var rb3 = proxy.GetComponent<Rigidbody>();
             if (rb3 != null) { rb3.useGravity = false; rb3.isKinematic = true; rb3.Sleep(); }
+
+            var proxyRb = proxy.GetComponent<Rigidbody>();
+            if (proxyRb == null)
+            {
+                proxyRb = proxy.AddComponent<Rigidbody>();
+                proxyRb.useGravity = false;
+                proxyRb.isKinematic = true;
+                proxyRb.constraints = RigidbodyConstraints.FreezeAll;
+            }
+            var proxyCol = proxy.GetComponent<CapsuleCollider>();
+            if (proxyCol == null)
+            {
+                proxyCol = proxy.AddComponent<CapsuleCollider>();
+                proxyCol.radius = 0.3f;
+                proxyCol.height = 1.8f;
+                proxyCol.center = new Vector3(0, 0.9f, 0);
+                proxyCol.isTrigger = true;
+            }
+            else
+                proxyCol.enabled = true;
 
             Object.Destroy(dummy);
 

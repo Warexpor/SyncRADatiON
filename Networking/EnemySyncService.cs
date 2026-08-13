@@ -226,6 +226,8 @@ namespace SyncRADation.Networking
 
         public void OnEnemyStateReceived(EnemyStateMessage msg)
         {
+            var net = LanNetworkManager.Instance;
+            if (net != null && net.Role == NetworkRole.Host) return;
             if (msg.Enemies == null) return;
 
             for (int i = 0; i < msg.Enemies.Length; i++)
@@ -321,8 +323,7 @@ namespace SyncRADation.Networking
         /// <summary>Host applies damage from a remote player (legacy float dmg or native TakeDamage).</summary>
         public bool ApplyDamageOnHost(ulong enemyId, float damage)
         {
-            return ApplyNativeTakeDamageOnHost(enemyId, 0f, 0f, 1f, false)
-                || ApplyLegacyHpDamage(enemyId, damage);
+            return ApplyLegacyHpDamage(enemyId, damage);
         }
 
         /// <summary>Preferred: call real EnemyController.TakeDamage chances (from PlayerAttack).</summary>

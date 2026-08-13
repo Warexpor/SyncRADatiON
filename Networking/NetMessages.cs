@@ -1,10 +1,11 @@
-// SyncRADation � all protocol structs (messages, enums, snapshots) + serialization
+// SyncRADation — all protocol structs (messages, enums, snapshots) + serialization
+using System;
 using LiteNetLib.Utils;
 using UnityEngine;
 
 namespace SyncRADation.Networking
 {
-    // Protocol v6 wire types. Host relays gameplay; host owns world/story.
+    // Protocol v7 wire types. Host relays gameplay; host owns world/story.
     public enum NetMessageType : byte
     {
         Handshake = 1,
@@ -32,7 +33,8 @@ namespace SyncRADation.Networking
         PartyKeyRing = 30,
         DeathPolicy = 31,
         FmodEmitter = 32,
-        _Highest = 33
+        PlayerRoster = 33,
+        _Highest = 34
     }
 
     public enum InteractionKind : byte
@@ -53,6 +55,11 @@ namespace SyncRADation.Networking
         Gunshot = 13,
         MultiCondition = 14,
         SceneFollowRequest = 15,
+        UseItemMulti = 16,
+        CutsceneProceed = 17,
+        BookOpen = 18,
+        BookMemory = 19,
+        DroppedPickup = 20,
     }
 
     public enum StoryCmd : byte
@@ -78,6 +85,30 @@ namespace SyncRADation.Networking
     {
         ClientDowned = 1,
         HostWipeReload = 2,
+    }
+
+    /// <summary>Host → all: full session id list (includes 0). Leave is an omission; clients prune proxies.</summary>
+    public struct PlayerRosterMessage
+    {
+        public int[] PlayerIds;
+
+        public void Serialize(NetDataWriter w)
+        {
+            int n = PlayerIds != null ? PlayerIds.Length : 0;
+            if (n > 32) n = 32;
+            w.Put((byte)n);
+            for (int i = 0; i < n; i++)
+                w.Put(PlayerIds[i]);
+        }
+
+        public static PlayerRosterMessage Deserialize(NetDataReader r)
+        {
+            int n = r.GetByte();
+            var ids = n > 0 ? new int[n] : Array.Empty<int>();
+            for (int i = 0; i < n; i++)
+                ids[i] = r.GetInt();
+            return new PlayerRosterMessage { PlayerIds = ids };
+        }
     }
 
     public struct SnapshotRequestMessage
@@ -267,8 +298,8 @@ namespace SyncRADation.Networking
         public float PosX;
         public float PosY;
         public float PosZ;
-        public float RotY;
-        public float RootY;
+        public float RotY;   // facing-pivot world quat.w (was fAngle)
+        public float RootY;  // quat.y
         public float VelX;
         public float VelZ;
         public float Forward;
@@ -289,9 +320,29 @@ namespace SyncRADation.Networking
         public bool Climbing;
         public byte ModelState;   // CharacterModelType.ElsterType
         public bool WearHat;
-        public float RootX;
-        public float RootZ;
+        public float RootX;  // quat.x
+        public float RootZ;  // quat.z
         public float[] BoneRotations;
+
+        public void SetFacingWorld(Quaternion q)
+        {
+            if (q.w < 0f)
+                q = new Quaternion(-q.x, -q.y, -q.z, -q.w);
+            RootX = q.x;
+            RootY = q.y;
+            RootZ = q.z;
+            RotY = q.w;
+        }
+
+        public Quaternion GetFacingWorld()
+        {
+            var q = new Quaternion(RootX, RootY, RootZ, RotY);
+            float mag = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
+            if (mag < 0.0001f)
+                return Quaternion.identity;
+            mag = Mathf.Sqrt(mag);
+            return new Quaternion(q.x / mag, q.y / mag, q.z / mag, q.w / mag);
+        }
 
         public void Serialize(NetDataWriter w)
         {
@@ -449,8 +500,9 @@ namespace SyncRADation.Networking
         public static EnemyStateMessage Deserialize(NetDataReader r)
         {
             int cnt = r.GetInt();
-            var arr = new EnemySnapshotNet[cnt];
-            for (int i = 0; i < cnt; i++)
+            if (cnt < 0 || cnt > 512) cnt = 0;
+            var arr = cnt > 0 ? new EnemySnapshotNet[cnt] : System.Array.Empty<EnemySnapshotNet>();
+            for (int i = 0; i < arr.Length; i++)
                 arr[i] = EnemySnapshotNet.Deserialize(r);
             return new EnemyStateMessage { Enemies = arr };
         }
@@ -834,7 +886,7 @@ namespace SyncRADation.Networking
                 FullRefresh = r.GetBool()
             };
             int cnt = r.GetInt();
-            if (cnt > 0)
+            if (cnt > 0 && cnt < 8192)
             {
                 msg.Entries = new PuzzleStateEntry[cnt];
                 for (int i = 0; i < cnt; i++)
@@ -917,8 +969,9 @@ namespace SyncRADation.Networking
         public static BossStateMessage Deserialize(NetDataReader r)
         {
             int cnt = r.GetInt();
-            var arr = new BossSnapshotNet[cnt];
-            for (int i = 0; i < cnt; i++)
+            if (cnt < 0 || cnt > 64) cnt = 0;
+            var arr = cnt > 0 ? new BossSnapshotNet[cnt] : System.Array.Empty<BossSnapshotNet>();
+            for (int i = 0; i < arr.Length; i++)
                 arr[i] = BossSnapshotNet.Deserialize(r);
             return new BossStateMessage { Bosses = arr };
         }

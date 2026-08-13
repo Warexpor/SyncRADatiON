@@ -162,7 +162,8 @@ namespace SyncRADation.Players
             sb.Append("\n  holster=").Append(_holsterSound ?? "null");
             sb.Append("\n  reloadFMOD=").Append(_reloadFMODPath ?? "null");
 
-            ModRuntime.Log?.Msg(sb.ToString());
+            if (ModRuntime.VerboseLogging)
+                ModRuntime.Log?.Msg(sb.ToString());
 
             // Test sound removed — was playing footstep on every proxy init
         }
@@ -193,7 +194,7 @@ namespace SyncRADation.Players
                 distToLocal = Vector3.Distance(_proxyTransform.position, localPlayer.transform.position);
 
             // Log every ~500 ticks
-            if (_tickCount % 500 == 0)
+            if (ModRuntime.VerboseLogging && _tickCount % 2000 == 0)
                 ModRuntime.Log?.Msg("[Audio] Tick#" + _tickCount + " step=" + state.StepHappened
                     + " dist=" + distToLocal.ToString("F1"));
 
@@ -201,8 +202,8 @@ namespace SyncRADation.Players
             bool nearby = distToLocal < 40f;
             bool farRange = distToLocal < 75f;
 
-            // Shooting — far range (gunshots are loud)
-            if (farRange && shooting && !_lastShooting)
+            // Shooting — far range; Fire trigger is per-shot (held Fire1 stays Shooting)
+            if (farRange && triggers.HasFlag(AnimTriggers.Fire))
                 PlayShootSound(state.Weapon);
             _lastShooting = shooting;
 
@@ -350,11 +351,16 @@ namespace SyncRADation.Players
             if (string.IsNullOrEmpty(path) || _audioAnchor == null) return;
             try
             {
-                RuntimeManager.PlayOneShotAttached(path, _audioAnchor);
+                var inst = RuntimeManager.CreateInstance(path);
+                inst.setVolume(Mathf.Clamp01(volume));
+                inst.set3DAttributes(RuntimeUtils.To3DAttributes(_audioAnchor.transform.position));
+                inst.start();
+                inst.release();
             }
             catch
             {
-                ModRuntime.Log?.Warning("[Audio] FMOD PlayOneShotAttached(" + path + ") FAILED");
+                try { RuntimeManager.PlayOneShotAttached(path, _audioAnchor); }
+                catch { ModRuntime.Log?.Warning("[Audio] FMOD PlayOneShotAttached(" + path + ") FAILED"); }
             }
         }
 

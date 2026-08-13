@@ -1,5 +1,6 @@
 // Invoke SIGNALIS door entry points (private methods via reflection when needed).
 using System.Reflection;
+using SyncRADation.Sync;
 using UnityEngine;
 
 namespace SyncRADation.Networking
@@ -31,12 +32,11 @@ namespace SyncRADation.Networking
             if (open == wasOpen)
                 return;
 
-            // Flag first so Update/coroutines that poll `open` can run.
             d.open = open;
 
+            NetGate.BeginApply();
             try
             {
-                // IL2CPP: StartCoroutine(IEnumerator) not always available — call private open/close.
                 if (open)
                 {
                     if (_doubleOpen != null)
@@ -53,6 +53,10 @@ namespace SyncRADation.Networking
             catch (System.Exception ex)
             {
                 ModRuntime.Log?.Warning("[DoorNative] DoubleDoor: " + ex.Message);
+            }
+            finally
+            {
+                NetGate.EndApply();
             }
         }
 
@@ -82,28 +86,35 @@ namespace SyncRADation.Networking
             Resolve();
 
             bool was = sd.opened;
+            if (opened == was && !moving)
+                return;
+
+            NetGate.BeginApply();
+            try
+            {
+                // cycle() toggles; do not pre-set opened.
+                if (opened != was && _slideCycle != null)
+                    _slideCycle.Invoke(sd, null);
+            }
+            catch (System.Exception ex)
+            {
+                ModRuntime.Log?.Warning("[DoorNative] SlidingDoor: " + ex.Message);
+            }
+            finally
+            {
+                NetGate.EndApply();
+            }
+
             sd.opened = opened;
             sd.moving = moving;
 
-            if (opened != was || moving)
+            try
             {
-                try
-                {
-                    if (_slideCycle != null)
-                        _slideCycle.Invoke(sd, null);
-                }
-                catch (System.Exception ex)
-                {
-                    ModRuntime.Log?.Warning("[DoorNative] SlidingDoor: " + ex.Message);
-                }
-                try
-                {
-                    string path = opened ? sd.openSFX : sd.closeSFX;
-                    if (!string.IsNullOrEmpty(path))
-                        FMODUnity.RuntimeManager.PlayOneShot(path, sd.transform.position);
-                }
-                catch { }
+                string path = opened ? sd.openSFX : sd.closeSFX;
+                if (!string.IsNullOrEmpty(path))
+                    FMODUnity.RuntimeManager.PlayOneShot(path, sd.transform.position);
             }
+            catch { }
         }
     }
 }

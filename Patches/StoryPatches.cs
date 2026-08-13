@@ -40,6 +40,16 @@ namespace SyncRADation.Patches
         }
 
         [HarmonyPrefix]
+        [HarmonyPatch(nameof(SProgress.SetString))]
+        public static bool PrefixString(string key, string val)
+        {
+            if (NetGate.IsApplying || !NetGate.Live) return true;
+            if (NetGate.Client) return false;
+            LanNetworkManager.Instance.StorySync.NoteString(key, val);
+            return true;
+        }
+
+        [HarmonyPrefix]
         [HarmonyPatch(nameof(SProgress.SetVector))]
         public static bool PrefixVector(string key, Vector3 val)
         {

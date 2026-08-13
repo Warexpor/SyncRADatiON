@@ -1,6 +1,6 @@
 # SyncRADation — SIGNALIS Multiplayer Mod
 
-**Status:** v0.4.2-dev — protocol v6. Host-authoritative world/story + native presentation/FMOD. Dual-instance playtest required. Decompile: `C:\Users\amicu\Desktop\Dev\SIGNALIS DECOMPILED`.
+**Status:** v0.4.2-dev — protocol v7. Host-authoritative world/story + native presentation/FMOD. Dual-instance playtest required. Decompile: `C:\Users\amicu\Desktop\Dev\SIGNALIS DECOMPILED`.
 
 ## Product
 
@@ -37,16 +37,17 @@ LAN multiplayer MelonLoader mod for SIGNALIS (Unity IL2CPP / Unhollower-style Ma
 
 ## Architecture
 
-- `LanNetworkManager` — LiteNetLib, ids 0..N-1, host relay, join snapshot
+- `LanNetworkManager` — LiteNetLib, ids 0..N-1 (recycled 1..MaxPlayers-1), host relay, join snapshot **unicast**, `PlayerRoster` leave/join
 - `WorldId` / `WorldRegistry` — `hash(scene + hierarchy path)` — never `GetInstanceID()`
 - `EnemySyncService` / `DoorSyncService` / `PuzzleSyncService` / `BossSyncService` / `WorldPickupSyncService`
 - `PlayerProxyBuilder` — visual clone; `NetworkDamageSystem` — local HP/death/drop
 
 ## Protocol
 
-- **ProtocolVersion = 6**
+- **ProtocolVersion = 7**
 - Port default `7777`, key `SyncRADation`
 - v6: full SProgress dump, UnityEvent presentation, FmodEmitter Play/Stop
+- v7: `PlayerRoster` (3+ peers), recycled client ids, join/resync dump to the requester only
 
 ## This machine (dual-instance)
 

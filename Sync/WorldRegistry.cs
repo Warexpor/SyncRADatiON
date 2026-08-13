@@ -28,7 +28,7 @@ namespace SyncRADation.Sync
 
             try
             {
-                var enemies = Object.FindObjectsOfType<EnemyController>();
+                var enemies = FindAll<EnemyController>();
                 if (enemies != null)
                 {
                     for (int i = 0; i < enemies.Length; i++)
@@ -44,7 +44,7 @@ namespace SyncRADation.Sync
                     }
                 }
 
-                var doubles = Object.FindObjectsOfType<Doorway_Double>();
+                var doubles = FindAll<Doorway_Double>();
                 if (doubles != null)
                 {
                     for (int i = 0; i < doubles.Length; i++)
@@ -54,10 +54,12 @@ namespace SyncRADation.Sync
                         ulong id = WorldId.FromGameObject(d.gameObject);
                         if (id != 0 && !DoubleDoors.ContainsKey(id))
                             DoubleDoors[id] = d;
+                        else if (id != 0)
+                            ModRuntime.Log?.Warning("[WorldRegistry] Double door WorldId collision: " + WorldId.DebugLabel(id, d.transform));
                     }
                 }
 
-                var connected = Object.FindObjectsOfType<ConnectedDoors>();
+                var connected = FindAll<ConnectedDoors>();
                 if (connected != null)
                 {
                     for (int i = 0; i < connected.Length; i++)
@@ -67,10 +69,12 @@ namespace SyncRADation.Sync
                         ulong id = WorldId.FromGameObject(c.gameObject);
                         if (id != 0 && !ConnectedDoorMap.ContainsKey(id))
                             ConnectedDoorMap[id] = c;
+                        else if (id != 0)
+                            ModRuntime.Log?.Warning("[WorldRegistry] ConnectedDoor WorldId collision: " + WorldId.DebugLabel(id, c.transform));
                     }
                 }
 
-                var sliding = Object.FindObjectsOfType<EventSlidingDoor>();
+                var sliding = FindAll<EventSlidingDoor>();
                 if (sliding != null)
                 {
                     for (int i = 0; i < sliding.Length; i++)
@@ -80,6 +84,8 @@ namespace SyncRADation.Sync
                         ulong id = WorldId.FromGameObject(s.gameObject);
                         if (id != 0 && !SlidingDoors.ContainsKey(id))
                             SlidingDoors[id] = s;
+                        else if (id != 0)
+                            ModRuntime.Log?.Warning("[WorldRegistry] Sliding door WorldId collision: " + WorldId.DebugLabel(id, s.transform));
                     }
                 }
             }
@@ -102,6 +108,12 @@ namespace SyncRADation.Sync
             ConnectedDoorMap.Clear();
             SlidingDoors.Clear();
             _sceneName = "";
+        }
+
+        private static T[] FindAll<T>() where T : Object
+        {
+            try { return Object.FindObjectsOfType<T>(true); }
+            catch { return Object.FindObjectsOfType<T>(); }
         }
 
         public static bool TryGetEnemy(ulong id, out EnemyController enemy) => Enemies.TryGetValue(id, out enemy);

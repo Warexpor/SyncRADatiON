@@ -7,6 +7,9 @@ namespace SyncRADation.Networking
 {
     public static class FmodEmitterSync
     {
+        static readonly System.Collections.Generic.Dictionary<ulong, bool> _sentPlaying
+            = new System.Collections.Generic.Dictionary<ulong, bool>();
+
         public static void Handle(FmodEmitterMessage msg)
         {
             var net = LanNetworkManager.Instance;
@@ -56,7 +59,11 @@ namespace SyncRADation.Networking
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
             ulong id = WorldId.FromGameObject(emitter.gameObject);
-            PlaytestLog.Verbose("FMOD", (play ? "host Play" : "host Stop") + " id=" + id.ToString("X16"));
+            bool was;
+            if (_sentPlaying.TryGetValue(id, out was) && was == play) return;
+            if (!play && !was) return;
+            _sentPlaying[id] = play;
+            PlaytestLog.Event("FMOD", (play ? "host Play" : "host Stop") + " id=" + id.ToString("X16"));
             net.SendFmodEmitter(new FmodEmitterMessage
             {
                 WorldId = unchecked((long)id),
@@ -65,12 +72,31 @@ namespace SyncRADation.Networking
             });
         }
 
+        public static void Reset() => _sentPlaying.Clear();
+
+        public static void DumpPlaying()
+        {
+            var net = LanNetworkManager.Instance;
+            if (net == null || net.Role != NetworkRole.Host || !net.IsConnected) return;
+            foreach (var kvp in _sentPlaying)
+            {
+                if (!kvp.Value || kvp.Key == 0) continue;
+                net.SendFmodEmitter(new FmodEmitterMessage
+                {
+                    WorldId = unchecked((long)kvp.Key),
+                    Play = true,
+                    Kind = 0
+                });
+            }
+        }
+
         public static void HostOneShot(string path, Vector3 pos)
         {
             if (string.IsNullOrEmpty(path) || !NetGate.Host || NetGate.IsApplying) return;
+            if (IsLocalOneShot(path)) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
-            PlaytestLog.Verbose("FMOD", "host OneShot " + path);
+            PlaytestLog.Event("FMOD", "host OneShot " + path);
             net.SendFmodEmitter(new FmodEmitterMessage
             {
                 Play = true,
@@ -80,6 +106,14 @@ namespace SyncRADation.Networking
                 PosZ = pos.z,
                 Path = path
             });
+        }
+
+        public static bool IsLocalOneShot(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return true;
+            if (path.StartsWith("event:/Elster/")) return true;
+            if (path.StartsWith("event:/UI/")) return true;
+            return false;
         }
 
         public static bool IsLocalOnly(Transform t)

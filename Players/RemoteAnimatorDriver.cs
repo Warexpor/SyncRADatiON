@@ -1,4 +1,4 @@
-// SyncRADation — drives proxy Animator params (9 floats, 22 bools, 16 triggers), facing pivot, bone lerp
+// SyncRADation  drives proxy Animator params (9 floats, 22 bools, 16 triggers), facing pivot, bone lerp
 using SyncRADation.Networking;
 using UnityEngine;
 
@@ -45,6 +45,23 @@ namespace SyncRADation.Players
         }
 
         public Transform RootTransform => _rootTransform;
+        public Transform FacingPivot => _facingPivot;
+
+        public Vector3 AimDirection
+        {
+            get
+            {
+                if (_facingPivot != null)
+                {
+                    Vector3 f = _facingPivot.forward;
+                    if (f.sqrMagnitude > 0.0001f)
+                        return f.normalized;
+                }
+                if (_rootTransform != null)
+                    return _rootTransform.forward;
+                return Vector3.forward;
+            }
+        }
 
         public void Initialize(GameObject target)
         {
@@ -80,7 +97,7 @@ namespace SyncRADation.Players
             _weapon = state.Weapon;
             _facing = state.Facing;
             _targetFacing = state.RotY;
-            // Store bone snapshot for interpolation â€” use fixed 50ms window for smooth blending
+            // Store bone snapshot for interpolation  use fixed 50ms window for smooth blending
             if (state.BoneRotations != null && state.BoneRotations.Length > 0)
             {
                 if (_boneSync != null && _boneSync.BoneCount > 0 && _boneSync.BoneCount != state.BoneRotations.Length / 3)
@@ -88,9 +105,12 @@ namespace SyncRADation.Players
                     SyncRADation.ModRuntime.Log?.Msg("[DRV] BONE COUNT MISMATCH! proxy=" + _boneSync.BoneCount + " source=" + (state.BoneRotations.Length / 3));
                 }
                 _prevBones = _curBones;
-                _curBones = state.BoneRotations;
-                _prevBoneTime = Time.time;
-                _curBoneTime = Time.time + 0.05f; // fixed 50ms window for 20Hz bone rate
+                var src = state.BoneRotations;
+                _curBones = new float[src.Length];
+                System.Array.Copy(src, _curBones, src.Length);
+                float oldCur = _curBoneTime;
+                _prevBoneTime = _prevBones != null ? oldCur : Time.time;
+                _curBoneTime = Time.time + 0.05f;
             }
 
             if (!_snappedToFirst)
@@ -193,7 +213,7 @@ namespace SyncRADation.Players
 
         private void ApplyWeaponParams(Animator anim)
         {
-            string[] wpnNames = { "Handgun", "Pistol", "Revolver", "Shotgun", "Rifle", "SMG", "Flare", "CAR" };
+            string[] wpnNames = { "Handgun", "Pistol", "Revolver", "Shotgun", "Rifle", "SMG", "Flare", "CAR", "Melee" };
             string activeName = null;
             if (_weapon == Networking.WeaponType.Handgun) activeName = "Handgun";
             else if (_weapon == Networking.WeaponType.Pistol) activeName = "Pistol";
@@ -203,6 +223,7 @@ namespace SyncRADation.Players
             else if (_weapon == Networking.WeaponType.SMG) activeName = "SMG";
             else if (_weapon == Networking.WeaponType.Flare) activeName = "Flare";
             else if (_weapon == Networking.WeaponType.CAR) activeName = "CAR";
+            else if (_weapon == Networking.WeaponType.Melee) activeName = "Melee";
             foreach (var name in wpnNames)
             {
                 bool active = (name == activeName);
@@ -235,7 +256,8 @@ namespace SyncRADation.Players
         {
             if (_facingPivot == null)
                 return;
-            _facingPivot.localEulerAngles = new Vector3(0f, _currentFacing, 0f);
+            // World yaw lives on the proxy root (facing-pivot world quat). Do not re-apply fAngle.
+            _facingPivot.localRotation = Quaternion.identity;
         }
 
         private float _lastLog;
@@ -248,7 +270,7 @@ namespace SyncRADation.Players
                 ApplyWeaponParams(anim);
             }
 
-            // Apply bone rotations â€” interpolate between snapshots
+            // Apply bone rotations  interpolate between snapshots
             if (_boneSync != null && _curBones != null)
             {
                 if (_prevBones != null && _curBoneTime > _prevBoneTime)
@@ -262,7 +284,7 @@ namespace SyncRADation.Players
                 }
             }
 
-            if (Time.time - _lastLog > 3f)
+            if (SyncRADation.ModRuntime.VerboseLogging && Time.time - _lastLog > 30f)
             {
                 try
                 {
@@ -285,7 +307,7 @@ namespace SyncRADation.Players
                         sb.Append(" shoot="); sb.Append(a.GetBool("Shooting") ? "1" : "0");
                         sb.Append(" run="); sb.Append(a.GetBool("Running") ? "1" : "0");
                         sb.Append(" inv="); sb.Append(a.GetBool("Inventory") ? "1" : "0");
-                        string[] wpnNames = { "Handgun", "Pistol", "Revolver", "Shotgun", "Rifle", "SMG", "Flare", "CAR" };
+                        string[] wpnNames = { "Handgun", "Pistol", "Revolver", "Shotgun", "Rifle", "SMG", "Flare", "CAR", "Melee" };
                         foreach (var w in wpnNames)
                         {
                             sb.Append(" ").Append(w).Append("=");

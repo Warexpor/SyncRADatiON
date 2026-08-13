@@ -47,9 +47,12 @@ namespace SyncRADation.Patches
             if (net.Role == NetworkRole.Host)
                 return true;
 
-            // Client: do not mutate puppet HP; host will apply + snapshot.
             ulong id = WorldId.FromGameObject(enemy.gameObject);
-            if (id == 0) return false;
+            if (id == 0)
+            {
+                ModRuntime.Log?.Warning("[Damage] Client hit with WorldId 0: " + enemy.gameObject.name);
+                return false;
+            }
 
             net.SendNativeEnemyHit(id, fire, crit, hurt, noSneak);
             return false;

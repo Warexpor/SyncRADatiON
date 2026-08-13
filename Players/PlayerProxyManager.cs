@@ -14,23 +14,29 @@ namespace SyncRADation.Players
         // Per-proxy interpolation state
         private class InterpState
         {
-            public Vector3 prevPos;
             public Vector3 targetPos;
-            public float prevRotY;
-            public float targetRotY;
+            public Vector3 vel;
+            public Quaternion facingWorld = Quaternion.identity;
             public float arrivalTime;
-            public bool hasTarget;
             public bool isFirst;
         }
         private readonly Dictionary<int, InterpState> _interp = new Dictionary<int, InterpState>();
 
-        private static float SnapshotInterval => PluginInfo.SendInterval;
         private const float TeleportDistance = 15f;
+        private const float FacingSlerpRate = 16f;
+        private const float PositionLerpRate = 16f;
+        private const float PredictMaxAge = 0.12f;
         private int _proxyLayer = -1;
 
         public int ProxyLayer => _proxyLayer;
         public bool HasProxy(int playerId) => _proxies.ContainsKey(playerId);
         public RemotePlayerProxy GetProxy(int playerId) => _proxies.TryGetValue(playerId, out var p) ? p : null;
+
+        public IEnumerable<int> GetProxyPlayerIds()
+        {
+            foreach (var kvp in _proxies)
+                yield return kvp.Key;
+        }
 
         public int GetPlayerIdByGameObject(GameObject go)
         {
@@ -44,7 +50,11 @@ namespace SyncRADation.Players
             try
             {
                 var local = PlayerState.player;
-                if (local == go) return 0;
+                if (local == go)
+                {
+                    var net = LanNetworkManager.Instance;
+                    return net != null ? net.LocalPlayerId : 0;
+                }
             }
             catch { }
             return -1;
@@ -70,10 +80,7 @@ namespace SyncRADation.Players
         public void CreateProxy(int playerId, GameObject source)
         {
             if (_proxies.ContainsKey(playerId))
-            {
-                ModRuntime.Log?.Msg("[ProxyManager] Proxy for player " + playerId + " already exists");
-                return;
-            }
+                DestroyProxy(playerId);
 
             GameObject clone = PlayerProxyBuilder.CreatePlayerClone(source, "RemotePlayer_" + playerId, Vector3.zero, ModRuntime.Log);
             if (clone == null)
@@ -126,13 +133,15 @@ namespace SyncRADation.Players
             {
                 proxy.ApplyState(state);
                 var targetPos = new Vector3(state.PosX, state.PosY, state.PosZ);
-                ApplyPosition(playerId, targetPos, state.RotY, state.RootX, state.RootY, state.RootZ);
+                ApplyPosition(playerId, targetPos, new Vector3(state.VelX, 0f, state.VelZ), state.GetFacingWorld());
             }
         }
 
-        private void ApplyPosition(int playerId, Vector3 position, float rotY, float rootX, float rootY, float rootZ)
+        private void ApplyPosition(int playerId, Vector3 position, Vector3 velocity, Quaternion facingWorld)
         {
             if (!_interp.TryGetValue(playerId, out var ist)) return;
+
+            ist.facingWorld = facingWorld;
 
             bool teleport = !ist.isFirst &&
                 (Vector3.Distance(ist.targetPos, position) > TeleportDistance);
@@ -142,73 +151,75 @@ namespace SyncRADation.Players
                 if (_proxyObjects.TryGetValue(playerId, out var go) && go != null)
                 {
                     go.transform.position = position;
-                    // Preserve SIGNALIS root tilt from source
-                    go.transform.eulerAngles = new Vector3(rootX, rootY, rootZ);
+                    go.transform.rotation = facingWorld;
                 }
-                ist.prevPos = position;
                 ist.targetPos = position;
-                ist.prevRotY = rotY;
-                ist.targetRotY = rotY;
+                ist.vel = velocity;
                 ist.arrivalTime = Time.time;
-                ist.hasTarget = true;
                 ist.isFirst = false;
                 return;
             }
 
-            ist.prevPos = _proxyObjects.TryGetValue(playerId, out var go2) && go2 != null
-                ? go2.transform.position : ist.targetPos;
-            ist.prevRotY = rotY; // Facing handled by RemoteAnimatorDriver
             ist.targetPos = position;
-            ist.targetRotY = rotY;
+            ist.vel = velocity;
             ist.arrivalTime = Time.time;
-            ist.hasTarget = true;
         }
 
         public void LateUpdate()
         {
-            TickAll();
             float now = Time.time;
+            float followT = Mathf.Clamp01(Time.deltaTime * PositionLerpRate);
+            var stale = new List<int>();
 
-            foreach (var kvp in _interp)
+            foreach (var kvp in _proxyObjects)
             {
                 int pid = kvp.Key;
-                var ist = kvp.Value;
-                if (!ist.hasTarget) continue;
-                if (!_proxyObjects.TryGetValue(pid, out var go) || go == null) continue;
-
-                float elapsed = now - ist.arrivalTime;
-
-                if (elapsed > 0.3f)
+                var go = kvp.Value;
+                if (go == null)
                 {
-                    go.transform.position = ist.targetPos;
-                    ist.hasTarget = false;
+                    stale.Add(pid);
+                    continue;
                 }
-                else if (elapsed > SnapshotInterval)
+                if (!_interp.TryGetValue(pid, out var ist)) continue;
+
+                Vector3 predicted = ist.targetPos;
+                float age = now - ist.arrivalTime;
+                if (age > 0f && age < PredictMaxAge)
                 {
-                    float extrapT = elapsed - SnapshotInterval;
-                    Vector3 vel = (ist.targetPos - ist.prevPos) / SnapshotInterval;
-                    float damp = Mathf.Clamp01(1f - (extrapT / 0.27f));
-                    go.transform.position = ist.targetPos + vel * extrapT * damp;
+                    float spd2 = ist.vel.x * ist.vel.x + ist.vel.z * ist.vel.z;
+                    if (spd2 > 0.04f)
+                        predicted += ist.vel * age;
                 }
+
+                if (Vector3.Distance(go.transform.position, predicted) > TeleportDistance)
+                    go.transform.position = predicted;
                 else
-                {
-                    float t = elapsed / SnapshotInterval;
-                    float smoothT = t * t * (3f - 2f * t);
-                    go.transform.position = Vector3.Lerp(ist.prevPos, ist.targetPos, smoothT);
-                }
+                    go.transform.position = Vector3.Lerp(go.transform.position, predicted, followT);
+
+                if (Quaternion.Angle(go.transform.rotation, ist.facingWorld) > 50f)
+                    go.transform.rotation = ist.facingWorld;
+                else
+                    go.transform.rotation = Quaternion.Slerp(go.transform.rotation, ist.facingWorld,
+                        Mathf.Clamp01(Time.deltaTime * FacingSlerpRate));
             }
+
+            TickAll();
+            for (int i = 0; i < stale.Count; i++)
+                DestroyProxy(stale[i]);
         }
 
         private void TickAll()
         {
             foreach (var kvp in _proxies)
             {
-                var driver = kvp.Value.AnimDriver;
+                var proxy = kvp.Value;
+                var driver = proxy.AnimDriver;
                 if (driver != null)
                 {
                     driver.Tick();
                     driver.LateTick();
                 }
+                proxy.LateFxTick();
             }
         }
     }

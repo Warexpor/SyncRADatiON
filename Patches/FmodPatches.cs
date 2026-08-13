@@ -34,6 +34,7 @@ namespace SyncRADation.Patches
         public static void Postfix(string path, Vector3 position)
         {
             if (NetGate.IsApplying || !NetGate.Host) return;
+            if (FmodEmitterSync.IsLocalOneShot(path)) return;
             var player = PlayerState.player;
             if (player != null && (player.transform.position - position).sqrMagnitude < 4f)
                 return;

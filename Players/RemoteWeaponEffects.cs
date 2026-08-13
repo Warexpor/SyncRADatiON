@@ -20,10 +20,12 @@ namespace SyncRADation.Players
         private Transform _slide;
         private float _slideRestPos;
         private float _flashTimer;
+        private float _ejectStopTimer;
+        private float _smokeStopTimer;
         private int _wallMask = ~0;
 
-        // Visible long enough at ~30 Hz state + remote render (~2 frames minimum)
-        private const float FlashDuration = 0.08f;
+        // Native muzzleCycle is ~1–2 frames; 80ms looked like a stuck flash on the clone.
+        private const float FlashDuration = 0.04f;
         private const float SlideTravel = 0.02f;
         private const float SlideReturn = 0.08f;
         private readonly GameObject _weaponRoot;
@@ -40,6 +42,21 @@ namespace SyncRADation.Players
         public void SetWallMask(int mask)
         {
             _wallMask = mask;
+        }
+
+        public bool TryGetMuzzleForward(out Vector3 dir)
+        {
+            if (_muzzleOrigin != null)
+            {
+                dir = _muzzleOrigin.forward;
+                if (dir.sqrMagnitude > 0.0001f)
+                {
+                    dir.Normalize();
+                    return true;
+                }
+            }
+            dir = default;
+            return false;
         }
 
         public bool TryGetMuzzleWorldPos(out Vector3 pos)
@@ -245,6 +262,18 @@ namespace SyncRADation.Players
             catch { }
         }
 
+        private static void PlayBurst(ParticleSystem ps)
+        {
+            if (ps == null) return;
+            try
+            {
+                ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+                ps.Play(true);
+                ps.Emit(1);
+            }
+            catch { }
+        }
+
         private static ParticleSystem FindMatchingPs(Transform[] all, string name)
         {
             if (string.IsNullOrEmpty(name)) return null;
@@ -379,9 +408,14 @@ namespace SyncRADation.Players
                 _muzzleFlash.SetActive(true);
                 EnsureRendererVisible(_muzzleFlash);
                 _flashTimer = FlashDuration;
+                var flashPs = _muzzleFlash.GetComponentsInChildren<ParticleSystem>(true);
+                for (int i = 0; i < flashPs.Length; i++)
+                    HardenParticle(flashPs[i]);
             }
             PlayBurst(_muzzleSmoke);
+            _smokeStopTimer = 0.2f;
             PlayBurst(_caseEject);
+            _ejectStopTimer = 0.2f;
             if (_slide != null)
             {
                 Vector3 p = _slide.localPosition;
@@ -393,17 +427,7 @@ namespace SyncRADation.Players
         public void OnReload()
         {
             PlayBurst(_caseEject);
-        }
-
-        private static void PlayBurst(ParticleSystem ps)
-        {
-            if (ps == null) return;
-            try
-            {
-                ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
-                ps.Play(true);
-            }
-            catch { }
+            _ejectStopTimer = 0.2f;
         }
 
         public void DoImpactRaycast(Vector3 origin, Vector3 direction, float damage)
@@ -415,11 +439,7 @@ namespace SyncRADation.Players
                 if (hitPlayer)
                 {
                     if (Config.ModConfig.FriendlyFire?.Value == true)
-                    {
-                        ModRuntime.Log?.Msg("[FX] Friendly fire! Hit local player at " + hit.point.ToString("F1") + " dmg=" + damage.ToString("F0"));
-                        NetworkDamageSystem.ApplyDamage(damage, hit.point, direction);
-                    }
-                    PlayAt(_ricochet, hit.point, hit.normal);
+                        PlayAt(_ricochet, hit.point, hit.normal);
                     return;
                 }
 
@@ -506,6 +526,19 @@ namespace SyncRADation.Players
                     _muzzleFlash.SetActive(false);
             }
 
+            if (_ejectStopTimer > 0f)
+            {
+                _ejectStopTimer -= dt;
+                if (_ejectStopTimer <= 0f)
+                    StopEmitKeep(_caseEject);
+            }
+            if (_smokeStopTimer > 0f)
+            {
+                _smokeStopTimer -= dt;
+                if (_smokeStopTimer <= 0f)
+                    StopEmitKeep(_muzzleSmoke);
+            }
+
             if (_slide != null)
             {
                 float z = _slide.localPosition.z;
@@ -518,6 +551,13 @@ namespace SyncRADation.Players
                     _slide.localPosition = p;
                 }
             }
+        }
+
+        private static void StopEmitKeep(ParticleSystem ps)
+        {
+            if (ps == null) return;
+            try { ps.Stop(true, ParticleSystemStopBehavior.StopEmitting); }
+            catch { }
         }
 
         public void ResetAll()

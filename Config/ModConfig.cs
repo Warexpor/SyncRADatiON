@@ -33,10 +33,12 @@ namespace SyncRADation.Config
                 "Share HP / death / game-state for remote Elster display");
             VerboseLogging = Category.CreateEntry("VerboseLogging", true,
                 "FMOD one-shots and extra diagnostics (playtest default on)");
+
+            if (SyncPuzzles.Value && !ExperimentalPuzzles.Value)
+                SyncPuzzles.Value = false;
+            ExperimentalPuzzles.Value = SyncPuzzles.Value;
         }
 
-        /// <summary>True if either SyncPuzzles or legacy ExperimentalPuzzles is on.</summary>
-        public static bool PuzzlesEnabled =>
-            (SyncPuzzles?.Value == true) || (ExperimentalPuzzles?.Value == true);
+        public static bool PuzzlesEnabled => SyncPuzzles?.Value == true;
     }
 }

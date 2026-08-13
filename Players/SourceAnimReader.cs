@@ -164,8 +164,7 @@ namespace SyncRADation.Players
             _lastBools = b;
             _hasLast = true;
 
-            // Periodic debug log every 3s to confirm what SourceAnimReader sees
-            if (Time.time - _lastSrcLog > 3f)
+            if (ModRuntime.VerboseLogging && Time.time - _lastSrcLog > 30f)
             {
                 ModRuntime.Log?.Msg("[SRC] shoot=" + (b.HasFlag(AnimBools.Shooting) ? "1" : "0")
                     + " Fire1=" + (Input.GetButton("Fire1") ? "1" : "0")
@@ -235,6 +234,13 @@ namespace SyncRADation.Players
             {
                 return false;
             }
+        }
+
+        public static Quaternion ReadFacingWorldRotation(GameObject player)
+        {
+            if (player == null) return Quaternion.identity;
+            var pivot = FindFacingPivot(player.transform);
+            return pivot != null ? pivot.rotation : player.transform.rotation;
         }
 
         private static Transform FindFacingPivot(Transform root)

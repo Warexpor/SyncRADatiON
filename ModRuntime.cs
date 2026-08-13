@@ -38,7 +38,7 @@ namespace SyncRADation
                 Log.Msg("  F2 menu | F3 quick connect | G drop | E pickup");
                 Log.Msg("  FriendlyFire=" + (ModConfig.FriendlyFire?.Value == true)
                     + " VerboseLogging=" + VerboseLogging);
-                Log.Msg("  grep: [Story] [Interact] [FMOD] [KeyRing] [StorageBox] [Scene] [Damage] [Harmony]");
+                Log.Msg("  grep: [Story] [Interact] [FMOD] [KeyRing] [StorageBox] [Scene] [Damage] [Door] [Harmony]");
                 Log.Msg("=============================================");
 
                 Application.runInBackground = true;
@@ -111,12 +111,6 @@ namespace SyncRADation
                 }
             }
 
-            if (pm != null)
-            {
-                foreach (int pid in GetProxyIds(pm))
-                    pm.GetProxy(pid)?.AnimDriver?.PreTick();
-            }
-
             // Friendly fire only (opt-in). Enemy hits go through Harmony → EnemyController.TakeDamage
             // (see Patches/EnemyTakeDamagePatches) — not DIY raycasts.
             if (net != null && net.IsConnected && ModConfig.FriendlyFire?.Value == true)
@@ -129,13 +123,22 @@ namespace SyncRADation
                     if (pl != null)
                     {
                         Vector3 origin = pl.transform.position + Vector3.up * 0.8f;
-                        Quaternion facingRot;
-                        var apc = pl.GetComponent<AlternatePlayerController>();
-                        if (apc != null)
-                            facingRot = Quaternion.Euler(0, apc.fAngle, 0);
+                        Vector3 dir = pl.transform.forward;
+                        try
+                        {
+                            var apc = pl.GetComponent<AlternatePlayerController>();
+                            if (apc != null)
+                            {
+                                var pivot = pl.transform.childCount > 0 ? pl.transform.GetChild(0) : null;
+                                if (pivot != null)
+                                    dir = pivot.forward;
+                            }
+                        }
+                        catch { }
+                        if (dir.sqrMagnitude < 0.0001f)
+                            dir = Vector3.forward;
                         else
-                            facingRot = Quaternion.Euler(0, pl.transform.eulerAngles.y, 0);
-                        Vector3 dir = facingRot * Vector3.forward;
+                            dir.Normalize();
                         int wallMask = GetWallMask();
                         if (pm != null && pm.ProxyLayer >= 0)
                             wallMask |= (1 << pm.ProxyLayer);
@@ -163,6 +166,12 @@ namespace SyncRADation
 
             try { net?.Update(); }
             catch (System.Exception ex) { Log?.Error("Network.Update crashed: " + ex); }
+
+            if (pm != null)
+            {
+                foreach (int pid in GetProxyIds(pm))
+                    pm.GetProxy(pid)?.AnimDriver?.PreTick();
+            }
         }
 
         public static void OnLateUpdate()
@@ -174,7 +183,6 @@ namespace SyncRADation
         public static void OnSceneChanged()
         {
             Log?.Msg("[Runtime] Scene changed");
-            NetworkDamageSystem.Reset();
             _lastLocalShooting = false;
             _ffCooldown = 0f;
             WorldRegistry.Rebuild();

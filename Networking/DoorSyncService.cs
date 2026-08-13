@@ -60,7 +60,7 @@ namespace SyncRADation.Networking
         {
             if (!_ready)
             {
-                if (WorldRegistry.DoorCount > 0 || WorldRegistry.EnemyCount >= 0)
+                if (WorldRegistry.DoorCount > 0)
                     RefreshScene();
                 return;
             }
@@ -142,6 +142,40 @@ namespace SyncRADation.Networking
                 Moving = moving
             };
             net.SendDoorState(msg);
+        }
+
+        public static void NotifyDoubleDoor(Doorway_Double d, bool open)
+        {
+            if (d == null || NetGate.IsApplying) return;
+            var net = LanNetworkManager.Instance;
+            if (net == null || !net.IsConnected) return;
+            ulong id = WorldId.FromGameObject(d.gameObject);
+            if (id == 0) return;
+            bool lo;
+            LastDoubleOpen.TryGetValue(id, out lo);
+            if (lo == open && LastDoubleLocked.ContainsKey(id))
+                return;
+            LastDoubleOpen[id] = open;
+            LastDoubleLocked[id] = d.locked;
+            PlaytestLog.Event("Door", (open ? "open" : "close") + " id=" + id.ToString("X16"));
+            SendDoorChange(DoorType.DoorwayDouble, id, open, d.locked, false, false, false);
+        }
+
+        public static void NotifySlidingDoor(EventSlidingDoor sd)
+        {
+            if (sd == null || NetGate.IsApplying) return;
+            var net = LanNetworkManager.Instance;
+            if (net == null || !net.IsConnected) return;
+            ulong id = WorldId.FromGameObject(sd.gameObject);
+            if (id == 0) return;
+            bool lo, lm;
+            LastSdOpened.TryGetValue(id, out lo);
+            LastSdMoving.TryGetValue(id, out lm);
+            if (lo == sd.opened && lm == sd.moving) return;
+            LastSdOpened[id] = sd.opened;
+            LastSdMoving[id] = sd.moving;
+            PlaytestLog.Event("Door", (sd.opened ? "slide-open" : "slide-close") + " id=" + id.ToString("X16"));
+            SendDoorChange(DoorType.EventSlidingDoor, id, sd.opened, false, false, false, sd.moving);
         }
 
         /// <summary>Host: push every door state (join resync / scene load).</summary>

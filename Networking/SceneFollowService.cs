@@ -24,6 +24,63 @@ namespace SyncRADation.Networking
             net.SendSceneFollow(sceneName, true);
         }
 
+        public static bool TryApplyRequest(string sceneName)
+        {
+            if (string.IsNullOrEmpty(sceneName)) return false;
+            if (!IsKnownScene(sceneName))
+            {
+                ModRuntime.Log?.Warning("[SceneFollow] Rejected unknown scene '" + sceneName + "'");
+                return false;
+            }
+            Apply(sceneName);
+            return true;
+        }
+
+        private static bool IsKnownScene(string sceneName)
+        {
+            try
+            {
+                var zones = Object.FindObjectsOfType<LoadLevelZone>();
+                if (zones != null)
+                {
+                    for (int i = 0; i < zones.Length; i++)
+                    {
+                        if (zones[i] != null && string.Equals(zones[i].SceneName, sceneName, System.StringComparison.Ordinal))
+                            return true;
+                    }
+                }
+            }
+            catch { }
+            try
+            {
+                var loads = Object.FindObjectsOfType<LoadLevelInteraction>();
+                if (loads != null)
+                {
+                    for (int i = 0; i < loads.Length; i++)
+                    {
+                        if (loads[i] != null && string.Equals(loads[i].targetLevel, sceneName, System.StringComparison.Ordinal))
+                            return true;
+                    }
+                }
+            }
+            catch { }
+            try
+            {
+                var helpers = Object.FindObjectsOfType<SceneHelper>();
+                if (helpers != null)
+                {
+                    for (int i = 0; i < helpers.Length; i++)
+                    {
+                        if (helpers[i] == null) continue;
+                        if (string.Equals(helpers[i].targetScene, sceneName, System.StringComparison.Ordinal))
+                            return true;
+                    }
+                }
+            }
+            catch { }
+            return false;
+        }
+
         public static void Apply(string sceneName)
         {
             if (string.IsNullOrEmpty(sceneName)) return;
@@ -67,7 +124,7 @@ namespace SyncRADation.Networking
             if (msg.IsRequest)
             {
                 if (net.Role != NetworkRole.Host) return;
-                Apply(msg.SceneName);
+                TryApplyRequest(msg.SceneName);
                 return;
             }
 

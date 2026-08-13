@@ -2,7 +2,7 @@
 
 ## 0.4.2-dev — 2026-08-13
 
-Protocol **v6** (incompatible with v5). Join dump is the live SProgress slot. UnityEvents and world FMOD replay on the client. Native puzzle solve methods on the solved edge.
+Protocol **v7** (incompatible with v6). Join dump is the live SProgress slot. UnityEvents and world FMOD replay on the client. Native puzzle solve methods on the solved edge. Session roster for 3–4 players.
 
 ### Added
 - Full `SProgress.progress` list dump (bool/int/float/string/vector) + mid-presentation WorldId on join
@@ -10,9 +10,21 @@ Protocol **v6** (incompatible with v5). Join dump is the live SProgress slot. Un
 - `StudioEventEmitter` Play/Stop by WorldId (skips Elster + radio UI); sliding-door one-shots
 - Native `openDoor` / `delayedOpen` / `StartShutdown` / `CheckSolve` / `useRing` on solve
 - `EXC_Elevator` flags only (never `startRide`); Kolibri + Adler snapshots
+- `PlayerRoster`: host broadcasts session ids; clients prune ghost proxies on leave; `GetRemotePlayerIds` works on clients
+- Client ids recycled in `1..MaxPlayers-1` (cap 4 including host)
 
 ### Changed
-- Version `0.4.2-dev`, protocol 6
+- Proxy locomotion uses the same exponential follow as facing (plus a short velocity predict) instead of per-packet ease-in/out
+- Version `0.4.2-dev`, protocol 7
+- Join and F2 client resync world dump **unicast** to that peer (host F2 Resync is a no-op; scene-change dump still goes to all clients)
+
+### Fixed
+- Friendly fire no longer double-hits; storage put/take mutates the shared box, not the host bag
+- StoryCommit replays presentation on join/resync only; host ignores client world-apply packets
+- Client Dialoguer / UseItemMulti / keypad / cutscene proceed / books actually reach the host
+- Dropped E pickup is host-claimed; pickup deny no longer hides the prop
+- Scene-follow requests only apply known current-scene names; F7 rooms and client F11 spawn are gated while connected
+- Downed clients stay downed across SceneFollow; sliding doors emit on `cycle`; FMOD join dump + reset
 - Harmony still per-class; one bad patch cannot abort the mod
 - Playtest traces: `[Story]` `[Interact]` `[FMOD]` `[KeyRing]` `[StorageBox]` `[Scene]` `[Damage]`; VerboseLogging default on
 - `.gitignore` now drops bin/obj/dist, NuGet packages, IDE files, logs, and secrets (stop tracking build artifacts)

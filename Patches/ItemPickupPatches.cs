@@ -44,8 +44,9 @@ namespace SyncRADation.Patches
         }
 
         [HarmonyPostfix]
-        public static void Postfix(ItemPickup __instance)
+        public static void Postfix(ItemPickup __instance, bool __runOriginal)
         {
+            if (!__runOriginal) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
             if (net.Role != NetworkRole.Host) return;

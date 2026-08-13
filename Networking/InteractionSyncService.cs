@@ -1,4 +1,5 @@
 // Host validates client interaction intents and applies native world mutations.
+using System.Reflection;
 using SyncRADation.Sync;
 using UnityEngine;
 
@@ -27,11 +28,25 @@ namespace SyncRADation.Networking
                         if (!ok) reason = "no key";
                         else if (!string.IsNullOrEmpty(consumeReason)) reason = consumeReason;
                         break;
+                    case InteractionKind.UseItemMulti:
+                        ok = ApplyUseItemMulti(id, out string multiReason);
+                        if (!ok) reason = "no key";
+                        else if (!string.IsNullOrEmpty(multiReason)) reason = multiReason;
+                        break;
                     case InteractionKind.KeypadSubmit:
                         ok = ApplyKeypad(id);
                         break;
                     case InteractionKind.DialogueStart:
-                        ok = ApplyDialogue(id, net);
+                        if (id == 0 && msg.Int0 != 0)
+                        {
+                            NetGate.BeginApply();
+                            try { Dialoguer.StartDialogue(msg.Int0); }
+                            finally { NetGate.EndApply(); }
+                            net.StorySync.BroadcastPresentation(StoryCmd.DialoguerStartId, 0, msg.Int0, "");
+                            ok = true;
+                        }
+                        else
+                            ok = ApplyDialogue(id, net);
                         break;
                     case InteractionKind.CutsceneStart:
                         ok = ApplyCutscene(id, net);
@@ -64,10 +79,10 @@ namespace SyncRADation.Networking
                         ok = true;
                         break;
                     case InteractionKind.StoragePut:
-                        ok = ApplyStorage(msg, put: true);
+                        ok = ApplyStorage(msg, put: true, out reason);
                         break;
                     case InteractionKind.StorageTake:
-                        ok = ApplyStorage(msg, put: false);
+                        ok = ApplyStorage(msg, put: false, out reason);
                         break;
                     case InteractionKind.Gunshot:
                         ApplyGunshot(new Vector3(msg.Float0, msg.Float1, msg.Float2), net);
@@ -77,8 +92,20 @@ namespace SyncRADation.Networking
                         ok = ApplyMultiCondition(id);
                         break;
                     case InteractionKind.SceneFollowRequest:
-                        SceneFollowService.Apply(msg.Text);
-                        ok = true;
+                        ok = SceneFollowService.TryApplyRequest(msg.Text);
+                        if (!ok) reason = "unknown scene";
+                        break;
+                    case InteractionKind.CutsceneProceed:
+                        ok = ApplyCutsceneProceed(id, net);
+                        break;
+                    case InteractionKind.BookOpen:
+                        ok = ApplyBook(net, msg.Text, false);
+                        break;
+                    case InteractionKind.BookMemory:
+                        ok = ApplyBook(net, msg.Text, true);
+                        break;
+                    case InteractionKind.DroppedPickup:
+                        ok = net.TryClaimDropped(msg.Int0, msg.SenderPlayerId, out reason);
                         break;
                 }
             }
@@ -103,6 +130,7 @@ namespace SyncRADation.Networking
             if (z.triggered) return true;
             z.triggered = true;
             try { if (z.onInRange != null) z.onInRange.Invoke(); } catch { }
+            SyncRADation.Patches.EventZonePatch.MarkFired(id);
             LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.EventZoneFire, id, 0, "");
             return true;
         }
@@ -145,6 +173,97 @@ namespace SyncRADation.Networking
                 PartyKeyRing.Note(key);
             }
             PartyKeyRing.Broadcast();
+            return true;
+        }
+
+        private static bool ApplyUseItemMulti(ulong id, out string consumeReason)
+        {
+            consumeReason = "";
+            var m = Find<UseItemMultiInteraction>(id);
+            if (m == null) return false;
+
+            try
+            {
+                var list = m.Interactions;
+                if (list != null)
+                {
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        var u = list[i];
+                        if (u == null) continue;
+                        AnItem key = u.key;
+                        if (key != null && !PartyKeyRing.LocalOrRingHas(key))
+                            return false;
+                    }
+                }
+            }
+            catch { return false; }
+
+            var ready = typeof(UseItemMultiInteraction).GetMethod("ready",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (ready == null) return false;
+
+            NetGate.BeginApply();
+            try { ready.Invoke(m, null); }
+            finally { NetGate.EndApply(); }
+
+            var parts = new System.Collections.Generic.List<string>();
+            try
+            {
+                var list = m.Interactions;
+                if (list != null)
+                {
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        var u = list[i];
+                        if (u == null) continue;
+                        AnItem key = u.key;
+                        if (key == null) continue;
+                        bool consumes = false;
+                        try
+                        {
+                            var lockComp = u.GetComponent<InteractiveLock>();
+                            if (lockComp != null)
+                                consumes = lockComp.ConsumesKey;
+                        }
+                        catch { }
+                        if (consumes)
+                        {
+                            bool hostHad = PartyKeyRing.InLocalBag(key);
+                            ConsumeKey(key);
+                            if (!hostHad)
+                                parts.Add((int)key._item + ":1");
+                        }
+                        else
+                            PartyKeyRing.Note(key);
+                    }
+                }
+            }
+            catch { }
+            if (parts.Count > 0)
+                consumeReason = "consume:" + string.Join("|", parts.ToArray());
+            PartyKeyRing.Broadcast();
+            return true;
+        }
+
+        private static bool ApplyCutsceneProceed(ulong id, LanNetworkManager net)
+        {
+            var cut = Find<CutsceneCut>(id);
+            if (cut == null) return false;
+            NetGate.BeginApply();
+            try { cut.Proceed(); }
+            finally { NetGate.EndApply(); }
+            net.StorySync.BroadcastPresentation(StoryCmd.CutsceneProceed, id, 0, "");
+            return true;
+        }
+
+        private static bool ApplyBook(LanNetworkManager net, string bookName, bool memory)
+        {
+            NetGate.BeginApply();
+            try { net.StorySync.ReplayBook(bookName, memory); }
+            finally { NetGate.EndApply(); }
+            net.StorySync.BroadcastPresentation(
+                memory ? StoryCmd.OpenBookMemory : StoryCmd.BookOpen, 0, 0, bookName ?? "");
             return true;
         }
 
@@ -238,21 +357,32 @@ namespace SyncRADation.Networking
             return true;
         }
 
-        private static bool ApplyStorage(InteractionRequestMessage msg, bool put)
+        private static bool ApplyStorage(InteractionRequestMessage msg, bool put, out string reasonOut)
         {
+            reasonOut = "";
             var item = InventoryManager.getItem((Items.itemlist)msg.Int0);
             if (item == null) return false;
             int n = msg.Int1 > 0 ? msg.Int1 : 1;
             NetGate.BeginApply();
             try
             {
-                if (put) InventoryManager.storeItem(item, n);
-                else InventoryManager.retrieveItem(item, n);
+                // Box only — never host Elster bag. Sender bag is adjusted via ack.
+                if (put) InventoryManager.boxItem(item, n);
+                else
+                {
+                    for (int i = 0; i < n; i++)
+                        InventoryManager.unboxItem(item);
+                }
             }
             finally { NetGate.EndApply(); }
             var net = LanNetworkManager.Instance;
             net?.StorageSync.RequestSend();
             net?.StorageSync.SendNow(net);
+            int enumVal = 0;
+            try { enumVal = (int)item._item; } catch { }
+            reasonOut = put
+                ? "consume:" + enumVal + ":" + n
+                : "grant:" + enumVal + ":" + n;
             return true;
         }
 
@@ -319,7 +449,7 @@ namespace SyncRADation.Networking
             if (worldId == 0) return null;
             try
             {
-                var all = Object.FindObjectsOfType<T>();
+                var all = FindAll<T>();
                 if (all == null) return null;
                 for (int i = 0; i < all.Length; i++)
                 {
@@ -330,6 +460,12 @@ namespace SyncRADation.Networking
             }
             catch { }
             return null;
+        }
+
+        private static T[] FindAll<T>() where T : Component
+        {
+            try { return Object.FindObjectsOfType<T>(true); }
+            catch { return Object.FindObjectsOfType<T>(); }
         }
     }
 }

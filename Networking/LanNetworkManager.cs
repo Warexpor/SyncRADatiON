@@ -22,9 +22,10 @@ namespace SyncRADation.Networking
         private NetManager _net;
         private NetworkRole _role = NetworkRole.Offline;
         private int _localPlayerId;
-        private int _nextClientId = 1;
+        private int _unicastPlayerId = -1; // >=0: join/resync dump goes only to this peer
         private readonly Dictionary<int, NetPeer> _peers = new Dictionary<int, NetPeer>(); // playerId -> peer
         private readonly Dictionary<NetPeer, int> _peerToId = new Dictionary<NetPeer, int>(); // peer -> playerId
+        private readonly HashSet<int> _sessionPlayerIds = new HashSet<int>(); // host+clients; clients fill from roster
         private readonly PlayerProxyManager _proxyManager = new PlayerProxyManager();
         private readonly EnemySyncService _enemySync = new EnemySyncService();
         private readonly PuzzleSyncService _puzzleSync = new PuzzleSyncService();
@@ -95,6 +96,7 @@ namespace SyncRADation.Networking
                 _role = NetworkRole.Offline;
                 return;
             }
+            _sessionPlayerIds.Add(0);
             StatusText = "Hosting on port " + port;
             ModRuntime.Log?.Msg("[Network] Hosting on port " + port);
         }
@@ -123,6 +125,8 @@ namespace SyncRADation.Networking
             _storySync.Reset();
             _storageSync.Reset();
             PartyKeyRing.Reset();
+            FmodEmitterSync.Reset();
+            NetGate.Reset();
             SourceAnimReader.Reset();
             DroppedItemManager.SaveToFile();
             DroppedItemManager.ClearAll();
@@ -130,8 +134,15 @@ namespace SyncRADation.Networking
             _vitalTimer = 0f;
             _peers.Clear();
             _peerToId.Clear();
+            _sessionPlayerIds.Clear();
+            _peerScenes.Clear();
+            _unicastPlayerId = -1;
             _sendTimer = 0f;
-            _nextClientId = 1;
+            _sceneMismatch = false;
+            _hostSceneName = "";
+            _localSceneName = "";
+            _localPlayerId = 0;
+            _nextItemIndex = 1;
 
             if (_net != null)
             {
@@ -183,7 +194,10 @@ namespace SyncRADation.Networking
             {
                 int localID = WorldItem.NearbyID;
                 WorldItem.NearbyID = -1;
-                DoPickupItem(localID);
+                if (_role == NetworkRole.Host)
+                    TryClaimDropped(localID, _localPlayerId, out _);
+                else
+                    SendInteractionRequest(0, InteractionKind.DroppedPickup, localID);
             }
 
             if (Input.GetKeyDown(KeyCode.G) && PlayerState.gameState == PlayerState.gameStates.play)
@@ -293,6 +307,7 @@ namespace SyncRADation.Networking
                 ModelState = modelState,
                 WearHat = wearHat
             };
+            msg.SetFacingWorld(SourceAnimReader.ReadFacingWorldRotation(player));
 
             SourceAnimReader.ReadFromPlayer(player, ref msg);
 
@@ -320,8 +335,20 @@ namespace SyncRADation.Networking
             }
         }
 
+        private void SendToPlayer(int playerId, NetDataWriter writer, DeliveryMethod method)
+        {
+            if (_peers.TryGetValue(playerId, out var peer)
+                && peer.ConnectionState == ConnectionState.Connected)
+                peer.Send(writer, method);
+        }
+
         private void BroadcastRaw(NetDataWriter writer, DeliveryMethod method)
         {
+            if (_unicastPlayerId >= 0)
+            {
+                SendToPlayer(_unicastPlayerId, writer, method);
+                return;
+            }
             foreach (var kvp in _peers)
             {
                 var peer = kvp.Value;
@@ -352,21 +379,17 @@ namespace SyncRADation.Networking
 
         public int GetPlayerCount()
         {
-            int count = 1; // local player
-            foreach (var kvp in _peers)
-            {
-                if (kvp.Key != _localPlayerId)
-                    count++;
-            }
-            return count;
+            if (_sessionPlayerIds.Count > 0)
+                return _sessionPlayerIds.Count;
+            return 1;
         }
 
         public IEnumerable<int> GetRemotePlayerIds()
         {
-            foreach (var kvp in _peers)
+            foreach (int id in _sessionPlayerIds)
             {
-                if (kvp.Key != _localPlayerId)
-                    yield return kvp.Key;
+                if (id != _localPlayerId)
+                    yield return id;
             }
         }
 
@@ -452,15 +475,10 @@ namespace SyncRADation.Networking
         public void SendEnemyState(EnemySnapshotNet[] snaps)
         {
             var msg = new EnemyStateMessage { Enemies = snaps };
-            foreach (var kvp in _peers)
-            {
-                var peer = kvp.Value;
-                if (peer.ConnectionState != ConnectionState.Connected) continue;
-                var writer = new NetDataWriter();
-                writer.Put((byte)NetMessageType.EnemyState);
-                msg.Serialize(writer);
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
-            }
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.EnemyState);
+            msg.Serialize(writer);
+            BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
         }
 
         public void SendEnemyDamage(int targetPlayerId, ulong enemyWorldId, float damage, bool stagger)
@@ -489,29 +507,19 @@ namespace SyncRADation.Networking
                 Entries = entries,
                 FullRefresh = fullRefresh
             };
-            foreach (var kvp in _peers)
-            {
-                var peer = kvp.Value;
-                if (peer.ConnectionState != ConnectionState.Connected) continue;
-                var writer = new NetDataWriter();
-                writer.Put((byte)NetMessageType.PuzzleState);
-                msg.Serialize(writer);
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
-            }
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.PuzzleState);
+            msg.Serialize(writer);
+            BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
         }
 
         public void SendBossState(BossSnapshotNet[] snaps)
         {
             var msg = new BossStateMessage { Bosses = snaps };
-            foreach (var kvp in _peers)
-            {
-                var peer = kvp.Value;
-                if (peer.ConnectionState != ConnectionState.Connected) continue;
-                var writer = new NetDataWriter();
-                writer.Put((byte)NetMessageType.BossState);
-                msg.Serialize(writer);
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
-            }
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.BossState);
+            msg.Serialize(writer);
+            BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
         }
 
         public void SendWorldPickupState(WorldPickupEntry[] entries, bool fullRefresh)
@@ -561,27 +569,38 @@ namespace SyncRADation.Networking
             BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
         }
 
-        /// <summary>Host: dump full world state after a client joins or requests resync.</summary>
-        public void SendFullWorldSnapshot()
+        /// <summary>Host: dump full world. targetPlayerId &gt;= 0 unicasts (join / client resync); -1 = all peers.</summary>
+        public void SendFullWorldSnapshot(int targetPlayerId = -1)
         {
             if (_role != NetworkRole.Host || !_handshakeComplete) return;
-            ModRuntime.Log?.Msg("[Network] Sending full world snapshot to peers");
-            WorldRegistry.Rebuild();
-            DoorSyncService.ForceFullSend();
-            _puzzleSync.RequestFullSend();
-            _puzzleSync.TickHost(this);
-            _pickupSync.RequestFullSend();
-            _pickupSync.TickHost(this);
-            _enemySync.RequestFullSend();
-            _enemySync.TickHost(this);
-            _bossSync.TickHost(this);
-            _storySync.RequestFullSend();
-            _storySync.Send(this, true);
-            _storageSync.RequestSend();
-            _storageSync.SendNow(this);
-            PartyKeyRing.Broadcast();
-            SendSceneFollow(SceneManager.GetActiveScene().name ?? "", false);
-            BroadcastSceneHello();
+            ModRuntime.Log?.Msg("[Network] Sending full world snapshot"
+                + (targetPlayerId >= 0 ? " to player " + targetPlayerId : " to all peers"));
+            int prevUnicast = _unicastPlayerId;
+            _unicastPlayerId = targetPlayerId;
+            try
+            {
+                WorldRegistry.Rebuild();
+                DoorSyncService.ForceFullSend();
+                _puzzleSync.RequestFullSend();
+                _puzzleSync.TickHost(this);
+                _pickupSync.RequestFullSend();
+                _pickupSync.TickHost(this);
+                _enemySync.RequestFullSend();
+                _enemySync.TickHost(this);
+                _bossSync.TickHost(this);
+                _storySync.RequestFullSend();
+                _storySync.Send(this, true, replayPresentation: true);
+                _storageSync.RequestSend();
+                _storageSync.SendNow(this);
+                PartyKeyRing.Broadcast();
+                FmodEmitterSync.DumpPlaying();
+                SendSceneFollow(SceneManager.GetActiveScene().name ?? "", false);
+                BroadcastSceneHello();
+            }
+            finally
+            {
+                _unicastPlayerId = prevUnicast;
+            }
         }
 
         public void RequestWorldSnapshot()
@@ -861,33 +880,18 @@ namespace SyncRADation.Networking
             ModRuntime.Log?.Msg("[Drop] Dropped " + itemToDrop + " x" + count);
         }
 
-        private void DoPickupItem(int itemKey)
+        public bool TryClaimDropped(int itemKey, int claimerId, out string reason)
         {
+            reason = "";
             var go = DroppedItemManager.GetItem(itemKey);
-            if (go == null)
-            {
-                ModRuntime.Log?.Warning("[Pickup] WorldItem not found for key " + itemKey);
-                return;
-            }
+            if (go == null) return false;
             var wi = go.GetComponent<WorldItem>();
-            if (wi == null) return;
+            if (wi == null) return false;
 
-            try
-            {
-                var item = InventoryManager.getItem(wi.ItemEnum);
-                if (item == null)
-                {
-                    ModRuntime.Log?.Warning("[Pickup] Unknown item enum " + wi.ItemEnum);
-                    return;
-                }
-                InventoryManager.AddItem(item, wi.Count);
-                ModRuntime.Log?.Msg("[Pickup] Picked up " + wi.ItemEnum + " x" + wi.Count);
-            }
-            catch (Exception ex)
-            {
-                ModRuntime.Log?.Warning("[Pickup] AddItem failed: " + ex.Message);
-                return;
-            }
+            var item = InventoryManager.getItem(wi.ItemEnum);
+            if (item == null) return false;
+            int count = wi.Count;
+            bool shared = IsSharedItem(wi.ItemEnum);
 
             int senderID = (itemKey >> 16) & 0xFF;
             ushort localIdx = (ushort)(itemKey & 0xFFFF);
@@ -897,11 +901,29 @@ namespace SyncRADation.Networking
                 SenderID = (byte)senderID,
                 LocalIndex = localIdx,
                 ItemEnum = (ushort)wi.ItemEnum,
-                Count = wi.Count,
-                GrantToReceiver = IsSharedItem(wi.ItemEnum)
+                Count = count,
+                GrantToReceiver = shared
             });
 
             DroppedItemManager.DespawnItem(itemKey);
+
+            if (shared)
+                return true;
+
+            if (claimerId == _localPlayerId)
+            {
+                try { InventoryManager.AddItem(item, count); }
+                catch (Exception ex)
+                {
+                    ModRuntime.Log?.Warning("[Pickup] AddItem failed: " + ex.Message);
+                    return false;
+                }
+            }
+            else
+                reason = "grant:" + (int)wi.ItemEnum + ":" + count;
+
+            ModRuntime.Log?.Msg("[Pickup] Claimed " + wi.ItemEnum + " x" + count + " by " + claimerId);
+            return true;
         }
 
         private static bool IsSharedItem(Items.itemlist itemEnum)
@@ -922,25 +944,24 @@ namespace SyncRADation.Networking
             int playerId;
             if (_role == NetworkRole.Host)
             {
-                if (_peers.Count + 1 >= PluginInfo.MaxPlayers)
+                playerId = AllocClientId();
+                if (playerId < 0)
                 {
                     ModRuntime.Log?.Warning("[Network] Rejecting peer: max players " + PluginInfo.MaxPlayers);
                     peer.Disconnect();
                     return;
                 }
 
-                playerId = _nextClientId++;
                 _peers[playerId] = peer;
                 _peerToId[peer] = playerId;
+                RebuildHostSession();
                 ModRuntime.Log?.Msg("[Network] Client connected, assigned playerId=" + playerId);
 
                 var w = new NetDataWriter();
                 w.Put((byte)NetMessageType.Handshake);
                 new HandshakeMessage { ProtocolVersion = PluginInfo.ProtocolVersion, AssignedPlayerId = playerId }.Serialize(w);
                 peer.Send(w, DeliveryMethod.ReliableOrdered);
-
-                var c = _connected;
-                if (c != null) c();
+                BroadcastPlayerRoster();
             }
             else
             {
@@ -965,6 +986,12 @@ namespace SyncRADation.Networking
                 _proxyManager.DestroyProxy(playerId);
                 _peers.Remove(playerId);
                 _peerToId.Remove(peer);
+                _peerScenes.Remove(playerId);
+                if (_role == NetworkRole.Host)
+                {
+                    RebuildHostSession();
+                    BroadcastPlayerRoster();
+                }
             }
 
             if (_role != NetworkRole.Host)
@@ -990,10 +1017,10 @@ namespace SyncRADation.Networking
             switch (type)
             {
             case NetMessageType.Handshake:
-                HandleHandshake(HandshakeMessage.Deserialize(reader));
+                HandleHandshake(HandshakeMessage.Deserialize(reader), senderId);
                 break;
             case NetMessageType.PlayerState:
-                HandlePlayerState(PlayerStateMessage.Deserialize(reader));
+                HandlePlayerState(PlayerStateMessage.Deserialize(reader), senderId);
                 break;
             case NetMessageType.DoorState:
             {
@@ -1070,22 +1097,20 @@ namespace SyncRADation.Networking
                 var req = SnapshotRequestMessage.Deserialize(reader);
                 if (_role == NetworkRole.Host)
                 {
-                    ModRuntime.Log?.Msg("[Network] Snapshot requested by player " + req.SenderPlayerId);
-                    SendFullWorldSnapshot();
+                    int target = req.SenderPlayerId;
+                    if (target < 1 || !_peers.ContainsKey(target))
+                        target = senderId;
+                    ModRuntime.Log?.Msg("[Network] Snapshot requested by player " + target);
+                    SendFullWorldSnapshot(target);
                 }
                 break;
             }
             case NetMessageType.WorldPickupState:
             {
+                if (_role == NetworkRole.Host)
+                    break;
                 var pickMsg = WorldPickupStateMessage.Deserialize(reader);
                 _pickupSync.ApplyHide(pickMsg);
-                if (_role == NetworkRole.Host)
-                {
-                    var w = new NetDataWriter();
-                    w.Put((byte)NetMessageType.WorldPickupState);
-                    pickMsg.Serialize(w);
-                    RelayRaw(w, DeliveryMethod.ReliableOrdered, senderId);
-                }
                 break;
             }
             case NetMessageType.WorldPickupClaim:
@@ -1145,6 +1170,9 @@ namespace SyncRADation.Networking
             case NetMessageType.FmodEmitter:
                 FmodEmitterSync.Handle(FmodEmitterMessage.Deserialize(reader));
                 break;
+            case NetMessageType.PlayerRoster:
+                HandlePlayerRoster(PlayerRosterMessage.Deserialize(reader));
+                break;
             default:
                 ModRuntime.Log?.Warning("[Network] Unhandled message type: " + type + " (" + messageType + ")");
                 break;
@@ -1169,6 +1197,8 @@ namespace SyncRADation.Networking
 
         private void HandleInteractionAck(InteractionAckMessage ack)
         {
+            if (ack.TargetPlayerId != _localPlayerId) return;
+
             if (!ack.Ok)
             {
                 ModRuntime.Log?.Msg("[Interact] rejected " + ack.Kind
@@ -1177,28 +1207,50 @@ namespace SyncRADation.Networking
             }
             PlaytestLog.Event("Interact", "ack " + ack.Kind);
 
-            if (string.IsNullOrEmpty(ack.Reason) || !ack.Reason.StartsWith("consume:"))
-                return;
+            if (string.IsNullOrEmpty(ack.Reason)) return;
             try
             {
-                int enumVal;
-                if (!int.TryParse(ack.Reason.Substring("consume:".Length), out enumVal))
-                    return;
-                var item = InventoryManager.getItem((Items.itemlist)enumVal);
-                if (item != null)
-                    InventoryManager.RemoveItem(item, 1);
+                ApplyBagAck(ack.Reason);
             }
             catch (Exception ex)
             {
-                ModRuntime.Log?.Warning("[Interact] consume ack: " + ex.Message);
+                ModRuntime.Log?.Warning("[Interact] bag ack: " + ex.Message);
             }
         }
 
-        private void HandleHandshake(HandshakeMessage handshake)
+        private static void ApplyBagAck(string reason)
+        {
+            bool consume = reason.StartsWith("consume:");
+            bool grant = reason.StartsWith("grant:");
+            if (!consume && !grant) return;
+            string rest = reason.Substring(consume ? 8 : 6);
+            string[] groups = rest.Split('|');
+            for (int g = 0; g < groups.Length; g++)
+                ApplyBagAckPart(consume, groups[g]);
+        }
+
+        private static void ApplyBagAckPart(bool consume, string rest)
+        {
+            string[] parts = rest.Split(':');
+            if (parts.Length < 1) return;
+            int enumVal;
+            if (!int.TryParse(parts[0], out enumVal)) return;
+            int count = 1;
+            if (parts.Length >= 2)
+                int.TryParse(parts[1], out count);
+            if (count < 1) count = 1;
+            var item = InventoryManager.getItem((Items.itemlist)enumVal);
+            if (item == null) return;
+            if (consume) InventoryManager.RemoveItem(item, count);
+            else InventoryManager.AddItem(item, count);
+        }
+
+        private void HandleHandshake(HandshakeMessage handshake, int senderId)
         {
             if (handshake.ProtocolVersion != PluginInfo.ProtocolVersion)
             {
                 ModRuntime.Log?.Error("[Network] Protocol mismatch: local=" + PluginInfo.ProtocolVersion + " remote=" + handshake.ProtocolVersion);
+                _handshakeComplete = false;
                 foreach (var kvp in _peers)
                     kvp.Value.Disconnect();
                 return;
@@ -1207,26 +1259,96 @@ namespace SyncRADation.Networking
             if (_role == NetworkRole.Client)
             {
                 _localPlayerId = handshake.AssignedPlayerId;
+                _sessionPlayerIds.Add(0);
+                _sessionPlayerIds.Add(_localPlayerId);
                 ModRuntime.Log?.Msg("[Network] Host assigned playerId=" + _localPlayerId);
             }
 
             _handshakeComplete = true;
             _lastStateTime = Time.time;
-            StatusText = _role == NetworkRole.Host ? "Clients connected" : "Connected to host";
+            StatusText = _role == NetworkRole.Host
+                ? "Clients connected (" + GetPlayerCount() + ")"
+                : "Connected to host";
             ModRuntime.Log?.Msg("[Network] Handshake OK, local playerId=" + _localPlayerId);
             WorldRegistry.Rebuild();
             BroadcastSceneHello();
 
+            var connected = _connected;
+            if (connected != null) connected();
+
             if (_role == NetworkRole.Host)
             {
-                // Give new client the full world immediately
-                SendFullWorldSnapshot();
+                BroadcastPlayerRoster();
+                if (senderId >= 1)
+                    SendFullWorldSnapshot(senderId);
             }
             else
             {
-                RequestWorldSnapshot();
                 _enemySync.PuppetAllNow();
             }
+        }
+
+        private int AllocClientId()
+        {
+            for (int i = 1; i < PluginInfo.MaxPlayers; i++)
+            {
+                if (!_peers.ContainsKey(i))
+                    return i;
+            }
+            return -1;
+        }
+
+        private void RebuildHostSession()
+        {
+            _sessionPlayerIds.Clear();
+            _sessionPlayerIds.Add(0);
+            foreach (var kvp in _peers)
+                _sessionPlayerIds.Add(kvp.Key);
+        }
+
+        private void BroadcastPlayerRoster()
+        {
+            if (_role != NetworkRole.Host) return;
+            RebuildHostSession();
+            var ids = new int[_sessionPlayerIds.Count];
+            int i = 0;
+            foreach (int id in _sessionPlayerIds)
+                ids[i++] = id;
+            var msg = new PlayerRosterMessage { PlayerIds = ids };
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.PlayerRoster);
+            msg.Serialize(writer);
+            int prev = _unicastPlayerId;
+            _unicastPlayerId = -1;
+            try { BroadcastRaw(writer, DeliveryMethod.ReliableOrdered); }
+            finally { _unicastPlayerId = prev; }
+            ModRuntime.Log?.Msg("[Network] Roster sent (" + ids.Length + " players)");
+        }
+
+        private void HandlePlayerRoster(PlayerRosterMessage msg)
+        {
+            if (_role == NetworkRole.Host) return;
+            _sessionPlayerIds.Clear();
+            if (msg.PlayerIds != null)
+            {
+                for (int i = 0; i < msg.PlayerIds.Length; i++)
+                    _sessionPlayerIds.Add(msg.PlayerIds[i]);
+            }
+            _sessionPlayerIds.Add(0);
+            if (_localPlayerId > 0)
+                _sessionPlayerIds.Add(_localPlayerId);
+
+            var stale = new List<int>();
+            foreach (int pid in _proxyManager.GetProxyPlayerIds())
+            {
+                if (!_sessionPlayerIds.Contains(pid))
+                    stale.Add(pid);
+            }
+            for (int i = 0; i < stale.Count; i++)
+                _proxyManager.DestroyProxy(stale[i]);
+
+            StatusText = "Connected (" + GetPlayerCount() + " players)";
+            ModRuntime.Log?.Msg("[Network] Roster applied, players=" + GetPlayerCount());
         }
 
         private void HandlePlayerVital(PlayerVitalMessage msg)
@@ -1241,9 +1363,14 @@ namespace SyncRADation.Networking
             catch { }
         }
 
-        private void HandlePlayerState(PlayerStateMessage state)
+        private void HandlePlayerState(PlayerStateMessage state, int peerId)
         {
+            // Host: identity is the LiteNetLib peer map, not the wire field.
+            // Client: all packets come from peer 0 (host); keep the stamped SenderPlayerId.
+            if (_role == NetworkRole.Host && peerId >= 0)
+                state.SenderPlayerId = peerId;
             int senderId = state.SenderPlayerId;
+            if (senderId == _localPlayerId) return;
 
             if (_sceneMismatch)
                 return;
@@ -1350,7 +1477,6 @@ namespace SyncRADation.Networking
             {
                 ModRuntime.Log?.Msg("[WorldPickup] Claim denied id=" + id.ToString("X16")
                     + " by " + claim.ClaimerPlayerId);
-                _pickupSync.BroadcastTriggered(id, true);
                 return;
             }
 
@@ -1416,9 +1542,9 @@ namespace SyncRADation.Networking
             _lastStateTime = 0f;
             _proxyManager.DestroyAll();
             DroppedItemManager.ClearAll();
-            DroppedItemManager.LoadFromFile();
             WorldRegistry.Rebuild();
             DoorSyncService.RefreshScene();
+            FmodEmitterSync.Reset();
             _enemySync.OnSceneChanged();
             _puzzleSync.RefreshScene();
             _bossSync.OnSceneChanged();

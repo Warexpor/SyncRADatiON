@@ -1,7 +1,7 @@
 # SyncRADation
 
 LAN multiplayer MelonLoader mod for **SIGNALIS**.  
-**v0.4.2-dev** — protocol **v6**. Host owns world and story; the client is a real Elster whose interactions go to the host and apply via native game methods (including UnityEvents and world FMOD).
+**v0.4.2-dev** — protocol **v7**. Host owns world and story; the client is a real Elster whose interactions go to the host and apply via native game methods (including UnityEvents and world FMOD).
 
 Formerly labeled `1.2.x-dev`. That was optimistic. This is still early co-op.
 
@@ -10,7 +10,7 @@ Formerly labeled `1.2.x-dev`. That was optimistic. This is still early co-op.
 - SIGNALIS (Steam or a second install)
 - MelonLoader with Managed assemblies (`MelonLoader\Managed`, Unhollower-style)
 - Same chapter/scene on every peer
-- Same mod DLL on every peer (protocol 6)
+- Same mod DLL on every peer (protocol 7)
 
 ## Install
 
@@ -33,12 +33,12 @@ dotnet build -p:SignalisDir="C:\MyProjects\SIGNALIS" -p:ClientSignalisDir="C:\Pr
 
 Debug builds copy into both `$(SignalisDir)\Mods` and `$(ClientSignalisDir)\Mods` when those dirs exist.
 
-## Play (2 players)
+## Play (up to 4 players)
 
-1. Both load the **same chapter scene**.
+1. Everyone loads the **same chapter scene**.
 2. Host: **F2 → Host Game** (UDP `7777`, key `SyncRADation`).
-3. Client: **F2 → IP → Connect**, or **F3** with the saved address.
-4. Host dumps world state on join. If doors/pickups look wrong → **Resync world**.
+3. Each client: **F2 → IP → Connect**, or **F3** with the saved address.
+4. Host dumps world state **to that joiner**. If doors/pickups look wrong → **Resync world**.
 5. **SCENE MISMATCH** means the client is loading the host chapter automatically (SceneFollow). If it sticks, load the same chapter manually.
 
 ## Controls
@@ -66,7 +66,7 @@ Debug builds copy into both `$(SignalisDir)\Mods` and `$(ClientSignalisDir)\Mods
 | World ItemPickups | Host claim/grant | Claimer gets the item; unique keys go on the **party key ring** so either Elster can use them |
 | Player-dropped items | Peer + relay | G drop / E pickup |
 | Death | Asymmetric | Client downed (drops bag, world continues); host death reloads last save for both |
-| Bosses (END / Chimera / Mynah) | Host | Light-field sync |
+| Bosses (END / Chimera / Mynah / Kolibri / Adler) | Host | Light-field sync |
 | Friendly fire | Opt-in | Default off |
 | Inventories | Independent | By design |
 
@@ -74,7 +74,7 @@ World objects are identified by `hash(scene + hierarchy path)` — never `GetIns
 
 ## Still unverified
 
-Code for protocol **6** is in this build. Dual-instance playtest has **not** been run. Do not treat any of this as proven until you play it.
+Code for protocol **7** is in this build. Dual-instance playtest has **not** been run. Do not treat any of this as proven until you play it.
 
 GitHub zip: `dist/SyncRADation-0.4.2-dev.zip` (`SyncRADation.dll` + `LiteNetLib.dll` + this README). Nexus is out of scope until that run is enjoyable.
 
@@ -92,7 +92,7 @@ GitHub zip: `dist/SyncRADation-0.4.2-dev.zip` (`SyncRADation.dll` + `LiteNetLib.
 
 ## Playtest gate (before Nexus)
 
-Dual-instance LAN, same protocol-6 build. **This is the remaining work.**
+Dual-instance LAN, same protocol-7 build. **This is the remaining work.**
 
 Chapter 1 (Reeducation → Mines elevator):
 

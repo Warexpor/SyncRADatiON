@@ -15,6 +15,9 @@ namespace SyncRADation.Players
         private WeaponType _lastWeapon;
         private byte _lastModelState = 255;
         private bool _lastWearHat;
+        private PlayerStateMessage _fxState;
+        private AnimTriggers _fxTriggers;
+        private bool _fxPending;
 
         public int LastHp { get; private set; } = 100;
         public int LastMaxHp { get; private set; } = 100;
@@ -66,6 +69,7 @@ namespace SyncRADation.Players
 
         public void SetVital(int hp, int maxHp, bool dead, byte gameState, byte charState)
         {
+            bool wasDead = LastDead;
             LastHp = hp;
             LastMaxHp = maxHp > 0 ? maxHp : 100;
             LastDead = dead;
@@ -78,7 +82,7 @@ namespace SyncRADation.Players
                 if (anim != null)
                 {
                     anim.SetBool("Dead", dead);
-                    if (dead)
+                    if (dead && !wasDead)
                         anim.SetTrigger("Die");
                 }
             }
@@ -97,7 +101,9 @@ namespace SyncRADation.Players
 
             AnimDriver.ApplyState(state);
             AudioSync.Tick(state, state.AnimBools, state.AnimTriggers);
-            WeaponSync.Tick(state, state.AnimBools, state.AnimTriggers, GameObject.transform.position, state.RotY);
+            _fxState = state;
+            _fxTriggers |= state.AnimTriggers;
+            _fxPending = true;
 
             if (state.ModelState != _lastModelState || state.WearHat != _lastWearHat)
             {
@@ -107,6 +113,17 @@ namespace SyncRADation.Players
             }
         }
 
+        public void LateFxTick()
+        {
+            if (!_fxPending || WeaponSync == null || GameObject == null) return;
+            Vector3 dir = AnimDriver != null ? AnimDriver.AimDirection : GameObject.transform.forward;
+            WeaponSync.Tick(_fxState, _fxState.AnimBools, _fxTriggers, GameObject.transform.position, dir);
+            _fxTriggers = 0;
+            _fxPending = false;
+        }
+
+        private static readonly object _modelApplyLock = new object();
+
         private void ApplyModel(byte modelState, bool wearHat)
         {
             try
@@ -114,14 +131,16 @@ namespace SyncRADation.Players
                 var cmt = GameObject.GetComponentInChildren<CharacterModelType>(true);
                 if (cmt == null) return;
                 cmt.modelState = (CharacterModelType.ElsterType)modelState;
-                // Only touch static if proxy is active; ApplyType uses instance
-                var prev = CharacterModelType.instance;
-                var prevHat = CharacterModelType.wearHat;
-                CharacterModelType.instance = cmt;
-                CharacterModelType.wearHat = wearHat;
-                CharacterModelType.ApplyType();
-                CharacterModelType.instance = prev;
-                CharacterModelType.wearHat = prevHat;
+                lock (_modelApplyLock)
+                {
+                    var prev = CharacterModelType.instance;
+                    var prevHat = CharacterModelType.wearHat;
+                    CharacterModelType.instance = cmt;
+                    CharacterModelType.wearHat = wearHat;
+                    CharacterModelType.ApplyType();
+                    CharacterModelType.instance = prev;
+                    CharacterModelType.wearHat = prevHat;
+                }
             }
             catch (System.Exception ex)
             {

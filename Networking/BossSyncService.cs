@@ -102,6 +102,10 @@ namespace SyncRADation.Networking
 
         public void OnBossStateReceived(BossStateMessage msg)
         {
+            var net = LanNetworkManager.Instance;
+            if (net != null && net.Role == NetworkRole.Host) return;
+            if (msg.Bosses == null) return;
+
             if (!_clientDisabled)
             {
                 DisableLocalAI();

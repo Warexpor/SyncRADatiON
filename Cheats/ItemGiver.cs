@@ -160,6 +160,17 @@ namespace SyncRADation.Cheats
                 if (target == null) { SetStatus("Can't find '" + item.ItemId + "'", true); return; }
 
                 InventoryManager.AddItem(target, 1);
+                try
+                {
+                    if (Sync.NetGate.Live
+                        && (target.type == AnItem.AnItemType.Object || target.type == AnItem.AnItemType.Key))
+                    {
+                        SyncRADation.Networking.PartyKeyRing.Note(target);
+                        if (Sync.NetGate.Host)
+                            SyncRADation.Networking.PartyKeyRing.Broadcast();
+                    }
+                }
+                catch { }
                 SetStatus("Added: " + item.DisplayName);
             }
             catch (System.Exception ex)

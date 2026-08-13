@@ -50,7 +50,7 @@ namespace SyncRADation.Networking
             _needSend = false;
         }
 
-        public void Send(LanNetworkManager net, bool full)
+        public void Send(LanNetworkManager net, bool full, bool replayPresentation = false)
         {
             if (full)
                 DumpLiveProgress();
@@ -88,13 +88,14 @@ namespace SyncRADation.Networking
                 EndingId = ending,
                 Flags = arr,
                 ActiveGameState = gs,
-                ActiveWorldId = unchecked((long)LastWorldId),
-                ActiveStoryCmd = (byte)LastCmd
+                ActiveWorldId = replayPresentation ? unchecked((long)LastWorldId) : 0,
+                ActiveStoryCmd = replayPresentation ? (byte)LastCmd : (byte)0
             });
             if (full)
                 PlaytestLog.Event("Story", "commit full flags=" + arr.Length
                     + " xml=" + (xml != null ? xml.Length : 0)
-                    + " cmd=" + LastCmd + " gs=" + gs);
+                    + " cmd=" + (replayPresentation ? LastCmd.ToString() : "-")
+                    + " gs=" + gs);
         }
 
         private void DumpLiveProgress()
@@ -261,7 +262,7 @@ namespace SyncRADation.Networking
                 + " xml=" + (msg.DialoguerXml != null ? msg.DialoguerXml.Length : 0)
                 + " cmd=" + (StoryCmd)msg.ActiveStoryCmd);
 
-            if (msg.ActiveStoryCmd != 0 && msg.ActiveWorldId != 0)
+            if (msg.FullRefresh && msg.ActiveStoryCmd != 0 && msg.ActiveWorldId != 0)
             {
                 ApplyPresentation(new StoryPresentationMessage
                 {
@@ -292,6 +293,9 @@ namespace SyncRADation.Networking
 
         public void ApplyPresentation(StoryPresentationMessage msg)
         {
+            var net = LanNetworkManager.Instance;
+            if (net != null && net.Role == NetworkRole.Host) return;
+
             NetGate.BeginApply();
             try
             {
@@ -403,6 +407,11 @@ namespace SyncRADation.Networking
             {
                 NetGate.EndApply();
             }
+        }
+
+        public void ReplayBook(string bookName, bool memory)
+        {
+            ApplyBook(bookName, memory);
         }
 
         private static void ApplyBook(string bookName, bool memory)

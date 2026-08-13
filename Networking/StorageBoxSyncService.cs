@@ -42,6 +42,24 @@ namespace SyncRADation.Networking
         {
             var net = LanNetworkManager.Instance;
             if (net != null && net.Role == NetworkRole.Host) return;
+            if (msg.Items == null) return;
+
+            var pending = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<AnItem, int>>();
+            try
+            {
+                for (int i = 0; i < msg.Items.Length; i++)
+                {
+                    var e = msg.Items[i];
+                    var item = InventoryManager.getItem((Items.itemlist)e.ItemEnum);
+                    if (item == null || e.Count <= 0) continue;
+                    pending.Add(new System.Collections.Generic.KeyValuePair<AnItem, int>(item, e.Count));
+                }
+            }
+            catch (System.Exception ex)
+            {
+                ModRuntime.Log?.Warning("[StorageBox] Apply build: " + ex.Message);
+                return;
+            }
 
             Sync.NetGate.BeginApply();
             try
@@ -51,18 +69,14 @@ namespace SyncRADation.Networking
                 {
                     try { dict.Clear(); } catch { }
                 }
-
-                if (msg.Items == null) return;
-                PlaytestLog.Event("StorageBox", "apply items=" + msg.Items.Length);
-                for (int i = 0; i < msg.Items.Length; i++)
+                PlaytestLog.Event("StorageBox", "apply items=" + pending.Count);
+                for (int i = 0; i < pending.Count; i++)
                 {
-                    var e = msg.Items[i];
-                    var item = InventoryManager.getItem((Items.itemlist)e.ItemEnum);
-                    if (item == null || e.Count <= 0) continue;
-                    try { InventoryManager.boxItem(item, e.Count); }
+                    var pair = pending[i];
+                    try { InventoryManager.boxItem(pair.Key, pair.Value); }
                     catch
                     {
-                        try { InventoryManager.storeItem(item, e.Count); } catch { }
+                        try { InventoryManager.storeItem(pair.Key, pair.Value); } catch { }
                     }
                 }
             }

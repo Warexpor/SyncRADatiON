@@ -91,11 +91,10 @@ namespace SyncRADation.Players
 
         public System.Action<WeaponType> OnShotFired; // callback for secondary sounds (pump, eject)
 
-        public void Tick(PlayerStateMessage state, AnimBools bools, AnimTriggers triggers, Vector3 proxyPos, float facingAngle)
+        public void Tick(PlayerStateMessage state, AnimBools bools, AnimTriggers triggers, Vector3 proxyPos, Vector3 aimDir)
         {
-            _facingDir = Quaternion.Euler(0, facingAngle, 0) * Vector3.forward;
+            _facingDir = aimDir.sqrMagnitude > 0.0001f ? aimDir.normalized : Vector3.forward;
 
-            // Prefer real muzzle on the cloned weapon; fall back to chest-height proxy guess
             if (_currentWeapon != WeaponType.None && _effects.TryGetValue(_currentWeapon, out var fxMuzzle))
             {
                 Vector3 m;
@@ -103,19 +102,19 @@ namespace SyncRADation.Players
                     _muzzlePos = m;
                 else
                     _muzzlePos = proxyPos + Vector3.up * 0.95f + _facingDir * 0.35f;
+                Vector3 mdir;
+                if (fxMuzzle.TryGetMuzzleForward(out mdir))
+                    _facingDir = mdir;
             }
             else
                 _muzzlePos = proxyPos + Vector3.up * 0.95f + _facingDir * 0.35f;
 
-            // Tick current weapon effects
             if (_currentWeapon != WeaponType.None && _effects.TryGetValue(_currentWeapon, out var fx))
             {
                 fx.Tick(Time.deltaTime);
 
-                // Primary: AnimTriggers.Fire (ammo-spent pulse from source). Backup: Shooting rising edge.
-                bool shot = triggers.HasFlag(AnimTriggers.Fire)
-                    || (bools.HasFlag(AnimBools.Shooting) && !_lastBools.HasFlag(AnimBools.Shooting));
-                if (shot)
+                // Only the ammo-spent Fire pulse. Held Fire1 used to retrigger FX every dropped packet.
+                if (triggers.HasFlag(AnimTriggers.Fire))
                 {
                     fx.OnShot();
                     DoImpactRaycast(GetDamage(_currentWeapon));
@@ -123,11 +122,9 @@ namespace SyncRADation.Players
                     if (cb != null) cb(_currentWeapon);
                 }
 
-                // Reload trigger
                 if (triggers.HasFlag(AnimTriggers.ReloadTrigger))
                     fx.OnReload();
 
-                // Laser while aiming (world-space LR + materials fixed in RemoteWeaponEffects)
                 bool aiming = bools.HasFlag(AnimBools.Aiming) || state.AimingTime > 0.5f;
                 fx.UpdateLaser(aiming, _muzzlePos, _facingDir, 30f);
             }
@@ -309,7 +306,7 @@ namespace SyncRADation.Players
             var low = name.ToLowerInvariant();
             switch (weapon)
             {
-                case WeaponType.Handgun: return low.Contains("taser") || low.Contains("handgun");
+                case WeaponType.Handgun: return low.Contains("handgun");
                 case WeaponType.Pistol: return low.Contains("pistol");
                 case WeaponType.Revolver: return low.Contains("revolver");
                 case WeaponType.Shotgun: return low.Contains("shotgun");

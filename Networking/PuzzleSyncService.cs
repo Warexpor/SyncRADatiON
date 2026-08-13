@@ -55,8 +55,8 @@ namespace SyncRADation.Networking
         {
             var map = Map(type);
             T[] arr = null;
-            try { arr = UnityEngine.Object.FindObjectsOfType<T>(); }
-            catch { return; }
+            try { arr = UnityEngine.Object.FindObjectsOfType<T>(true); }
+            catch { try { arr = UnityEngine.Object.FindObjectsOfType<T>(); } catch { return; } }
             if (arr == null) return;
             for (int i = 0; i < arr.Length; i++)
             {
@@ -152,12 +152,18 @@ namespace SyncRADation.Networking
 
         private void ReadAll(List<PuzzleStateEntry> entries, bool full)
         {
+            bool emittedMultiBlocked = false;
             foreach (var typeMap in _maps)
             {
                 var type = typeMap.Key;
                 foreach (var kvp in typeMap.Value)
                 {
                     if (kvp.Value == null) continue;
+                    if (type == PuzzleType.UseItemMulti)
+                    {
+                        if (emittedMultiBlocked) continue;
+                        emittedMultiBlocked = true;
+                    }
                     PuzzleStateEntry entry;
                     if (!TryRead(type, kvp.Key, kvp.Value, out entry)) continue;
                     if (ChangedOrFirst(entry, full)) entries.Add(entry);
@@ -404,6 +410,8 @@ namespace SyncRADation.Networking
 
         public void ApplyPuzzleState(PuzzleStateMessage msg)
         {
+            var net = LanNetworkManager.Instance;
+            if (net != null && net.Role == NetworkRole.Host) return;
             if (msg.Entries == null || msg.Entries.Length == 0) return;
             EnsureScanned();
             NetGate.BeginApply();
@@ -422,9 +430,20 @@ namespace SyncRADation.Networking
         {
             if (worldId == 0) return null;
             Dictionary<ulong, Component> map;
-            if (!_maps.TryGetValue(type, out map)) return null;
+            if (!_maps.TryGetValue(type, out map))
+            {
+                _scanned = false;
+                EnsureScanned();
+                if (!_maps.TryGetValue(type, out map)) return null;
+            }
             Component c;
-            if (!map.TryGetValue(unchecked((ulong)worldId), out c) || c == null) return null;
+            if (!map.TryGetValue(unchecked((ulong)worldId), out c) || c == null)
+            {
+                _scanned = false;
+                EnsureScanned();
+                if (!_maps.TryGetValue(type, out map)) return null;
+                if (!map.TryGetValue(unchecked((ulong)worldId), out c) || c == null) return null;
+            }
             return c as T;
         }
 
@@ -583,9 +602,34 @@ namespace SyncRADation.Networking
                     case PuzzleType.FoldingShutterDoor:
                         { var x = Get<FoldingShutterDoor>(e.Type, e.WorldId); if (x != null) x.open = e.Float0; break; }
                     case PuzzleType.InteractionTriggered:
-                        { var x = Get<Interaction>(e.Type, e.WorldId); if (x != null) x.triggered = e.Bool0; break; }
+                        {
+                            var x = Get<Interaction>(e.Type, e.WorldId);
+                            if (x != null)
+                            {
+                                bool was = x.triggered;
+                                x.triggered = e.Bool0;
+                                if (e.Bool0 && !was)
+                                {
+                                    try { x.trigger(); } catch { }
+                                }
+                            }
+                            break;
+                        }
                     case PuzzleType.EventZoneTriggered:
-                        { var x = Get<EventZone>(e.Type, e.WorldId); if (x != null) x.triggered = e.Bool0; break; }
+                        {
+                            var x = Get<EventZone>(e.Type, e.WorldId);
+                            if (x != null)
+                            {
+                                bool was = x.triggered;
+                                x.triggered = e.Bool0;
+                                if (e.Bool0 && !was)
+                                {
+                                    try { if (x.onInRange != null) x.onInRange.Invoke(); } catch { }
+                                    SyncRADation.Patches.EventZonePatch.MarkFired(unchecked((ulong)e.WorldId));
+                                }
+                            }
+                            break;
+                        }
                     case PuzzleType.GlobalAlertStatus:
                         GlobalAlertStatus.currentStatus = (GlobalAlertStatus.alarm)e.Int0;
                         break;
@@ -675,7 +719,6 @@ namespace SyncRADation.Networking
                             var x = Get<DET_RadioCodeLock>(e.Type, e.WorldId);
                             if (x != null)
                             {
-                                x.frequency = e.Int0;
                                 x.code = e.Int1;
                                 x.hintStation = e.Int2;
                             }
@@ -694,10 +737,7 @@ namespace SyncRADation.Networking
                         {
                             var x = Get<CutsceneManager>(e.Type, e.WorldId);
                             if (x != null && e.Bool0)
-                            {
                                 x.completed = true;
-                                try { if (x.onGameLoad != null) x.onGameLoad.Invoke(); } catch { }
-                            }
                             break;
                         }
                     case PuzzleType.DialoguePlayedOnce:
@@ -760,10 +800,7 @@ namespace SyncRADation.Networking
             {
                 var cd = FindInParents<ConnectedDoors>(go);
                 if (cd != null && cd.locked)
-                {
-                    try { cd.Unlock(); }
-                    catch { cd.locked = false; try { cd.UpdateProperties(); } catch { } }
-                }
+                    DoorNative.ApplyConnectedDoors(cd, false);
             }
             catch { }
             try

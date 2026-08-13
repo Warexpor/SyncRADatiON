@@ -166,6 +166,7 @@ namespace SyncRADation.Players
 
             if (msg.Kind == DeathKind.HostWipeReload)
             {
+                if (net.Role == NetworkRole.Host) return;
                 ModRuntime.Log?.Msg("[Damage] Host died — reloading last save");
                 ReloadHostSave();
                 return;
@@ -214,6 +215,7 @@ namespace SyncRADation.Players
             PlayerHP = MaxHP;
             _isDead = false;
             _respawnTimer = -1f;
+            try { PlayerState.suspendInput = false; } catch { }
         }
     }
 }

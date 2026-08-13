@@ -35,8 +35,11 @@ namespace SyncRADation.Networking
             if (_scanned) return;
             _byId.Clear();
             ItemPickup[] all = null;
-            try { all = Object.FindObjectsOfType<ItemPickup>(); }
-            catch { }
+            try { all = Object.FindObjectsOfType<ItemPickup>(true); }
+            catch
+            {
+                try { all = Object.FindObjectsOfType<ItemPickup>(); } catch { }
+            }
 
             if (all != null)
             {

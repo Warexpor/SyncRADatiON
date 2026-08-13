@@ -7,8 +7,8 @@ namespace SyncRADation
         public const string Version = "0.4.2-dev";
         public const string Author = "Warexpor";
         public const string Description = "LAN multiplayer mod for SIGNALIS — host-authoritative world/story, native client UX";
-        /// <summary>Protocol v6: full SProgress dump, UnityEvent presentation, world FMOD emitters.</summary>
-        public const int ProtocolVersion = 6;
+        /// <summary>Protocol v7: v6 world dump + player roster/leave for 3+ peers.</summary>
+        public const int ProtocolVersion = 7;
         public const int DefaultPort = 7777;
         public const int MaxPlayers = 4;
         public const float SendInterval = 1f / 30f;

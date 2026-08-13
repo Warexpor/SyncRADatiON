@@ -77,9 +77,7 @@ namespace SyncRADation.UI
 
             if (net.Role != NetworkRole.Offline && GUI.Button(CR(10, 255, 150, 28), "Resync world"))
             {
-                if (net.Role == NetworkRole.Host)
-                    net.SendFullWorldSnapshot();
-                else
+                if (net.Role == NetworkRole.Client)
                     net.RequestWorldSnapshot();
             }
 

@@ -12,7 +12,20 @@ namespace SyncRADation.Patches
         private static readonly System.Collections.Generic.HashSet<ulong> _fired
             = new System.Collections.Generic.HashSet<ulong>();
 
-        public static void OnSceneChanged() => _fired.Clear();
+        public static void OnSceneChanged()
+        {
+            _fired.Clear();
+            _lastRequest.Clear();
+            ClientKeypad.OnSceneChanged();
+        }
+
+        public static void MarkFired(ulong id)
+        {
+            if (id != 0) _fired.Add(id);
+        }
+
+        private static readonly System.Collections.Generic.Dictionary<ulong, float> _lastRequest
+            = new System.Collections.Generic.Dictionary<ulong, float>();
 
         [HarmonyPrefix]
         public static bool Prefix(EventZone __instance)
@@ -24,8 +37,14 @@ namespace SyncRADation.Patches
             try
             {
                 if (__instance.inter != null && __instance.inter.inRange)
-                    LanNetworkManager.Instance.SendInteractionRequest(
-                        WorldId.FromGameObject(__instance.gameObject), InteractionKind.EventZone);
+                {
+                    ulong id = WorldId.FromGameObject(__instance.gameObject);
+                    float last;
+                    if (_lastRequest.TryGetValue(id, out last) && Time.unscaledTime - last < 0.25f)
+                        return false;
+                    _lastRequest[id] = Time.unscaledTime;
+                    LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.EventZone);
+                }
             }
             catch { }
             return false;
@@ -53,7 +72,7 @@ namespace SyncRADation.Patches
             if (NetGate.Host) return true;
             try
             {
-                if (!__instance.autoTriggered) return false;
+                if (!__instance.autoTriggered) return true;
                 if (!__instance.repeatable && __instance.playedOnce) return false;
             }
             catch { }
@@ -86,7 +105,8 @@ namespace SyncRADation.Patches
     [HarmonyPatch(typeof(UseItemInteraction), "Update")]
     public static class UseItemInteractionPatch
     {
-        private static float _lastSend;
+        private static readonly System.Collections.Generic.Dictionary<ulong, float> _lastSend
+            = new System.Collections.Generic.Dictionary<ulong, float>();
 
         [HarmonyPrefix]
         public static bool Prefix(UseItemInteraction __instance)
@@ -99,13 +119,51 @@ namespace SyncRADation.Patches
             try
             {
                 if (__instance.inter == null || !__instance.inter.inRange) return false;
-                if (Time.unscaledTime - _lastSend < 0.25f) return false;
-                _lastSend = Time.unscaledTime;
-                LanNetworkManager.Instance.SendInteractionRequest(
-                    WorldId.FromGameObject(__instance.gameObject), InteractionKind.UseItem);
+                ulong id = WorldId.FromGameObject(__instance.gameObject);
+                float last;
+                if (_lastSend.TryGetValue(id, out last) && Time.unscaledTime - last < 0.25f)
+                    return false;
+                _lastSend[id] = Time.unscaledTime;
+                LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.UseItem);
             }
             catch { }
             return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(Keypad3D), "openDoor")]
+    public static class Keypad3DOpenPatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(Keypad3D __instance) => ClientKeypad.Submit(__instance);
+    }
+
+    static class ClientKeypad
+    {
+        private static readonly System.Collections.Generic.HashSet<ulong> _sent
+            = new System.Collections.Generic.HashSet<ulong>();
+
+        public static void OnSceneChanged() => _sent.Clear();
+
+        public static bool Submit(Component inst)
+        {
+            if (NetGate.IsApplying || !NetGate.Live) return true;
+            if (inst == null) return true;
+            if (NetGate.Host) return true;
+            ulong id = WorldId.FromGameObject(inst.gameObject);
+            if (id == 0 || !_sent.Add(id)) return false;
+            LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.KeypadSubmit);
+            return false;
+        }
+
+        public static void SubmitIfSolved(Component inst, bool solved)
+        {
+            if (!solved) return;
+            if (NetGate.IsApplying || !NetGate.Live) return;
+            if (inst == null || NetGate.Host) return;
+            ulong id = WorldId.FromGameObject(inst.gameObject);
+            if (id == 0 || !_sent.Add(id)) return;
+            LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.KeypadSubmit);
         }
     }
 
@@ -115,12 +173,16 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(Keypad3D __instance)
         {
-            if (!NetGate.Host || NetGate.IsApplying) return;
-            if (__instance == null) return;
+            if (NetGate.IsApplying || !NetGate.Live || __instance == null) return;
             try
             {
-                if (__instance.solved)
-                    LanNetworkManager.Instance.PuzzleSync.RequestFullSend();
+                if (NetGate.Host)
+                {
+                    if (__instance.solved)
+                        LanNetworkManager.Instance.PuzzleSync.RequestFullSend();
+                }
+                else
+                    ClientKeypad.SubmitIfSolved(__instance, __instance.solved);
             }
             catch { }
         }
@@ -132,12 +194,16 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(ROT_Keypad __instance)
         {
-            if (!NetGate.Host || NetGate.IsApplying) return;
-            if (__instance == null) return;
+            if (NetGate.IsApplying || !NetGate.Live || __instance == null) return;
             try
             {
-                if (__instance.solved)
-                    LanNetworkManager.Instance.PuzzleSync.RequestFullSend();
+                if (NetGate.Host)
+                {
+                    if (__instance.solved)
+                        LanNetworkManager.Instance.PuzzleSync.RequestFullSend();
+                }
+                else
+                    ClientKeypad.SubmitIfSolved(__instance, __instance.solved);
             }
             catch { }
         }
@@ -149,12 +215,16 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(PEN_Codepad __instance)
         {
-            if (!NetGate.Host || NetGate.IsApplying) return;
-            if (__instance == null) return;
+            if (NetGate.IsApplying || !NetGate.Live || __instance == null) return;
             try
             {
-                if (__instance.solved)
-                    LanNetworkManager.Instance.PuzzleSync.RequestFullSend();
+                if (NetGate.Host)
+                {
+                    if (__instance.solved)
+                        LanNetworkManager.Instance.PuzzleSync.RequestFullSend();
+                }
+                else
+                    ClientKeypad.SubmitIfSolved(__instance, __instance.solved);
             }
             catch { }
         }
@@ -170,7 +240,7 @@ namespace SyncRADation.Patches
             if (__instance == null) return true;
             if (NetGate.Host) return true;
             LanNetworkManager.Instance.SendInteractionRequest(
-                WorldId.FromGameObject(__instance.gameObject), InteractionKind.UseItem);
+                WorldId.FromGameObject(__instance.gameObject), InteractionKind.UseItemMulti);
             return false;
         }
     }
@@ -318,6 +388,7 @@ namespace SyncRADation.Patches
                 LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.CutsceneProceed, id, 0, "");
                 return true;
             }
+            LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.CutsceneProceed);
             return false;
         }
     }
@@ -337,6 +408,7 @@ namespace SyncRADation.Patches
                 LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.OpenBookMemory, 0, 0, bookName);
                 return true;
             }
+            LanNetworkManager.Instance.SendInteractionRequest(0, InteractionKind.BookMemory, 0, 0, 0f, 0f, 0f, bookName);
             return false;
         }
     }
@@ -356,6 +428,7 @@ namespace SyncRADation.Patches
                 LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.BookOpen, 0, 0, bookName);
                 return true;
             }
+            LanNetworkManager.Instance.SendInteractionRequest(0, InteractionKind.BookOpen, 0, 0, 0f, 0f, 0f, bookName);
             return false;
         }
     }
@@ -385,7 +458,7 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix()
         {
-            if (!NetGate.Live) return;
+            if (NetGate.IsApplying || !NetGate.Live) return;
             var player = PlayerState.player;
             if (player == null) return;
             var pos = player.transform.position;
