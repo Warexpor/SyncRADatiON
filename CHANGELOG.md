@@ -14,6 +14,8 @@ Protocol **v6** (incompatible with v5). Join dump is the live SProgress slot. Un
 ### Changed
 - Version `0.4.2-dev`, protocol 6
 - Harmony still per-class; one bad patch cannot abort the mod
+- Playtest traces: `[Story]` `[Interact]` `[FMOD]` `[KeyRing]` `[StorageBox]` `[Scene]` `[Damage]`; VerboseLogging default on
+- `.gitignore` now drops bin/obj/dist, NuGet packages, IDE files, logs, and secrets (stop tracking build artifacts)
 
 ## 0.4.1-dev — 2026-08-13
 

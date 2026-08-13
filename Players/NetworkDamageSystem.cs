@@ -84,6 +84,7 @@ namespace SyncRADation.Players
             {
                 if (net.Role == NetworkRole.Host)
                 {
+                    ModRuntime.Log?.Msg("[Damage] Host died — wipe reload");
                     net.SendDeathPolicy(DeathKind.HostWipeReload);
                     ReloadHostSave();
                     return;

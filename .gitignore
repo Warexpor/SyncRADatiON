@@ -1,5 +1,84 @@
-bin/
-obj/
+# Build output
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+*.dll
+*.pdb
+*.exe
+*.cache
+*.ilk
+*.idb
+*.ipdb
+*.iobj
+*.sourcelink.json
+
+# Dist / zip artifacts
+[Dd]ist/
+*.zip
+*.7z
+*.rar
+*.nupkg
+*.snupkg
+
+# NuGet restore (keep packages.config)
+[Pp]ackages/
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# IDE / editor
+.vs/
+.idea/
 *.user
 *.suo
-.vs/
+*.userosscache
+*.sln.docstates
+*.userprefs
+*.DotSettings.user
+*.rsuser
+.vscode/
+*.code-workspace
+
+# Secrets / credentials / keys
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.snk
+*.pem
+*.key
+*.crt
+credentials.json
+secrets.json
+appsettings.*.local.json
+*password*
+*secret*
+
+# MelonLoader / SIGNALIS local (never commit installs or prefs)
+UserData/
+MelonLoader/
+Mods/
+MelonPreferences.cfg
+boot.config
+Latest.log
+console.log
+
+# Logs / dumps / temp
+*.log
+logs/
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+_tmp_ref/
+_stage/
+
+# OS junk
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+$RECYCLE.BIN/

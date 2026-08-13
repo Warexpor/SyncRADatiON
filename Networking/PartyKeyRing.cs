@@ -1,5 +1,6 @@
 // Party-held unique keys/objects so UseItemInteraction works for either Elster.
 using System.Collections.Generic;
+using SyncRADation.Sync;
 
 namespace SyncRADation.Networking
 {
@@ -20,7 +21,8 @@ namespace SyncRADation.Networking
         public static void Note(Items.itemlist item)
         {
             if (item == Items.itemlist.None) return;
-            _keys.Add((ushort)item);
+            if (_keys.Add((ushort)item))
+                PlaytestLog.Event("KeyRing", "note " + item + " count=" + _keys.Count);
         }
 
         public static void Note(AnItem item)
@@ -45,6 +47,7 @@ namespace SyncRADation.Networking
             if (msg.ItemEnums == null) return;
             for (int i = 0; i < msg.ItemEnums.Length; i++)
                 _keys.Add(msg.ItemEnums[i]);
+            PlaytestLog.Event("KeyRing", "apply count=" + _keys.Count);
         }
 
         public static void Broadcast()

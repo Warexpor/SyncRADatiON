@@ -88,6 +88,11 @@ namespace SyncRADation.Networking
                 ModRuntime.Log?.Warning("[Interact] " + msg.Kind + ": " + ex.Message);
             }
 
+            if (msg.Kind != InteractionKind.Gunshot)
+                PlaytestLog.Event("Interact", (ok ? "ok " : "FAIL ") + msg.Kind
+                    + " from=" + msg.SenderPlayerId
+                    + " id=" + unchecked((ulong)msg.WorldId).ToString("X16")
+                    + (string.IsNullOrEmpty(reason) ? "" : " " + reason));
             net.SendInteractionAck(msg.SenderPlayerId, msg.WorldId, msg.Kind, ok, reason);
         }
 

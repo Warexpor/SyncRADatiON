@@ -31,7 +31,8 @@ namespace SyncRADation.Config
                 "Sync world ItemPickups (keys, modules, docs, ground ammo)");
             SyncPlayerVitals = Category.CreateEntry("SyncPlayerVitals", true,
                 "Share HP / death / game-state for remote Elster display");
-            VerboseLogging = Category.CreateEntry("VerboseLogging", false, "Extra diagnostic logs");
+            VerboseLogging = Category.CreateEntry("VerboseLogging", true,
+                "FMOD one-shots and extra diagnostics (playtest default on)");
         }
 
         /// <summary>True if either SyncPuzzles or legacy ExperimentalPuzzles is on.</summary>

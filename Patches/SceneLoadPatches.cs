@@ -76,13 +76,7 @@ namespace SyncRADation.Patches
             if (__instance == null) return true;
             string scene = __instance.SceneName;
             if (string.IsNullOrEmpty(scene)) return true;
-            if (NetGate.Host)
-            {
-                LanNetworkManager.Instance.SendSceneFollow(scene, false);
-                return true;
-            }
-            SceneFollowService.RequestFollow(scene);
-            return false;
+            return GateLevel(scene);
         }
 
         [HarmonyPrefix]
@@ -110,10 +104,12 @@ namespace SyncRADation.Patches
 
             if (NetGate.Host)
             {
+                PlaytestLog.Event("Scene", "host load '" + scene + "'");
                 LanNetworkManager.Instance.SendSceneFollow(scene, false);
                 return true;
             }
 
+            PlaytestLog.Event("Scene", "client blocked local load, request '" + scene + "'");
             SceneFollowService.RequestFollow(scene);
             return false;
         }

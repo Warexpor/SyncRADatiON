@@ -17,6 +17,7 @@ namespace SyncRADation.Networking
             {
                 if (msg.Kind == 1)
                 {
+                    PlaytestLog.Verbose("FMOD", "apply OneShot " + msg.Path);
                     if (!string.IsNullOrEmpty(msg.Path))
                         RuntimeManager.PlayOneShot(msg.Path, new Vector3(msg.PosX, msg.PosY, msg.PosZ));
                     return;
@@ -31,10 +32,12 @@ namespace SyncRADation.Networking
                     var e = all[i];
                     if (e == null) continue;
                     if (WorldId.FromGameObject(e.gameObject) != id) continue;
+                    PlaytestLog.Event("FMOD", (msg.Play ? "Play" : "Stop") + " id=" + id.ToString("X16"));
                     if (msg.Play) e.Play();
                     else e.Stop();
                     return;
                 }
+                PlaytestLog.Miss("FMOD", "StudioEventEmitter", id);
             }
             catch (System.Exception ex)
             {
@@ -52,9 +55,11 @@ namespace SyncRADation.Networking
             if (IsLocalOnly(emitter.transform)) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
+            ulong id = WorldId.FromGameObject(emitter.gameObject);
+            PlaytestLog.Verbose("FMOD", (play ? "host Play" : "host Stop") + " id=" + id.ToString("X16"));
             net.SendFmodEmitter(new FmodEmitterMessage
             {
-                WorldId = unchecked((long)WorldId.FromGameObject(emitter.gameObject)),
+                WorldId = unchecked((long)id),
                 Play = play,
                 Kind = 0
             });
@@ -65,6 +70,7 @@ namespace SyncRADation.Networking
             if (string.IsNullOrEmpty(path) || !NetGate.Host || NetGate.IsApplying) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
+            PlaytestLog.Verbose("FMOD", "host OneShot " + path);
             net.SendFmodEmitter(new FmodEmitterMessage
             {
                 Play = true,

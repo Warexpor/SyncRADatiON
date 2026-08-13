@@ -720,6 +720,8 @@ namespace SyncRADation.Networking
                 Float2 = f2,
                 Text = text ?? ""
             };
+            if (kind != InteractionKind.Gunshot)
+                PlaytestLog.Event("Interact", "request " + kind + " id=" + worldId.ToString("X16"));
             if (_role == NetworkRole.Host)
             {
                 InteractionSyncService.HandleRequest(msg);
@@ -1169,10 +1171,11 @@ namespace SyncRADation.Networking
         {
             if (!ack.Ok)
             {
-                if (!string.IsNullOrEmpty(ack.Reason))
-                    ModRuntime.Log?.Msg("[Interact] rejected: " + ack.Reason);
+                ModRuntime.Log?.Msg("[Interact] rejected " + ack.Kind
+                    + (string.IsNullOrEmpty(ack.Reason) ? "" : ": " + ack.Reason));
                 return;
             }
+            PlaytestLog.Event("Interact", "ack " + ack.Kind);
 
             if (string.IsNullOrEmpty(ack.Reason) || !ack.Reason.StartsWith("consume:"))
                 return;

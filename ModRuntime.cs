@@ -36,7 +36,9 @@ namespace SyncRADation
                 Log.Msg("  " + PluginInfo.Description);
                 Log.Msg("  Protocol v" + PluginInfo.ProtocolVersion + " | Port " + PluginInfo.DefaultPort);
                 Log.Msg("  F2 menu | F3 quick connect | G drop | E pickup");
-                Log.Msg("  FriendlyFire=" + (ModConfig.FriendlyFire?.Value == true));
+                Log.Msg("  FriendlyFire=" + (ModConfig.FriendlyFire?.Value == true)
+                    + " VerboseLogging=" + VerboseLogging);
+                Log.Msg("  grep: [Story] [Interact] [FMOD] [KeyRing] [StorageBox] [Scene] [Damage] [Harmony]");
                 Log.Msg("=============================================");
 
                 Application.runInBackground = true;

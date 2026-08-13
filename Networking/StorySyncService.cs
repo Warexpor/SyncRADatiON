@@ -91,6 +91,10 @@ namespace SyncRADation.Networking
                 ActiveWorldId = unchecked((long)LastWorldId),
                 ActiveStoryCmd = (byte)LastCmd
             });
+            if (full)
+                PlaytestLog.Event("Story", "commit full flags=" + arr.Length
+                    + " xml=" + (xml != null ? xml.Length : 0)
+                    + " cmd=" + LastCmd + " gs=" + gs);
         }
 
         private void DumpLiveProgress()
@@ -252,6 +256,11 @@ namespace SyncRADation.Networking
                 NetGate.EndApply();
             }
 
+            PlaytestLog.Event("Story", "apply commit full=" + msg.FullRefresh
+                + " flags=" + (msg.Flags != null ? msg.Flags.Length : 0)
+                + " xml=" + (msg.DialoguerXml != null ? msg.DialoguerXml.Length : 0)
+                + " cmd=" + (StoryCmd)msg.ActiveStoryCmd);
+
             if (msg.ActiveStoryCmd != 0 && msg.ActiveWorldId != 0)
             {
                 ApplyPresentation(new StoryPresentationMessage
@@ -270,6 +279,8 @@ namespace SyncRADation.Networking
             if (net == null || !net.IsConnected) return;
             LastCmd = cmd;
             LastWorldId = worldId;
+            PlaytestLog.Event("Story", "send " + cmd + " id=" + worldId.ToString("X16") + " i=" + int0
+                + (string.IsNullOrEmpty(text) ? "" : " '" + text + "'"));
             net.SendStoryPresentation(new StoryPresentationMessage
             {
                 WorldId = unchecked((long)worldId),
@@ -285,6 +296,7 @@ namespace SyncRADation.Networking
             try
             {
                 ulong id = unchecked((ulong)msg.WorldId);
+                PlaytestLog.Event("Story", "apply " + msg.Cmd + " id=" + id.ToString("X16") + " i=" + msg.Int0);
                 switch (msg.Cmd)
                 {
                     case StoryCmd.DialogueStart:
@@ -446,6 +458,7 @@ namespace SyncRADation.Networking
                 }
             }
             catch { }
+            PlaytestLog.Miss("Story", typeof(T).Name, worldId);
             return null;
         }
     }

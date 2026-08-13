@@ -48,6 +48,25 @@ LAN multiplayer MelonLoader mod for SIGNALIS (Unity IL2CPP / Unhollower-style Ma
 - Port default `7777`, key `SyncRADation`
 - v6: full SProgress dump, UnityEvent presentation, FmodEmitter Play/Stop
 
+## This machine (dual-instance)
+
+Same PC. **Steam = host. Copy = client.** F3 is `127.0.0.1:7777`. `VerboseLogging` on. `boot.config` `single-instance=0` on both.
+
+| Role | Install | Launch | MelonLoader log |
+|------|---------|--------|-----------------|
+| **Host** | `C:\Program Files (x86)\Steam\steamapps\common\SIGNALIS` | Steam | `...\SIGNALIS\MelonLoader\Latest.log` |
+| **Client** | `C:\MyProjects\SIGNALIS` | `SIGNALIS.exe` (not Steam) | `C:\MyProjects\SIGNALIS\MelonLoader\Latest.log` |
+
+Prefs: `...\SIGNALIS\UserData\MelonPreferences.cfg` on each install.
+
+Debug build copies the DLL to **both** `Mods\` folders. csproj names: `SignalisDir` = copy, `ClientSignalisDir` = Steam (deploy labels, not playtest roles).
+
+Grep logs: `[Harmony]` `[Story]` `[Interact]` `[FMOD]` `[KeyRing]` `[StorageBox]` `[Scene]` `[Damage]`.
+
+## Decompile reference
+
+`C:\Users\amicu\Desktop\Dev\SIGNALIS DECOMPILED\`
+
 ## Build / deploy
 
 ```powershell
@@ -56,12 +75,8 @@ dotnet build "C:\MyProjects\SyncRADation (SIGNALIS MP REMAKE)\SyncRADation.cspro
 
 Copies to:
 
-- `$(SignalisDir)\Mods` default `C:\MyProjects\SIGNALIS\Mods`
-- `$(ClientSignalisDir)\Mods` Steam install if present
-
-## Decompile reference
-
-`C:\Users\amicu\Desktop\Dev\SIGNALIS DECOMPILED\`
+- `$(SignalisDir)\Mods` → `C:\MyProjects\SIGNALIS\Mods` (client copy)
+- `$(ClientSignalisDir)\Mods` → Steam install (host)
 
 ## Hard rules
 

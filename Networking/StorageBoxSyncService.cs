@@ -1,5 +1,6 @@
 // Host-authoritative InventoryManager.boxItems.
 using System.Collections.Generic;
+using SyncRADation.Sync;
 
 namespace SyncRADation.Networking
 {
@@ -33,6 +34,7 @@ namespace SyncRADation.Networking
             string sig = Signature(items);
             if (sig == _lastSig) return;
             _lastSig = sig;
+            PlaytestLog.Event("StorageBox", "send items=" + (items != null ? items.Length : 0));
             net.SendStorageBoxBlob(items);
         }
 
@@ -51,6 +53,7 @@ namespace SyncRADation.Networking
                 }
 
                 if (msg.Items == null) return;
+                PlaytestLog.Event("StorageBox", "apply items=" + msg.Items.Length);
                 for (int i = 0; i < msg.Items.Length; i++)
                 {
                     var e = msg.Items[i];
