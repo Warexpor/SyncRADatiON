@@ -16,6 +16,8 @@ namespace SyncRADation.Players
         private static float _prevNormTime;
         private static Networking.WeaponType _lastWeaponRead;
         private static float _lastSrcLog;
+        private static int _lastMagAmmo = -1;
+        private static bool _hasMagAmmo;
 
         public static void ReadFromPlayer(GameObject player, ref PlayerStateMessage msg)
         {
@@ -70,22 +72,26 @@ namespace SyncRADation.Players
             {
                 ModRuntime.Log?.Msg("[WeaponSync] Source weapon: " + _lastWeaponRead + " -> " + msg.Weapon);
                 _lastWeaponRead = msg.Weapon;
+                _hasMagAmmo = false; // resync mag baseline on weapon swap
+                _lastMagAmmo = -1;
             }
 
             // Read bools
-            // IL2CPP: Animator.GetBool for weapon-related params (Aiming, Shooting, etc.) ALWAYS returns false.
-            // Aiming: detect from AimingTime float (reliable)
-            // Shooting: detect from ammo decrease in InventoryManager.elsterItems (reliable, works in IL2CPP)
+            // IL2CPP: Animator.GetBool for Aiming/Shooting is unreliable.
+            // Aiming: AimingTime float. Shot edge: equipped magAmmo decrease → AnimTriggers.Fire.
             AnimBools b = 0;
 
             // Aiming from AimingTime float
             if (msg.AimingTime > 0.5f)
                 b |= AnimBools.Aiming;
 
-            // Shooting detection via Unity Input (works in IL2CPP — native engine API)
-            // Fire1 = LMB / Left Ctrl / Controller trigger (standard Unity input axis)
-            // Input.GetMouseButton(0) = direct LMB check, doesn't rely on Input Manager axes
-            if (Input.GetButton("Fire1") || Input.GetMouseButton(0)) b |= AnimBools.Shooting;
+            // Shot pulse from magazine ammo (works full-auto + semi; independent of held Fire1)
+            bool ammoShot = TryDetectAmmoShot();
+            if (ammoShot)
+                b |= AnimBools.Shooting;
+            // Fallback while trigger held (empty click / non-mag weapons) — still useful for aim anim
+            else if (Input.GetButton("Fire1") || Input.GetMouseButton(0))
+                b |= AnimBools.Shooting;
 
             if (SafeGetBool(anim, "Running")) b |= AnimBools.Running;
             if (SafeGetBool(anim, "Grounded")) b |= AnimBools.Grounded;
@@ -126,6 +132,8 @@ namespace SyncRADation.Players
 
             // Detect triggers: if a bool changed from false→true, fire the trigger
             AnimTriggers triggers = 0;
+            if (ammoShot)
+                triggers |= AnimTriggers.Fire;
             if (_hasLast)
             {
                 if (!_lastBools.HasFlag(AnimBools.Reload) && b.HasFlag(AnimBools.Reload))
@@ -146,6 +154,9 @@ namespace SyncRADation.Players
                     triggers |= AnimTriggers.Hurt;
                 if (!_lastBools.HasFlag(AnimBools.Dead) && b.HasFlag(AnimBools.Dead))
                     triggers |= AnimTriggers.Die;
+                // Rising edge of held-fire as backup when magAmmo unreadable (melee/empty)
+                if (!ammoShot && !_lastBools.HasFlag(AnimBools.Shooting) && b.HasFlag(AnimBools.Shooting))
+                    triggers |= AnimTriggers.Fire;
             }
             triggers |= _accumulatedTriggers;
             _accumulatedTriggers = 0;
@@ -182,7 +193,48 @@ namespace SyncRADation.Players
             _lastPlayerRoot = null;
             _boneReader = null;
             _lastWeaponRead = 0;
+            _lastMagAmmo = -1;
+            _hasMagAmmo = false;
+        }
 
+        /// <summary>True once per expended round when EquippedWeapon.magAmmo decreases.</summary>
+        private static bool TryDetectAmmoShot()
+        {
+            try
+            {
+                var equipped = InventoryManager.EquippedWeapon;
+                if (equipped == null)
+                {
+                    _hasMagAmmo = false;
+                    _lastMagAmmo = -1;
+                    return false;
+                }
+                int mag = equipped.magAmmo;
+                if (!_hasMagAmmo)
+                {
+                    _lastMagAmmo = mag;
+                    _hasMagAmmo = true;
+                    return false;
+                }
+                // Reload / swap can increase mag — resync, not a shot
+                if (mag > _lastMagAmmo)
+                {
+                    _lastMagAmmo = mag;
+                    return false;
+                }
+                if (mag < _lastMagAmmo)
+                {
+                    int spent = _lastMagAmmo - mag;
+                    _lastMagAmmo = mag;
+                    // One network pulse per state tick; multi-round spend still one visual shot (full-auto re-samples next tick)
+                    return spent > 0;
+                }
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static Transform FindFacingPivot(Transform root)

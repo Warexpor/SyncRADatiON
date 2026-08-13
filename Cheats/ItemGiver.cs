@@ -157,7 +157,7 @@ namespace SyncRADation.Cheats
             try
             {
                 var target = FindAnItem(item.ItemId);
-                if (target == null) { SetStatus("Can't find '" + item.ItemId + "' in Resources", true); return; }
+                if (target == null) { SetStatus("Can't find '" + item.ItemId + "'", true); return; }
 
                 InventoryManager.AddItem(target, 1);
                 SetStatus("Added: " + item.DisplayName);
@@ -171,6 +171,17 @@ namespace SyncRADation.Cheats
 
         private static AnItem FindAnItem(string name)
         {
+            try
+            {
+                Items.itemlist parsed;
+                if (System.Enum.TryParse(name, true, out parsed))
+                {
+                    var fromMgr = InventoryManager.getItem(parsed);
+                    if (fromMgr != null) return fromMgr;
+                }
+            }
+            catch { }
+
             try
             {
                 var resItems = Resources.FindObjectsOfTypeAll<AnItem>();

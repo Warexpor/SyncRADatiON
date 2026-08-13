@@ -20,7 +20,7 @@ namespace SyncRADation.Cheats
             if (!ShowMenu) return;
 
             RefreshEnemyList();
-            _windowRect = GUI.Window(997, _windowRect, (GUI.WindowFunction)DrawWindow, "Entity Spawner (F7)");
+            _windowRect = GUI.Window(997, _windowRect, (GUI.WindowFunction)DrawWindow, "Entity Spawner (F11)");
         }
 
         private static void RefreshEnemyList()

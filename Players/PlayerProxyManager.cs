@@ -1,4 +1,4 @@
-// SyncRADation — Dictionary<int,RemotePlayerProxy>, position interpolation, collider lookup
+// SyncRADation ï¿½ Dictionary<int,RemotePlayerProxy>, position interpolation, collider lookup
 using System.Collections.Generic;
 using SyncRADation.Networking;
 using UnityEngine;
@@ -125,13 +125,12 @@ namespace SyncRADation.Players
             if (_proxies.TryGetValue(playerId, out var proxy))
             {
                 proxy.ApplyState(state);
-                // Store position for interpolation
                 var targetPos = new Vector3(state.PosX, state.PosY, state.PosZ);
-                ApplyPosition(playerId, targetPos, state.RotY);
+                ApplyPosition(playerId, targetPos, state.RotY, state.RootX, state.RootY, state.RootZ);
             }
         }
 
-        private void ApplyPosition(int playerId, Vector3 position, float rotY)
+        private void ApplyPosition(int playerId, Vector3 position, float rotY, float rootX, float rootY, float rootZ)
         {
             if (!_interp.TryGetValue(playerId, out var ist)) return;
 
@@ -141,7 +140,11 @@ namespace SyncRADation.Players
             if (ist.isFirst || teleport)
             {
                 if (_proxyObjects.TryGetValue(playerId, out var go) && go != null)
+                {
                     go.transform.position = position;
+                    // Preserve SIGNALIS root tilt from source
+                    go.transform.eulerAngles = new Vector3(rootX, rootY, rootZ);
+                }
                 ist.prevPos = position;
                 ist.targetPos = position;
                 ist.prevRotY = rotY;

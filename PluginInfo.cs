@@ -1,16 +1,19 @@
-// SyncRADation � constants: version, protocol, port, send rates
+// SyncRADation — constants: version, protocol, port, send rates
 namespace SyncRADation
 {
     public static class PluginInfo
     {
         public const string Name = "SyncRADation";
-        public const string Version = "0.3.0";
+        public const string Version = "0.4.2-dev";
         public const string Author = "Warexpor";
-        public const string Description = "LAN multiplayer mod for SIGNALIS — proxy sync, doors, audio, item drops";
-        public const int ProtocolVersion = 1;
+        public const string Description = "LAN multiplayer mod for SIGNALIS — host-authoritative world/story, native client UX";
+        /// <summary>Protocol v6: full SProgress dump, UnityEvent presentation, world FMOD emitters.</summary>
+        public const int ProtocolVersion = 6;
         public const int DefaultPort = 7777;
+        public const int MaxPlayers = 4;
         public const float SendInterval = 1f / 30f;
-        public const int BoneSendDivider = 2; // send bones every 2nd state packet (15Hz)
-        public const float EntitySendInterval = 1f / 30f;
+        public const int BoneSendDivider = 2; // bones every 2nd state packet (~15 Hz)
+        public const float EntitySendInterval = 1f / 15f;
+        public const string ConnectionKey = "SyncRADation";
     }
 }

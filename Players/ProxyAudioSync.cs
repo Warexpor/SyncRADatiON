@@ -1,4 +1,4 @@
-// SyncRADation � positional FMOD audio on proxy via PlayOneShotAttached, combat SFX cache
+// SyncRADation � positional FMOD audio on proxy via PlayOneShotAttached, combat SFX cache
 using System;
 using System.Collections.Generic;
 using FMODUnity;
@@ -283,6 +283,7 @@ namespace SyncRADation.Players
         {
             if (!_combatSfxCached) BuildCombatSfxCache();
 
+            // Delayed mechanical / case sounds after the bang (proxy has no native ReloadCaseEject MBs)
             switch (weapon)
             {
                 case WeaponType.Shotgun:
@@ -292,6 +293,25 @@ namespace SyncRADation.Players
                 case WeaponType.CAR:
                     _pendingActionPath = _fgunEjectPath;
                     _actionSoundTimer = 0.25f;
+                    break;
+                case WeaponType.Pistol:
+                case WeaponType.Handgun:
+                    // slide rack / case-ish secondary — best available CombatSfx paths
+                    _pendingActionPath = !string.IsNullOrEmpty(_pistolSlideForwardPath)
+                        ? _pistolSlideForwardPath
+                        : _pistolMagDropPath;
+                    _actionSoundTimer = 0.12f;
+                    break;
+                case WeaponType.Revolver:
+                    _pendingActionPath = _revolverEjectPath;
+                    _actionSoundTimer = 0.18f;
+                    break;
+                case WeaponType.Rifle:
+                    _pendingActionPath = _rifleEjectPath;
+                    _actionSoundTimer = 0.2f;
+                    break;
+                case WeaponType.SMG:
+                    // no dedicated case path — skip noisy spam on full-auto
                     break;
             }
         }

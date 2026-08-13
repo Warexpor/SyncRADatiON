@@ -5,9 +5,13 @@ using System.Net;
 using System.Net.Sockets;
 using LiteNetLib;
 using LiteNetLib.Utils;
+using SyncRADation.Config;
 using SyncRADation.ItemSystem;
 using SyncRADation.Players;
+using SyncRADation.Sync;
+// NetworkDamageSystem lives in Players
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace SyncRADation.Networking
 {
@@ -25,23 +29,37 @@ namespace SyncRADation.Networking
         private readonly EnemySyncService _enemySync = new EnemySyncService();
         private readonly PuzzleSyncService _puzzleSync = new PuzzleSyncService();
         private readonly BossSyncService _bossSync = new BossSyncService();
+        private readonly WorldPickupSyncService _pickupSync = new WorldPickupSyncService();
+        private readonly StorySyncService _storySync = new StorySyncService();
+        private readonly StorageBoxSyncService _storageSync = new StorageBoxSyncService();
         private GameObject _localPlayer;
         private float _sendTimer;
+        private float _vitalTimer;
         private int _boneSendCounter;
         private Vector3 _lastSentPosition;
         private float _lastStateTime;
 
         private bool _handshakeComplete;
+        private readonly Dictionary<int, string> _peerScenes = new Dictionary<int, string>();
+        private string _hostSceneName = "";
+        private string _localSceneName = "";
+        private bool _sceneMismatch;
 
         private ushort _nextItemIndex = 1;
         public NetworkRole Role => _role;
         public bool IsConnected => _peers.Count > 0 && _handshakeComplete;
         public int LocalPlayerId => _localPlayerId;
         public string StatusText { get; private set; } = "Offline";
+        public bool SceneMismatch => _sceneMismatch;
+        public string HostSceneName => _hostSceneName;
+        public string LocalSceneName => _localSceneName;
         public PlayerProxyManager ProxyManager => _proxyManager;
         public EnemySyncService EnemySync => _enemySync;
         public PuzzleSyncService PuzzleSync => _puzzleSync;
         public BossSyncService BossSync => _bossSync;
+        public WorldPickupSyncService PickupSync => _pickupSync;
+        public StorySyncService StorySync => _storySync;
+        public StorageBoxSyncService StorageSync => _storageSync;
         public GameObject GetLocalPlayer() => _localPlayer;
         public void SetLocalPlayer(GameObject go) { _localPlayer = go; }
 
@@ -87,7 +105,7 @@ namespace SyncRADation.Networking
             _role = NetworkRole.Client;
             _net = new NetManager(this) { UnconnectedMessagesEnabled = true, DisconnectTimeout = 5000 };
             _net.Start();
-            var peer = _net.Connect(address, port, "SyncRADation");
+            var peer = _net.Connect(address, port, PluginInfo.ConnectionKey);
             // Client initially connects with unknown playerId; host will assign in handshake
             _peers.Clear();
             _peerToId.Clear();
@@ -101,10 +119,15 @@ namespace SyncRADation.Networking
             _proxyManager.DestroyAll();
             DoorSyncService.Reset();
             _puzzleSync.Reset();
+            _pickupSync.Reset();
+            _storySync.Reset();
+            _storageSync.Reset();
+            PartyKeyRing.Reset();
             SourceAnimReader.Reset();
             DroppedItemManager.SaveToFile();
             DroppedItemManager.ClearAll();
             _handshakeComplete = false;
+            _vitalTimer = 0f;
             _peers.Clear();
             _peerToId.Clear();
             _sendTimer = 0f;
@@ -136,8 +159,23 @@ namespace SyncRADation.Networking
 
             DoorSyncService.Tick();
             _enemySync.TickHost(this);
-            _puzzleSync.TickHost(this);
+            if (ModConfig.PuzzlesEnabled)
+                _puzzleSync.TickHost(this);
             _bossSync.TickHost(this);
+            _pickupSync.TickHost(this);
+            _storySync.TickHost(this);
+            _storageSync.TickHost(this);
+
+            // Vitals ~5 Hz for remote damage/death presentation
+            if (ModConfig.SyncPlayerVitals?.Value == true)
+            {
+                _vitalTimer += Mathf.Min(Time.deltaTime, 0.1f);
+                if (_vitalTimer >= 0.2f)
+                {
+                    _vitalTimer = 0f;
+                    SendLocalVital();
+                }
+            }
 
             // Pickup nearby dropped item
             if (Input.GetKeyDown(KeyCode.E) && WorldItem.NearbyID >= 0
@@ -223,6 +261,17 @@ namespace SyncRADation.Networking
             }
             catch { }
 
+            var euler = player.transform.eulerAngles;
+            byte modelState = 0;
+            bool wearHat = false;
+            try
+            {
+                var cmt = player.GetComponentInChildren<CharacterModelType>(true);
+                if (cmt != null) modelState = (byte)cmt.modelState;
+                wearHat = CharacterModelType.wearHat;
+            }
+            catch { }
+
             var msg = new PlayerStateMessage
             {
                 SenderPlayerId = _localPlayerId,
@@ -230,7 +279,9 @@ namespace SyncRADation.Networking
                 PosY = pos.y,
                 PosZ = pos.z,
                 RotY = rotY,
-                RootY = player.transform.eulerAngles.y,
+                RootY = euler.y,
+                RootX = euler.x,
+                RootZ = euler.z,
                 VelX = vel.x,
                 VelZ = vel.z,
                 Forward = forwardAmount,
@@ -238,7 +289,9 @@ namespace SyncRADation.Networking
                 AimingTime = aimingTime,
                 CharState = (byte)PlayerState.charState,
                 Facing = facing,
-                AnimBools = 0
+                AnimBools = 0,
+                ModelState = modelState,
+                WearHat = wearHat
             };
 
             SourceAnimReader.ReadFromPlayer(player, ref msg);
@@ -247,11 +300,54 @@ namespace SyncRADation.Networking
             if (_boneSendCounter % PluginInfo.BoneSendDivider != 0)
                 msg.BoneRotations = null;
 
-            // Ammo-based shooting detection is handled in SourceAnimReader.ReadFromPlayer
             if (PlayerState.aiming) msg.AnimBools |= AnimBools.Aiming;
             if (PlayerState.charState == PlayerState.charStates.run) msg.AnimBools |= AnimBools.Running;
 
             return msg;
+        }
+
+        /// <summary>Host relays a raw writer to all peers except excludePlayerId.</summary>
+        public void RelayRaw(NetDataWriter writer, DeliveryMethod method, int excludePlayerId)
+        {
+            if (_role != NetworkRole.Host) return;
+            foreach (var kvp in _peers)
+            {
+                if (kvp.Key == excludePlayerId) continue;
+                if (kvp.Key == _localPlayerId) continue;
+                var peer = kvp.Value;
+                if (peer.ConnectionState != ConnectionState.Connected) continue;
+                peer.Send(writer, method);
+            }
+        }
+
+        private void BroadcastRaw(NetDataWriter writer, DeliveryMethod method)
+        {
+            foreach (var kvp in _peers)
+            {
+                var peer = kvp.Value;
+                if (peer.ConnectionState != ConnectionState.Connected) continue;
+                peer.Send(writer, method);
+            }
+        }
+
+        public void BroadcastSceneHello()
+        {
+            if (_net == null || !_handshakeComplete) return;
+            _localSceneName = SceneManager.GetActiveScene().name ?? "";
+            if (_role == NetworkRole.Host)
+                _hostSceneName = _localSceneName;
+
+            var msg = new SceneHelloMessage
+            {
+                SenderPlayerId = _localPlayerId,
+                SceneName = _localSceneName,
+                RoomName = WorldRegistry.GetLocalRoomName()
+            };
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.SceneHello);
+            msg.Serialize(writer);
+            BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
+            ModRuntime.Log?.Msg("[Scene] Hello sent scene='" + msg.SceneName + "' room='" + msg.RoomName + "'");
         }
 
         public int GetPlayerCount()
@@ -297,45 +393,32 @@ namespace SyncRADation.Networking
 
         public void SendDoorState(DoorStateMessage msg)
         {
-            foreach (var kvp in _peers)
-            {
-                var peer = kvp.Value;
-                if (peer.ConnectionState != ConnectionState.Connected) continue;
-                var writer = new NetDataWriter();
-                writer.Put((byte)NetMessageType.DoorState);
-                msg.Serialize(writer);
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
-            }
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.DoorState);
+            msg.Serialize(writer);
+            BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
         }
 
         public void SendDropItem(DropItemSpawnMessage msg)
         {
-            foreach (var kvp in _peers)
-            {
-                var peer = kvp.Value;
-                if (peer.ConnectionState != ConnectionState.Connected) continue;
-                var writer = new NetDataWriter();
-                writer.Put((byte)NetMessageType.DropItemSpawn);
-                msg.Serialize(writer);
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
-            }
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.DropItemSpawn);
+            msg.Serialize(writer);
+            BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
         }
 
         public void SendItemPickedUp(ItemPickedUpMessage msg)
         {
-            foreach (var kvp in _peers)
-            {
-                var peer = kvp.Value;
-                if (peer.ConnectionState != ConnectionState.Connected) continue;
-                var writer = new NetDataWriter();
-                writer.Put((byte)NetMessageType.ItemPickedUp);
-                msg.Serialize(writer);
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
-            }
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.ItemPickedUp);
+            msg.Serialize(writer);
+            BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
         }
 
         public void SendFriendlyFire(int targetPlayerId, float damage, Vector3 hitPos)
         {
+            if (ModConfig.FriendlyFire?.Value != true) return;
+
             var msg = new FriendlyFireMessage
             {
                 TargetPlayerId = targetPlayerId,
@@ -345,16 +428,24 @@ namespace SyncRADation.Networking
                 HitPosY = hitPos.y,
                 HitPosZ = hitPos.z
             };
-            foreach (var kvp in _peers)
+            // Send to host if we are client (host relays); host sends direct to target
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.FriendlyFire);
+            msg.Serialize(writer);
+
+            if (_role == NetworkRole.Host)
             {
-                if (kvp.Key != targetPlayerId) continue;
-                var peer = kvp.Value;
-                if (peer.ConnectionState != ConnectionState.Connected) continue;
-                var writer = new NetDataWriter();
-                writer.Put((byte)NetMessageType.FriendlyFire);
-                msg.Serialize(writer);
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
-                ModRuntime.Log?.Msg("[FF] Sent damage=" + damage.ToString("F0") + " to player " + targetPlayerId);
+                if (_peers.TryGetValue(targetPlayerId, out var peer)
+                    && peer.ConnectionState == ConnectionState.Connected)
+                {
+                    peer.Send(writer, DeliveryMethod.ReliableOrdered);
+                    ModRuntime.Log?.Msg("[FF] Host sent dmg=" + damage.ToString("F0") + " to " + targetPlayerId);
+                }
+            }
+            else
+            {
+                BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
+                ModRuntime.Log?.Msg("[FF] Client sent dmg=" + damage.ToString("F0") + " target=" + targetPlayerId);
             }
         }
 
@@ -372,26 +463,22 @@ namespace SyncRADation.Networking
             }
         }
 
-        public void SendEnemyDamage(int targetPlayerId, int hostEnemyInstanceID, float damage, bool stagger)
+        public void SendEnemyDamage(int targetPlayerId, ulong enemyWorldId, float damage, bool stagger)
         {
             var msg = new EnemyDamageMessage
             {
                 AttackerPlayerId = -1,
                 TargetPlayerId = targetPlayerId,
-                HostEnemyInstanceID = hostEnemyInstanceID,
+                EnemyWorldId = unchecked((long)enemyWorldId),
                 Damage = damage,
                 IsStagger = stagger
             };
-            foreach (var kvp in _peers)
-            {
-                if (kvp.Key != targetPlayerId) continue;
-                var peer = kvp.Value;
-                if (peer.ConnectionState != ConnectionState.Connected) continue;
-                var writer = new NetDataWriter();
-                writer.Put((byte)NetMessageType.EnemyDamage);
-                msg.Serialize(writer);
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.EnemyDamage);
+            msg.Serialize(writer);
+            if (_peers.TryGetValue(targetPlayerId, out var peer)
+                && peer.ConnectionState == ConnectionState.Connected)
                 peer.Send(writer, DeliveryMethod.ReliableOrdered);
-            }
         }
 
         public void SendPuzzleState(PuzzleStateEntry[] entries, bool fullRefresh)
@@ -427,26 +514,291 @@ namespace SyncRADation.Networking
             }
         }
 
-        public void SendPlayerShotEnemy(int hostEnemyInstanceID, float damage)
+        public void SendWorldPickupState(WorldPickupEntry[] entries, bool fullRefresh)
+        {
+            var msg = new WorldPickupStateMessage
+            {
+                SenderPlayerId = _localPlayerId,
+                FullRefresh = fullRefresh,
+                Entries = entries
+            };
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.WorldPickupState);
+            msg.Serialize(writer);
+            BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        private void SendLocalVital()
+        {
+            int hp = 100, maxHp = 100;
+            byte gameState = 0, charState = 0;
+            bool dead = false;
+            try
+            {
+                hp = PlayerState.hp;
+                maxHp = 100;
+                gameState = (byte)PlayerState.gameState;
+                charState = (byte)PlayerState.charState;
+                dead = PlayerState.charState == PlayerState.charStates.dead
+                    || NetworkDamageSystem.PlayerHP <= 0f;
+                if (NetworkDamageSystem.PlayerHP > 0f && NetworkDamageSystem.PlayerHP < hp)
+                    hp = (int)NetworkDamageSystem.PlayerHP;
+            }
+            catch { }
+
+            var msg = new PlayerVitalMessage
+            {
+                SenderPlayerId = _localPlayerId,
+                Hp = hp,
+                MaxHp = maxHp,
+                GameState = gameState,
+                CharState = charState,
+                Dead = dead
+            };
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.PlayerVital);
+            msg.Serialize(writer);
+            BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        /// <summary>Host: dump full world state after a client joins or requests resync.</summary>
+        public void SendFullWorldSnapshot()
+        {
+            if (_role != NetworkRole.Host || !_handshakeComplete) return;
+            ModRuntime.Log?.Msg("[Network] Sending full world snapshot to peers");
+            WorldRegistry.Rebuild();
+            DoorSyncService.ForceFullSend();
+            _puzzleSync.RequestFullSend();
+            _puzzleSync.TickHost(this);
+            _pickupSync.RequestFullSend();
+            _pickupSync.TickHost(this);
+            _enemySync.RequestFullSend();
+            _enemySync.TickHost(this);
+            _bossSync.TickHost(this);
+            _storySync.RequestFullSend();
+            _storySync.Send(this, true);
+            _storageSync.RequestSend();
+            _storageSync.SendNow(this);
+            PartyKeyRing.Broadcast();
+            SendSceneFollow(SceneManager.GetActiveScene().name ?? "", false);
+            BroadcastSceneHello();
+        }
+
+        public void RequestWorldSnapshot()
+        {
+            if (_role != NetworkRole.Client || !_handshakeComplete) return;
+            var msg = new SnapshotRequestMessage { SenderPlayerId = _localPlayerId };
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.SnapshotRequest);
+            msg.Serialize(writer);
+            BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
+            ModRuntime.Log?.Msg("[Network] Snapshot request sent to host");
+        }
+
+        public void SendPlayerShotEnemy(ulong enemyWorldId, float damage)
+        {
+            // Legacy path (debug/cheats) — prefer SendNativeEnemyHit
+            var msg = new EnemyDamageMessage
+            {
+                AttackerPlayerId = _localPlayerId,
+                TargetPlayerId = -1,
+                EnemyWorldId = unchecked((long)enemyWorldId),
+                Damage = damage,
+                IsStagger = false,
+                NativeTakeDamage = false
+            };
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.EnemyDamage);
+            msg.Serialize(writer);
+
+            if (_role == NetworkRole.Host)
+                _enemySync.ApplyDamageOnHost(enemyWorldId, damage);
+            else if (_peers.TryGetValue(0, out var peer)
+                && peer.ConnectionState == ConnectionState.Connected)
+                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        /// <summary>Client → host: real TakeDamage chances from PlayerAttack / EnemyController patch.</summary>
+        public void SendNativeEnemyHit(ulong enemyWorldId, float fire, float crit, float hurt, bool noSneak)
         {
             var msg = new EnemyDamageMessage
             {
                 AttackerPlayerId = _localPlayerId,
                 TargetPlayerId = -1,
-                HostEnemyInstanceID = hostEnemyInstanceID,
-                Damage = damage,
-                IsStagger = false
+                EnemyWorldId = unchecked((long)enemyWorldId),
+                Damage = 0f,
+                IsStagger = false,
+                NativeTakeDamage = true,
+                FireChance = fire,
+                CriticalChance = crit,
+                HurtChance = hurt,
+                NoSneak = noSneak
             };
-            foreach (var kvp in _peers)
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.EnemyDamage);
+            msg.Serialize(writer);
+
+            if (_role == NetworkRole.Host)
             {
-                if (kvp.Key != 0) continue; // only send to host
-                var peer = kvp.Value;
-                if (peer.ConnectionState != ConnectionState.Connected) continue;
-                var writer = new NetDataWriter();
-                writer.Put((byte)NetMessageType.EnemyDamage);
-                msg.Serialize(writer);
+                _enemySync.ApplyNativeTakeDamageOnHost(enemyWorldId, fire, crit, hurt, noSneak);
+            }
+            else if (_peers.TryGetValue(0, out var peer)
+                && peer.ConnectionState == ConnectionState.Connected)
+            {
                 peer.Send(writer, DeliveryMethod.ReliableOrdered);
             }
+        }
+
+        public void SendWorldPickupClaim(ulong worldId)
+        {
+            var msg = new WorldPickupClaimMessage
+            {
+                ClaimerPlayerId = _localPlayerId,
+                WorldId = unchecked((long)worldId)
+            };
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.WorldPickupClaim);
+            msg.Serialize(writer);
+            // Client → host only
+            if (_peers.TryGetValue(0, out var peer)
+                && peer.ConnectionState == ConnectionState.Connected)
+                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendWorldPickupGrant(int targetPlayerId, ulong worldId, Items.itemlist item, int count)
+        {
+            var msg = new WorldPickupGrantMessage
+            {
+                TargetPlayerId = targetPlayerId,
+                WorldId = unchecked((long)worldId),
+                ItemEnum = (ushort)item,
+                Count = count
+            };
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.WorldPickupGrant);
+            msg.Serialize(writer);
+            if (_peers.TryGetValue(targetPlayerId, out var peer)
+                && peer.ConnectionState == ConnectionState.Connected)
+                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+            // Host also grants if target is host
+            if (targetPlayerId == _localPlayerId)
+                _pickupSync.ApplyGrant(msg);
+        }
+
+        public void SendSceneFollow(string sceneName, bool isRequest)
+        {
+            var msg = new SceneFollowMessage
+            {
+                SenderPlayerId = _localPlayerId,
+                SceneName = sceneName ?? "",
+                IsRequest = isRequest
+            };
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.SceneFollow);
+            msg.Serialize(writer);
+            if (isRequest)
+            {
+                if (_peers.TryGetValue(0, out var peer) && peer.ConnectionState == ConnectionState.Connected)
+                    peer.Send(writer, DeliveryMethod.ReliableOrdered);
+            }
+            else
+                BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendInteractionRequest(ulong worldId, InteractionKind kind, int int0 = 0, int int1 = 0,
+            float f0 = 0f, float f1 = 0f, float f2 = 0f, string text = "")
+        {
+            var msg = new InteractionRequestMessage
+            {
+                SenderPlayerId = _localPlayerId,
+                WorldId = unchecked((long)worldId),
+                Kind = kind,
+                Int0 = int0,
+                Int1 = int1,
+                Float0 = f0,
+                Float1 = f1,
+                Float2 = f2,
+                Text = text ?? ""
+            };
+            if (_role == NetworkRole.Host)
+            {
+                InteractionSyncService.HandleRequest(msg);
+                return;
+            }
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.InteractionRequest);
+            msg.Serialize(writer);
+            if (_peers.TryGetValue(0, out var peer) && peer.ConnectionState == ConnectionState.Connected)
+                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendInteractionAck(int targetPlayerId, long worldId, InteractionKind kind, bool ok, string reason)
+        {
+            var msg = new InteractionAckMessage
+            {
+                TargetPlayerId = targetPlayerId,
+                WorldId = worldId,
+                Kind = kind,
+                Ok = ok,
+                Reason = reason ?? ""
+            };
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.InteractionAck);
+            msg.Serialize(writer);
+            if (targetPlayerId == _localPlayerId) return;
+            if (_peers.TryGetValue(targetPlayerId, out var peer) && peer.ConnectionState == ConnectionState.Connected)
+                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendStoryCommit(StoryCommitMessage msg)
+        {
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.StoryCommit);
+            msg.Serialize(writer);
+            BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendStoryPresentation(StoryPresentationMessage msg)
+        {
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.StoryPresentation);
+            msg.Serialize(writer);
+            BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendStorageBoxBlob(StorageBoxItem[] items)
+        {
+            var msg = new StorageBoxBlobMessage { Items = items };
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.StorageBoxBlob);
+            msg.Serialize(writer);
+            BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendPartyKeyRing(ushort[] enums)
+        {
+            var msg = new PartyKeyRingMessage { ItemEnums = enums };
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.PartyKeyRing);
+            msg.Serialize(writer);
+            BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendDeathPolicy(DeathKind kind)
+        {
+            var msg = new DeathPolicyMessage { SenderPlayerId = _localPlayerId, Kind = kind };
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.DeathPolicy);
+            msg.Serialize(writer);
+            BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendFmodEmitter(FmodEmitterMessage msg)
+        {
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.FmodEmitter);
+            msg.Serialize(writer);
+            BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
         }
 
         public ushort AllocateItemIndex()
@@ -568,18 +920,23 @@ namespace SyncRADation.Networking
             int playerId;
             if (_role == NetworkRole.Host)
             {
+                if (_peers.Count + 1 >= PluginInfo.MaxPlayers)
+                {
+                    ModRuntime.Log?.Warning("[Network] Rejecting peer: max players " + PluginInfo.MaxPlayers);
+                    peer.Disconnect();
+                    return;
+                }
+
                 playerId = _nextClientId++;
                 _peers[playerId] = peer;
                 _peerToId[peer] = playerId;
                 ModRuntime.Log?.Msg("[Network] Client connected, assigned playerId=" + playerId);
 
-                // Send handshake with assigned ID
                 var w = new NetDataWriter();
                 w.Put((byte)NetMessageType.Handshake);
                 new HandshakeMessage { ProtocolVersion = PluginInfo.ProtocolVersion, AssignedPlayerId = playerId }.Serialize(w);
                 peer.Send(w, DeliveryMethod.ReliableOrdered);
 
-                // If this is the first client, fire Connected event
                 var c = _connected;
                 if (c != null) c();
             }
@@ -637,31 +994,154 @@ namespace SyncRADation.Networking
                 HandlePlayerState(PlayerStateMessage.Deserialize(reader));
                 break;
             case NetMessageType.DoorState:
-                DoorSyncService.HandleMessage(DoorStateMessage.Deserialize(reader));
+            {
+                var doorMsg = DoorStateMessage.Deserialize(reader);
+                DoorSyncService.HandleMessage(doorMsg);
+                if (_role == NetworkRole.Host)
+                {
+                    var w = new NetDataWriter();
+                    w.Put((byte)NetMessageType.DoorState);
+                    doorMsg.Serialize(w);
+                    RelayRaw(w, DeliveryMethod.ReliableOrdered, senderId);
+                }
                 break;
+            }
             case NetMessageType.DropItemSpawn:
-                HandleDropItemSpawn(DropItemSpawnMessage.Deserialize(reader));
+            {
+                var dropMsg = DropItemSpawnMessage.Deserialize(reader);
+                HandleDropItemSpawn(dropMsg);
+                if (_role == NetworkRole.Host)
+                {
+                    var w = new NetDataWriter();
+                    w.Put((byte)NetMessageType.DropItemSpawn);
+                    dropMsg.Serialize(w);
+                    RelayRaw(w, DeliveryMethod.ReliableOrdered, senderId);
+                }
                 break;
+            }
             case NetMessageType.ItemPickedUp:
-                HandleItemPickedUp(ItemPickedUpMessage.Deserialize(reader));
+            {
+                var pickMsg = ItemPickedUpMessage.Deserialize(reader);
+                HandleItemPickedUp(pickMsg);
+                if (_role == NetworkRole.Host)
+                {
+                    var w = new NetDataWriter();
+                    w.Put((byte)NetMessageType.ItemPickedUp);
+                    pickMsg.Serialize(w);
+                    RelayRaw(w, DeliveryMethod.ReliableOrdered, senderId);
+                }
                 break;
+            }
             case NetMessageType.FriendlyFire:
-                HandleFriendlyFire(FriendlyFireMessage.Deserialize(reader));
+            {
+                var ff = FriendlyFireMessage.Deserialize(reader);
+                if (_role == NetworkRole.Host && ff.TargetPlayerId != _localPlayerId)
+                {
+                    var w = new NetDataWriter();
+                    w.Put((byte)NetMessageType.FriendlyFire);
+                    ff.Serialize(w);
+                    if (_peers.TryGetValue(ff.TargetPlayerId, out var tpeer)
+                        && tpeer.ConnectionState == ConnectionState.Connected)
+                        tpeer.Send(w, DeliveryMethod.ReliableOrdered);
+                }
+                HandleFriendlyFire(ff);
                 break;
+            }
             case NetMessageType.EnemyState:
                 _enemySync.OnEnemyStateReceived(EnemyStateMessage.Deserialize(reader));
                 break;
             case NetMessageType.EnemyDamage:
                 HandleEnemyDamage(EnemyDamageMessage.Deserialize(reader));
                 break;
-            case NetMessageType.SceneSync:
-                HandleSceneSync(SceneSyncMessage.Deserialize(reader));
+            case NetMessageType.SceneHello:
+                HandleSceneHello(SceneHelloMessage.Deserialize(reader));
                 break;
             case NetMessageType.PuzzleState:
-                _puzzleSync.ApplyPuzzleState(PuzzleStateMessage.Deserialize(reader));
+                if (ModConfig.PuzzlesEnabled)
+                    _puzzleSync.ApplyPuzzleState(PuzzleStateMessage.Deserialize(reader));
                 break;
             case NetMessageType.BossState:
                 _bossSync.OnBossStateReceived(BossStateMessage.Deserialize(reader));
+                break;
+            case NetMessageType.SnapshotRequest:
+            {
+                var req = SnapshotRequestMessage.Deserialize(reader);
+                if (_role == NetworkRole.Host)
+                {
+                    ModRuntime.Log?.Msg("[Network] Snapshot requested by player " + req.SenderPlayerId);
+                    SendFullWorldSnapshot();
+                }
+                break;
+            }
+            case NetMessageType.WorldPickupState:
+            {
+                var pickMsg = WorldPickupStateMessage.Deserialize(reader);
+                _pickupSync.ApplyHide(pickMsg);
+                if (_role == NetworkRole.Host)
+                {
+                    var w = new NetDataWriter();
+                    w.Put((byte)NetMessageType.WorldPickupState);
+                    pickMsg.Serialize(w);
+                    RelayRaw(w, DeliveryMethod.ReliableOrdered, senderId);
+                }
+                break;
+            }
+            case NetMessageType.WorldPickupClaim:
+            {
+                var claim = WorldPickupClaimMessage.Deserialize(reader);
+                if (_role == NetworkRole.Host)
+                    HandleWorldPickupClaim(claim);
+                break;
+            }
+            case NetMessageType.WorldPickupGrant:
+            {
+                var grant = WorldPickupGrantMessage.Deserialize(reader);
+                _pickupSync.ApplyGrant(grant);
+                break;
+            }
+            case NetMessageType.PlayerVital:
+            {
+                var vital = PlayerVitalMessage.Deserialize(reader);
+                HandlePlayerVital(vital);
+                if (_role == NetworkRole.Host)
+                {
+                    var w = new NetDataWriter();
+                    w.Put((byte)NetMessageType.PlayerVital);
+                    vital.Serialize(w);
+                    RelayRaw(w, DeliveryMethod.ReliableOrdered, senderId);
+                }
+                break;
+            }
+            case NetMessageType.SceneFollow:
+                SceneFollowService.HandleMessage(SceneFollowMessage.Deserialize(reader));
+                break;
+            case NetMessageType.InteractionRequest:
+                if (_role == NetworkRole.Host)
+                    InteractionSyncService.HandleRequest(InteractionRequestMessage.Deserialize(reader));
+                break;
+            case NetMessageType.InteractionAck:
+            {
+                var ack = InteractionAckMessage.Deserialize(reader);
+                HandleInteractionAck(ack);
+                break;
+            }
+            case NetMessageType.StoryCommit:
+                _storySync.ApplyCommit(StoryCommitMessage.Deserialize(reader));
+                break;
+            case NetMessageType.StoryPresentation:
+                _storySync.ApplyPresentation(StoryPresentationMessage.Deserialize(reader));
+                break;
+            case NetMessageType.StorageBoxBlob:
+                _storageSync.Apply(StorageBoxBlobMessage.Deserialize(reader));
+                break;
+            case NetMessageType.PartyKeyRing:
+                PartyKeyRing.ApplyMessage(PartyKeyRingMessage.Deserialize(reader));
+                break;
+            case NetMessageType.DeathPolicy:
+                NetworkDamageSystem.HandleDeathPolicy(DeathPolicyMessage.Deserialize(reader));
+                break;
+            case NetMessageType.FmodEmitter:
+                FmodEmitterSync.Handle(FmodEmitterMessage.Deserialize(reader));
                 break;
             default:
                 ModRuntime.Log?.Warning("[Network] Unhandled message type: " + type + " (" + messageType + ")");
@@ -680,9 +1160,35 @@ namespace SyncRADation.Networking
         void INetEventListener.OnConnectionRequest(ConnectionRequest request)
         {
             if (_role == NetworkRole.Host)
-                request.AcceptIfKey("SyncRADation");
+                request.AcceptIfKey(PluginInfo.ConnectionKey);
             else
                 request.Reject();
+        }
+
+        private void HandleInteractionAck(InteractionAckMessage ack)
+        {
+            if (!ack.Ok)
+            {
+                if (!string.IsNullOrEmpty(ack.Reason))
+                    ModRuntime.Log?.Msg("[Interact] rejected: " + ack.Reason);
+                return;
+            }
+
+            if (string.IsNullOrEmpty(ack.Reason) || !ack.Reason.StartsWith("consume:"))
+                return;
+            try
+            {
+                int enumVal;
+                if (!int.TryParse(ack.Reason.Substring("consume:".Length), out enumVal))
+                    return;
+                var item = InventoryManager.getItem((Items.itemlist)enumVal);
+                if (item != null)
+                    InventoryManager.RemoveItem(item, 1);
+            }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[Interact] consume ack: " + ex.Message);
+            }
         }
 
         private void HandleHandshake(HandshakeMessage handshake)
@@ -697,7 +1203,6 @@ namespace SyncRADation.Networking
 
             if (_role == NetworkRole.Client)
             {
-                // Host tells us our assigned player ID
                 _localPlayerId = handshake.AssignedPlayerId;
                 ModRuntime.Log?.Msg("[Network] Host assigned playerId=" + _localPlayerId);
             }
@@ -706,13 +1211,40 @@ namespace SyncRADation.Networking
             _lastStateTime = Time.time;
             StatusText = _role == NetworkRole.Host ? "Clients connected" : "Connected to host";
             ModRuntime.Log?.Msg("[Network] Handshake OK, local playerId=" + _localPlayerId);
+            WorldRegistry.Rebuild();
+            BroadcastSceneHello();
+
+            if (_role == NetworkRole.Host)
+            {
+                // Give new client the full world immediately
+                SendFullWorldSnapshot();
+            }
+            else
+            {
+                RequestWorldSnapshot();
+                _enemySync.PuppetAllNow();
+            }
+        }
+
+        private void HandlePlayerVital(PlayerVitalMessage msg)
+        {
+            if (msg.SenderPlayerId == _localPlayerId) return;
+            var proxy = _proxyManager.GetProxy(msg.SenderPlayerId);
+            if (proxy == null) return;
+            try
+            {
+                proxy.SetVital(msg.Hp, msg.MaxHp, msg.Dead, msg.GameState, msg.CharState);
+            }
+            catch { }
         }
 
         private void HandlePlayerState(PlayerStateMessage state)
         {
             int senderId = state.SenderPlayerId;
 
-            // Ensure we have a proxy for this player
+            if (_sceneMismatch)
+                return;
+
             if (!_proxyManager.HasProxy(senderId))
             {
                 GameObject source = PlayerState.player;
@@ -721,26 +1253,27 @@ namespace SyncRADation.Networking
                     ModRuntime.Log?.Warning("[Net] Cannot create proxy: no local player");
                     return;
                 }
+                try
+                {
+                    if (PlayerState.gameState != PlayerState.gameStates.play
+                        && PlayerState.gameState != PlayerState.gameStates.traversing)
+                    {
+                        // Still allow proxy in most interactive states
+                    }
+                }
+                catch { }
                 _proxyManager.CreateProxy(senderId, source);
             }
 
             _proxyManager.ApplyState(senderId, state);
             _lastStateTime = Time.time;
 
-            // Host: relay to all OTHER peers (not back to sender)
             if (_role == NetworkRole.Host)
             {
-                foreach (var kvp in _peers)
-                {
-                    if (kvp.Key == senderId) continue;
-                    if (kvp.Key == _localPlayerId) continue; // don't send to self
-                    var peer = kvp.Value;
-                    if (peer.ConnectionState != ConnectionState.Connected) continue;
-                    var writer = new NetDataWriter();
-                    writer.Put((byte)NetMessageType.PlayerState);
-                    state.Serialize(writer);
-                    peer.Send(writer, DeliveryMethod.ReliableOrdered);
-                }
+                var writer = new NetDataWriter();
+                writer.Put((byte)NetMessageType.PlayerState);
+                state.Serialize(writer);
+                RelayRaw(writer, DeliveryMethod.ReliableOrdered, senderId);
             }
         }
 
@@ -777,6 +1310,7 @@ namespace SyncRADation.Networking
 
         private void HandleFriendlyFire(FriendlyFireMessage msg)
         {
+            if (ModConfig.FriendlyFire?.Value != true) return;
             if (msg.TargetPlayerId == _localPlayerId)
             {
                 Vector3 hitPos = new Vector3(msg.HitPosX, msg.HitPosY, msg.HitPosZ);
@@ -787,40 +1321,86 @@ namespace SyncRADation.Networking
 
         private void HandleEnemyDamage(EnemyDamageMessage msg)
         {
+            ulong enemyId = unchecked((ulong)msg.EnemyWorldId);
+
             if (msg.TargetPlayerId == _localPlayerId)
             {
-                ModRuntime.Log?.Msg("[Enemy] Received damage=" + msg.Damage.ToString("F0") + " from enemy " + msg.HostEnemyInstanceID);
-                if (msg.IsStagger)
-                    NetworkDamageSystem.ApplyDamage(msg.Damage, Vector3.zero, Vector3.zero);
-                else
-                    NetworkDamageSystem.ApplyDamage(msg.Damage, Vector3.zero, Vector3.zero);
+                ModRuntime.Log?.Msg("[Enemy] Received damage=" + msg.Damage.ToString("F0")
+                    + " from enemy " + enemyId.ToString("X16"));
+                NetworkDamageSystem.ApplyDamage(msg.Damage, Vector3.zero, Vector3.zero);
             }
-            else if (msg.AttackerPlayerId != -1 && _role == NetworkRole.Host)
+            else if (msg.AttackerPlayerId >= 0 && msg.TargetPlayerId < 0 && _role == NetworkRole.Host)
             {
-                // Host: a player shot an enemy — modify fields directly (IL2CPP-safe)
-                var enemies = GameObject.FindObjectsOfType<EnemyController>();
-                foreach (var e in enemies)
-                {
-                    if (e != null && e.gameObject.GetInstanceID() == msg.HostEnemyInstanceID)
-                    {
-                        if (e.hitbox != null)
-                        {
-                            e.hitbox.HP -= (int)msg.Damage;
-                            if (e.hitbox.HP <= 0)
-                                e.state = EnemyController.enemystate.dead;
-                        }
-                        ModRuntime.Log?.Msg("[Enemy] Player " + msg.AttackerPlayerId + " damaged enemy " + msg.HostEnemyInstanceID + " HP=" + (e.hitbox != null ? e.hitbox.HP.ToString() : "?"));
-                        break;
-                    }
-                }
+                if (msg.NativeTakeDamage)
+                    _enemySync.ApplyNativeTakeDamageOnHost(enemyId, msg.FireChance, msg.CriticalChance, msg.HurtChance, msg.NoSneak);
+                else
+                    _enemySync.ApplyDamageOnHost(enemyId, msg.Damage);
             }
         }
 
-        private void HandleSceneSync(SceneSyncMessage msg)
+        private void HandleWorldPickupClaim(WorldPickupClaimMessage claim)
         {
-            if (msg.SenderPlayerId != _localPlayerId)
+            ulong id = unchecked((ulong)claim.WorldId);
+            Items.itemlist item;
+            int count;
+            if (!_pickupSync.TryClaimOnHost(id, claim.ClaimerPlayerId, out item, out count, hideNow: true))
             {
-                ModRuntime.Log?.Msg("[Scene] Player " + msg.SenderPlayerId + " is in scene '" + msg.SceneName + "'");
+                ModRuntime.Log?.Msg("[WorldPickup] Claim denied id=" + id.ToString("X16")
+                    + " by " + claim.ClaimerPlayerId);
+                _pickupSync.BroadcastTriggered(id, true);
+                return;
+            }
+
+            ModRuntime.Log?.Msg("[WorldPickup] Claim OK id=" + id.ToString("X16")
+                + " item=" + item + " x" + count + " → player " + claim.ClaimerPlayerId);
+
+            PartyKeyRing.Note(item);
+            PartyKeyRing.Broadcast();
+
+            if (claim.ClaimerPlayerId == _localPlayerId)
+            {
+                try
+                {
+                    var an = InventoryManager.getItem(item);
+                    if (an != null) InventoryManager.AddItem(an, count > 0 ? count : 1);
+                }
+                catch { }
+            }
+            else if (item != Items.itemlist.None)
+            {
+                SendWorldPickupGrant(claim.ClaimerPlayerId, id, item, count > 0 ? count : 1);
+            }
+
+            _pickupSync.BroadcastTriggered(id, true);
+        }
+
+        private void HandleSceneHello(SceneHelloMessage msg)
+        {
+            _peerScenes[msg.SenderPlayerId] = msg.SceneName ?? "";
+            if (msg.SenderPlayerId == 0 || _role == NetworkRole.Client)
+            {
+                if (msg.SenderPlayerId == 0)
+                    _hostSceneName = msg.SceneName ?? "";
+            }
+
+            _localSceneName = SceneManager.GetActiveScene().name ?? "";
+            string compareTo = !string.IsNullOrEmpty(_hostSceneName) ? _hostSceneName : msg.SceneName;
+            _sceneMismatch = !string.IsNullOrEmpty(compareTo)
+                && !string.IsNullOrEmpty(_localSceneName)
+                && !string.Equals(compareTo, _localSceneName, StringComparison.Ordinal);
+
+            if (_sceneMismatch)
+            {
+                StatusText = "Following host scene '" + compareTo + "'";
+                ModRuntime.Log?.Warning("[Scene] MISMATCH local='" + _localSceneName + "' host='" + compareTo
+                    + "' — following host");
+                if (_role == NetworkRole.Client && !string.IsNullOrEmpty(compareTo))
+                    SceneFollowService.Apply(compareTo);
+            }
+            else
+            {
+                ModRuntime.Log?.Msg("[Scene] Peer " + msg.SenderPlayerId + " scene='" + msg.SceneName
+                    + "' room='" + msg.RoomName + "' OK");
             }
         }
 
@@ -834,10 +1414,26 @@ namespace SyncRADation.Networking
             _proxyManager.DestroyAll();
             DroppedItemManager.ClearAll();
             DroppedItemManager.LoadFromFile();
+            WorldRegistry.Rebuild();
             DoorSyncService.RefreshScene();
             _enemySync.OnSceneChanged();
             _puzzleSync.RefreshScene();
             _bossSync.OnSceneChanged();
+            _pickupSync.RefreshScene();
+            _storySync.RequestFullSend();
+            Patches.EventZonePatch.OnSceneChanged();
+            _sceneMismatch = false;
+            if (_handshakeComplete)
+            {
+                BroadcastSceneHello();
+                if (_role == NetworkRole.Host)
+                    SendFullWorldSnapshot();
+                else
+                {
+                    RequestWorldSnapshot();
+                    _enemySync.PuppetAllNow();
+                }
+            }
         }
     }
 }

@@ -1,6 +1,6 @@
-// SyncRADation — host-authoritative boss sync: END_Boss, Chimera, Mynah (15Hz snapshot, client disable+apply)
+// Host-authoritative boss sync via WorldId
 using System.Collections.Generic;
-using SyncRADation.Players;
+using SyncRADation.Sync;
 using UnityEngine;
 
 namespace SyncRADation.Networking
@@ -39,7 +39,7 @@ namespace SyncRADation.Networking
                     BossType = (byte)BossType.END_Boss,
                     PosX = t.position.x, PosY = t.position.y, PosZ = t.position.z,
                     RotY = t.eulerAngles.y,
-                    HostInstanceID = b.gameObject.GetInstanceID(),
+                    WorldId = unchecked((long)Sync.WorldId.FromGameObject(b.gameObject)),
                     Alive = b.state != END_Boss.states.dead,
                     StateEnum = (byte)b.state,
                     Bool0 = b.started, Bool1 = b.survival, Bool2 = b.hit,
@@ -63,7 +63,7 @@ namespace SyncRADation.Networking
                     BossType = (byte)BossType.LAB_ChimeraBoss,
                     PosX = targetT.position.x, PosY = targetT.position.y, PosZ = targetT.position.z,
                     RotY = targetT.eulerAngles.y,
-                    HostInstanceID = b.gameObject.GetInstanceID(),
+                    WorldId = unchecked((long)Sync.WorldId.FromGameObject(b.gameObject)),
                     Alive = b.inOperation && !b.done,
                     StateEnum = 0,
                     Bool0 = b.inOperation, Bool1 = b.done,
@@ -83,7 +83,7 @@ namespace SyncRADation.Networking
                     BossType = (byte)BossType.MED_MynahBoss,
                     PosX = targetT.position.x, PosY = targetT.position.y, PosZ = targetT.position.z,
                     RotY = targetT.eulerAngles.y,
-                    HostInstanceID = b.gameObject.GetInstanceID(),
+                    WorldId = unchecked((long)Sync.WorldId.FromGameObject(b.gameObject)),
                     Alive = b.inProgress,
                     StateEnum = 0,
                     Bool0 = b.inProgress, Bool1 = b.phaseTwo, Bool2 = b.phaseThree,
@@ -114,7 +114,7 @@ namespace SyncRADation.Networking
 
         private void ApplyBossState(BossSnapshotNet snap)
         {
-            int hostID = snap.HostInstanceID;
+            int hostID = (int)(snap.WorldId & 0x7FFFFFFF); // dictionary key only
 
             MonoBehaviour comp;
             BossType type;
@@ -125,14 +125,14 @@ namespace SyncRADation.Networking
                 if (comp == null)
                 {
                     _hostToLocal.Remove(hostID);
-                    comp = FindLocalBossByHostID(hostID, out type);
+                    comp = FindLocalBossByWorldId(snap.WorldId, out type);
                     if (comp == null) return;
                     _hostToLocal[hostID] = (comp, type);
                 }
             }
             else
             {
-                comp = FindLocalBossByHostID(hostID, out type);
+                comp = FindLocalBossByWorldId(snap.WorldId, out type);
                 if (comp == null) return;
                 _hostToLocal[hostID] = (comp, type);
             }
@@ -222,12 +222,14 @@ namespace SyncRADation.Networking
             b.schonfrist = snap.Float0;
         }
 
-        private MonoBehaviour FindLocalBossByHostID(int hostInstanceID, out BossType type)
+        private MonoBehaviour FindLocalBossByWorldId(long worldIdLong, out BossType type)
         {
+            ulong want = unchecked((ulong)worldIdLong);
+
             var ends = GameObject.FindObjectsOfType<END_Boss>();
             foreach (var e in ends)
             {
-                if (e != null && e.gameObject.GetInstanceID() == hostInstanceID)
+                if (e != null && Sync.WorldId.FromGameObject(e.gameObject) == want)
                 {
                     type = BossType.END_Boss;
                     return e;
@@ -237,7 +239,7 @@ namespace SyncRADation.Networking
             var labs = GameObject.FindObjectsOfType<LAB_ChimeraBoss>();
             foreach (var l in labs)
             {
-                if (l != null && l.gameObject.GetInstanceID() == hostInstanceID)
+                if (l != null && Sync.WorldId.FromGameObject(l.gameObject) == want)
                 {
                     type = BossType.LAB_ChimeraBoss;
                     return l;
@@ -247,21 +249,10 @@ namespace SyncRADation.Networking
             var meds = GameObject.FindObjectsOfType<MED_MynahBoss>();
             foreach (var m in meds)
             {
-                if (m != null && m.gameObject.GetInstanceID() == hostInstanceID)
+                if (m != null && Sync.WorldId.FromGameObject(m.gameObject) == want)
                 {
                     type = BossType.MED_MynahBoss;
                     return m;
-                }
-            }
-
-            var all = GameObject.FindObjectsOfType<MonoBehaviour>();
-            foreach (var mb in all)
-            {
-                if (mb != null && mb.gameObject.GetInstanceID() == hostInstanceID)
-                {
-                    if (mb is END_Boss) { type = BossType.END_Boss; return mb; }
-                    if (mb is LAB_ChimeraBoss) { type = BossType.LAB_ChimeraBoss; return mb; }
-                    if (mb is MED_MynahBoss) { type = BossType.MED_MynahBoss; return mb; }
                 }
             }
 

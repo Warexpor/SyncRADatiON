@@ -1,107 +1,69 @@
-// SyncRADation � door state tracking + broadcast: Doorway_Double, ConnectedDoors, EventSlidingDoor
-using System;
-using FMODUnity;
+// Door state tracking via WorldId; host/any peer can emit; host relays.
+using System.Collections.Generic;
+using SyncRADation.Sync;
 using UnityEngine;
 
 namespace SyncRADation.Networking
 {
     public static class DoorSyncService
     {
-        private static Doorway_Double[] _doubleDoors;
-        private static bool[] _lastDoubleOpen;
-        private static bool[] _lastDoubleLocked;
-
-        private static ConnectedDoors[] _connectedDoors;
-        private static bool[] _lastCdInProgress;
-        private static bool[] _lastCdForwards;
-        private static bool[] _lastCdLocked;
-
-        private static EventSlidingDoor[] _slidingDoors;
-        private static bool[] _lastSdOpened;
-        private static bool[] _lastSdMoving;
+        private static readonly Dictionary<ulong, bool> LastDoubleOpen = new Dictionary<ulong, bool>();
+        private static readonly Dictionary<ulong, bool> LastDoubleLocked = new Dictionary<ulong, bool>();
+        // ConnectedDoors: lock only. Never sync inProgress/forwards (those are room-traverse).
+        private static readonly Dictionary<ulong, bool> LastCdLocked = new Dictionary<ulong, bool>();
+        private static readonly Dictionary<ulong, bool> LastSdOpened = new Dictionary<ulong, bool>();
+        private static readonly Dictionary<ulong, bool> LastSdMoving = new Dictionary<ulong, bool>();
 
         private static float _scanTimer;
         private const float ScanInterval = 0.3f;
+        private static bool _ready;
 
         public static void RefreshScene()
         {
-            try
+            Reset();
+            // Snapshot current states so we only send deltas after connect
+            foreach (var kvp in WorldRegistry.AllDoubleDoors())
             {
-                _doubleDoors = GameObject.FindObjectsOfType<Doorway_Double>();
-                _lastDoubleOpen = new bool[_doubleDoors != null ? _doubleDoors.Length : 0];
-                _lastDoubleLocked = new bool[_doubleDoors != null ? _doubleDoors.Length : 0];
-                if (_doubleDoors != null)
-                {
-                    for (int i = 0; i < _doubleDoors.Length; i++)
-                    {
-                        if (_doubleDoors[i] != null)
-                        {
-                            _lastDoubleOpen[i] = _doubleDoors[i].open;
-                            _lastDoubleLocked[i] = _doubleDoors[i].locked;
-                        }
-                    }
-                }
-
-                _connectedDoors = GameObject.FindObjectsOfType<ConnectedDoors>();
-                _lastCdInProgress = new bool[_connectedDoors != null ? _connectedDoors.Length : 0];
-                _lastCdForwards = new bool[_connectedDoors != null ? _connectedDoors.Length : 0];
-                _lastCdLocked = new bool[_connectedDoors != null ? _connectedDoors.Length : 0];
-                if (_connectedDoors != null)
-                {
-                    for (int i = 0; i < _connectedDoors.Length; i++)
-                    {
-                        if (_connectedDoors[i] != null)
-                        {
-                            _lastCdInProgress[i] = _connectedDoors[i].inProgress;
-                            _lastCdForwards[i] = _connectedDoors[i].forwards;
-                            _lastCdLocked[i] = _connectedDoors[i].locked;
-                        }
-                    }
-                }
-
-                _slidingDoors = GameObject.FindObjectsOfType<EventSlidingDoor>();
-                _lastSdOpened = new bool[_slidingDoors != null ? _slidingDoors.Length : 0];
-                _lastSdMoving = new bool[_slidingDoors != null ? _slidingDoors.Length : 0];
-                if (_slidingDoors != null)
-                {
-                    for (int i = 0; i < _slidingDoors.Length; i++)
-                    {
-                        if (_slidingDoors[i] != null)
-                        {
-                            _lastSdOpened[i] = _slidingDoors[i].opened;
-                            _lastSdMoving[i] = _slidingDoors[i].moving;
-                        }
-                    }
-                }
-
-                ModRuntime.Log?.Msg("[DoorSync] Scanned: " + (_doubleDoors != null ? _doubleDoors.Length : 0) + " Doorway_Double, "
-                    + (_connectedDoors != null ? _connectedDoors.Length : 0) + " ConnectedDoors, "
-                    + (_slidingDoors != null ? _slidingDoors.Length : 0) + " EventSlidingDoor");
+                if (kvp.Value == null) continue;
+                LastDoubleOpen[kvp.Key] = kvp.Value.open;
+                LastDoubleLocked[kvp.Key] = kvp.Value.locked;
             }
-            catch (Exception ex)
+            foreach (var kvp in WorldRegistry.AllConnectedDoors())
             {
-                ModRuntime.Log?.Warning("[DoorSync] Refresh failed: " + ex.Message);
+                if (kvp.Value == null) continue;
+                LastCdLocked[kvp.Key] = kvp.Value.locked;
             }
+            foreach (var kvp in WorldRegistry.AllSlidingDoors())
+            {
+                if (kvp.Value == null) continue;
+                LastSdOpened[kvp.Key] = kvp.Value.opened;
+                LastSdMoving[kvp.Key] = kvp.Value.moving;
+            }
+            _ready = true;
+            ModRuntime.Log?.Msg("[DoorSync] Ready with WorldIds: double=" + LastDoubleOpen.Count
+                + " connected=" + LastCdLocked.Count
+                + " sliding=" + LastSdOpened.Count);
         }
 
         public static void Reset()
         {
-            _doubleDoors = null;
-            _lastDoubleOpen = null;
-            _lastDoubleLocked = null;
-            _connectedDoors = null;
-            _lastCdInProgress = null;
-            _lastCdForwards = null;
-            _lastCdLocked = null;
-            _slidingDoors = null;
-            _lastSdOpened = null;
-            _lastSdMoving = null;
+            LastDoubleOpen.Clear();
+            LastDoubleLocked.Clear();
+            LastCdLocked.Clear();
+            LastSdOpened.Clear();
+            LastSdMoving.Clear();
             _scanTimer = 0f;
+            _ready = false;
         }
 
         public static void Tick()
         {
-            if (_doubleDoors == null) { RefreshScene(); return; }
+            if (!_ready)
+            {
+                if (WorldRegistry.DoorCount > 0 || WorldRegistry.EnemyCount >= 0)
+                    RefreshScene();
+                return;
+            }
 
             _scanTimer += Mathf.Min(Time.deltaTime, 0.1f);
             if (_scanTimer < ScanInterval) return;
@@ -110,148 +72,154 @@ namespace SyncRADation.Networking
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
 
-            // Doorway_Double
-            for (int i = 0; i < _doubleDoors.Length; i++)
+            foreach (var kvp in WorldRegistry.AllDoubleDoors())
             {
-                var d = _doubleDoors[i];
+                var d = kvp.Value;
                 if (d == null) continue;
+                ulong id = kvp.Key;
                 bool openNow = d.open;
                 bool lockedNow = d.locked;
-                if (openNow != _lastDoubleOpen[i] || lockedNow != _lastDoubleLocked[i])
+                bool lo, ll;
+                LastDoubleOpen.TryGetValue(id, out lo);
+                LastDoubleLocked.TryGetValue(id, out ll);
+                if (openNow != lo || lockedNow != ll)
                 {
-                    SendDoorChange(DoorType.DoorwayDouble, (short)i, openNow, lockedNow, false, false, false);
-                    _lastDoubleOpen[i] = openNow;
-                    _lastDoubleLocked[i] = lockedNow;
+                    SendDoorChange(DoorType.DoorwayDouble, id, openNow, lockedNow, false, false, false);
+                    LastDoubleOpen[id] = openNow;
+                    LastDoubleLocked[id] = lockedNow;
                 }
             }
 
-            // ConnectedDoors
-            for (int i = 0; i < _connectedDoors.Length; i++)
+            // Room links: lock/unlock only. inProgress means someone is mid-traverse — local only.
+            foreach (var kvp in WorldRegistry.AllConnectedDoors())
             {
-                var cd = _connectedDoors[i];
+                var cd = kvp.Value;
                 if (cd == null) continue;
-                bool ip = cd.inProgress;
-                bool fw = cd.forwards;
+                ulong id = kvp.Key;
                 bool lk = cd.locked;
-                if (ip != _lastCdInProgress[i] || fw != _lastCdForwards[i] || lk != _lastCdLocked[i])
+                bool llk;
+                LastCdLocked.TryGetValue(id, out llk);
+                if (lk != llk)
                 {
-                    SendDoorChange(DoorType.ConnectedDoors, (short)i, false, lk, ip, fw, false);
-                    _lastCdInProgress[i] = ip;
-                    _lastCdForwards[i] = fw;
-                    _lastCdLocked[i] = lk;
+                    SendDoorChange(DoorType.ConnectedDoors, id, false, lk, false, false, false);
+                    LastCdLocked[id] = lk;
                 }
             }
 
-            // EventSlidingDoor
-            for (int i = 0; i < _slidingDoors.Length; i++)
+            foreach (var kvp in WorldRegistry.AllSlidingDoors())
             {
-                var sd = _slidingDoors[i];
+                var sd = kvp.Value;
                 if (sd == null) continue;
+                ulong id = kvp.Key;
                 bool op = sd.opened;
                 bool mv = sd.moving;
-                if (op != _lastSdOpened[i] || mv != _lastSdMoving[i])
+                bool lop, lmv;
+                LastSdOpened.TryGetValue(id, out lop);
+                LastSdMoving.TryGetValue(id, out lmv);
+                if (op != lop || mv != lmv)
                 {
-                    SendDoorChange(DoorType.EventSlidingDoor, (short)i, op, false, false, false, mv);
-                    _lastSdOpened[i] = op;
-                    _lastSdMoving[i] = mv;
+                    SendDoorChange(DoorType.EventSlidingDoor, id, op, false, false, false, mv);
+                    LastSdOpened[id] = op;
+                    LastSdMoving[id] = mv;
                 }
             }
         }
 
-        private static void SendDoorChange(DoorType type, short index, bool open, bool locked,
+        private static void SendDoorChange(DoorType type, ulong worldId, bool open, bool locked,
             bool inProgress, bool forwards, bool moving)
         {
+            var net = LanNetworkManager.Instance;
+            if (net == null) return;
             var msg = new DoorStateMessage
             {
-                SenderPlayerId = LanNetworkManager.Instance.LocalPlayerId,
+                SenderPlayerId = net.LocalPlayerId,
                 Type = type,
-                Index = index,
+                WorldId = unchecked((long)worldId),
                 Open = open,
                 Locked = locked,
                 InProgress = inProgress,
                 Forwards = forwards,
                 Moving = moving
             };
-            LanNetworkManager.Instance.SendDoorState(msg);
+            net.SendDoorState(msg);
+        }
+
+        /// <summary>Host: push every door state (join resync / scene load).</summary>
+        public static void ForceFullSend()
+        {
+            if (!_ready)
+            {
+                if (WorldRegistry.DoorCount > 0)
+                    RefreshScene();
+                else
+                    return;
+            }
+
+            var net = LanNetworkManager.Instance;
+            if (net == null || !net.IsConnected) return;
+
+            foreach (var kvp in WorldRegistry.AllDoubleDoors())
+            {
+                if (kvp.Value == null) continue;
+                SendDoorChange(DoorType.DoorwayDouble, kvp.Key, kvp.Value.open, kvp.Value.locked, false, false, false);
+                LastDoubleOpen[kvp.Key] = kvp.Value.open;
+                LastDoubleLocked[kvp.Key] = kvp.Value.locked;
+            }
+            foreach (var kvp in WorldRegistry.AllConnectedDoors())
+            {
+                if (kvp.Value == null) continue;
+                SendDoorChange(DoorType.ConnectedDoors, kvp.Key, false, kvp.Value.locked, false, false, false);
+                LastCdLocked[kvp.Key] = kvp.Value.locked;
+            }
+            foreach (var kvp in WorldRegistry.AllSlidingDoors())
+            {
+                if (kvp.Value == null) continue;
+                SendDoorChange(DoorType.EventSlidingDoor, kvp.Key, kvp.Value.opened, false, false, false, kvp.Value.moving);
+                LastSdOpened[kvp.Key] = kvp.Value.opened;
+                LastSdMoving[kvp.Key] = kvp.Value.moving;
+            }
+            ModRuntime.Log?.Msg("[DoorSync] Full dump sent");
         }
 
         public static void HandleMessage(DoorStateMessage msg)
         {
+            ulong id = unchecked((ulong)msg.WorldId);
             switch (msg.Type)
             {
-                case DoorType.DoorwayDouble: ApplyDoorwayDouble(msg); break;
-                case DoorType.ConnectedDoors: ApplyConnectedDoors(msg); break;
-                case DoorType.EventSlidingDoor: ApplySlidingDoor(msg); break;
+                case DoorType.DoorwayDouble: ApplyDoorwayDouble(id, msg); break;
+                case DoorType.ConnectedDoors: ApplyConnectedDoors(id, msg); break;
+                case DoorType.EventSlidingDoor: ApplySlidingDoor(id, msg); break;
             }
         }
 
-        private static void ApplyDoorwayDouble(DoorStateMessage msg)
+        private static void ApplyDoorwayDouble(ulong id, DoorStateMessage msg)
         {
-            if (_doubleDoors == null) RefreshScene();
-            if (_doubleDoors == null || msg.Index < 0 || msg.Index >= _doubleDoors.Length) return;
-            var d = _doubleDoors[msg.Index];
-            if (d == null) return;
+            Doorway_Double d;
+            if (!WorldRegistry.TryGetDoubleDoor(id, out d) || d == null) return;
 
-            if (msg.Open != d.open)
-            {
-                d.open = msg.Open;
-                d.locked = msg.Locked;
-                if (d.enabled && d.gameObject.activeInHierarchy)
-                {
-                    try
-                    {
-                        if (msg.Open && d.OpenSFX != null) d.OpenSFX.Play();
-                        else if (!msg.Open && d.CloseSFX != null) d.CloseSFX.Play();
-                    }
-                    catch { }
-                }
-            }
-            else
-            {
-                d.locked = msg.Locked;
-            }
-            if (msg.Index < _lastDoubleOpen.Length)
-            {
-                _lastDoubleOpen[msg.Index] = msg.Open;
-                _lastDoubleLocked[msg.Index] = msg.Locked;
-            }
+            DoorNative.ApplyDoubleDoor(d, msg.Open, msg.Locked);
+            LastDoubleOpen[id] = msg.Open;
+            LastDoubleLocked[id] = msg.Locked;
         }
 
-        private static void ApplyConnectedDoors(DoorStateMessage msg)
+        private static void ApplyConnectedDoors(ulong id, DoorStateMessage msg)
         {
-            if (_connectedDoors == null) RefreshScene();
-            if (_connectedDoors == null || msg.Index < 0 || msg.Index >= _connectedDoors.Length) return;
-            var cd = _connectedDoors[msg.Index];
-            if (cd == null) return;
+            ConnectedDoors cd;
+            if (!WorldRegistry.TryGetConnectedDoor(id, out cd) || cd == null) return;
 
-            cd.locked = msg.Locked;
-            if (msg.InProgress != cd.inProgress)
-            {
-                cd.inProgress = msg.InProgress;
-                cd.forwards = msg.Forwards;
-            }
-            if (msg.Index < _lastCdInProgress.Length)
-            {
-                _lastCdInProgress[msg.Index] = msg.InProgress;
-                _lastCdForwards[msg.Index] = msg.Forwards;
-                _lastCdLocked[msg.Index] = msg.Locked;
-            }
+            // Ignore InProgress/Forwards — those must stay local (room entry).
+            DoorNative.ApplyConnectedDoors(cd, msg.Locked);
+            LastCdLocked[id] = msg.Locked;
         }
 
-        private static void ApplySlidingDoor(DoorStateMessage msg)
+        private static void ApplySlidingDoor(ulong id, DoorStateMessage msg)
         {
-            if (_slidingDoors == null) RefreshScene();
-            if (_slidingDoors == null || msg.Index < 0 || msg.Index >= _slidingDoors.Length) return;
-            var sd = _slidingDoors[msg.Index];
-            if (sd == null) return;
+            EventSlidingDoor sd;
+            if (!WorldRegistry.TryGetSlidingDoor(id, out sd) || sd == null) return;
 
-            sd.opened = msg.Open;
-            sd.moving = msg.Moving;
-            if (msg.Index < _lastSdOpened.Length)
-            {
-                _lastSdOpened[msg.Index] = msg.Open;
-                _lastSdMoving[msg.Index] = msg.Moving;
-            }
+            DoorNative.ApplySlidingDoor(sd, msg.Open, msg.Moving);
+            LastSdOpened[id] = msg.Open;
+            LastSdMoving[id] = msg.Moving;
         }
     }
 }

@@ -1,8 +1,9 @@
-// SyncRADation — MelonMod entry point, input bindings (F2/F3/F6/F7), command-line auto-host/connect
+// SyncRADation ? MelonMod entry point, input bindings (F2/F3/F6/F11), command-line auto-host/connect
 using MelonLoader;
 
 [assembly: MelonInfo(typeof(SyncRADation.SyncRADationMod), SyncRADation.PluginInfo.Name, SyncRADation.PluginInfo.Version, SyncRADation.PluginInfo.Author)]
 [assembly: MelonGame("rose-engine", "SIGNALIS")]
+[assembly: HarmonyDontPatchAll]
 
 namespace SyncRADation
 {
@@ -34,6 +35,8 @@ namespace SyncRADation
             if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F6))
                 Cheats.ItemGiver.ShowMenu = !Cheats.ItemGiver.ShowMenu;
             if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F7))
+                Cheats.LocationTeleporter.ShowMenu = !Cheats.LocationTeleporter.ShowMenu;
+            if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F11))
                 Cheats.EntitySpawner.ShowMenu = !Cheats.EntitySpawner.ShowMenu;
         }
 
@@ -85,6 +88,7 @@ namespace SyncRADation
         {
             UI.MultiplayerMenu.OnGUI();
             Cheats.ItemGiver.OnGUI();
+            Cheats.LocationTeleporter.OnGUI();
             Cheats.EntitySpawner.OnGUI();
         }
 

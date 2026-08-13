@@ -1,6 +1,7 @@
-// SyncRADation � player HP (100), damage, stagger, death, respawn 5s, inventory drop on death
+// SyncRADation � player HP (100), damage, stagger, death, respawn 5s, inventory drop on death
 using FMODUnity;
 using SyncRADation.ItemSystem;
+using SyncRADation.Networking;
 using UnityEngine;
 
 namespace SyncRADation.Players
@@ -19,30 +20,46 @@ namespace SyncRADation.Players
 
             PlayerHP -= damage;
 
+            // Keep real game HP in sync when possible
             try
             {
-                var hurtSound = PlayerState.player?.GetComponent<ElsterHurtSound>();
-                if (hurtSound != null && !string.IsNullOrEmpty(hurtSound.HurtSound))
-                    RuntimeManager.PlayOneShot(hurtSound.HurtSound, hitPoint);
+                if (PlayerState.hp > 0)
+                    PlayerState.hp = Mathf.Max(0, PlayerState.hp - (int)damage);
             }
             catch { }
 
-            PlayerState.charState = PlayerState.charStates.grabbed;
-
             try
             {
-                var anim = PlayerState.player?.GetComponent<Animator>();
-                if (anim != null)
+                // Prefer native hurt path if available
+                PlayerState.HurtElster((int)damage, new Vector2(hitDir.x, hitDir.z));
+            }
+            catch
+            {
+                try
                 {
-                    anim.SetFloat("HurtTime", 1f);
-                    anim.SetBool("Injured", true);
+                    var hurtSound = PlayerState.player?.GetComponent<ElsterHurtSound>();
+                    if (hurtSound != null && !string.IsNullOrEmpty(hurtSound.HurtSound))
+                        RuntimeManager.PlayOneShot(hurtSound.HurtSound, hitPoint);
                 }
+                catch { }
+
+                PlayerState.charState = PlayerState.charStates.grabbed;
+                try
+                {
+                    var anim = PlayerState.player?.GetComponentInChildren<Animator>(true);
+                    if (anim != null)
+                    {
+                        anim.SetFloat("HurtTime", 1f);
+                        anim.SetBool("Injured", true);
+                    }
+                }
+                catch { }
             }
-            catch { }
 
-            ModRuntime.Log?.Msg("[Damage] -" + damage.ToString("F0") + " HP, remaining: " + PlayerHP.ToString("F0"));
+            ModRuntime.Log?.Msg("[Damage] -" + damage.ToString("F0") + " HP, remaining: " + PlayerHP.ToString("F0")
+                + " gameHp=" + PlayerState.hp);
 
-            if (PlayerHP <= 0f)
+            if (PlayerHP <= 0f || PlayerState.hp <= 0)
                 Die();
         }
 
@@ -61,6 +78,23 @@ namespace SyncRADation.Players
                     RuntimeManager.PlayOneShot(hurtSound.DeathSound);
             }
             catch { }
+
+            var net = ModRuntime.Network;
+            if (net != null && net.IsConnected)
+            {
+                if (net.Role == NetworkRole.Host)
+                {
+                    net.SendDeathPolicy(DeathKind.HostWipeReload);
+                    ReloadHostSave();
+                    return;
+                }
+
+                net.SendDeathPolicy(DeathKind.ClientDowned);
+                try { PlayerState.suspendInput = true; } catch { }
+                _respawnTimer = -1f;
+                ModRuntime.Log?.Msg("[Damage] Client downed — world continues");
+                return;
+            }
 
             _respawnTimer = 5f;
             ModRuntime.Log?.Msg("[Damage] Player died. Respawn in 5s");
@@ -120,6 +154,41 @@ namespace SyncRADation.Players
             catch (System.Exception ex)
             {
                 ModRuntime.Log?.Warning("[DeathDrop] Failed: " + ex.Message);
+            }
+        }
+
+        public static void HandleDeathPolicy(DeathPolicyMessage msg)
+        {
+            var net = ModRuntime.Network;
+            if (net == null) return;
+            if (msg.SenderPlayerId == net.LocalPlayerId) return;
+
+            if (msg.Kind == DeathKind.HostWipeReload)
+            {
+                ModRuntime.Log?.Msg("[Damage] Host died — reloading last save");
+                ReloadHostSave();
+                return;
+            }
+
+            if (msg.Kind == DeathKind.ClientDowned)
+                ModRuntime.Log?.Msg("[Damage] Peer " + msg.SenderPlayerId + " downed");
+        }
+
+        private static void ReloadHostSave()
+        {
+            Sync.NetGate.BeginApply();
+            try
+            {
+                SaveManager.Load();
+            }
+            catch (System.Exception ex)
+            {
+                ModRuntime.Log?.Warning("[Damage] SaveManager.Load failed: " + ex.Message);
+            }
+            finally
+            {
+                Sync.NetGate.EndApply();
+                Reset();
             }
         }
 

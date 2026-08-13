@@ -93,18 +93,29 @@ namespace SyncRADation.Players
 
         public void Tick(PlayerStateMessage state, AnimBools bools, AnimTriggers triggers, Vector3 proxyPos, float facingAngle)
         {
-            // Update muzzle position from proxy + facing
-            _muzzlePos = proxyPos + Vector3.up * 0.8f;
             _facingDir = Quaternion.Euler(0, facingAngle, 0) * Vector3.forward;
+
+            // Prefer real muzzle on the cloned weapon; fall back to chest-height proxy guess
+            if (_currentWeapon != WeaponType.None && _effects.TryGetValue(_currentWeapon, out var fxMuzzle))
+            {
+                Vector3 m;
+                if (fxMuzzle.TryGetMuzzleWorldPos(out m))
+                    _muzzlePos = m;
+                else
+                    _muzzlePos = proxyPos + Vector3.up * 0.95f + _facingDir * 0.35f;
+            }
+            else
+                _muzzlePos = proxyPos + Vector3.up * 0.95f + _facingDir * 0.35f;
 
             // Tick current weapon effects
             if (_currentWeapon != WeaponType.None && _effects.TryGetValue(_currentWeapon, out var fx))
             {
                 fx.Tick(Time.deltaTime);
 
-                // Shot detection (leading edge)
-                bool curShoot = bools.HasFlag(AnimBools.Shooting);
-                if (curShoot && !_lastBools.HasFlag(AnimBools.Shooting))
+                // Primary: AnimTriggers.Fire (ammo-spent pulse from source). Backup: Shooting rising edge.
+                bool shot = triggers.HasFlag(AnimTriggers.Fire)
+                    || (bools.HasFlag(AnimBools.Shooting) && !_lastBools.HasFlag(AnimBools.Shooting));
+                if (shot)
                 {
                     fx.OnShot();
                     DoImpactRaycast(GetDamage(_currentWeapon));
@@ -116,8 +127,8 @@ namespace SyncRADation.Players
                 if (triggers.HasFlag(AnimTriggers.ReloadTrigger))
                     fx.OnReload();
 
-                // Laser
-                bool aiming = bools.HasFlag(AnimBools.Aiming);
+                // Laser while aiming (world-space LR + materials fixed in RemoteWeaponEffects)
+                bool aiming = bools.HasFlag(AnimBools.Aiming) || state.AimingTime > 0.5f;
                 fx.UpdateLaser(aiming, _muzzlePos, _facingDir, 30f);
             }
 
@@ -235,8 +246,20 @@ namespace SyncRADation.Players
             for (int i = 0; i < srcLrs.Length && i < dstLrs.Length; i++)
             {
                 if (srcLrs[i] == null || dstLrs[i] == null) continue;
-                if (dstLrs[i].sharedMaterial == null && srcLrs[i].sharedMaterial != null)
+                if (srcLrs[i].sharedMaterial != null)
                     dstLrs[i].sharedMaterial = srcLrs[i].sharedMaterial;
+                if (srcLrs[i].materials != null && srcLrs[i].materials.Length > 0)
+                {
+                    try
+                    {
+                        var mats = srcLrs[i].sharedMaterials;
+                        if (mats != null && mats.Length > 0)
+                            dstLrs[i].sharedMaterials = mats;
+                    }
+                    catch { }
+                }
+                dstLrs[i].useWorldSpace = true;
+                dstLrs[i].enabled = false;
             }
             var srcPsrs = sourceWeaponTransform.GetComponentsInChildren<ParticleSystemRenderer>(true);
             var dstPsrs = clone.GetComponentsInChildren<ParticleSystemRenderer>(true);
@@ -245,7 +268,13 @@ namespace SyncRADation.Players
                 if (srcPsrs[i] == null || dstPsrs[i] == null) continue;
                 if (dstPsrs[i].sharedMaterial == null && srcPsrs[i].sharedMaterial != null)
                     dstPsrs[i].sharedMaterial = srcPsrs[i].sharedMaterial;
+                if (srcPsrs[i].sharedMaterials != null && srcPsrs[i].sharedMaterials.Length > 0)
+                {
+                    try { dstPsrs[i].sharedMaterials = srcPsrs[i].sharedMaterials; } catch { }
+                }
             }
+            // Path-matched renderer material pass (index order can diverge after IL2CPP Instantiate)
+            CopyMaterialsByPath(sourceWeaponTransform, clone.transform);
             ModRuntime.Log?.Msg("[WeaponSync] Cloned " + weapon + " (from '" + sourceWeaponTransform.name + "') fixed " + fixedCount + " meshes");
 
             SetLayerRecursive(clone, _targetLayer);
@@ -298,6 +327,51 @@ namespace SyncRADation.Players
             obj.layer = layer;
             for (int i = 0; i < obj.transform.childCount; i++)
                 SetLayerRecursive(obj.transform.GetChild(i).gameObject, layer);
+        }
+
+        private static void CopyMaterialsByPath(Transform srcRoot, Transform dstRoot)
+        {
+            if (srcRoot == null || dstRoot == null) return;
+            var srcAll = srcRoot.GetComponentsInChildren<Renderer>(true);
+            var dstAll = dstRoot.GetComponentsInChildren<Renderer>(true);
+            var dstByRel = new Dictionary<string, Renderer>();
+            string dstRootPath = GetPath(dstRoot);
+            foreach (var r in dstAll)
+            {
+                if (r == null) continue;
+                string rel = GetPath(r.transform);
+                if (rel.StartsWith(dstRootPath))
+                    rel = rel.Length > dstRootPath.Length ? rel.Substring(dstRootPath.Length).TrimStart('/') : "";
+                if (!dstByRel.ContainsKey(rel))
+                    dstByRel[rel] = r;
+                // also key by leaf name as fallback
+                if (!dstByRel.ContainsKey(r.name))
+                    dstByRel[r.name] = r;
+            }
+            string srcRootPath = GetPath(srcRoot);
+            int copied = 0;
+            foreach (var sr in srcAll)
+            {
+                if (sr == null || sr.sharedMaterial == null) continue;
+                string rel = GetPath(sr.transform);
+                if (rel.StartsWith(srcRootPath))
+                    rel = rel.Length > srcRootPath.Length ? rel.Substring(srcRootPath.Length).TrimStart('/') : "";
+                Renderer dr = null;
+                if (!dstByRel.TryGetValue(rel, out dr))
+                    dstByRel.TryGetValue(sr.name, out dr);
+                if (dr == null) continue;
+                try
+                {
+                    if (dr.sharedMaterial == null)
+                        dr.sharedMaterial = sr.sharedMaterial;
+                    if (sr.sharedMaterials != null && sr.sharedMaterials.Length > 0)
+                        dr.sharedMaterials = sr.sharedMaterials;
+                    copied++;
+                }
+                catch { }
+            }
+            if (copied > 0)
+                ModRuntime.Log?.Msg("[WeaponSync] Path-matched materials: " + copied);
         }
 
         private static int DestroyAllMBs(GameObject obj)

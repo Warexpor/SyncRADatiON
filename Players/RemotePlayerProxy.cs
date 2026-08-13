@@ -1,4 +1,4 @@
-// SyncRADation — wrapper per remote player: owns AnimDriver, AudioSync, WeaponSync
+// SyncRADation ï¿½ wrapper per remote player: owns AnimDriver, AudioSync, WeaponSync
 using SyncRADation.Networking;
 using UnityEngine;
 
@@ -13,6 +13,14 @@ namespace SyncRADation.Players
         public int PlayerId { get; }
 
         private WeaponType _lastWeapon;
+        private byte _lastModelState = 255;
+        private bool _lastWearHat;
+
+        public int LastHp { get; private set; } = 100;
+        public int LastMaxHp { get; private set; } = 100;
+        public bool LastDead { get; private set; }
+        public byte LastGameState { get; private set; }
+        public byte LastCharState { get; private set; }
 
         public RemotePlayerProxy(GameObject go, int playerId)
         {
@@ -56,17 +64,70 @@ namespace SyncRADation.Players
             WeaponSync?.Cleanup();
         }
 
+        public void SetVital(int hp, int maxHp, bool dead, byte gameState, byte charState)
+        {
+            LastHp = hp;
+            LastMaxHp = maxHp > 0 ? maxHp : 100;
+            LastDead = dead;
+            LastGameState = gameState;
+            LastCharState = charState;
+
+            try
+            {
+                var anim = GameObject != null ? GameObject.GetComponentInChildren<Animator>(true) : null;
+                if (anim != null)
+                {
+                    anim.SetBool("Dead", dead);
+                    if (dead)
+                        anim.SetTrigger("Die");
+                }
+            }
+            catch { }
+        }
+
         public void ApplyState(PlayerStateMessage state)
         {
-            AnimDriver.ApplyState(state);
-            AudioSync.Tick(state, state.AnimBools, state.AnimTriggers);
-            WeaponSync.Tick(state, state.AnimBools, state.AnimTriggers, GameObject.transform.position, state.RotY);
+            // Weapon before FX tick so first-frame Fire after equip still has a clone
             if (state.Weapon != _lastWeapon)
             {
                 ModRuntime.Log?.Msg("[WeaponSync] Proxy " + PlayerId + " weapon: " + _lastWeapon + " -> " + state.Weapon);
                 WeaponSync.ApplyWeapon(state.Weapon);
                 _lastWeapon = state.Weapon;
             }
+
+            AnimDriver.ApplyState(state);
+            AudioSync.Tick(state, state.AnimBools, state.AnimTriggers);
+            WeaponSync.Tick(state, state.AnimBools, state.AnimTriggers, GameObject.transform.position, state.RotY);
+
+            if (state.ModelState != _lastModelState || state.WearHat != _lastWearHat)
+            {
+                ApplyModel(state.ModelState, state.WearHat);
+                _lastModelState = state.ModelState;
+                _lastWearHat = state.WearHat;
+            }
+        }
+
+        private void ApplyModel(byte modelState, bool wearHat)
+        {
+            try
+            {
+                var cmt = GameObject.GetComponentInChildren<CharacterModelType>(true);
+                if (cmt == null) return;
+                cmt.modelState = (CharacterModelType.ElsterType)modelState;
+                // Only touch static if proxy is active; ApplyType uses instance
+                var prev = CharacterModelType.instance;
+                var prevHat = CharacterModelType.wearHat;
+                CharacterModelType.instance = cmt;
+                CharacterModelType.wearHat = wearHat;
+                CharacterModelType.ApplyType();
+                CharacterModelType.instance = prev;
+                CharacterModelType.wearHat = prevHat;
+            }
+            catch (System.Exception ex)
+            {
+                ModRuntime.Log?.Warning("[Proxy] ApplyModel failed: " + ex.Message);
+            }
         }
     }
 }
+

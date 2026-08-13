@@ -1,4 +1,4 @@
-// SyncRADation � model-only clone: MB removal, mesh/material fix (IL2CPP), CapsuleCollider+Rigidbody
+// SyncRADation � model-only clone: MB removal, mesh/material fix (IL2CPP), CapsuleCollider+Rigidbody
 using MelonLoader;
 using UnityEngine;
 
@@ -79,7 +79,7 @@ namespace SyncRADation.Players
             // Now safe to activate proxy — no Awake runs (no MBs left)
             proxy.SetActive(true);
 
-            // Find source Animator and copy controller + avatar to a fresh Animator on proxy root
+            // Animator-primary pose: keep enabled so the controller evaluates network params.
             Animator sourceAnim = source.GetComponentInChildren<Animator>(true);
             if (sourceAnim != null)
             {
@@ -88,18 +88,20 @@ namespace SyncRADation.Players
                 proxyAnim.avatar = sourceAnim.avatar;
                 proxyAnim.applyRootMotion = false;
                 proxyAnim.cullingMode = AnimatorCullingMode.AlwaysAnimate;
-                proxyAnim.updateMode = sourceAnim.updateMode;
+                proxyAnim.updateMode = AnimatorUpdateMode.Normal;
                 proxyAnim.speed = 1f;
-                proxyAnim.enabled = false;
+                proxyAnim.enabled = true;
                 try { proxyAnim.Rebind(); proxyAnim.Update(0f); } catch { }
-                log?.Msg("[Proxy] Added Animator: ctrl=" + sourceAnim.runtimeAnimatorController
-                    + " avatar=" + sourceAnim.avatar
-                    + " updateMode=" + sourceAnim.updateMode);
+                log?.Msg("[Proxy] Animator ENABLED: ctrl=" + sourceAnim.runtimeAnimatorController
+                    + " avatar=" + sourceAnim.avatar);
             }
             else
             {
                 log?.Warning("[Proxy] No source Animator found!");
             }
+
+            // Preserve source root tilt (SIGNALIS uses non-zero root X/Z euler)
+            proxy.transform.rotation = source.transform.rotation;
 
             foreach (var col in proxy.GetComponentsInChildren<Collider>(true))
             {
@@ -117,7 +119,8 @@ namespace SyncRADation.Players
             var rb3 = proxy.GetComponent<Rigidbody>();
             if (rb3 != null) { rb3.useGravity = false; rb3.isKinematic = true; rb3.Sleep(); }
 
-            log?.Msg("Model-only proxy created: " + proxy.name + " at " + proxy.transform.position.ToString("F1"));
+            log?.Msg("Model-only proxy created: " + proxy.name + " at " + proxy.transform.position.ToString("F1")
+                + " rootEuler=" + proxy.transform.eulerAngles.ToString("F1"));
 
             // --- Fix IL2CPP: copy sharedMesh from source SMRs to proxy SMRs ---
             var sourceSmrs = facingChild.GetComponentsInChildren<SkinnedMeshRenderer>(true);
@@ -134,31 +137,46 @@ namespace SyncRADation.Players
             }
             for (int si = 0; si < sourceSmrs.Length && si < proxySmrs.Length; si++)
             {
-                if (sourceSmrs[si] != null && proxySmrs[si] != null
-                    && proxySmrs[si].sharedMaterial == null && sourceSmrs[si].sharedMaterial != null)
+                if (sourceSmrs[si] != null && proxySmrs[si] != null)
                 {
-                    proxySmrs[si].sharedMaterial = sourceSmrs[si].sharedMaterial;
+                    if (proxySmrs[si].sharedMaterial == null && sourceSmrs[si].sharedMaterial != null)
+                        proxySmrs[si].sharedMaterial = sourceSmrs[si].sharedMaterial;
+                    if (sourceSmrs[si].sharedMaterials != null && sourceSmrs[si].sharedMaterials.Length > 0)
+                        proxySmrs[si].sharedMaterials = sourceSmrs[si].sharedMaterials;
                 }
             }
             if (copyCount > 0)
                 log?.Msg("[Proxy] Copied " + copyCount + " sharedMeshes from source to proxy");
 
-            // Set layer for friendly fire detection (match model layer)
+            // Apply character model variant if present on source
+            try
+            {
+                var srcCmt = source.GetComponentInChildren<CharacterModelType>(true);
+                var proxyCmt = proxy.GetComponentInChildren<CharacterModelType>(true);
+                if (srcCmt != null && proxyCmt != null)
+                {
+                    proxyCmt.modelState = srcCmt.modelState;
+                    CharacterModelType.wearHat = CharacterModelType.wearHat;
+                    CharacterModelType.ApplyType();
+                }
+            }
+            catch { }
+
             var anyRenderer = proxy.GetComponentInChildren<Renderer>(true);
             if (anyRenderer != null)
                 proxy.layer = anyRenderer.gameObject.layer;
 
-            // Add physics for push/friendly fire
+            // Kinematic collider for FF raycasts — does not fight net position interp
             var proxyRb = proxy.AddComponent<Rigidbody>();
             proxyRb.useGravity = false;
-            proxyRb.isKinematic = false;
-            proxyRb.constraints = RigidbodyConstraints.FreezeRotation;
+            proxyRb.isKinematic = true;
+            proxyRb.constraints = RigidbodyConstraints.FreezeAll;
             var proxyCol = proxy.AddComponent<CapsuleCollider>();
             proxyCol.radius = 0.3f;
             proxyCol.height = 1.8f;
             proxyCol.center = new Vector3(0, 0.9f, 0);
-            proxyCol.isTrigger = false;
-            log?.Msg("[Proxy] Added physics collider+rigidbody for push/friendly fire");
+            proxyCol.isTrigger = true;
+            log?.Msg("[Proxy] Kinematic trigger capsule for FF detection");
 
             return proxy;
         }

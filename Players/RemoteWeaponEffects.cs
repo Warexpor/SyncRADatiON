@@ -1,4 +1,4 @@
-// SyncRADation � per-weapon FX: muzzle flash, smoke, case eject, laser, ricochet, slide
+// SyncRADation — per-weapon FX: muzzle flash, smoke, case eject, laser, ricochet, slide
 using System;
 using System.Collections.Generic;
 using SyncRADation.Networking;
@@ -10,17 +10,20 @@ namespace SyncRADation.Players
     {
         private readonly GameObject _weapon;
         private GameObject _muzzleFlash;
+        private Transform _muzzleOrigin;
         private ParticleSystem _muzzleSmoke;
         private ParticleSystem _caseEject;
         private ParticleSystem _missedShot;
         private ParticleSystem _ricochet;
         private LineRenderer _laser;
+        private SpriteRenderer _laserPoint;
         private Transform _slide;
         private float _slideRestPos;
         private float _flashTimer;
         private int _wallMask = ~0;
 
-        private const float FlashDuration = 0.03f;
+        // Visible long enough at ~30 Hz state + remote render (~2 frames minimum)
+        private const float FlashDuration = 0.08f;
         private const float SlideTravel = 0.02f;
         private const float SlideReturn = 0.08f;
         private readonly GameObject _weaponRoot;
@@ -30,13 +33,29 @@ namespace SyncRADation.Players
             _weapon = weapon;
             _weaponRoot = weapon;
             CacheEffects(sourceWeapon);
-            ResetAll(); // prevent PlayOnAwake before first activation
+            ResetAll();
             TryReadWallMask();
         }
 
         public void SetWallMask(int mask)
         {
             _wallMask = mask;
+        }
+
+        public bool TryGetMuzzleWorldPos(out Vector3 pos)
+        {
+            if (_muzzleOrigin != null)
+            {
+                pos = _muzzleOrigin.position;
+                return true;
+            }
+            if (_muzzleFlash != null)
+            {
+                pos = _muzzleFlash.transform.position;
+                return true;
+            }
+            pos = default;
+            return false;
         }
 
         private void TryReadWallMask()
@@ -51,67 +70,194 @@ namespace SyncRADation.Players
 
         private void CacheEffects(GameObject source)
         {
-            // Pure name/hierarchy search — no dependency on MonoBehaviour components.
-            // After this, all MBs can be destroyed without losing effect references.
-            // Runs BEFORE MB destruction (component-based search still works but we don't rely on it).
-
-            // DIAG: dump clone hierarchy
-            ModRuntime.Log?.Msg("[FX] === CLONE HIERARCHY: " + _weapon.name + " ===");
-            DumpHierarchy(_weapon.transform, 0);
-
-            // Gather all transforms once for name-based search
             var allTransforms = _weapon.GetComponentsInChildren<Transform>(true);
 
-            // Muzzle flash: Quad MeshRenderer is the actual visual
-            _muzzleFlash = FindMuzzleVisualTarget(allTransforms, _weaponRoot);
+            // Prefer serialized MuzzleFlash.muzzle from SOURCE before clone MBs die
+            GameObject srcMuzzleGo = null;
+            Transform srcMuzzleTf = null;
+            try
+            {
+                var srcMf = source != null ? source.GetComponentInChildren<MuzzleFlash>(true) : null;
+                if (srcMf != null && srcMf.muzzle != null)
+                {
+                    srcMuzzleGo = srcMf.muzzle;
+                    string leaf = srcMf.muzzle.name;
+                    // Match same leaf name under clone
+                    foreach (var t in allTransforms)
+                    {
+                        if (t != null && t.name == leaf)
+                        {
+                            _muzzleFlash = t.gameObject;
+                            break;
+                        }
+                    }
+                }
+                if (srcMf != null && srcMf.pivot != null)
+                    srcMuzzleTf = srcMf.pivot;
+            }
+            catch { }
+
+            if (_muzzleFlash == null)
+                _muzzleFlash = FindMuzzleVisualTarget(allTransforms, _weaponRoot);
+
+            if (_muzzleFlash != null)
+            {
+                _muzzleFlash.SetActive(false);
+                EnsureRendererVisible(_muzzleFlash);
+            }
             ModRuntime.Log?.Msg("[FX] MuzzleFlash " + (_muzzleFlash != null ? "FOUND at " + GetPath(_muzzleFlash.transform) : "NOT FOUND"));
 
-            // Muzzle smoke: ParticleSystem named "Smoke" under Muzzle subtree
-            _muzzleSmoke = FindParticleSystemByName(allTransforms, "Smoke");
+            // Origin for laser/ray: Muzzle node / flash / pivot
+            _muzzleOrigin = FindTransformByNameContains(allTransforms, "muzzle");
+            if (_muzzleOrigin == null && _muzzleFlash != null)
+                _muzzleOrigin = _muzzleFlash.transform;
+            if (_muzzleOrigin == null && srcMuzzleTf != null)
+            {
+                foreach (var t in allTransforms)
+                {
+                    if (t != null && t.name == srcMuzzleTf.name)
+                    {
+                        _muzzleOrigin = t;
+                        break;
+                    }
+                }
+            }
+
+            _muzzleSmoke = FindParticleSystemByName(allTransforms, "Smoke", allowAnyFallback: false);
+            // Smoke is often under Muzzle
+            if (_muzzleSmoke == null)
+                _muzzleSmoke = FindParticleSystemNearName(allTransforms, "muzzle");
             ModRuntime.Log?.Msg("[FX] MuzzleSmoke " + (_muzzleSmoke != null ? "FOUND" : "NOT FOUND"));
+            HardenParticle(_muzzleSmoke);
 
-            // Laser: LineRenderer (on TestLaser for Pistol)
-            _laser = FindLineRenderer(allTransforms);
-            if (_laser != null) _laser.enabled = false;
-            ModRuntime.Log?.Msg("[FX] Laser " + (_laser != null ? "FOUND" : "NOT FOUND"));
+            // Laser from AimLaser on source if present
+            try
+            {
+                var srcAl = source != null ? source.GetComponentInChildren<AimLaser>(true) : null;
+                if (srcAl != null)
+                {
+                    if (srcAl.line != null)
+                    {
+                        string ln = srcAl.line.gameObject.name;
+                        foreach (var t in allTransforms)
+                        {
+                            if (t == null) continue;
+                            var lr = t.GetComponent<LineRenderer>();
+                            if (lr != null && (t.name == ln || t.name.IndexOf("laser", StringComparison.OrdinalIgnoreCase) >= 0
+                                || t.name.IndexOf("testlaser", StringComparison.OrdinalIgnoreCase) >= 0))
+                            {
+                                _laser = lr;
+                                break;
+                            }
+                        }
+                        if (_laser == null)
+                            _laser = FindLineRenderer(allTransforms);
+                    }
+                    if (srcAl.laserPoint != null)
+                    {
+                        foreach (var t in allTransforms)
+                        {
+                            if (t != null && t.name == srcAl.laserPoint.name)
+                            {
+                                _laserPoint = t.GetComponent<SpriteRenderer>();
+                                break;
+                            }
+                        }
+                    }
+                    if (srcAl.missedShot != null)
+                        _missedShot = FindMatchingPs(allTransforms, srcAl.missedShot.gameObject.name);
+                    if (srcAl.ricochet != null)
+                        _ricochet = FindMatchingPs(allTransforms, srcAl.ricochet.gameObject.name);
+                }
+            }
+            catch { }
 
-            // Missed shot / ricochet: ParticleSystems under TestLaser
-            _missedShot = FindParticleSystemByName(allTransforms, "Miss");
-            _ricochet = FindParticleSystemByName(allTransforms, "Ricochet");
+            if (_laser == null)
+                _laser = FindLineRenderer(allTransforms);
+            if (_laser != null)
+            {
+                _laser.useWorldSpace = true;
+                _laser.enabled = false;
+                // Ensure width isn't zero after clone
+                try
+                {
+                    if (_laser.startWidth <= 0f && _laser.endWidth <= 0f)
+                    {
+                        _laser.startWidth = 0.01f;
+                        _laser.endWidth = 0.01f;
+                    }
+                }
+                catch { }
+            }
+            ModRuntime.Log?.Msg("[FX] Laser " + (_laser != null ? "FOUND mat=" + (_laser.sharedMaterial != null ? _laser.sharedMaterial.name : "NULL") : "NOT FOUND"));
+
+            if (_missedShot == null)
+                _missedShot = FindParticleSystemByName(allTransforms, "Miss", allowAnyFallback: false);
+            if (_ricochet == null)
+                _ricochet = FindParticleSystemByName(allTransforms, "Ricochet", allowAnyFallback: false);
             ModRuntime.Log?.Msg("[FX] MissedShot " + (_missedShot != null ? "FOUND" : "NOT FOUND")
                 + " Ricochet " + (_ricochet != null ? "FOUND" : "NOT FOUND"));
+            HardenParticle(_missedShot);
+            HardenParticle(_ricochet);
 
-            // Case eject: ParticleSystem named "Case" (Pistol has this without ReloadCaseEject component)
-            _caseEject = FindParticleSystemByName(allTransforms, "Case");
-            ModRuntime.Log?.Msg("[FX] CaseEject " + (_caseEject != null ? "FOUND" : "NOT FOUND"));
+            // Case eject — never fall back to random PS
+            try
+            {
+                var srcCe = source != null ? source.GetComponentInChildren<ReloadCaseEject>(true) : null;
+                if (srcCe != null && srcCe.particles != null)
+                    _caseEject = FindMatchingPs(allTransforms, srcCe.particles.gameObject.name);
+            }
+            catch { }
+            if (_caseEject == null)
+                _caseEject = FindParticleSystemByName(allTransforms, "Case", allowAnyFallback: false);
+            if (_caseEject == null)
+                _caseEject = FindParticleSystemByName(allTransforms, "Shell", allowAnyFallback: false);
+            if (_caseEject == null)
+                _caseEject = FindParticleSystemByName(allTransforms, "Eject", allowAnyFallback: false);
+            ModRuntime.Log?.Msg("[FX] CaseEject " + (_caseEject != null ? "FOUND at " + _caseEject.gameObject.name : "NOT FOUND"));
+            HardenParticle(_caseEject);
 
-            // Slide: Transform named "Slide"
             _slide = FindTransformByName(allTransforms, "Slide");
             if (_slide != null) _slideRestPos = _slide.localPosition.z;
             ModRuntime.Log?.Msg("[FX] PistolSlide " + (_slide != null ? "FOUND" : "NOT FOUND"));
         }
 
-        private static void DumpHierarchy(Transform t, int depth)
+        private static void EnsureRendererVisible(GameObject go)
         {
-            if (t == null) return;
-            string indent = new string(' ', depth * 2);
-            string tags = "";
-            if (t.GetComponent<MuzzleFlash>() != null) tags += " MF";
-            if (t.GetComponent<AimLaser>() != null) tags += " AL";
-            if (t.GetComponent<ReloadCaseEject>() != null) tags += " CE";
-            if (t.GetComponent<PistolSlide>() != null) tags += " PS";
-            if (t.GetComponent<MuzzleSmoke>() != null) tags += " MS";
-            if (t.GetComponent<LineRenderer>() != null) tags += " LR";
-            if (t.GetComponent<ParticleSystem>() != null) tags += " PSys";
-            if (t.GetComponent<Renderer>() != null) tags += " Rend";
-            if (t.GetComponent<MeshRenderer>() != null) tags += " MR";
-            ModRuntime.Log?.Msg("[FX] " + indent + t.name + " children=" + t.childCount + tags);
-            for (int i = 0; i < t.childCount; i++)
-                DumpHierarchy(t.GetChild(i), depth + 1);
+            if (go == null) return;
+            var rends = go.GetComponentsInChildren<Renderer>(true);
+            foreach (var r in rends)
+            {
+                if (r == null) continue;
+                r.enabled = true;
+            }
         }
 
-        // Muzzle flash: find the Quad MeshRenderer that MuzzleFlash.muzzle normally points to.
-        // Quad (1) path: .../Muzzle/Halo/Quad (1). Score by name to prefer Quad over MuzzleFlash's own MR.
+        private static void HardenParticle(ParticleSystem ps)
+        {
+            if (ps == null) return;
+            try
+            {
+                ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+                var psr = ps.GetComponent<ParticleSystemRenderer>();
+                if (psr != null) psr.enabled = true;
+            }
+            catch { }
+        }
+
+        private static ParticleSystem FindMatchingPs(Transform[] all, string name)
+        {
+            if (string.IsNullOrEmpty(name)) return null;
+            foreach (var t in all)
+            {
+                if (t == null) continue;
+                if (t.name != name) continue;
+                var ps = t.GetComponent<ParticleSystem>();
+                if (ps != null) return ps;
+            }
+            return FindParticleSystemByName(all, name, allowAnyFallback: false);
+        }
+
         private static GameObject FindMuzzleVisualTarget(Transform[] allTransforms, GameObject weaponRoot)
         {
             GameObject best = null;
@@ -124,31 +270,42 @@ namespace SyncRADation.Players
                 int score = 0;
                 string n = t.name.ToLowerInvariant();
                 if (n.Contains("quad")) score += 30;
-                if (n.Contains("flash")) score += 5;
-                if (n.Contains("muzzle")) score += 2;
-                if (n.Contains("halo")) score -= 1;
+                if (n.Contains("flash")) score += 20;
+                if (n.Contains("muzzle")) score += 10;
+                if (n.Contains("halo")) score += 5;
+                // Prefer under a Muzzle parent
+                if (t.parent != null)
+                {
+                    string pn = t.parent.name.ToLowerInvariant();
+                    if (pn.Contains("muzzle") || pn.Contains("flash") || pn.Contains("halo"))
+                        score += 15;
+                }
                 if (score > bestScore) { bestScore = score; best = mr.gameObject; }
             }
+            // Accept only if we scored something muzzle-related
+            if (bestScore < 10) return null;
             return best;
         }
 
-        // Find first LineRenderer in the hierarchy
         private static LineRenderer FindLineRenderer(Transform[] allTransforms)
         {
+            LineRenderer fallback = null;
             foreach (var t in allTransforms)
             {
                 if (t == null) continue;
                 var lr = t.GetComponent<LineRenderer>();
-                if (lr != null) return lr;
+                if (lr == null) continue;
+                string n = t.name.ToLowerInvariant();
+                if (n.Contains("laser") || n.Contains("aim") || n.Contains("testlaser"))
+                    return lr;
+                if (fallback == null) fallback = lr;
             }
-            return null;
+            return fallback;
         }
 
-        // Find first ParticleSystem whose name (or parent's name) contains the hint
-        private static ParticleSystem FindParticleSystemByName(Transform[] allTransforms, string hint)
+        private static ParticleSystem FindParticleSystemByName(Transform[] allTransforms, string hint, bool allowAnyFallback)
         {
             if (string.IsNullOrEmpty(hint)) return null;
-            // First pass: exact name match on the PS's own transform or parent
             foreach (var t in allTransforms)
             {
                 var ps = t.GetComponent<ParticleSystem>();
@@ -156,7 +313,7 @@ namespace SyncRADation.Players
                 if (t.name.IndexOf(hint, StringComparison.OrdinalIgnoreCase) >= 0) return ps;
                 if (t.parent != null && t.parent.name.IndexOf(hint, StringComparison.OrdinalIgnoreCase) >= 0) return ps;
             }
-            // Second pass: any ParticleSystem
+            if (!allowAnyFallback) return null;
             foreach (var t in allTransforms)
             {
                 var ps = t.GetComponent<ParticleSystem>();
@@ -165,7 +322,23 @@ namespace SyncRADation.Players
             return null;
         }
 
-        // Find first Transform whose name matches (case-insensitive)
+        private static ParticleSystem FindParticleSystemNearName(Transform[] allTransforms, string parentHint)
+        {
+            foreach (var t in allTransforms)
+            {
+                var ps = t.GetComponent<ParticleSystem>();
+                if (ps == null) continue;
+                Transform p = t;
+                for (int d = 0; d < 4 && p != null; d++)
+                {
+                    if (p.name.IndexOf(parentHint, StringComparison.OrdinalIgnoreCase) >= 0)
+                        return ps;
+                    p = p.parent;
+                }
+            }
+            return null;
+        }
+
         private static Transform FindTransformByName(Transform[] allTransforms, string name)
         {
             foreach (var t in allTransforms)
@@ -174,6 +347,21 @@ namespace SyncRADation.Players
                 if (t.name.Equals(name, StringComparison.OrdinalIgnoreCase)) return t;
             }
             return null;
+        }
+
+        private static Transform FindTransformByNameContains(Transform[] allTransforms, string hint)
+        {
+            Transform best = null;
+            int bestScore = -1;
+            foreach (var t in allTransforms)
+            {
+                if (t == null) continue;
+                string n = t.name.ToLowerInvariant();
+                if (n.IndexOf(hint, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                int score = n == hint ? 10 : 5;
+                if (score > bestScore) { bestScore = score; best = t; }
+            }
+            return best;
         }
 
         private static string GetPath(Transform t)
@@ -189,18 +377,11 @@ namespace SyncRADation.Players
             if (_muzzleFlash != null)
             {
                 _muzzleFlash.SetActive(true);
+                EnsureRendererVisible(_muzzleFlash);
                 _flashTimer = FlashDuration;
             }
-            if (_muzzleSmoke != null)
-            {
-                _muzzleSmoke.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
-                _muzzleSmoke.Play();
-            }
-            if (_caseEject != null)
-            {
-                _caseEject.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
-                _caseEject.Play();
-            }
+            PlayBurst(_muzzleSmoke);
+            PlayBurst(_caseEject);
             if (_slide != null)
             {
                 Vector3 p = _slide.localPosition;
@@ -211,8 +392,18 @@ namespace SyncRADation.Players
 
         public void OnReload()
         {
-            if (_caseEject != null)
-                _caseEject.Play();
+            PlayBurst(_caseEject);
+        }
+
+        private static void PlayBurst(ParticleSystem ps)
+        {
+            if (ps == null) return;
+            try
+            {
+                ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+                ps.Play(true);
+            }
+            catch { }
         }
 
         public void DoImpactRaycast(Vector3 origin, Vector3 direction, float damage)
@@ -223,23 +414,16 @@ namespace SyncRADation.Players
                 bool hitPlayer = IsPlayerHit(hit.collider);
                 if (hitPlayer)
                 {
-                    ModRuntime.Log?.Msg("[FX] Friendly fire! Hit local player at " + hit.point.ToString("F1") + " dmg=" + damage.ToString("F0"));
-                    NetworkDamageSystem.ApplyDamage(damage, hit.point, direction);
-                    if (_ricochet != null)
+                    if (Config.ModConfig.FriendlyFire?.Value == true)
                     {
-                        _ricochet.transform.position = hit.point;
-                        _ricochet.transform.rotation = Quaternion.LookRotation(hit.normal);
-                        _ricochet.Play();
+                        ModRuntime.Log?.Msg("[FX] Friendly fire! Hit local player at " + hit.point.ToString("F1") + " dmg=" + damage.ToString("F0"));
+                        NetworkDamageSystem.ApplyDamage(damage, hit.point, direction);
                     }
+                    PlayAt(_ricochet, hit.point, hit.normal);
                     return;
                 }
 
-                if (_ricochet != null)
-                {
-                    _ricochet.transform.position = hit.point;
-                    _ricochet.transform.rotation = Quaternion.LookRotation(hit.normal);
-                    _ricochet.Play();
-                }
+                PlayAt(_ricochet, hit.point, hit.normal);
             }
             else
             {
@@ -247,9 +431,18 @@ namespace SyncRADation.Players
                 {
                     Vector3 farPoint = origin + direction * 30f;
                     _missedShot.transform.position = farPoint;
-                    _missedShot.Play();
+                    PlayBurst(_missedShot);
                 }
             }
+        }
+
+        private static void PlayAt(ParticleSystem ps, Vector3 point, Vector3 normal)
+        {
+            if (ps == null) return;
+            ps.transform.position = point;
+            if (normal.sqrMagnitude > 0.001f)
+                ps.transform.rotation = Quaternion.LookRotation(normal);
+            PlayBurst(ps);
         }
 
         private static bool IsPlayerHit(Collider col)
@@ -268,16 +461,40 @@ namespace SyncRADation.Players
 
         public void UpdateLaser(bool aiming, Vector3 origin, Vector3 direction, float maxDist)
         {
-            if (_laser == null) return;
+            if (_laser == null)
+            {
+                if (_laserPoint != null) _laserPoint.enabled = false;
+                return;
+            }
+
+            _laser.useWorldSpace = true;
             _laser.enabled = aiming;
+            if (_laserPoint != null) _laserPoint.enabled = aiming;
             if (!aiming) return;
 
-            _laser.SetPosition(0, origin);
+            if (direction.sqrMagnitude < 0.0001f)
+                direction = Vector3.forward;
+            direction.Normalize();
+
+            Vector3 end = origin + direction * maxDist;
             RaycastHit hit;
             if (Physics.Raycast(origin, direction, out hit, maxDist, _wallMask))
-                _laser.SetPosition(1, hit.point);
-            else
-                _laser.SetPosition(1, origin + direction * maxDist);
+            {
+                end = hit.point;
+                if (_laserPoint != null)
+                {
+                    _laserPoint.transform.position = hit.point;
+                    _laserPoint.enabled = true;
+                }
+            }
+            else if (_laserPoint != null)
+            {
+                _laserPoint.transform.position = end;
+            }
+
+            _laser.positionCount = 2;
+            _laser.SetPosition(0, origin);
+            _laser.SetPosition(1, end);
         }
 
         public void Tick(float dt)
@@ -303,20 +520,26 @@ namespace SyncRADation.Players
             }
         }
 
-        // Stop all particles (prevents PlayOnAwake from causing infinite emission on weapon switch)
         public void ResetAll()
         {
             StopPS(ref _muzzleSmoke);
             StopPS(ref _caseEject);
             StopPS(ref _missedShot);
             StopPS(ref _ricochet);
+            if (_muzzleFlash != null)
+                _muzzleFlash.SetActive(false);
+            if (_laser != null)
+                _laser.enabled = false;
+            if (_laserPoint != null)
+                _laserPoint.enabled = false;
         }
 
         private static void StopPS(ref ParticleSystem ps)
         {
             if (ps != null)
             {
-                ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+                try { ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear); }
+                catch { }
             }
         }
 
@@ -328,9 +551,9 @@ namespace SyncRADation.Players
             _muzzleSmoke = null;
             _caseEject = null;
             _laser = null;
+            _laserPoint = null;
             _slide = null;
+            _muzzleOrigin = null;
         }
-
-
     }
 }

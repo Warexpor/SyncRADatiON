@@ -1,166 +1,124 @@
-<?xml version="1.0" encoding="utf-8"?>
-<Project ToolsVersion="4.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
-    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProjectGuid>{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}</ProjectGuid>
-    <OutputType>Library</OutputType>
-    <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>SyncRADation</RootNamespace>
+    <TargetFramework>net472</TargetFramework>
+    <LangVersion>latest</LangVersion>
     <AssemblyName>SyncRADation</AssemblyName>
-    <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
-    <FileAlignment>512</FileAlignment>
+    <RootNamespace>SyncRADation</RootNamespace>
+    <OutputType>Library</OutputType>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <DebugType>portable</DebugType>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <Deterministic>true</Deterministic>
   </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
-    <PlatformTarget>AnyCPU</PlatformTarget>
-    <DebugSymbols>true</DebugSymbols>
-    <DebugType>full</DebugType>
-    <Optimize>false</Optimize>
-    <OutputPath>bin\Debug\</OutputPath>
-    <DefineConstants>DEBUG;TRACE</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-    <PlatformTarget>AnyCPU</PlatformTarget>
-    <DebugType>none</DebugType>
-    <Optimize>true</Optimize>
-    <OutputPath>bin\Release\</OutputPath>
-    <DefineConstants>TRACE</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-  </PropertyGroup>
+
   <PropertyGroup>
-    <SignalisDir Condition="'$(SignalisDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\SIGNALIS</SignalisDir>
-    <ClientSignalisDir Condition="'$(ClientSignalisDir)' == ''">C:\SIGNALIS</ClientSignalisDir>
+    <SignalisDir Condition="'$(SignalisDir)' == ''">C:\MyProjects\SIGNALIS</SignalisDir>
+    <ClientSignalisDir Condition="'$(ClientSignalisDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\SIGNALIS</ClientSignalisDir>
     <MelonLoaderDir>$(SignalisDir)\MelonLoader</MelonLoaderDir>
     <ManagedDir>$(MelonLoaderDir)\Managed</ManagedDir>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net472" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
   <ItemGroup>
     <Reference Include="0Harmony">
       <HintPath>$(MelonLoaderDir)\0Harmony.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="Assembly-CSharp">
-      <HintPath>$(ManagedDir)\Assembly-CSharp.dll</HintPath>
-      <Private>False</Private>
+      <Private>false</Private>
     </Reference>
     <Reference Include="MelonLoader">
       <HintPath>$(MelonLoaderDir)\MelonLoader.dll</HintPath>
-      <Private>False</Private>
+      <Private>false</Private>
     </Reference>
-    <Reference Include="LiteNetLib">
-      <HintPath>packages\LiteNetLib.1.3.1\lib\net471\LiteNetLib.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
-    <Reference Include="System" />
-    <Reference Include="System.Core" />
-    <Reference Include="System.Data" />
-    <Reference Include="System.Xml" />
-    <Reference Include="UnhollowerBaseLib">
-      <HintPath>$(ManagedDir)\UnhollowerBaseLib.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="Il2Cppmscorlib">
-      <HintPath>$(ManagedDir)\Il2Cppmscorlib.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="UnityEngine">
-      <HintPath>$(ManagedDir)\UnityEngine.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="UnityEngine.CoreModule">
-      <HintPath>$(ManagedDir)\UnityEngine.CoreModule.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="UnityEngine.Physics2DModule">
-      <HintPath>$(ManagedDir)\UnityEngine.Physics2DModule.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="UnityEngine.PhysicsModule">
-      <HintPath>$(ManagedDir)\UnityEngine.PhysicsModule.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="UnityEngine.InputLegacyModule">
-      <HintPath>$(ManagedDir)\UnityEngine.InputLegacyModule.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="UnityEngine.IMGUIModule">
-      <HintPath>$(ManagedDir)\UnityEngine.IMGUIModule.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="UnityEngine.AnimationModule">
-      <HintPath>$(ManagedDir)\UnityEngine.AnimationModule.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="UnityEngine.AudioModule">
-      <HintPath>$(ManagedDir)\UnityEngine.AudioModule.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="UnityEngine.ParticleSystemModule">
-      <HintPath>$(ManagedDir)\UnityEngine.ParticleSystemModule.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="AstarPathfindingProject">
-      <HintPath>$(ManagedDir)\AstarPathfindingProject.dll</HintPath>
-      <Private>False</Private>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(ManagedDir)\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
     </Reference>
     <Reference Include="Assembly-CSharp-firstpass">
       <HintPath>$(ManagedDir)\Assembly-CSharp-firstpass.dll</HintPath>
-      <Private>False</Private>
+      <Private>false</Private>
     </Reference>
-    <Reference Include="Sirenix.Serialization">
-      <HintPath>$(ManagedDir)\Sirenix.Serialization.dll</HintPath>
-      <Private>False</Private>
+    <Reference Include="UnhollowerBaseLib">
+      <HintPath>$(ManagedDir)\UnhollowerBaseLib.dll</HintPath>
+      <Private>false</Private>
     </Reference>
-    <Reference Include="FMODUnity">
-      <HintPath>$(ManagedDir)\FMODUnity.dll</HintPath>
-      <Private>False</Private>
+    <Reference Include="Il2Cppmscorlib">
+      <HintPath>$(ManagedDir)\Il2Cppmscorlib.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(ManagedDir)\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(ManagedDir)\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.Physics2DModule">
+      <HintPath>$(ManagedDir)\UnityEngine.Physics2DModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.PhysicsModule">
+      <HintPath>$(ManagedDir)\UnityEngine.PhysicsModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>$(ManagedDir)\UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>$(ManagedDir)\UnityEngine.IMGUIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.AnimationModule">
+      <HintPath>$(ManagedDir)\UnityEngine.AnimationModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.AudioModule">
+      <HintPath>$(ManagedDir)\UnityEngine.AudioModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.ParticleSystemModule">
+      <HintPath>$(ManagedDir)\UnityEngine.ParticleSystemModule.dll</HintPath>
+      <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.UI">
       <HintPath>$(ManagedDir)\UnityEngine.UI.dll</HintPath>
-      <Private>False</Private>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="AstarPathfindingProject">
+      <HintPath>$(ManagedDir)\AstarPathfindingProject.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Sirenix.Serialization">
+      <HintPath>$(ManagedDir)\Sirenix.Serialization.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="FMODUnity">
+      <HintPath>$(ManagedDir)\FMODUnity.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="LiteNetLib">
+      <HintPath>packages\LiteNetLib.1.3.1\lib\net471\LiteNetLib.dll</HintPath>
+      <Private>true</Private>
     </Reference>
   </ItemGroup>
-  <ItemGroup>
-    <Compile Include="PluginInfo.cs" />
-    <Compile Include="SyncRADationMod.cs" />
-    <Compile Include="ModRuntime.cs" />
-    <Compile Include="Config\ModConfig.cs" />
-    <Compile Include="Networking\NetworkRole.cs" />
-    <Compile Include="Networking\NetMessages.cs" />
-    <Compile Include="Networking\LanNetworkManager.cs" />
 
-    <Compile Include="Players\RemotePlayerProxy.cs" />
-    <Compile Include="Players\PlayerProxyBuilder.cs" />
-    <Compile Include="Players\PlayerProxyManager.cs" />
-    <Compile Include="Players\NetworkDamageSystem.cs" />
-    <Compile Include="Players\RemoteAnimatorDriver.cs" />
-    <Compile Include="Players\SourceAnimReader.cs" />
-    <Compile Include="Players\ProxyAudioSync.cs" />
-    <Compile Include="Players\RemoteWeaponSync.cs" />
-    <Compile Include="Players\RemoteWeaponEffects.cs" />
-    <Compile Include="Players\BoneSyncManager.cs" />
-    <Compile Include="Networking\DoorSyncService.cs" />
-    <Compile Include="Networking\EnemySyncService.cs" />
-    <Compile Include="Networking\PuzzleSyncService.cs" />
-    <Compile Include="Networking\BossSyncService.cs" />
-    <Compile Include="Networking\WeaponUtils.cs" />
-    <Compile Include="Items\WorldItem.cs" />
-    <Compile Include="Items\DroppedItemManager.cs" />
-    <Compile Include="Cheats\ItemGiver.cs" />
-    <Compile Include="Cheats\EntitySpawner.cs" />
-    <Compile Include="UI\MultiplayerMenu.cs" />
-    <Compile Include="Properties\AssemblyInfo.cs" />
+  <ItemGroup>
+    <Compile Remove="_tmp_ref\**" />
+    <None Remove="_tmp_ref\**" />
+    <Compile Remove="GameAPI.cs" Condition="Exists('GameAPI.cs')" />
   </ItemGroup>
-  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
-  <Target Name="AfterBuild">
+
+  <Target Name="CopyToMods" AfterTargets="Build">
     <MakeDir Directories="$(SignalisDir)\Mods" />
-    <MakeDir Directories="$(ClientSignalisDir)\Mods" Condition="Exists('$(ClientSignalisDir)')" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(SignalisDir)\Mods" />
-    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ClientSignalisDir)\Mods" Condition="Exists('$(ClientSignalisDir)\Mods')" />
     <Copy SourceFiles="$(TargetDir)LiteNetLib.dll" DestinationFolder="$(SignalisDir)\Mods" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)LiteNetLib.dll')" />
-    <Copy SourceFiles="$(TargetDir)LiteNetLib.dll" DestinationFolder="$(ClientSignalisDir)\Mods" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)LiteNetLib.dll') And Exists('$(ClientSignalisDir)\Mods')" />
+    <MakeDir Directories="$(ClientSignalisDir)\Mods" Condition="Exists('$(ClientSignalisDir)')" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ClientSignalisDir)\Mods" Condition="Exists('$(ClientSignalisDir)\Mods') Or Exists('$(ClientSignalisDir)')" ContinueOnError="true" />
+    <Copy SourceFiles="$(TargetDir)LiteNetLib.dll" DestinationFolder="$(ClientSignalisDir)\Mods" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)LiteNetLib.dll') And Exists('$(ClientSignalisDir)')" ContinueOnError="true" />
   </Target>
 </Project>

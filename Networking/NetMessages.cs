@@ -4,6 +4,7 @@ using UnityEngine;
 
 namespace SyncRADation.Networking
 {
+    // Protocol v6 wire types. Host relays gameplay; host owns world/story.
     public enum NetMessageType : byte
     {
         Handshake = 1,
@@ -14,10 +15,166 @@ namespace SyncRADation.Networking
         FriendlyFire = 11,
         EnemyState = 12,
         EnemyDamage = 13,
-        SceneSync = 14,
+        SceneHello = 14,
         PuzzleState = 15,
         BossState = 17,
-        _Highest = 18
+        SnapshotRequest = 19,
+        WorldPickupState = 20,
+        PlayerVital = 21,
+        WorldPickupClaim = 22,
+        WorldPickupGrant = 23,
+        SceneFollow = 24,
+        InteractionRequest = 25,
+        InteractionAck = 26,
+        StoryCommit = 27,
+        StoryPresentation = 28,
+        StorageBoxBlob = 29,
+        PartyKeyRing = 30,
+        DeathPolicy = 31,
+        FmodEmitter = 32,
+        _Highest = 33
+    }
+
+    public enum InteractionKind : byte
+    {
+        None = 0,
+        EventZone = 1,
+        UseItem = 2,
+        KeypadSubmit = 3,
+        DialogueStart = 4,
+        CutsceneStart = 5,
+        EventScreenStart = 6,
+        EventScreenExit = 7,
+        CutsceneSkip = 8,
+        DialogueContinue = 9,
+        DialogueEnd = 10,
+        StoragePut = 11,
+        StorageTake = 12,
+        Gunshot = 13,
+        MultiCondition = 14,
+        SceneFollowRequest = 15,
+    }
+
+    public enum StoryCmd : byte
+    {
+        None = 0,
+        DialogueStart = 1,
+        DialogueContinue = 2,
+        DialogueEnd = 3,
+        CutsceneStart = 4,
+        CutsceneSkip = 5,
+        CutsceneProceed = 6,
+        EventScreenStart = 7,
+        EventScreenExit = 8,
+        OpenBookMemory = 9,
+        DetermineEnding = 10,
+        DialoguerStartId = 11,
+        EventZoneFire = 12,
+        MultiConditionFire = 13,
+        BookOpen = 14,
+    }
+
+    public enum DeathKind : byte
+    {
+        ClientDowned = 1,
+        HostWipeReload = 2,
+    }
+
+    public struct SnapshotRequestMessage
+    {
+        public int SenderPlayerId;
+
+        public void Serialize(NetDataWriter w) => w.Put(SenderPlayerId);
+
+        public static SnapshotRequestMessage Deserialize(NetDataReader r) =>
+            new SnapshotRequestMessage { SenderPlayerId = r.GetInt() };
+    }
+
+    public struct WorldPickupEntry
+    {
+        public long WorldId;
+        public bool Triggered;
+        public bool Active;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(WorldId);
+            w.Put(Triggered);
+            w.Put(Active);
+        }
+
+        public static WorldPickupEntry Deserialize(NetDataReader r) =>
+            new WorldPickupEntry
+            {
+                WorldId = r.GetLong(),
+                Triggered = r.GetBool(),
+                Active = r.GetBool()
+            };
+    }
+
+    public struct WorldPickupStateMessage
+    {
+        public int SenderPlayerId;
+        public bool FullRefresh;
+        public WorldPickupEntry[] Entries;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(SenderPlayerId);
+            w.Put(FullRefresh);
+            int n = Entries != null ? Entries.Length : 0;
+            w.Put(n);
+            for (int i = 0; i < n; i++)
+                Entries[i].Serialize(w);
+        }
+
+        public static WorldPickupStateMessage Deserialize(NetDataReader r)
+        {
+            var msg = new WorldPickupStateMessage
+            {
+                SenderPlayerId = r.GetInt(),
+                FullRefresh = r.GetBool()
+            };
+            int n = r.GetInt();
+            if (n > 0 && n < 8192)
+            {
+                msg.Entries = new WorldPickupEntry[n];
+                for (int i = 0; i < n; i++)
+                    msg.Entries[i] = WorldPickupEntry.Deserialize(r);
+            }
+            return msg;
+        }
+    }
+
+    public struct PlayerVitalMessage
+    {
+        public int SenderPlayerId;
+        public int Hp;
+        public int MaxHp;
+        public byte GameState;
+        public byte CharState;
+        public bool Dead;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(SenderPlayerId);
+            w.Put(Hp);
+            w.Put(MaxHp);
+            w.Put(GameState);
+            w.Put(CharState);
+            w.Put(Dead);
+        }
+
+        public static PlayerVitalMessage Deserialize(NetDataReader r) =>
+            new PlayerVitalMessage
+            {
+                SenderPlayerId = r.GetInt(),
+                Hp = r.GetInt(),
+                MaxHp = r.GetInt(),
+                GameState = r.GetByte(),
+                CharState = r.GetByte(),
+                Dead = r.GetBool()
+            };
     }
 
     public struct HandshakeMessage
@@ -130,6 +287,10 @@ namespace SyncRADation.Networking
         public AnimTriggers AnimTriggers;
         public bool StepHappened;
         public bool Climbing;
+        public byte ModelState;   // CharacterModelType.ElsterType
+        public bool WearHat;
+        public float RootX;
+        public float RootZ;
         public float[] BoneRotations;
 
         public void Serialize(NetDataWriter w)
@@ -158,6 +319,10 @@ namespace SyncRADation.Networking
             w.Put((ushort)AnimTriggers);
             w.Put(StepHappened);
             w.Put(Climbing);
+            w.Put(ModelState);
+            w.Put(WearHat);
+            w.Put(RootX);
+            w.Put(RootZ);
             int bc = (BoneRotations != null) ? BoneRotations.Length : 0;
             w.Put(bc);
             for (int i = 0; i < bc; i++)
@@ -191,10 +356,14 @@ namespace SyncRADation.Networking
                 AnimBools = (AnimBools)r.GetUInt(),
                 AnimTriggers = (AnimTriggers)r.GetUShort(),
                 StepHappened = r.GetBool(),
-                Climbing = r.GetBool()
+                Climbing = r.GetBool(),
+                ModelState = r.GetByte(),
+                WearHat = r.GetBool(),
+                RootX = r.GetFloat(),
+                RootZ = r.GetFloat()
             };
             int bc = r.GetInt();
-            if (bc > 0)
+            if (bc > 0 && bc < 4096)
             {
                 msg.BoneRotations = new float[bc];
                 for (int i = 0; i < bc; i++)
@@ -216,7 +385,7 @@ namespace SyncRADation.Networking
 
     public struct EnemySnapshotNet
     {
-        public short Index;
+        public long WorldId; // ulong stored as long
         public byte State;
         public byte HurtState;
         public float PosX, PosY, PosZ;
@@ -226,12 +395,12 @@ namespace SyncRADation.Networking
         public float AnimTime;
         public int HP;
         public int MaxHP;
-        public int HostInstanceID;
         public bool Alive;
+        public sbyte TargetPlayerId;
 
         public void Serialize(NetDataWriter w)
         {
-            w.Put(Index);
+            w.Put(WorldId);
             w.Put(State);
             w.Put(HurtState);
             w.Put(PosX); w.Put(PosY); w.Put(PosZ);
@@ -241,15 +410,15 @@ namespace SyncRADation.Networking
             w.Put(AnimTime);
             w.Put(HP);
             w.Put(MaxHP);
-            w.Put(HostInstanceID);
             w.Put(Alive);
+            w.Put(TargetPlayerId);
         }
 
         public static EnemySnapshotNet Deserialize(NetDataReader r)
         {
             return new EnemySnapshotNet
             {
-                Index = r.GetShort(),
+                WorldId = r.GetLong(),
                 State = r.GetByte(),
                 HurtState = r.GetByte(),
                 PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
@@ -259,8 +428,8 @@ namespace SyncRADation.Networking
                 AnimTime = r.GetFloat(),
                 HP = r.GetInt(),
                 MaxHP = r.GetInt(),
-                HostInstanceID = r.GetInt(),
-                Alive = r.GetBool()
+                Alive = r.GetBool(),
+                TargetPlayerId = r.GetSByte()
             };
         }
     }
@@ -291,17 +460,28 @@ namespace SyncRADation.Networking
     {
         public int AttackerPlayerId;
         public int TargetPlayerId;
-        public int HostEnemyInstanceID;
+        public long EnemyWorldId;
         public float Damage;
         public bool IsStagger;
+        /// <summary>When true, host applies EnemyController.TakeDamage(fire,crit,hurt,noSneak).</summary>
+        public bool NativeTakeDamage;
+        public float FireChance;
+        public float CriticalChance;
+        public float HurtChance;
+        public bool NoSneak;
 
         public void Serialize(NetDataWriter w)
         {
             w.Put(AttackerPlayerId);
             w.Put(TargetPlayerId);
-            w.Put(HostEnemyInstanceID);
+            w.Put(EnemyWorldId);
             w.Put(Damage);
             w.Put(IsStagger);
+            w.Put(NativeTakeDamage);
+            w.Put(FireChance);
+            w.Put(CriticalChance);
+            w.Put(HurtChance);
+            w.Put(NoSneak);
         }
 
         public static EnemyDamageMessage Deserialize(NetDataReader r)
@@ -310,33 +490,38 @@ namespace SyncRADation.Networking
             {
                 AttackerPlayerId = r.GetInt(),
                 TargetPlayerId = r.GetInt(),
-                HostEnemyInstanceID = r.GetInt(),
+                EnemyWorldId = r.GetLong(),
                 Damage = r.GetFloat(),
-                IsStagger = r.GetBool()
+                IsStagger = r.GetBool(),
+                NativeTakeDamage = r.GetBool(),
+                FireChance = r.GetFloat(),
+                CriticalChance = r.GetFloat(),
+                HurtChance = r.GetFloat(),
+                NoSneak = r.GetBool()
             };
         }
     }
 
-    public struct SceneSyncMessage
+    public struct SceneHelloMessage
     {
         public int SenderPlayerId;
         public string SceneName;
-        public string SaveSlotName;
+        public string RoomName;
 
         public void Serialize(NetDataWriter w)
         {
             w.Put(SenderPlayerId);
             w.Put(SceneName ?? "");
-            w.Put(SaveSlotName ?? "");
+            w.Put(RoomName ?? "");
         }
 
-        public static SceneSyncMessage Deserialize(NetDataReader r)
+        public static SceneHelloMessage Deserialize(NetDataReader r)
         {
-            return new SceneSyncMessage
+            return new SceneHelloMessage
             {
                 SenderPlayerId = r.GetInt(),
                 SceneName = r.GetString(),
-                SaveSlotName = r.GetString()
+                RoomName = r.GetString()
             };
         }
     }
@@ -353,7 +538,7 @@ namespace SyncRADation.Networking
     {
         public int SenderPlayerId;
         public DoorType Type;
-        public short Index;
+        public long WorldId;
         public bool Open;
         public bool Locked;
         public bool InProgress;  // ConnectedDoors
@@ -364,7 +549,7 @@ namespace SyncRADation.Networking
         {
             w.Put(SenderPlayerId);
             w.Put((byte)Type);
-            w.Put(Index);
+            w.Put(WorldId);
             w.Put(Open);
             w.Put(Locked);
             w.Put(InProgress);
@@ -378,7 +563,7 @@ namespace SyncRADation.Networking
             {
                 SenderPlayerId = r.GetInt(),
                 Type = (DoorType)r.GetByte(),
-                Index = r.GetShort(),
+                WorldId = r.GetLong(),
                 Open = r.GetBool(),
                 Locked = r.GetBool(),
                 InProgress = r.GetBool(),
@@ -523,12 +708,27 @@ namespace SyncRADation.Networking
         RadioManagerState = 32,
         EnemyManagerState = 33,
         StorageBox = 34,
+        ROT_Tarot = 35,
+        ROT_Mural = 36,
+        MED_Incinerator = 37,
+        LAB_Waage = 38,
+        RES_Shrine = 39,
+        ROT_RadioAlignment = 40,
+        DET_RadioCodeLock = 41,
+        UseItemMulti = 42,
+        SaveRoomEvent = 43,
+        CutsceneCompleted = 44,
+        DialoguePlayedOnce = 45,
+        EXC_Elevator = 46,
+        KolibriManager = 47,
+        BOS_Adler = 48,
     }
 
     public struct PuzzleStateEntry
     {
         public PuzzleType Type;
-        public short Index;
+        /// <summary>Stable WorldId (FNV scene+path). 0 = global singleton (radio/alert).</summary>
+        public long WorldId;
         public bool Bool0;
         public bool Bool1;
         public bool Bool2;
@@ -541,7 +741,7 @@ namespace SyncRADation.Networking
         public void Serialize(NetDataWriter w)
         {
             w.Put((byte)Type);
-            w.Put(Index);
+            w.Put(WorldId);
             w.Put(Bool0);
             w.Put(Bool1);
             w.Put(Bool2);
@@ -557,7 +757,7 @@ namespace SyncRADation.Networking
             return new PuzzleStateEntry
             {
                 Type = (PuzzleType)r.GetByte(),
-                Index = r.GetShort(),
+                WorldId = r.GetLong(),
                 Bool0 = r.GetBool(),
                 Bool1 = r.GetBool(),
                 Bool2 = r.GetBool(),
@@ -568,6 +768,46 @@ namespace SyncRADation.Networking
                 Float0 = r.GetFloat()
             };
         }
+    }
+
+    public struct WorldPickupClaimMessage
+    {
+        public int ClaimerPlayerId;
+        public long WorldId;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(ClaimerPlayerId);
+            w.Put(WorldId);
+        }
+
+        public static WorldPickupClaimMessage Deserialize(NetDataReader r) =>
+            new WorldPickupClaimMessage { ClaimerPlayerId = r.GetInt(), WorldId = r.GetLong() };
+    }
+
+    public struct WorldPickupGrantMessage
+    {
+        public int TargetPlayerId;
+        public long WorldId;
+        public ushort ItemEnum;
+        public int Count;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(TargetPlayerId);
+            w.Put(WorldId);
+            w.Put(ItemEnum);
+            w.Put(Count);
+        }
+
+        public static WorldPickupGrantMessage Deserialize(NetDataReader r) =>
+            new WorldPickupGrantMessage
+            {
+                TargetPlayerId = r.GetInt(),
+                WorldId = r.GetLong(),
+                ItemEnum = r.GetUShort(),
+                Count = r.GetInt()
+            };
     }
 
     public struct PuzzleStateMessage
@@ -617,7 +857,7 @@ namespace SyncRADation.Networking
         public byte BossType;
         public float PosX, PosY, PosZ;
         public float RotY;
-        public int HostInstanceID;
+        public long WorldId;
         public bool Alive;
         public byte StateEnum;
         public bool Bool0, Bool1, Bool2, Bool3, Bool4;
@@ -632,7 +872,7 @@ namespace SyncRADation.Networking
             w.Put(BossType);
             w.Put(PosX); w.Put(PosY); w.Put(PosZ);
             w.Put(RotY);
-            w.Put(HostInstanceID);
+            w.Put(WorldId);
             w.Put(Alive);
             w.Put(StateEnum);
             w.Put(Bool0); w.Put(Bool1); w.Put(Bool2); w.Put(Bool3); w.Put(Bool4);
@@ -650,7 +890,7 @@ namespace SyncRADation.Networking
                 BossType = r.GetByte(),
                 PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
                 RotY = r.GetFloat(),
-                HostInstanceID = r.GetInt(),
+                WorldId = r.GetLong(),
                 Alive = r.GetBool(),
                 StateEnum = r.GetByte(),
                 Bool0 = r.GetBool(), Bool1 = r.GetBool(), Bool2 = r.GetBool(), Bool3 = r.GetBool(), Bool4 = r.GetBool(),
@@ -682,5 +922,325 @@ namespace SyncRADation.Networking
                 arr[i] = BossSnapshotNet.Deserialize(r);
             return new BossStateMessage { Bosses = arr };
         }
+    }
+
+    public struct SceneFollowMessage
+    {
+        public int SenderPlayerId;
+        public string SceneName;
+        public bool IsRequest;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(SenderPlayerId);
+            w.Put(SceneName ?? "");
+            w.Put(IsRequest);
+        }
+
+        public static SceneFollowMessage Deserialize(NetDataReader r) =>
+            new SceneFollowMessage
+            {
+                SenderPlayerId = r.GetInt(),
+                SceneName = r.GetString(),
+                IsRequest = r.GetBool()
+            };
+    }
+
+    public struct InteractionRequestMessage
+    {
+        public int SenderPlayerId;
+        public long WorldId;
+        public InteractionKind Kind;
+        public int Int0;
+        public int Int1;
+        public float Float0;
+        public float Float1;
+        public float Float2;
+        public string Text;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(SenderPlayerId);
+            w.Put(WorldId);
+            w.Put((byte)Kind);
+            w.Put(Int0);
+            w.Put(Int1);
+            w.Put(Float0);
+            w.Put(Float1);
+            w.Put(Float2);
+            w.Put(Text ?? "");
+        }
+
+        public static InteractionRequestMessage Deserialize(NetDataReader r) =>
+            new InteractionRequestMessage
+            {
+                SenderPlayerId = r.GetInt(),
+                WorldId = r.GetLong(),
+                Kind = (InteractionKind)r.GetByte(),
+                Int0 = r.GetInt(),
+                Int1 = r.GetInt(),
+                Float0 = r.GetFloat(),
+                Float1 = r.GetFloat(),
+                Float2 = r.GetFloat(),
+                Text = r.GetString()
+            };
+    }
+
+    public struct InteractionAckMessage
+    {
+        public int TargetPlayerId;
+        public long WorldId;
+        public InteractionKind Kind;
+        public bool Ok;
+        public string Reason;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(TargetPlayerId);
+            w.Put(WorldId);
+            w.Put((byte)Kind);
+            w.Put(Ok);
+            w.Put(Reason ?? "");
+        }
+
+        public static InteractionAckMessage Deserialize(NetDataReader r) =>
+            new InteractionAckMessage
+            {
+                TargetPlayerId = r.GetInt(),
+                WorldId = r.GetLong(),
+                Kind = (InteractionKind)r.GetByte(),
+                Ok = r.GetBool(),
+                Reason = r.GetString()
+            };
+    }
+
+    public struct StoryFlagEntry
+    {
+        public byte Kind; // 0 bool, 1 int, 2 float, 3 string, 4 vector
+        public string Key;
+        public bool BoolVal;
+        public int IntVal;
+        public float FloatVal;
+        public string StringVal;
+        public float VecY;
+        public float VecZ;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(Kind);
+            w.Put(Key ?? "");
+            w.Put(BoolVal);
+            w.Put(IntVal);
+            w.Put(FloatVal);
+            w.Put(StringVal ?? "");
+            w.Put(VecY);
+            w.Put(VecZ);
+        }
+
+        public static StoryFlagEntry Deserialize(NetDataReader r) =>
+            new StoryFlagEntry
+            {
+                Kind = r.GetByte(),
+                Key = r.GetString(),
+                BoolVal = r.GetBool(),
+                IntVal = r.GetInt(),
+                FloatVal = r.GetFloat(),
+                StringVal = r.GetString(),
+                VecY = r.GetFloat(),
+                VecZ = r.GetFloat()
+            };
+    }
+
+    public struct StoryCommitMessage
+    {
+        public bool FullRefresh;
+        public string DialoguerXml;
+        public int EndCircle;
+        public int EndDeath;
+        public int EndGraves;
+        public int EndLeave;
+        public int EndingId;
+        public StoryFlagEntry[] Flags;
+        public byte ActiveGameState;
+        public long ActiveWorldId;
+        public byte ActiveStoryCmd;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(FullRefresh);
+            w.Put(DialoguerXml ?? "");
+            w.Put(EndCircle);
+            w.Put(EndDeath);
+            w.Put(EndGraves);
+            w.Put(EndLeave);
+            w.Put(EndingId);
+            int n = Flags != null ? Flags.Length : 0;
+            w.Put(n);
+            for (int i = 0; i < n; i++)
+                Flags[i].Serialize(w);
+            w.Put(ActiveGameState);
+            w.Put(ActiveWorldId);
+            w.Put(ActiveStoryCmd);
+        }
+
+        public static StoryCommitMessage Deserialize(NetDataReader r)
+        {
+            var msg = new StoryCommitMessage
+            {
+                FullRefresh = r.GetBool(),
+                DialoguerXml = r.GetString(),
+                EndCircle = r.GetInt(),
+                EndDeath = r.GetInt(),
+                EndGraves = r.GetInt(),
+                EndLeave = r.GetInt(),
+                EndingId = r.GetInt()
+            };
+            int n = r.GetInt();
+            if (n > 0 && n < 8192)
+            {
+                msg.Flags = new StoryFlagEntry[n];
+                for (int i = 0; i < n; i++)
+                    msg.Flags[i] = StoryFlagEntry.Deserialize(r);
+            }
+            msg.ActiveGameState = r.GetByte();
+            msg.ActiveWorldId = r.GetLong();
+            msg.ActiveStoryCmd = r.GetByte();
+            return msg;
+        }
+    }
+
+    public struct StoryPresentationMessage
+    {
+        public long WorldId;
+        public StoryCmd Cmd;
+        public int Int0;
+        public string Text;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(WorldId);
+            w.Put((byte)Cmd);
+            w.Put(Int0);
+            w.Put(Text ?? "");
+        }
+
+        public static StoryPresentationMessage Deserialize(NetDataReader r) =>
+            new StoryPresentationMessage
+            {
+                WorldId = r.GetLong(),
+                Cmd = (StoryCmd)r.GetByte(),
+                Int0 = r.GetInt(),
+                Text = r.GetString()
+            };
+    }
+
+    public struct StorageBoxItem
+    {
+        public ushort ItemEnum;
+        public int Count;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(ItemEnum);
+            w.Put(Count);
+        }
+
+        public static StorageBoxItem Deserialize(NetDataReader r) =>
+            new StorageBoxItem { ItemEnum = r.GetUShort(), Count = r.GetInt() };
+    }
+
+    public struct StorageBoxBlobMessage
+    {
+        public StorageBoxItem[] Items;
+
+        public void Serialize(NetDataWriter w)
+        {
+            int n = Items != null ? Items.Length : 0;
+            w.Put(n);
+            for (int i = 0; i < n; i++)
+                Items[i].Serialize(w);
+        }
+
+        public static StorageBoxBlobMessage Deserialize(NetDataReader r)
+        {
+            int n = r.GetInt();
+            var items = n > 0 && n < 512 ? new StorageBoxItem[n] : new StorageBoxItem[0];
+            for (int i = 0; i < items.Length; i++)
+                items[i] = StorageBoxItem.Deserialize(r);
+            return new StorageBoxBlobMessage { Items = items };
+        }
+    }
+
+    public struct PartyKeyRingMessage
+    {
+        public ushort[] ItemEnums;
+
+        public void Serialize(NetDataWriter w)
+        {
+            int n = ItemEnums != null ? ItemEnums.Length : 0;
+            w.Put(n);
+            for (int i = 0; i < n; i++)
+                w.Put(ItemEnums[i]);
+        }
+
+        public static PartyKeyRingMessage Deserialize(NetDataReader r)
+        {
+            int n = r.GetInt();
+            var arr = n > 0 && n < 512 ? new ushort[n] : new ushort[0];
+            for (int i = 0; i < arr.Length; i++)
+                arr[i] = r.GetUShort();
+            return new PartyKeyRingMessage { ItemEnums = arr };
+        }
+    }
+
+    public struct DeathPolicyMessage
+    {
+        public int SenderPlayerId;
+        public DeathKind Kind;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(SenderPlayerId);
+            w.Put((byte)Kind);
+        }
+
+        public static DeathPolicyMessage Deserialize(NetDataReader r) =>
+            new DeathPolicyMessage
+            {
+                SenderPlayerId = r.GetInt(),
+                Kind = (DeathKind)r.GetByte()
+            };
+    }
+
+    public struct FmodEmitterMessage
+    {
+        public long WorldId;
+        public bool Play;
+        public byte Kind; // 0 = StudioEventEmitter, 1 = PlayOneShot path
+        public float PosX, PosY, PosZ;
+        public string Path;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(WorldId);
+            w.Put(Play);
+            w.Put(Kind);
+            w.Put(PosX);
+            w.Put(PosY);
+            w.Put(PosZ);
+            w.Put(Path ?? "");
+        }
+
+        public static FmodEmitterMessage Deserialize(NetDataReader r) =>
+            new FmodEmitterMessage
+            {
+                WorldId = r.GetLong(),
+                Play = r.GetBool(),
+                Kind = r.GetByte(),
+                PosX = r.GetFloat(),
+                PosY = r.GetFloat(),
+                PosZ = r.GetFloat(),
+                Path = r.GetString()
+            };
     }
 }
