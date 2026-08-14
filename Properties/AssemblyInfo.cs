@@ -6,7 +6,7 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("")]
 [assembly: AssemblyProduct("SyncRADation")]
-[assembly: AssemblyCopyright("Copyright 2026")]
+[assembly: AssemblyCopyright("Copyright (C) 2026 Warexpor")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
 [assembly: ComVisible(false)]

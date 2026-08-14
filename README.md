@@ -111,3 +111,13 @@ GitHub zip is the publish path until that run is enjoyable. Nexus waits on that 
 ## Logs
 
 `SIGNALIS/MelonLoader/Latest.log` — look for `Handshake OK`, `[Harmony] patched`, `WorldRegistry`, `full world snapshot`.
+
+## License
+
+Copyright (C) 2026 Warexpor.
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, version 3.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+The full license text is in [LICENSE](LICENSE).
