@@ -1,5 +1,6 @@
 // Invoke SIGNALIS door entry points (private methods via reflection when needed).
 using System.Reflection;
+using FMODUnity;
 using SyncRADation.Sync;
 using UnityEngine;
 
@@ -32,8 +33,7 @@ namespace SyncRADation.Networking
             if (open == wasOpen)
                 return;
 
-            d.open = open;
-
+            PlaytestLog.Event("Door", "apply " + (open ? "open" : "close") + " " + d.gameObject.name);
             NetGate.BeginApply();
             try
             {
@@ -41,14 +41,13 @@ namespace SyncRADation.Networking
                 {
                     if (_doubleOpen != null)
                         _doubleOpen.Invoke(d, null);
-                    try { if (d.OpenSFX != null) d.OpenSFX.Play(); } catch { }
                 }
                 else
                 {
                     if (_doubleClose != null)
                         _doubleClose.Invoke(d, null);
-                    try { if (d.CloseSFX != null) d.CloseSFX.Play(); } catch { }
                 }
+                d.open = open;
             }
             catch (System.Exception ex)
             {
@@ -58,6 +57,8 @@ namespace SyncRADation.Networking
             {
                 NetGate.EndApply();
             }
+
+            PlayWorld(open ? d.OpenSFX : d.CloseSFX, d.gameObject);
         }
 
         /// <summary>
@@ -71,7 +72,6 @@ namespace SyncRADation.Networking
             try
             {
                 cd.locked = locked;
-                // Refresh minimap / lock UI without starting a traverse.
                 try { cd.UpdateProperties(); } catch { }
             }
             catch (System.Exception ex)
@@ -92,7 +92,6 @@ namespace SyncRADation.Networking
             NetGate.BeginApply();
             try
             {
-                // cycle() toggles; do not pre-set opened.
                 if (opened != was && _slideCycle != null)
                     _slideCycle.Invoke(sd, null);
             }
@@ -107,14 +106,36 @@ namespace SyncRADation.Networking
 
             sd.opened = opened;
             sd.moving = moving;
+            if (opened != was)
+                PlayWorldPath(opened ? sd.openSFX : sd.closeSFX, sd.gameObject);
+        }
 
-            try
+        static void PlayWorld(StudioEventEmitter emitter, GameObject at)
+        {
+            if (emitter == null || at == null) return;
+            string path = null;
+            try { path = emitter.Event; } catch { }
+            if (string.IsNullOrEmpty(path))
             {
-                string path = opened ? sd.openSFX : sd.closeSFX;
-                if (!string.IsNullOrEmpty(path))
-                    FMODUnity.RuntimeManager.PlayOneShot(path, sd.transform.position);
+                float dummy;
+                if (!WorldSfx.TryVolume(at.transform.position, out dummy)) return;
+                try { emitter.Play(); } catch { }
+                return;
             }
-            catch { }
+            PlayWorldPath(path, at);
+        }
+
+        static void PlayWorldPath(string path, GameObject at)
+        {
+            if (string.IsNullOrEmpty(path) || at == null) return;
+            float vol;
+            if (!WorldSfx.TryVolume(at.transform.position, out vol))
+            {
+                PlaytestLog.Verbose("Door", "sfx skip far " + at.name);
+                return;
+            }
+            WorldSfx.Play(path, at.transform);
+            PlaytestLog.Event("Door", "sfx " + path + " @ " + at.name + " vol=" + vol.ToString("0.00"));
         }
     }
 }

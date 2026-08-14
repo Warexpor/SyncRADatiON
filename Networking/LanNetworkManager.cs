@@ -38,6 +38,7 @@ namespace SyncRADation.Networking
         private float _vitalTimer;
         private int _boneSendCounter;
         private Vector3 _lastSentPosition;
+        private float _lastSentTime;
         private float _lastStateTime;
 
         private bool _handshakeComplete;
@@ -138,6 +139,7 @@ namespace SyncRADation.Networking
             _peerScenes.Clear();
             _unicastPlayerId = -1;
             _sendTimer = 0f;
+            _lastSentTime = 0f;
             _sceneMismatch = false;
             _hostSceneName = "";
             _localSceneName = "";
@@ -159,6 +161,34 @@ namespace SyncRADation.Networking
 
             _role = NetworkRole.Offline;
             StatusText = "Offline";
+            RestoreLocalControl();
+        }
+
+        static void RestoreLocalControl()
+        {
+            try { Time.timeScale = 1f; } catch { }
+            try { PlayerState.suspendInput = false; } catch { }
+            try { PlayerState.suspendInputCheats = false; } catch { }
+            try { PlayerState.animating = false; } catch { }
+            try { PlayerState.grappled = false; } catch { }
+            try { PlayerState.stunTime = 0f; } catch { }
+            try
+            {
+                var gs = PlayerState.gameState;
+                if (gs != PlayerState.gameStates.menu && gs != PlayerState.gameStates.loading)
+                    PlayerState.gameState = PlayerState.gameStates.play;
+            }
+            catch { }
+            try
+            {
+                var cs = PlayerState.charState;
+                if (cs == PlayerState.charStates.grabbed
+                    || cs == PlayerState.charStates.dead
+                    || cs == PlayerState.charStates.animation)
+                    PlayerState.charState = PlayerState.charStates.idle;
+            }
+            catch { }
+            ModRuntime.Log?.Msg("[Network] local control restored (offline)");
         }
 
         public void Update()
@@ -171,7 +201,7 @@ namespace SyncRADation.Networking
             DoorSyncService.Tick();
             _enemySync.TickHost(this);
             if (ModConfig.PuzzlesEnabled)
-                _puzzleSync.TickHost(this);
+                _puzzleSync.Tick(this);
             _bossSync.TickHost(this);
             _pickupSync.TickHost(this);
             _storySync.TickHost(this);
@@ -222,7 +252,7 @@ namespace SyncRADation.Networking
                 return;
 
             var msg = BuildPlayerStateMessage(player);
-            SendToAll(msg, DeliveryMethod.ReliableOrdered, excludePlayerId: -1); // -1 means send to all
+            SendPlayerState(msg);
 
             // Host also needs to relay states it received from clients — but that's handled
             // in OnReceive: the host stores the state and re-sends to all other peers
@@ -236,7 +266,11 @@ namespace SyncRADation.Networking
         private PlayerStateMessage BuildPlayerStateMessage(GameObject player)
         {
             var pos = player.transform.position;
-            Vector3 vel = (pos - _lastSentPosition) / PluginInfo.SendInterval;
+            float dt = PluginInfo.SendInterval;
+            if (_lastSentTime > 0f)
+                dt = Mathf.Max(0.016f, Time.time - _lastSentTime);
+            _lastSentTime = Time.time;
+            Vector3 vel = (pos - _lastSentPosition) / dt;
             _lastSentPosition = pos;
 
             var apc = player.GetComponent<AlternatePlayerController>();
@@ -357,6 +391,23 @@ namespace SyncRADation.Networking
             }
         }
 
+        private void BroadcastRawExcept(NetDataWriter writer, DeliveryMethod method, int exceptPlayerId)
+        {
+            if (_unicastPlayerId >= 0)
+            {
+                if (_unicastPlayerId != exceptPlayerId)
+                    SendToPlayer(_unicastPlayerId, writer, method);
+                return;
+            }
+            foreach (var kvp in _peers)
+            {
+                if (kvp.Key == exceptPlayerId) continue;
+                var peer = kvp.Value;
+                if (peer.ConnectionState != ConnectionState.Connected) continue;
+                peer.Send(writer, method);
+            }
+        }
+
         public void BroadcastSceneHello()
         {
             if (_net == null || !_handshakeComplete) return;
@@ -399,18 +450,104 @@ namespace SyncRADation.Networking
             return peer;
         }
 
-        // Send PlayerStateMessage to ALL peers (for host) or to the single connected peer (for client)
-        private void SendToAll(PlayerStateMessage msg, DeliveryMethod method, int excludePlayerId = -1)
+        // Sequenced MTU is 1020. Pose stays small; bones go in the same packet only if they fit.
+        private const int SequencedMtuFallback = 1020;
+        private const int BonePoseHeaderBytes = 1 + 4 + 2 + 2 + 2; // type + sender + total + start + count
+        private bool _loggedOversizedPose;
+
+        private int SequencedMtu()
         {
             foreach (var kvp in _peers)
             {
-                if (kvp.Key == excludePlayerId) continue;
                 var peer = kvp.Value;
-                if (peer.ConnectionState != ConnectionState.Connected) continue;
+                if (peer != null && peer.ConnectionState == ConnectionState.Connected)
+                    return peer.GetMaxSinglePacketSize(DeliveryMethod.Sequenced);
+            }
+            return SequencedMtuFallback;
+        }
+
+        private void SendPlayerState(PlayerStateMessage msg)
+        {
+            float[] bones = msg.BoneRotations;
+            msg.BoneRotations = null;
+            var poseWriter = new NetDataWriter();
+            poseWriter.Put((byte)NetMessageType.PlayerState);
+            msg.Serialize(poseWriter);
+
+            int mtu = SequencedMtu();
+            if (bones != null && bones.Length >= 3)
+            {
+                int boneBytes = 4 + bones.Length * 2; // count int + ushorts
+                if (poseWriter.Length + boneBytes <= mtu)
+                {
+                    msg.BoneRotations = bones;
+                    poseWriter = new NetDataWriter();
+                    poseWriter.Put((byte)NetMessageType.PlayerState);
+                    msg.Serialize(poseWriter);
+                    bones = null;
+                }
+            }
+
+            SendSequenced(poseWriter);
+            if (bones != null)
+                SendBoneChunks(msg.SenderPlayerId, bones, mtu);
+        }
+
+        private void SendBoneChunks(int senderId, float[] eulers, int mtu)
+        {
+            int totalBones = eulers.Length / 3;
+            if (totalBones <= 0) return;
+            int maxPayload = mtu - BonePoseHeaderBytes;
+            if (maxPayload < 6) return;
+            int maxBones = maxPayload / 6;
+            if (maxBones < 1) maxBones = 1;
+
+            ushort start = 0;
+            while (start < totalBones)
+            {
+                int count = totalBones - start;
+                if (count > maxBones) count = maxBones;
+                var chunk = new float[count * 3];
+                System.Array.Copy(eulers, start * 3, chunk, 0, chunk.Length);
+                var msg = new BonePoseMessage
+                {
+                    SenderPlayerId = senderId,
+                    TotalBones = (ushort)totalBones,
+                    StartBone = start,
+                    Eulers = chunk
+                };
                 var writer = new NetDataWriter();
-                writer.Put((byte)NetMessageType.PlayerState);
+                writer.Put((byte)NetMessageType.BonePose);
                 msg.Serialize(writer);
-                peer.Send(writer, method);
+                SendSequenced(writer);
+                start += (ushort)count;
+            }
+        }
+
+        private void SendSequenced(NetDataWriter writer)
+        {
+            if (writer.Length > SequencedMtu())
+            {
+                if (!_loggedOversizedPose)
+                {
+                    _loggedOversizedPose = true;
+                    ModRuntime.Log?.Error("[Net] sequenced packet " + writer.Length + " bytes exceeds MTU — dropped");
+                }
+                return;
+            }
+            foreach (var kvp in _peers)
+            {
+                var peer = kvp.Value;
+                if (peer == null || peer.ConnectionState != ConnectionState.Connected) continue;
+                try { peer.Send(writer, DeliveryMethod.Sequenced); }
+                catch (System.Exception ex)
+                {
+                    if (!_loggedOversizedPose)
+                    {
+                        _loggedOversizedPose = true;
+                        ModRuntime.Log?.Error("[Net] sequenced send failed: " + ex.Message);
+                    }
+                }
             }
         }
 
@@ -499,7 +636,7 @@ namespace SyncRADation.Networking
                 peer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
 
-        public void SendPuzzleState(PuzzleStateEntry[] entries, bool fullRefresh)
+        public void SendPuzzleState(PuzzleStateEntry[] entries, bool fullRefresh, int exceptPlayerId = -1)
         {
             var msg = new PuzzleStateMessage
             {
@@ -510,7 +647,10 @@ namespace SyncRADation.Networking
             var writer = new NetDataWriter();
             writer.Put((byte)NetMessageType.PuzzleState);
             msg.Serialize(writer);
-            BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
+            if (exceptPlayerId >= 0)
+                BroadcastRawExcept(writer, DeliveryMethod.ReliableOrdered, exceptPlayerId);
+            else
+                BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
         }
 
         public void SendBossState(BossSnapshotNet[] snaps)
@@ -582,7 +722,7 @@ namespace SyncRADation.Networking
                 WorldRegistry.Rebuild();
                 DoorSyncService.ForceFullSend();
                 _puzzleSync.RequestFullSend();
-                _puzzleSync.TickHost(this);
+                _puzzleSync.Tick(this);
                 _pickupSync.RequestFullSend();
                 _pickupSync.TickHost(this);
                 _enemySync.RequestFullSend();
@@ -1022,6 +1162,9 @@ namespace SyncRADation.Networking
             case NetMessageType.PlayerState:
                 HandlePlayerState(PlayerStateMessage.Deserialize(reader), senderId);
                 break;
+            case NetMessageType.BonePose:
+                HandleBonePose(BonePoseMessage.Deserialize(reader), senderId);
+                break;
             case NetMessageType.DoorState:
             {
                 var doorMsg = DoorStateMessage.Deserialize(reader);
@@ -1403,7 +1546,28 @@ namespace SyncRADation.Networking
                 var writer = new NetDataWriter();
                 writer.Put((byte)NetMessageType.PlayerState);
                 state.Serialize(writer);
-                RelayRaw(writer, DeliveryMethod.ReliableOrdered, senderId);
+                RelayRaw(writer, DeliveryMethod.Sequenced, senderId);
+            }
+        }
+
+        private void HandleBonePose(BonePoseMessage msg, int peerId)
+        {
+            if (_role == NetworkRole.Host && peerId >= 0)
+                msg.SenderPlayerId = peerId;
+            int senderId = msg.SenderPlayerId;
+            if (senderId == _localPlayerId) return;
+            if (_sceneMismatch) return;
+
+            var proxy = _proxyManager.GetProxy(senderId);
+            if (proxy != null && proxy.AnimDriver != null)
+                proxy.AnimDriver.ApplyBoneChunk(msg.TotalBones, msg.StartBone, msg.Eulers);
+
+            if (_role == NetworkRole.Host)
+            {
+                var writer = new NetDataWriter();
+                writer.Put((byte)NetMessageType.BonePose);
+                msg.Serialize(writer);
+                RelayRaw(writer, DeliveryMethod.Sequenced, senderId);
             }
         }
 
@@ -1537,6 +1701,7 @@ namespace SyncRADation.Networking
         {
             _localPlayer = null;
             _lastSentPosition = Vector3.zero;
+            _lastSentTime = 0f;
             SourceAnimReader.Reset();
             _sendTimer = 0f;
             _lastStateTime = 0f;

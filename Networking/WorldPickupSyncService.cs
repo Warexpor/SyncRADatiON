@@ -192,22 +192,21 @@ namespace SyncRADation.Networking
             {
                 var e = msg.Entries[i];
                 ulong id = unchecked((ulong)e.WorldId);
-                if (e.Triggered || !e.Active)
-                    _claimed.Add(id);
-
                 ItemPickup p;
                 if (!_byId.TryGetValue(id, out p) || p == null) continue;
 
+                // Inactive room chunks are not picked up. Only Triggered hides the prop.
+                if (!e.Triggered) continue;
+
+                _claimed.Add(id);
                 try
                 {
-                    if (e.Triggered || !e.Active)
-                    {
-                        p.triggered = true;
-                        if (!p.dontDestroyOnPickup)
-                            p.gameObject.SetActive(false);
-                        else
-                            p.enabled = false;
-                    }
+                    p.triggered = true;
+                    if (!p.dontDestroyOnPickup)
+                        p.gameObject.SetActive(false);
+                    else
+                        p.enabled = false;
+                    PlaytestLog.Event("Pickup", "hide id=" + id.ToString("X16") + " " + p.gameObject.name);
                 }
                 catch { }
             }

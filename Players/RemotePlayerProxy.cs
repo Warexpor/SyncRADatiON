@@ -115,9 +115,10 @@ namespace SyncRADation.Players
 
         public void LateFxTick()
         {
-            if (!_fxPending || WeaponSync == null || GameObject == null) return;
+            if (WeaponSync == null || GameObject == null) return;
             Vector3 dir = AnimDriver != null ? AnimDriver.AimDirection : GameObject.transform.forward;
-            WeaponSync.Tick(_fxState, _fxState.AnimBools, _fxTriggers, GameObject.transform.position, dir);
+            AnimTriggers trig = _fxPending ? _fxTriggers : 0;
+            WeaponSync.Tick(_fxState, _fxState.AnimBools, trig, GameObject.transform.position, dir);
             _fxTriggers = 0;
             _fxPending = false;
         }

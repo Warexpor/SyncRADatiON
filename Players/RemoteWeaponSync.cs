@@ -104,7 +104,7 @@ namespace SyncRADation.Players
                     _muzzlePos = proxyPos + Vector3.up * 0.95f + _facingDir * 0.35f;
                 Vector3 mdir;
                 if (fxMuzzle.TryGetMuzzleForward(out mdir))
-                    _facingDir = mdir;
+                    _facingDir = Quaternion.AngleAxis(90f, _proxy.transform.up) * mdir;
             }
             else
                 _muzzlePos = proxyPos + Vector3.up * 0.95f + _facingDir * 0.35f;

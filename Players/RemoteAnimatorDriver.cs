@@ -1,4 +1,4 @@
-// SyncRADation  drives proxy Animator params (9 floats, 22 bools, 16 triggers), facing pivot, bone lerp
+// SyncRADation ï¿½ drives proxy Animator params (9 floats, 22 bools, 16 triggers), facing pivot, bone lerp
 using SyncRADation.Networking;
 using UnityEngine;
 
@@ -35,6 +35,18 @@ namespace SyncRADation.Players
     private float[] _curBones;
     private float _prevBoneTime;
     private float _curBoneTime;
+    private float[] _boneAssemble;
+    private int _boneAssembleGot;
+
+        public Vector3 AimDirection
+        {
+            get
+            {
+                if (_facingPivot != null) return _facingPivot.forward;
+                if (_rootTransform != null) return _rootTransform.forward;
+                return Vector3.forward;
+            }
+        }
 
         private const float SmoothRate = 4f;
         private const float FacingSmoothRate = 8f;
@@ -45,23 +57,6 @@ namespace SyncRADation.Players
         }
 
         public Transform RootTransform => _rootTransform;
-        public Transform FacingPivot => _facingPivot;
-
-        public Vector3 AimDirection
-        {
-            get
-            {
-                if (_facingPivot != null)
-                {
-                    Vector3 f = _facingPivot.forward;
-                    if (f.sqrMagnitude > 0.0001f)
-                        return f.normalized;
-                }
-                if (_rootTransform != null)
-                    return _rootTransform.forward;
-                return Vector3.forward;
-            }
-        }
 
         public void Initialize(GameObject target)
         {
@@ -97,7 +92,7 @@ namespace SyncRADation.Players
             _weapon = state.Weapon;
             _facing = state.Facing;
             _targetFacing = state.RotY;
-            // Store bone snapshot for interpolation  use fixed 50ms window for smooth blending
+            // Store bone snapshot for interpolation ï¿½ use fixed 50ms window for smooth blending
             if (state.BoneRotations != null && state.BoneRotations.Length > 0)
             {
                 if (_boneSync != null && _boneSync.BoneCount > 0 && _boneSync.BoneCount != state.BoneRotations.Length / 3)
@@ -105,12 +100,9 @@ namespace SyncRADation.Players
                     SyncRADation.ModRuntime.Log?.Msg("[DRV] BONE COUNT MISMATCH! proxy=" + _boneSync.BoneCount + " source=" + (state.BoneRotations.Length / 3));
                 }
                 _prevBones = _curBones;
-                var src = state.BoneRotations;
-                _curBones = new float[src.Length];
-                System.Array.Copy(src, _curBones, src.Length);
-                float oldCur = _curBoneTime;
-                _prevBoneTime = _prevBones != null ? oldCur : Time.time;
-                _curBoneTime = Time.time + 0.05f;
+                _curBones = state.BoneRotations;
+                _prevBoneTime = Time.time;
+                _curBoneTime = Time.time + 0.05f; // fixed 50ms window for 20Hz bone rate
             }
 
             if (!_snappedToFirst)
@@ -141,6 +133,37 @@ namespace SyncRADation.Players
 
                 ApplyFacing();
             }
+        }
+
+        public void ApplyBoneChunk(ushort totalBones, ushort startBone, float[] eulers)
+        {
+            if (eulers == null || eulers.Length < 3 || totalBones == 0) return;
+            int count = eulers.Length / 3;
+            if (startBone == 0 || _boneAssemble == null || _boneAssemble.Length != totalBones * 3)
+            {
+                if (startBone != 0) return;
+                _boneAssemble = new float[totalBones * 3];
+                _boneAssembleGot = 0;
+            }
+            int dest = startBone * 3;
+            if (dest + eulers.Length > _boneAssemble.Length) return;
+            System.Array.Copy(eulers, 0, _boneAssemble, dest, eulers.Length);
+            _boneAssembleGot += count;
+            if (_boneAssembleGot < totalBones) return;
+
+            CommitBoneSnapshot(_boneAssemble);
+            _boneAssemble = null;
+            _boneAssembleGot = 0;
+        }
+
+        private void CommitBoneSnapshot(float[] data)
+        {
+            _prevBones = _curBones;
+            _curBones = data;
+            _prevBoneTime = Time.time;
+            _curBoneTime = Time.time + 0.05f;
+            if (!_snappedToFirst && _boneSync != null)
+                _boneSync.ApplyRotationsSnap(data);
         }
 
         public void PreTick()
@@ -213,22 +236,10 @@ namespace SyncRADation.Players
 
         private void ApplyWeaponParams(Animator anim)
         {
-            string[] wpnNames = { "Handgun", "Pistol", "Revolver", "Shotgun", "Rifle", "SMG", "Flare", "CAR", "Melee" };
-            string activeName = null;
-            if (_weapon == Networking.WeaponType.Handgun) activeName = "Handgun";
-            else if (_weapon == Networking.WeaponType.Pistol) activeName = "Pistol";
-            else if (_weapon == Networking.WeaponType.Revolver) activeName = "Revolver";
-            else if (_weapon == Networking.WeaponType.Shotgun) activeName = "Shotgun";
-            else if (_weapon == Networking.WeaponType.Rifle) activeName = "Rifle";
-            else if (_weapon == Networking.WeaponType.SMG) activeName = "SMG";
-            else if (_weapon == Networking.WeaponType.Flare) activeName = "Flare";
-            else if (_weapon == Networking.WeaponType.CAR) activeName = "CAR";
-            else if (_weapon == Networking.WeaponType.Melee) activeName = "Melee";
-            foreach (var name in wpnNames)
-            {
-                bool active = (name == activeName);
-                anim.SetBool(name, active);
-            }
+            string activeName = WeaponUtils.AnimatorBoolName(_weapon);
+            var names = WeaponUtils.AnimatorBoolNames;
+            for (int i = 0; i < names.Length; i++)
+                anim.SetBool(names[i], names[i] == activeName);
         }
 
         private void ApplyPendingTriggers(Animator anim)
@@ -256,8 +267,7 @@ namespace SyncRADation.Players
         {
             if (_facingPivot == null)
                 return;
-            // World yaw lives on the proxy root (facing-pivot world quat). Do not re-apply fAngle.
-            _facingPivot.localRotation = Quaternion.identity;
+            _facingPivot.localEulerAngles = new Vector3(0f, _currentFacing, 0f);
         }
 
         private float _lastLog;
@@ -270,7 +280,7 @@ namespace SyncRADation.Players
                 ApplyWeaponParams(anim);
             }
 
-            // Apply bone rotations  interpolate between snapshots
+            // Apply bone rotations ï¿½ interpolate between snapshots
             if (_boneSync != null && _curBones != null)
             {
                 if (_prevBones != null && _curBoneTime > _prevBoneTime)
@@ -307,9 +317,10 @@ namespace SyncRADation.Players
                         sb.Append(" shoot="); sb.Append(a.GetBool("Shooting") ? "1" : "0");
                         sb.Append(" run="); sb.Append(a.GetBool("Running") ? "1" : "0");
                         sb.Append(" inv="); sb.Append(a.GetBool("Inventory") ? "1" : "0");
-                        string[] wpnNames = { "Handgun", "Pistol", "Revolver", "Shotgun", "Rifle", "SMG", "Flare", "CAR", "Melee" };
-                        foreach (var w in wpnNames)
+                        var wpnNames = WeaponUtils.AnimatorBoolNames;
+                        for (int wi = 0; wi < wpnNames.Length; wi++)
                         {
+                            string w = wpnNames[wi];
                             sb.Append(" ").Append(w).Append("=");
                             try { sb.Append(a.GetBool(w) ? "1" : "0"); }
                             catch { sb.Append("E"); }

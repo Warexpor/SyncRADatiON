@@ -148,6 +148,14 @@ namespace SyncRADation.Networking
 
             u.unlocked = true;
             try { if (u.onSuccessful != null) u.onSuccessful.Invoke(); } catch { }
+            PuzzleSyncService.UnlockLinked(u.gameObject);
+            try
+            {
+                var netPuzzle = LanNetworkManager.Instance;
+                if (netPuzzle != null)
+                    netPuzzle.PuzzleSync.Emit(PuzzleType.UseItemInteraction, id, u);
+            }
+            catch { }
 
             bool consumes = false;
             try
@@ -297,7 +305,7 @@ namespace SyncRADation.Networking
             var p = Find<PEN_Codepad>(id);
             if (p != null)
             {
-                p.solved = true;
+                PuzzleSyncService.ApplyCodepadConsequences(p);
                 return true;
             }
             return false;
@@ -346,6 +354,17 @@ namespace SyncRADation.Networking
         {
             var e = Find<EventScreenInteraction>(id);
             if (e == null) return false;
+            if (PuzzleSyncService.IsPuzzleOverlay(e))
+                return true;
+            try
+            {
+                if (!e.gameObject.activeInHierarchy)
+                {
+                    PlaytestLog.Event("Interact", "skip EventScreen (room off) " + e.gameObject.name);
+                    return true;
+                }
+            }
+            catch { }
             NetGate.BeginApply();
             try
             {

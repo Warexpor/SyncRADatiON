@@ -182,6 +182,20 @@ namespace SyncRADation.Players
             _accumulatedTriggers |= trigger;
         }
 
+        public static Quaternion ReadFacingWorldRotation(GameObject player)
+        {
+            if (player == null) return Quaternion.identity;
+            try
+            {
+                if (_facingPivotCache == null || _lastPlayerRoot != player.transform)
+                    _facingPivotCache = FindFacingPivot(player.transform);
+                if (_facingPivotCache != null)
+                    return _facingPivotCache.rotation;
+            }
+            catch { }
+            return player.transform.rotation;
+        }
+
         public static void Reset()
         {
             _hasLast = false;
@@ -234,13 +248,6 @@ namespace SyncRADation.Players
             {
                 return false;
             }
-        }
-
-        public static Quaternion ReadFacingWorldRotation(GameObject player)
-        {
-            if (player == null) return Quaternion.identity;
-            var pivot = FindFacingPivot(player.transform);
-            return pivot != null ? pivot.rotation : player.transform.rotation;
         }
 
         private static Transform FindFacingPivot(Transform root)

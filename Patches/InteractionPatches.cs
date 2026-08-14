@@ -152,6 +152,7 @@ namespace SyncRADation.Patches
             if (NetGate.Host) return true;
             ulong id = WorldId.FromGameObject(inst.gameObject);
             if (id == 0 || !_sent.Add(id)) return false;
+            PlaytestLog.Event("Interact", "KeypadSubmit " + inst.GetType().Name + " id=" + id.ToString("X16"));
             LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.KeypadSubmit);
             return false;
         }
@@ -163,7 +164,11 @@ namespace SyncRADation.Patches
             if (inst == null || NetGate.Host) return;
             ulong id = WorldId.FromGameObject(inst.gameObject);
             if (id == 0 || !_sent.Add(id)) return;
+            PlaytestLog.Event("Interact", "KeypadSubmit " + inst.GetType().Name + " id=" + id.ToString("X16"));
             LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.KeypadSubmit);
+            var pad = inst as PEN_Codepad;
+            if (pad != null)
+                LanNetworkManager.Instance.PuzzleSync.Emit(PuzzleType.PEN_Codepad, id, pad);
         }
     }
 
@@ -176,13 +181,8 @@ namespace SyncRADation.Patches
             if (NetGate.IsApplying || !NetGate.Live || __instance == null) return;
             try
             {
-                if (NetGate.Host)
-                {
-                    if (__instance.solved)
-                        LanNetworkManager.Instance.PuzzleSync.RequestFullSend();
-                }
-                else
-                    ClientKeypad.SubmitIfSolved(__instance, __instance.solved);
+                if (NetGate.Host) return;
+                ClientKeypad.SubmitIfSolved(__instance, __instance.solved);
             }
             catch { }
         }
@@ -197,13 +197,8 @@ namespace SyncRADation.Patches
             if (NetGate.IsApplying || !NetGate.Live || __instance == null) return;
             try
             {
-                if (NetGate.Host)
-                {
-                    if (__instance.solved)
-                        LanNetworkManager.Instance.PuzzleSync.RequestFullSend();
-                }
-                else
-                    ClientKeypad.SubmitIfSolved(__instance, __instance.solved);
+                if (NetGate.Host) return;
+                ClientKeypad.SubmitIfSolved(__instance, __instance.solved);
             }
             catch { }
         }
@@ -218,13 +213,25 @@ namespace SyncRADation.Patches
             if (NetGate.IsApplying || !NetGate.Live || __instance == null) return;
             try
             {
-                if (NetGate.Host)
-                {
-                    if (__instance.solved)
-                        LanNetworkManager.Instance.PuzzleSync.RequestFullSend();
-                }
-                else
-                    ClientKeypad.SubmitIfSolved(__instance, __instance.solved);
+                if (NetGate.Host) return;
+                ClientKeypad.SubmitIfSolved(__instance, __instance.solved);
+            }
+            catch { }
+        }
+    }
+
+    [HarmonyPatch(typeof(PEN_Codepad), "CheckSolution")]
+    public static class PenCodepadSolvePatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(PEN_Codepad __instance)
+        {
+            if (__instance == null || NetGate.IsApplying || !NetGate.Live) return;
+            try
+            {
+                if (!__instance.solved) return;
+                ulong id = WorldId.FromGameObject(__instance.gameObject);
+                LanNetworkManager.Instance.PuzzleSync.Emit(PuzzleType.PEN_Codepad, id, __instance);
             }
             catch { }
         }
@@ -305,6 +312,7 @@ namespace SyncRADation.Patches
         {
             if (NetGate.IsApplying || !NetGate.Live) return true;
             if (__instance == null) return true;
+            if (PuzzleSyncService.IsPuzzleOverlay(__instance)) return true;
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             if (NetGate.Host)
             {
@@ -324,6 +332,7 @@ namespace SyncRADation.Patches
         {
             if (NetGate.IsApplying || !NetGate.Live) return true;
             if (__instance == null) return true;
+            if (PuzzleSyncService.IsPuzzleOverlay(__instance)) return true;
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             if (NetGate.Host)
             {
@@ -331,7 +340,7 @@ namespace SyncRADation.Patches
                 return true;
             }
             LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.EventScreenExit);
-            return false;
+            return true;
         }
     }
 
@@ -441,6 +450,7 @@ namespace SyncRADation.Patches
         {
             if (NetGate.IsApplying || !NetGate.Live) return true;
             if (__instance == null) return true;
+            if (PuzzleSyncService.IsPuzzleOverlay(__instance)) return true;
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             if (NetGate.Host)
             {

@@ -162,8 +162,7 @@ namespace SyncRADation.Players
             sb.Append("\n  holster=").Append(_holsterSound ?? "null");
             sb.Append("\n  reloadFMOD=").Append(_reloadFMODPath ?? "null");
 
-            if (ModRuntime.VerboseLogging)
-                ModRuntime.Log?.Msg(sb.ToString());
+            ModRuntime.Log?.Msg(sb.ToString());
 
             // Test sound removed — was playing footstep on every proxy init
         }
@@ -202,8 +201,8 @@ namespace SyncRADation.Players
             bool nearby = distToLocal < 40f;
             bool farRange = distToLocal < 75f;
 
-            // Shooting — far range; Fire trigger is per-shot (held Fire1 stays Shooting)
-            if (farRange && triggers.HasFlag(AnimTriggers.Fire))
+            // Shooting — far range (gunshots are loud)
+            if (farRange && shooting && !_lastShooting)
                 PlayShootSound(state.Weapon);
             _lastShooting = shooting;
 
@@ -246,17 +245,14 @@ namespace SyncRADation.Players
                 _hasReceivedFirst = true;
             }
 
-            // Ladder climbing — rhythmic footsteps at proxy position
+            // Ladder climbing — same 3D falloff pipeline as doors
             if (state.Climbing)
             {
                 _climbTimer -= Time.deltaTime;
                 if (_climbTimer <= 0f)
                 {
-                    if (nearby)
-                    {
-                        bool goingUp = (_proxyTransform.position.y - _lastPos.y) >= -0.01f;
-                        PlayFMODAttached(goingUp ? LadderUpPath : LadderDownPath, 0.5f);
-                    }
+                    bool goingUp = (_proxyTransform.position.y - _lastPos.y) >= -0.01f;
+                    WorldSfx.Play(goingUp ? LadderUpPath : LadderDownPath, _audioAnchor.transform, 0.5f);
                     _climbTimer = LadderClimbInterval;
                 }
                 _wasClimbing = true;
@@ -349,19 +345,7 @@ namespace SyncRADation.Players
         private void PlayFMODAttached(string path, float volume)
         {
             if (string.IsNullOrEmpty(path) || _audioAnchor == null) return;
-            try
-            {
-                var inst = RuntimeManager.CreateInstance(path);
-                inst.setVolume(Mathf.Clamp01(volume));
-                inst.set3DAttributes(RuntimeUtils.To3DAttributes(_audioAnchor.transform.position));
-                inst.start();
-                inst.release();
-            }
-            catch
-            {
-                try { RuntimeManager.PlayOneShotAttached(path, _audioAnchor); }
-                catch { ModRuntime.Log?.Warning("[Audio] FMOD PlayOneShotAttached(" + path + ") FAILED"); }
-            }
+            WorldSfx.Play(path, _audioAnchor.transform, volume);
         }
 
         private static void BuildWeaponCache()

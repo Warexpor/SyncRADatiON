@@ -19,5 +19,36 @@ namespace SyncRADation.Networking
                 default: return WeaponType.None;
             }
         }
+
+        /// <summary>ElsterNewController bool names. Most guns are Weapon/X; Handgun and CAR are unprefixed.</summary>
+        public static string AnimatorBoolName(WeaponType weapon)
+        {
+            switch (weapon)
+            {
+                case WeaponType.Handgun: return "Handgun";
+                case WeaponType.Melee: return "Weapon/Melee";
+                case WeaponType.Pistol: return "Weapon/Pistol";
+                case WeaponType.Revolver: return "Weapon/Revolver";
+                case WeaponType.Shotgun: return "Weapon/Shotgun";
+                case WeaponType.Rifle: return "Weapon/Rifle";
+                case WeaponType.SMG: return "Weapon/SMG";
+                case WeaponType.Flare: return "Weapon/Flare";
+                case WeaponType.CAR: return "CAR";
+                default: return null;
+            }
+        }
+
+        public static readonly string[] AnimatorBoolNames =
+        {
+            "Handgun",
+            "Weapon/Melee",
+            "Weapon/Pistol",
+            "Weapon/Revolver",
+            "Weapon/Shotgun",
+            "Weapon/Rifle",
+            "Weapon/SMG",
+            "Weapon/Flare",
+            "CAR"
+        };
     }
 }

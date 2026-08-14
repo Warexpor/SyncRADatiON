@@ -25,7 +25,7 @@ namespace SyncRADation.Players
         private int _wallMask = ~0;
 
         // Native muzzleCycle is ~1–2 frames; 80ms looked like a stuck flash on the clone.
-        private const float FlashDuration = 0.04f;
+        private const float FlashDuration = 0.02f;
         private const float SlideTravel = 0.02f;
         private const float SlideReturn = 0.08f;
         private readonly GameObject _weaponRoot;
@@ -148,11 +148,13 @@ namespace SyncRADation.Players
             HardenParticle(_muzzleSmoke);
 
             // Laser from AimLaser on source if present
+            LineRenderer srcLine = null;
             try
             {
                 var srcAl = source != null ? source.GetComponentInChildren<AimLaser>(true) : null;
                 if (srcAl != null)
                 {
+                    srcLine = srcAl.line;
                     if (srcAl.line != null)
                     {
                         string ln = srcAl.line.gameObject.name;
@@ -172,6 +174,7 @@ namespace SyncRADation.Players
                     }
                     if (srcAl.laserPoint != null)
                     {
+                        var srcSr = srcAl.laserPoint.GetComponent<SpriteRenderer>();
                         foreach (var t in allTransforms)
                         {
                             if (t != null && t.name == srcAl.laserPoint.name)
@@ -179,6 +182,12 @@ namespace SyncRADation.Players
                                 _laserPoint = t.GetComponent<SpriteRenderer>();
                                 break;
                             }
+                        }
+                        if (_laserPoint != null && srcSr != null)
+                        {
+                            _laserPoint.sprite = srcSr.sprite;
+                            _laserPoint.sharedMaterial = srcSr.sharedMaterial;
+                            _laserPoint.color = srcSr.color;
                         }
                     }
                     if (srcAl.missedShot != null)
@@ -195,9 +204,15 @@ namespace SyncRADation.Players
             {
                 _laser.useWorldSpace = true;
                 _laser.enabled = false;
-                // Ensure width isn't zero after clone
                 try
                 {
+                    if (srcLine != null)
+                    {
+                        _laser.startColor = srcLine.startColor;
+                        _laser.endColor = srcLine.endColor;
+                        if (srcLine.sharedMaterial != null)
+                            _laser.sharedMaterial = srcLine.sharedMaterial;
+                    }
                     if (_laser.startWidth <= 0f && _laser.endWidth <= 0f)
                     {
                         _laser.startWidth = 0.01f;
@@ -523,7 +538,12 @@ namespace SyncRADation.Players
             {
                 _flashTimer -= dt;
                 if (_flashTimer <= 0f && _muzzleFlash != null)
+                {
                     _muzzleFlash.SetActive(false);
+                    var rs = _muzzleFlash.GetComponentsInChildren<Renderer>(true);
+                    for (int i = 0; i < rs.Length; i++)
+                        if (rs[i] != null) rs[i].enabled = false;
+                }
             }
 
             if (_ejectStopTimer > 0f)

@@ -34,7 +34,8 @@ namespace SyncRADation.Networking
         DeathPolicy = 31,
         FmodEmitter = 32,
         PlayerRoster = 33,
-        _Highest = 34
+        BonePose = 34,
+        _Highest = 35
     }
 
     public enum InteractionKind : byte
@@ -268,6 +269,7 @@ namespace SyncRADation.Networking
         Hugged = 1 << 19,
         ReloadRounds = 1 << 20,
         ReloadChamber = 1 << 21,
+        EmptyClick = 1 << 22,
     }
 
     [System.Flags]
@@ -431,6 +433,46 @@ namespace SyncRADation.Networking
         public static float DecodeAngle(ushort encoded)
         {
             return (float)encoded / 65535f * 360f;
+        }
+    }
+
+    /// <summary>Sequenced bone chunk. LiteNetLib sequenced MTU is 1020 — never pack the full tree into PlayerState.</summary>
+    public struct BonePoseMessage
+    {
+        public int SenderPlayerId;
+        public ushort TotalBones;
+        public ushort StartBone;
+        public float[] Eulers; // Count * 3, Count = Eulers.Length / 3
+
+        public int Count => Eulers != null ? Eulers.Length / 3 : 0;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(SenderPlayerId);
+            w.Put(TotalBones);
+            w.Put(StartBone);
+            int count = Count;
+            w.Put((ushort)count);
+            for (int i = 0; i < count * 3; i++)
+                w.Put(PlayerStateMessage.EncodeAngle(Eulers[i]));
+        }
+
+        public static BonePoseMessage Deserialize(NetDataReader r)
+        {
+            var msg = new BonePoseMessage
+            {
+                SenderPlayerId = r.GetInt(),
+                TotalBones = r.GetUShort(),
+                StartBone = r.GetUShort()
+            };
+            int count = r.GetUShort();
+            if (count > 0 && count < 1024)
+            {
+                msg.Eulers = new float[count * 3];
+                for (int i = 0; i < msg.Eulers.Length; i++)
+                    msg.Eulers[i] = PlayerStateMessage.DecodeAngle(r.GetUShort());
+            }
+            return msg;
         }
     }
 
@@ -774,6 +816,8 @@ namespace SyncRADation.Networking
         EXC_Elevator = 46,
         KolibriManager = 47,
         BOS_Adler = 48,
+        CryoDoorLock = 49,
+        PEN_Cryo = 50,
     }
 
     public struct PuzzleStateEntry

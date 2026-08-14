@@ -38,7 +38,7 @@ namespace SyncRADation
                 Log.Msg("  F2 menu | F3 quick connect | G drop | E pickup");
                 Log.Msg("  FriendlyFire=" + (ModConfig.FriendlyFire?.Value == true)
                     + " VerboseLogging=" + VerboseLogging);
-                Log.Msg("  grep: [Story] [Interact] [FMOD] [KeyRing] [StorageBox] [Scene] [Damage] [Door] [Harmony]");
+                Log.Msg("  grep: [Story] [Interact] [FMOD] [KeyRing] [StorageBox] [Scene] [Damage] [Door] [Puzzle] [Pickup] [Harmony]");
                 Log.Msg("=============================================");
 
                 Application.runInBackground = true;

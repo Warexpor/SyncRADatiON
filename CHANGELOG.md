@@ -14,7 +14,7 @@ Protocol **v7** (incompatible with v6). Join dump is the live SProgress slot. Un
 - Client ids recycled in `1..MaxPlayers-1` (cap 4 including host)
 
 ### Changed
-- Proxy locomotion uses the same exponential follow as facing (plus a short velocity predict) instead of per-packet ease-in/out
+- Proxy locomotion interpolates between pose snapshots ~70ms behind (not exponential-lerp to the latest packet)
 - Version `0.4.2-dev`, protocol 7
 - Join and F2 client resync world dump **unicast** to that peer (host F2 Resync is a no-op; scene-change dump still goes to all clients)
 
@@ -23,6 +23,9 @@ Protocol **v7** (incompatible with v6). Join dump is the live SProgress slot. Un
 - StoryCommit replays presentation on join/resync only; host ignores client world-apply packets
 - Client Dialoguer / UseItemMulti / keypad / cutscene proceed / books actually reach the host
 - Dropped E pickup is host-claimed; pickup deny no longer hides the prop
+- Sequenced pose no longer embeds the WeaponMount tree (261 eulers blew the 1020-byte LiteNetLib cap and crashed `Network.Update` every bone tick). Bind bones only; overflow goes as `BonePose` chunks
+- Proxy weapon hold/aim uses Elster controller names (`Weapon/Pistol`, not `Pistol`) so ADS actually poses the arms
+- Proxy movement interpolates between received snapshots instead of exponential-lerping at the live packet (that retarget was the remaining metronome hitch)
 - Scene-follow requests only apply known current-scene names; F7 rooms and client F11 spawn are gated while connected
 - Downed clients stay downed across SceneFollow; sliding doors emit on `cycle`; FMOD join dump + reset
 - Harmony still per-class; one bad patch cannot abort the mod

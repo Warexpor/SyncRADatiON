@@ -11,21 +11,26 @@ namespace SyncRADation.Players
         private readonly Dictionary<int, GameObject> _proxyObjects = new Dictionary<int, GameObject>();
         private readonly Dictionary<Collider, int> _proxyColliders = new Dictionary<Collider, int>();
 
-        // Per-proxy interpolation state
+        // Snapshot interpolation: render ~2 packets behind so 30 Hz pose never
+        // exponential-lerps toward a moving target (that hitch is visible as a metronome stutter).
+        private struct PoseSnap
+        {
+            public float Time;
+            public Vector3 Pos;
+            public Vector3 Vel;
+            public Quaternion Facing;
+        }
         private class InterpState
         {
-            public Vector3 targetPos;
-            public Vector3 vel;
-            public Quaternion facingWorld = Quaternion.identity;
-            public float arrivalTime;
+            public readonly List<PoseSnap> Snaps = new List<PoseSnap>(8);
             public bool isFirst;
         }
         private readonly Dictionary<int, InterpState> _interp = new Dictionary<int, InterpState>();
 
         private const float TeleportDistance = 15f;
-        private const float FacingSlerpRate = 16f;
-        private const float PositionLerpRate = 16f;
-        private const float PredictMaxAge = 0.12f;
+        private const float InterpDelay = 0.07f;
+        private const float ExtrapolateMax = 0.12f;
+        private const int SnapshotCap = 8;
         private int _proxyLayer = -1;
 
         public int ProxyLayer => _proxyLayer;
@@ -141,34 +146,42 @@ namespace SyncRADation.Players
         {
             if (!_interp.TryGetValue(playerId, out var ist)) return;
 
-            ist.facingWorld = facingWorld;
-
-            bool teleport = !ist.isFirst &&
-                (Vector3.Distance(ist.targetPos, position) > TeleportDistance);
+            bool teleport = !ist.isFirst && ist.Snaps.Count > 0
+                && Vector3.Distance(ist.Snaps[ist.Snaps.Count - 1].Pos, position) > TeleportDistance;
 
             if (ist.isFirst || teleport)
             {
                 if (_proxyObjects.TryGetValue(playerId, out var go) && go != null)
                 {
                     go.transform.position = position;
-                    go.transform.rotation = facingWorld;
+                    go.transform.rotation = YawOnPlane(facingWorld, go.transform.up);
                 }
-                ist.targetPos = position;
-                ist.vel = velocity;
-                ist.arrivalTime = Time.time;
+                ist.Snaps.Clear();
+                ist.Snaps.Add(new PoseSnap
+                {
+                    Time = Time.time,
+                    Pos = position,
+                    Vel = velocity,
+                    Facing = facingWorld
+                });
                 ist.isFirst = false;
                 return;
             }
 
-            ist.targetPos = position;
-            ist.vel = velocity;
-            ist.arrivalTime = Time.time;
+            ist.Snaps.Add(new PoseSnap
+            {
+                Time = Time.time,
+                Pos = position,
+                Vel = velocity,
+                Facing = facingWorld
+            });
+            while (ist.Snaps.Count > SnapshotCap)
+                ist.Snaps.RemoveAt(0);
         }
 
         public void LateUpdate()
         {
-            float now = Time.time;
-            float followT = Mathf.Clamp01(Time.deltaTime * PositionLerpRate);
+            float renderTime = Time.time - InterpDelay;
             var stale = new List<int>();
 
             foreach (var kvp in _proxyObjects)
@@ -180,32 +193,66 @@ namespace SyncRADation.Players
                     stale.Add(pid);
                     continue;
                 }
-                if (!_interp.TryGetValue(pid, out var ist)) continue;
+                if (!_interp.TryGetValue(pid, out var ist) || ist.Snaps.Count == 0) continue;
 
-                Vector3 predicted = ist.targetPos;
-                float age = now - ist.arrivalTime;
-                if (age > 0f && age < PredictMaxAge)
-                {
-                    float spd2 = ist.vel.x * ist.vel.x + ist.vel.z * ist.vel.z;
-                    if (spd2 > 0.04f)
-                        predicted += ist.vel * age;
-                }
-
-                if (Vector3.Distance(go.transform.position, predicted) > TeleportDistance)
-                    go.transform.position = predicted;
-                else
-                    go.transform.position = Vector3.Lerp(go.transform.position, predicted, followT);
-
-                if (Quaternion.Angle(go.transform.rotation, ist.facingWorld) > 50f)
-                    go.transform.rotation = ist.facingWorld;
-                else
-                    go.transform.rotation = Quaternion.Slerp(go.transform.rotation, ist.facingWorld,
-                        Mathf.Clamp01(Time.deltaTime * FacingSlerpRate));
+                SamplePose(ist, renderTime, out Vector3 pos, out Quaternion facing);
+                go.transform.position = pos;
+                go.transform.rotation = YawOnPlane(facing, go.transform.up);
             }
 
             TickAll();
             for (int i = 0; i < stale.Count; i++)
                 DestroyProxy(stale[i]);
+        }
+
+        static void SamplePose(InterpState ist, float renderTime, out Vector3 pos, out Quaternion facing)
+        {
+            var snaps = ist.Snaps;
+            int n = snaps.Count;
+            var newest = snaps[n - 1];
+            var oldest = snaps[0];
+
+            if (n == 1 || renderTime <= oldest.Time)
+            {
+                pos = oldest.Pos;
+                facing = oldest.Facing;
+                return;
+            }
+
+            if (renderTime >= newest.Time)
+            {
+                float extra = Mathf.Min(renderTime - newest.Time, ExtrapolateMax);
+                pos = newest.Pos + newest.Vel * extra;
+                facing = newest.Facing;
+                return;
+            }
+
+            int hi = n - 1;
+            while (hi > 0 && snaps[hi].Time > renderTime)
+                hi--;
+            int lo = hi;
+            hi = Mathf.Min(lo + 1, n - 1);
+            var a = snaps[lo];
+            var b = snaps[hi];
+            float span = b.Time - a.Time;
+            float t = span > 0.0001f ? Mathf.Clamp01((renderTime - a.Time) / span) : 1f;
+            pos = Vector3.Lerp(a.Pos, b.Pos, t);
+            facing = Quaternion.Slerp(a.Facing, b.Facing, t);
+        }
+
+        static Quaternion YawOnPlane(Quaternion facingWorld, Vector3 up)
+        {
+            if (up.sqrMagnitude < 0.0001f)
+                up = Vector3.up;
+            else
+                up.Normalize();
+            Vector3 fwd = facingWorld * Vector3.forward;
+            fwd = Vector3.ProjectOnPlane(fwd, up);
+            if (fwd.sqrMagnitude < 0.0001f)
+                fwd = Vector3.ProjectOnPlane(facingWorld * Vector3.right, up);
+            if (fwd.sqrMagnitude < 0.0001f)
+                return Quaternion.LookRotation(Vector3.forward, up);
+            return Quaternion.LookRotation(fwd.normalized, up);
         }
 
         private void TickAll()
