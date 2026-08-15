@@ -13,30 +13,21 @@ namespace SyncRADation.Patches
         [HarmonyPatch(nameof(SProgress.SetBool))]
         public static bool PrefixBool(string key, bool val)
         {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
-            if (NetGate.Client) return false;
-            LanNetworkManager.Instance.StorySync.NoteBool(key, val);
-            return true;
+            return GateSet(key, 0, val ? 1 : 0, 0f, 0f, 0f);
         }
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(SProgress.SetInt))]
         public static bool PrefixInt(string key, int val)
         {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
-            if (NetGate.Client) return false;
-            LanNetworkManager.Instance.StorySync.NoteInt(key, val);
-            return true;
+            return GateSet(key, 1, val, 0f, 0f, 0f);
         }
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(SProgress.SetFloat))]
         public static bool PrefixFloat(string key, float val)
         {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
-            if (NetGate.Client) return false;
-            LanNetworkManager.Instance.StorySync.NoteFloat(key, val);
-            return true;
+            return GateSet(key, 2, 0, val, 0f, 0f);
         }
 
         [HarmonyPrefix]
@@ -44,19 +35,59 @@ namespace SyncRADation.Patches
         public static bool PrefixString(string key, string val)
         {
             if (NetGate.IsApplying || !NetGate.Live) return true;
-            if (NetGate.Client) return false;
-            LanNetworkManager.Instance.StorySync.NoteString(key, val);
-            return true;
+            if (NetGate.Host)
+            {
+                LanNetworkManager.Instance.StorySync.NoteString(key, val);
+                return true;
+            }
+            if (IsInspectOrigin())
+            {
+                LanNetworkManager.Instance.SendInteractionRequest(
+                    0, InteractionKind.InspectFlag, 3, 0, 0f, 0f, 0f, (key ?? "") + "\n" + (val ?? ""));
+                return true;
+            }
+            return false;
         }
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(SProgress.SetVector))]
         public static bool PrefixVector(string key, Vector3 val)
         {
+            return GateSet(key, 4, 0, val.x, val.y, val.z);
+        }
+
+        static bool GateSet(string key, int kind, int int1, float f0, float f1, float f2)
+        {
             if (NetGate.IsApplying || !NetGate.Live) return true;
-            if (NetGate.Client) return false;
-            LanNetworkManager.Instance.StorySync.NoteVector(key, val);
-            return true;
+            if (NetGate.Host)
+            {
+                var story = LanNetworkManager.Instance.StorySync;
+                if (kind == 0) story.NoteBool(key, int1 != 0);
+                else if (kind == 1) story.NoteInt(key, int1);
+                else if (kind == 2) story.NoteFloat(key, f0);
+                else story.NoteVector(key, new Vector3(f0, f1, f2));
+                return true;
+            }
+            if (IsInspectOrigin())
+            {
+                LanNetworkManager.Instance.SendInteractionRequest(
+                    0, InteractionKind.InspectFlag, kind, int1, f0, f1, f2, key ?? "");
+                return true;
+            }
+            return false;
+        }
+
+        static bool IsInspectOrigin()
+        {
+            try { if (PlayerState.eventScreen) return true; } catch { }
+            try
+            {
+                var gs = PlayerState.gameState;
+                if (gs == PlayerState.gameStates.eventScreen || gs == PlayerState.gameStates.book)
+                    return true;
+            }
+            catch { }
+            return false;
         }
     }
 
@@ -78,6 +109,14 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         [HarmonyPatch(nameof(END_Manager.AddLeave))]
         public static bool PrefixLeave() => AllowHostStat();
+
+        [HarmonyPrefix]
+        [HarmonyPatch(nameof(END_Manager.EvaluateEnding))]
+        public static bool PrefixEvaluate()
+        {
+            if (NetGate.IsApplying || !NetGate.Live) return true;
+            return !NetGate.Client;
+        }
 
         [HarmonyPostfix]
         [HarmonyPatch(nameof(END_Manager.EvaluateEnding))]
@@ -167,5 +206,122 @@ namespace SyncRADation.Patches
                 number > 0 ? number : 1);
             return false;
         }
+    }
+
+    static class DialoguerGate
+    {
+        static bool _flavorActive;
+
+        public static bool Start(int dialogueId)
+        {
+            if (NetGate.IsApplying || !NetGate.Live) return true;
+            if (LocalInspect.DialoguerFlavor(dialogueId) || InspectScreen())
+            {
+                _flavorActive = true;
+                return true;
+            }
+            _flavorActive = false;
+            if (NetGate.Host)
+            {
+                LanNetworkManager.Instance.StorySync.BroadcastPresentation(
+                    StoryCmd.DialoguerStartId, 0, dialogueId, "");
+                return true;
+            }
+            PlaytestLog.Event("Story", "request Dialoguer " + dialogueId);
+            LanNetworkManager.Instance.SendInteractionRequest(0, InteractionKind.DialogueStart, dialogueId);
+            return false;
+        }
+
+        public static bool Continue(int choice)
+        {
+            if (NetGate.IsApplying || !NetGate.Live) return true;
+            if (_flavorActive || InspectScreen()) return true;
+            if (NetGate.Host)
+            {
+                LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.DialogueContinue, 0, choice, "");
+                return true;
+            }
+            LanNetworkManager.Instance.SendInteractionRequest(0, InteractionKind.DialogueContinue, choice);
+            return false;
+        }
+
+        public static bool End()
+        {
+            if (NetGate.IsApplying || !NetGate.Live) return true;
+            if (_flavorActive || InspectScreen())
+            {
+                _flavorActive = false;
+                return true;
+            }
+            if (NetGate.Host)
+            {
+                LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.DialogueEnd, 0, 0, "");
+                return true;
+            }
+            LanNetworkManager.Instance.SendInteractionRequest(0, InteractionKind.DialogueEnd);
+            return false;
+        }
+
+        static bool InspectScreen()
+        {
+            try { if (PlayerState.eventScreen) return true; } catch { }
+            try
+            {
+                var gs = PlayerState.gameState;
+                if (gs == PlayerState.gameStates.eventScreen || gs == PlayerState.gameStates.book)
+                    return true;
+            }
+            catch { }
+            return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(Dialoguer), nameof(Dialoguer.StartDialogue), new[] { typeof(int) })]
+    public static class DialoguerStartIntPatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(int dialogueId) => DialoguerGate.Start(dialogueId);
+    }
+
+    [HarmonyPatch(typeof(Dialoguer), nameof(Dialoguer.StartDialogue), new[] { typeof(DialoguerDialogues) })]
+    public static class DialoguerStartEnumPatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(DialoguerDialogues dialogue) => DialoguerGate.Start((int)dialogue);
+    }
+
+    [HarmonyPatch(typeof(Dialoguer), nameof(Dialoguer.StartDialogue), new[] { typeof(int), typeof(DialoguerCallback) })]
+    public static class DialoguerStartIntCbPatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(int dialogueId) => DialoguerGate.Start(dialogueId);
+    }
+
+    [HarmonyPatch(typeof(Dialoguer), nameof(Dialoguer.StartDialogue), new[] { typeof(DialoguerDialogues), typeof(DialoguerCallback) })]
+    public static class DialoguerStartEnumCbPatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(DialoguerDialogues dialogue) => DialoguerGate.Start((int)dialogue);
+    }
+
+    [HarmonyPatch(typeof(Dialoguer), nameof(Dialoguer.ContinueDialogue), new[] { typeof(int) })]
+    public static class DialoguerContinueIntPatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(int choice) => DialoguerGate.Continue(choice);
+    }
+
+    [HarmonyPatch(typeof(Dialoguer), nameof(Dialoguer.ContinueDialogue), new System.Type[0])]
+    public static class DialoguerContinuePatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix() => DialoguerGate.Continue(0);
+    }
+
+    [HarmonyPatch(typeof(Dialoguer), nameof(Dialoguer.EndDialogue))]
+    public static class DialoguerEndPatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix() => DialoguerGate.End();
     }
 }

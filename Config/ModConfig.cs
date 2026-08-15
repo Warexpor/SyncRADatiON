@@ -34,8 +34,8 @@ namespace SyncRADation.Config
             VerboseLogging = Category.CreateEntry("VerboseLogging", true,
                 "FMOD one-shots and extra diagnostics (playtest default on)");
 
-            if (SyncPuzzles.Value && !ExperimentalPuzzles.Value)
-                SyncPuzzles.Value = false;
+            if (!SyncPuzzles.Value && ExperimentalPuzzles.Value)
+                SyncPuzzles.Value = true;
             ExperimentalPuzzles.Value = SyncPuzzles.Value;
         }
 

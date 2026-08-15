@@ -66,7 +66,18 @@ namespace SyncRADation.Sync
         public static ulong FromTransform(Transform t)
         {
             if (t == null) return 0;
-            string scene = SceneManager.GetActiveScene().name ?? "";
+            string scene = "";
+            try
+            {
+                var go = t.gameObject;
+                if (go != null)
+                    scene = go.scene.name ?? "";
+            }
+            catch { }
+            if (string.IsNullOrEmpty(scene))
+            {
+                try { scene = SceneManager.GetActiveScene().name ?? ""; } catch { }
+            }
             return Compute(scene, GetHierarchyPath(t));
         }
 

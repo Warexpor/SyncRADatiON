@@ -111,7 +111,7 @@ namespace SyncRADation.Networking
                     if (targetPid < 0 && e.playerPos.gameObject == net.GetLocalPlayer())
                         targetPid = net.LocalPlayerId;
 
-                    if (targetPid >= 0)
+                    if (targetPid >= 0 && targetPid != net.LocalPlayerId)
                     {
                         float now = Time.time;
                         float lastAtk;

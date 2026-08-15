@@ -61,11 +61,11 @@ Debug builds copy into both `$(SignalisDir)\Mods` and `$(ClientSignalisDir)\Mods
 | Enemies | Host | WorldId snaps; native `TakeDamage`; client hits Harmony → host |
 | Doors (double / sliding) | Any peer emit, host relay | Visual open/close via native methods |
 | ConnectedDoors (room links) | Lock only | **Never** sync traverse / `StartA`/`StartB` — room entry is local |
-| Story (Dialoguer, cutscenes, SProgress) | Host | Flags commit; books/notes/EventScreen inspect stay local |
+| Story (Dialoguer, cutscenes, SProgress) | Host | Flags commit; books/notes/EventScreen inspect stay local; story Dialoguer Start/Continue/End from the client plays on the host |
 | Puzzles / locks / elevators / radio module / storage / event zones | Host | WorldId-keyed; storage **contents** shared |
-| World ItemPickups | Host claim/grant | Claimer gets the item; unique keys go on the **party key ring** so either Elster can use them |
-| Player-dropped items | Peer + relay | G drop / E pickup |
-| Death | Asymmetric | Client downed (drops bag, world continues); host death reloads last save for both |
+| World ItemPickups | Host claim/grant | Claimer gets the item; unique **Key/Object** go on the **party key ring** |
+| Player-dropped items | Peer + relay | G drops the selected stack; E pickup if bag has room |
+| Death | Asymmetric | Native `HurtElster`; client downed (drops bag); host death reloads last save for both |
 | Bosses (END / Chimera / Mynah / Kolibri / Adler) | Host | Light-field sync |
 | Friendly fire | Opt-in | Default off |
 | Inventories | Independent | By design |
@@ -92,19 +92,20 @@ GitHub zip: `dist/SyncRADation-0.4.2-dev.zip` (`SyncRADation.dll` + `LiteNetLib.
 
 ## Playtest gate (before Nexus)
 
-Dual-instance LAN, same protocol-7 build. **This is the remaining work.**
+Dual-instance LAN, same protocol-7 build. Steam host + copy client, same chapter, Verbose on. **This is the remaining work.** Do not treat any of this as proven until you play it.
 
-Chapter 1 (Reeducation → Mines elevator):
+After this correctness pass:
 
-- both deal damage; neither is yanked through doors
-- one Dialoguer **with VO**
-- one Cutscene **with audio**
-- one EventZone/EventScreen **with audio**
-- key from the client bag via the party ring; storage box host-put / client-take
-- host death rewinds both; client death does not rewind the world
-- elevator both reach Mines
+1. Penrose: photo inspect local; cryo pattern; BrokenKey does not hide photo; Tape+BrokenKey on **client**; both walk airlock independently; host staying in wreck does not yank
+2. Key door: one unique key, both traverse; no-key locked links stay red NO ENTRY
+3. Ammo/health pickup: partner `hasItem` stays false
+4. Enemy: host HP not double; client hit registers on host; host death reloads both
+5. Client downed → disconnect → can move and take damage again
+6. Notes/books stay local; a real story Dialoguer line started by the client plays on host
+7. Chapter load via int and string; LoadingScreen does not dump
+8. Elevator flags (no remote ride cinematic); radio lock frequency; FMOD loop present on late join
 
-Then the same notepad for Ch2 / Ch3 / endings. Failures are apply bugs in this stack, not a new sync engine.
+Then Chapter 1 (Reeducation → Mines elevator) notepad: both deal damage; neither yanked through doors; one Dialoguer with VO; one cutscene with audio; storage box host-put / client-take.
 
 GitHub zip is the publish path until that run is enjoyable. Nexus waits on that approval.
 

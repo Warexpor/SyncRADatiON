@@ -123,18 +123,7 @@ namespace SyncRADation
                     if (pl != null)
                     {
                         Vector3 origin = pl.transform.position + Vector3.up * 0.8f;
-                        Vector3 dir = pl.transform.forward;
-                        try
-                        {
-                            var apc = pl.GetComponent<AlternatePlayerController>();
-                            if (apc != null)
-                            {
-                                var pivot = pl.transform.childCount > 0 ? pl.transform.GetChild(0) : null;
-                                if (pivot != null)
-                                    dir = pivot.forward;
-                            }
-                        }
-                        catch { }
+                        Vector3 dir = SourceAnimReader.ReadFacingWorldRotation(pl) * Vector3.forward;
                         if (dir.sqrMagnitude < 0.0001f)
                             dir = Vector3.forward;
                         else

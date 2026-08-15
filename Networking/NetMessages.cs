@@ -61,6 +61,7 @@ namespace SyncRADation.Networking
         BookOpen = 18,
         BookMemory = 19,
         DroppedPickup = 20,
+        InspectFlag = 21,
     }
 
     public enum StoryCmd : byte

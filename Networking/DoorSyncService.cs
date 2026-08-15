@@ -72,25 +72,6 @@ namespace SyncRADation.Networking
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
 
-            foreach (var kvp in WorldRegistry.AllDoubleDoors())
-            {
-                var d = kvp.Value;
-                if (d == null) continue;
-                ulong id = kvp.Key;
-                bool openNow = d.open;
-                bool lockedNow = d.locked;
-                bool lo, ll;
-                LastDoubleOpen.TryGetValue(id, out lo);
-                LastDoubleLocked.TryGetValue(id, out ll);
-                if (openNow != lo || lockedNow != ll)
-                {
-                    SendDoorChange(DoorType.DoorwayDouble, id, openNow, lockedNow, false, false, false);
-                    LastDoubleOpen[id] = openNow;
-                    LastDoubleLocked[id] = lockedNow;
-                }
-            }
-
-            // Room links: lock/unlock only. inProgress means someone is mid-traverse — local only.
             foreach (var kvp in WorldRegistry.AllConnectedDoors())
             {
                 var cd = kvp.Value;
@@ -103,24 +84,6 @@ namespace SyncRADation.Networking
                 {
                     SendDoorChange(DoorType.ConnectedDoors, id, false, lk, false, false, false);
                     LastCdLocked[id] = lk;
-                }
-            }
-
-            foreach (var kvp in WorldRegistry.AllSlidingDoors())
-            {
-                var sd = kvp.Value;
-                if (sd == null) continue;
-                ulong id = kvp.Key;
-                bool op = sd.opened;
-                bool mv = sd.moving;
-                bool lop, lmv;
-                LastSdOpened.TryGetValue(id, out lop);
-                LastSdMoving.TryGetValue(id, out lmv);
-                if (op != lop || mv != lmv)
-                {
-                    SendDoorChange(DoorType.EventSlidingDoor, id, op, false, false, false, mv);
-                    LastSdOpened[id] = op;
-                    LastSdMoving[id] = mv;
                 }
             }
         }

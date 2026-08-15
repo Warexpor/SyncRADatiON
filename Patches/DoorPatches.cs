@@ -183,17 +183,6 @@ namespace SyncRADation.Patches
         }
     }
 
-    [HarmonyPatch(typeof(Lab_PatternLockControl), "Start")]
-    public static class PatternLockControlStartPatch
-    {
-        [HarmonyPostfix]
-        public static void Postfix(Lab_PatternLockControl __instance)
-        {
-            if (__instance == null) return;
-            PatternLockControlEnablePatch.KillIfSpent(__instance);
-        }
-    }
-
     [HarmonyPatch(typeof(Interaction), nameof(Interaction.reset))]
     public static class InteractionResetSpentPatch
     {
@@ -229,13 +218,18 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static bool Prefix(Interaction __instance, bool _inRange)
         {
-            if (!_inRange) return true;
+            if (!_inRange || __instance == null) return true;
             var net = LanNetworkManager.Instance;
-            if (net == null || !net.IsConnected || __instance == null) return true;
-            if (!net.PuzzleSync.ShouldKillOverlay(__instance)) return true;
-            try { __instance.triggered = true; } catch { }
+            if (net != null && net.IsConnected && net.PuzzleSync.ShouldKillOverlay(__instance))
+            {
+                try { __instance.triggered = true; } catch { }
+                try { __instance.inRange = false; } catch { }
+                try { __instance.enabled = false; } catch { }
+                return false;
+            }
+            if (!NetGate.Live) return true;
+            if (!DoorNative.ShouldHideWalkPrompt(__instance)) return true;
             try { __instance.inRange = false; } catch { }
-            try { __instance.enabled = false; } catch { }
             return false;
         }
     }
@@ -294,34 +288,9 @@ namespace SyncRADation.Patches
         }
     }
 
-    [HarmonyPatch(typeof(Interaction), nameof(Interaction.setInRange))]
-    public static class InteractionLockedPromptPatch
-    {
-        [HarmonyPrefix]
-        public static bool Prefix(Interaction __instance, bool _inRange)
-        {
-            if (!_inRange || __instance == null || !NetGate.Live) return true;
-            if (!DoorNative.ShouldHideWalkPrompt(__instance)) return true;
-            try { __instance.inRange = false; } catch { }
-            return false;
-        }
-    }
-
     [HarmonyPatch(typeof(ConnectedDoors), "Update")]
     public static class ConnectedDoorsPlatePatch
     {
-        [HarmonyPrefix]
-        public static void Prefix(ConnectedDoors __instance)
-        {
-            if (__instance == null || !NetGate.Live) return;
-            try
-            {
-                if (DoorNative.IsNoPathLock(__instance))
-                    DoorNative.PresentNoPath(__instance);
-            }
-            catch { }
-        }
-
         [HarmonyPostfix]
         public static void Postfix(ConnectedDoors __instance)
         {

@@ -9,6 +9,35 @@ namespace SyncRADation.Networking
     {
         static readonly System.Collections.Generic.Dictionary<ulong, bool> _sentPlaying
             = new System.Collections.Generic.Dictionary<ulong, bool>();
+        static readonly System.Collections.Generic.Dictionary<ulong, StudioEventEmitter> _byId
+            = new System.Collections.Generic.Dictionary<ulong, StudioEventEmitter>();
+
+        static StudioEventEmitter FindCached(ulong id)
+        {
+            StudioEventEmitter e;
+            if (_byId.TryGetValue(id, out e) && e != null)
+                return e;
+            RebuildCache();
+            _byId.TryGetValue(id, out e);
+            return e;
+        }
+
+        static void RebuildCache()
+        {
+            _byId.Clear();
+            StudioEventEmitter[] all = null;
+            try { all = Object.FindObjectsOfType<StudioEventEmitter>(true); }
+            catch { try { all = Object.FindObjectsOfType<StudioEventEmitter>(); } catch { } }
+            if (all == null) return;
+            for (int i = 0; i < all.Length; i++)
+            {
+                var e = all[i];
+                if (e == null) continue;
+                ulong id = WorldId.FromGameObject(e.gameObject);
+                if (id == 0 || _byId.ContainsKey(id)) continue;
+                _byId[id] = e;
+            }
+        }
 
         public static void Handle(FmodEmitterMessage msg)
         {
@@ -28,20 +57,16 @@ namespace SyncRADation.Networking
 
                 ulong id = unchecked((ulong)msg.WorldId);
                 if (id == 0) return;
-                var all = Object.FindObjectsOfType<StudioEventEmitter>();
-                if (all == null) return;
-                for (int i = 0; i < all.Length; i++)
+                var e = FindCached(id);
+                if (e == null)
                 {
-                    var e = all[i];
-                    if (e == null) continue;
-                    if (WorldId.FromGameObject(e.gameObject) != id) continue;
-                    if (IsDoorEmitter(e)) return;
-                    PlaytestLog.Event("FMOD", (msg.Play ? "Play" : "Stop") + " id=" + id.ToString("X16"));
-                    if (msg.Play) e.Play();
-                    else e.Stop();
+                    PlaytestLog.Miss("FMOD", "StudioEventEmitter", id);
                     return;
                 }
-                PlaytestLog.Miss("FMOD", "StudioEventEmitter", id);
+                if (IsDoorEmitter(e)) return;
+                PlaytestLog.Event("FMOD", (msg.Play ? "Play" : "Stop") + " id=" + id.ToString("X16"));
+                if (msg.Play) e.Play();
+                else e.Stop();
             }
             catch (System.Exception ex)
             {
@@ -106,6 +131,11 @@ namespace SyncRADation.Networking
             if (t == null) return true;
             try
             {
+                if (LocalInspect.Cinematic(t.gameObject)) return true;
+            }
+            catch { }
+            try
+            {
                 var player = PlayerState.player;
                 if (player != null && (t == player.transform || t.IsChildOf(player.transform)))
                     return true;
@@ -164,15 +194,26 @@ namespace SyncRADation.Networking
             catch { return false; }
         }
 
-        public static void Reset() => _sentPlaying.Clear();
+        public static void Reset()
+        {
+            _sentPlaying.Clear();
+            _byId.Clear();
+        }
 
         public static void DumpPlaying()
         {
             var net = LanNetworkManager.Instance;
             if (net == null || net.Role != NetworkRole.Host || !net.IsConnected) return;
-            foreach (var kvp in _sentPlaying)
+            RebuildCache();
+            foreach (var kvp in _byId)
             {
-                if (!kvp.Value || kvp.Key == 0) continue;
+                var e = kvp.Value;
+                if (e == null || kvp.Key == 0) continue;
+                if (IsLocalOnly(e.transform) || IsDoorEmitter(e)) continue;
+                bool playing = false;
+                try { playing = e.IsPlaying(); } catch { }
+                if (!playing) continue;
+                _sentPlaying[kvp.Key] = true;
                 net.SendFmodEmitter(new FmodEmitterMessage
                 {
                     WorldId = unchecked((long)kvp.Key),

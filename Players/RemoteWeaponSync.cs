@@ -45,7 +45,7 @@ namespace SyncRADation.Players
         private readonly GameObject _proxy;
         private readonly Dictionary<WeaponType, GameObject> _weapons = new Dictionary<WeaponType, GameObject>();
         private readonly Dictionary<WeaponType, RemoteWeaponEffects> _effects = new Dictionary<WeaponType, RemoteWeaponEffects>();
-        private static readonly Dictionary<WeaponType, Transform> _sourceWeaponCache = new Dictionary<WeaponType, Transform>();
+        private readonly Dictionary<WeaponType, Transform> _sourceWeaponCache = new Dictionary<WeaponType, Transform>();
         private WeaponType _currentWeapon = WeaponType.None;
         private int _targetLayer;
         private GameObject _source;

@@ -17,24 +17,8 @@ namespace SyncRADation.Patches
         internal static void NoteCraftedKey(AnItem item)
         {
             if (NetGate.IsApplying || !NetGate.Live) return;
-            PartyKeyRing.Note(item);
-            if (NetGate.Host)
-                PartyKeyRing.Broadcast();
-        }
-
-        internal static void NoteTakenFromAddItem(AnItem item)
-        {
-            if (NetGate.IsApplying) return;
-            if (_pendingId == 0) return;
-            if (UnityEngine.Time.unscaledTime - _pendingTime > 20f) return;
-            if (item == null) return;
-            try
-            {
-                if (_pendingItem != Items.itemlist.None && item._item != _pendingItem)
-                    return;
-            }
-            catch { }
-            NoteTaken(null);
+            if (!PartyKeyRing.IsKeyOrObject(item)) return;
+            PartyKeyRing.OfferToHost(item);
         }
 
         static bool IsInspect(ItemPickup p)
@@ -62,18 +46,6 @@ namespace SyncRADation.Patches
             try
             {
                 if (__instance.slave) return true;
-                if (__instance.triggered)
-                {
-                    ulong stuckId = WorldId.FromGameObject(__instance.gameObject);
-                    if (stuckId != 0 && net.PickupSync.IsClaimed(stuckId))
-                    {
-                        PlaytestLog.Event("Pickup", "skip triggered " + __instance.gameObject.name);
-                        return false;
-                    }
-                    try { __instance.triggered = false; } catch { }
-                    PlaytestLog.Event("Pickup", "unstick " + __instance.gameObject.name
-                        + " id=" + stuckId.ToString("X16"));
-                }
             }
             catch { }
 
@@ -102,10 +74,12 @@ namespace SyncRADation.Patches
 
             if (net.Role == NetworkRole.Host)
             {
-                if (!net.PickupSync.TryClaimOnHost(id, net.LocalPlayerId, out _, out _, hideNow: false))
+                if (!net.PickupSync.TryClaimOnHost(id, net.LocalPlayerId, out _, out _,
+                    hideNow: false, hintItem: _pendingItem))
                 {
                     PlaytestLog.Event("Pickup", "host deny " + __instance.gameObject.name
                         + " id=" + id.ToString("X16"));
+                    try { net.PickupSync.HidePickup(__instance); } catch { }
                     return false;
                 }
                 PlaytestLog.Event("Pickup", "host take " + __instance.gameObject.name
@@ -246,7 +220,6 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(AnItem item)
         {
-            ItemPickupPatches.NoteTakenFromAddItem(item);
             ItemPickupPatches.NoteCraftedKey(item);
         }
     }
@@ -257,7 +230,6 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(AnItem item)
         {
-            ItemPickupPatches.NoteTakenFromAddItem(item);
             ItemPickupPatches.NoteCraftedKey(item);
         }
     }

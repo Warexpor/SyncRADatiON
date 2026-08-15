@@ -10,6 +10,31 @@ namespace SyncRADation.Networking
 
         public static void Reset() => _keys.Clear();
 
+        public static bool IsKeyOrObject(Items.itemlist item)
+        {
+            if (item == Items.itemlist.None) return false;
+            try
+            {
+                var an = InventoryManager.getItem(item);
+                if (an == null) return false;
+                return an.type == AnItem.AnItemType.Key || an.type == AnItem.AnItemType.Object;
+            }
+            catch { return false; }
+        }
+
+        public static bool IsKeyOrObject(AnItem item)
+        {
+            if (item == null) return false;
+            try
+            {
+                return item.type == AnItem.AnItemType.Key || item.type == AnItem.AnItemType.Object;
+            }
+            catch
+            {
+                try { return IsKeyOrObject(item._item); } catch { return false; }
+            }
+        }
+
         public static bool Has(Items.itemlist item) => _keys.Contains((ushort)item);
 
         public static bool Has(AnItem item)
@@ -20,23 +45,15 @@ namespace SyncRADation.Networking
 
         public static void Note(Items.itemlist item)
         {
-            if (item == Items.itemlist.None) return;
+            if (!IsKeyOrObject(item)) return;
             if (_keys.Add((ushort)item))
                 PlaytestLog.Event("KeyRing", "note " + item + " count=" + _keys.Count);
         }
 
         public static void Note(AnItem item)
         {
-            if (item == null) return;
-            try
-            {
-                if (item.type == AnItem.AnItemType.Key || item.type == AnItem.AnItemType.Object)
-                    Note(item._item);
-            }
-            catch
-            {
-                try { Note(item._item); } catch { }
-            }
+            if (item == null || !IsKeyOrObject(item)) return;
+            try { Note(item._item); } catch { }
         }
 
         public static void Remove(Items.itemlist item) => _keys.Remove((ushort)item);
@@ -44,11 +61,33 @@ namespace SyncRADation.Networking
         public static void ApplyMessage(PartyKeyRingMessage msg)
         {
             var net = LanNetworkManager.Instance;
-            if (net != null && net.Role == NetworkRole.Host) return;
-            _keys.Clear();
             if (msg.ItemEnums == null) return;
+
+            if (net != null && net.Role == NetworkRole.Host)
+            {
+                bool added = false;
+                for (int i = 0; i < msg.ItemEnums.Length; i++)
+                {
+                    var item = (Items.itemlist)msg.ItemEnums[i];
+                    if (!IsKeyOrObject(item)) continue;
+                    if (_keys.Add(msg.ItemEnums[i]))
+                        added = true;
+                }
+                if (added)
+                {
+                    PlaytestLog.Event("KeyRing", "host merge count=" + _keys.Count);
+                    Broadcast();
+                }
+                return;
+            }
+
+            _keys.Clear();
             for (int i = 0; i < msg.ItemEnums.Length; i++)
-                _keys.Add(msg.ItemEnums[i]);
+            {
+                var item = (Items.itemlist)msg.ItemEnums[i];
+                if (IsKeyOrObject(item))
+                    _keys.Add(msg.ItemEnums[i]);
+            }
             PlaytestLog.Event("KeyRing", "apply count=" + _keys.Count);
         }
 
@@ -56,11 +95,35 @@ namespace SyncRADation.Networking
         {
             var net = LanNetworkManager.Instance;
             if (net == null || net.Role != NetworkRole.Host || !net.IsConnected) return;
+            net.SendPartyKeyRing(Snapshot());
+        }
+
+        public static void OfferToHost(AnItem item)
+        {
+            Note(item);
+            var net = LanNetworkManager.Instance;
+            if (net == null || !net.IsConnected) return;
+            if (net.Role == NetworkRole.Host)
+            {
+                Broadcast();
+                return;
+            }
+            if (item == null) return;
+            try
+            {
+                if (!IsKeyOrObject(item)) return;
+                net.SendPartyKeyRing(new[] { (ushort)item._item });
+            }
+            catch { }
+        }
+
+        static ushort[] Snapshot()
+        {
             var arr = new ushort[_keys.Count];
             int i = 0;
             foreach (var k in _keys)
                 arr[i++] = k;
-            net.SendPartyKeyRing(arr);
+            return arr;
         }
 
         public static AnItem FindInBag(AnItem item)

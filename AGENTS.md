@@ -23,16 +23,16 @@ LAN multiplayer MelonLoader mod for SIGNALIS (Unity IL2CPP / Unhollower-style Ma
 | Avatar proxy + anim/bones/weapons | Peer | ~30 Hz state + bones |
 | Enemies | Host | WorldId snaps; **native TakeDamage**; client hits Harmony→host; `playerPos` all non-dead states |
 | Doors (double / sliding) | Any peer emit, host relay | Visual open/close via native methods |
-| ConnectedDoors (room links) | Lock only | **Never** sync traverse / StartA/B — room entry is local. Unique key doors: one solve (party key ring), both walk |
+| ConnectedDoors (room links) | Lock only | **Never** sync traverse / StartA/B — room entry is local. Unique key doors: one solve (party key ring **Key/Object only**), both walk |
 | Ladders | Local traverse | Climb is per-player; other peer only hears proxy SFX (no `Interaction.trigger`) |
-| Chapter / scene load | Host | SceneFollow via `AsyncLoader` / `SceneHelper` / `LoadLevelZone` — only yank on chapter change. Penrose airlock (`PEN_Titles` → `PEN_Hole`) is per-Elster: skip/load does not pull the other out of the wreck |
-| Story (SProgress, Dialoguer, cutscenes, END_Manager) | Host | Full slot dump on join; **books / notes / EventScreen / EventOnlyRoom / airlock (`PEN_Titles`) / lock-flavor lines stay local** |
+| Chapter / scene load | Host | SceneFollow via `AsyncLoader` / `SceneHelper` / `LoadLevelZone` — int and string loads both gate. Penrose defer is **cinematic** (`PEN_Titles.started` / local ViewPoint, 3s latch). Skip/load does not pull the other out of the wreck. Client F7 is a host load + follow, not `BeginApply` |
+| Story (SProgress, Dialoguer, cutscenes, END_Manager) | Host | Full slot dump on join; **books / notes / EventScreen / EventOnlyRoom / airlock (`PEN_Titles`) / lock-flavor lines stay local**. Story Dialoguer Start (all overloads) is client→host then presentation replay; Continue/End apply on clients |
 | World FMOD | Host Play/Stop | StudioEventEmitter by WorldId; skip Elster + radio UI; tuner freq local |
 | Puzzles / locks / elevators / radio module / storage / event zones / alert | Host + client emit | **WorldId-keyed**; client emits puzzle/lock types only (not `Interaction.trigger` / EventZone / combat); apply **snaps flags + doors**, never EventScreen / `trigger()`; cryo/codepad/pump/pipes/hatch live-apply native Open/Drain/TurnValve; unlocked location doors stay open for the party |
 | Host disconnect | Client goes offline | Restores play + input (no freeze) |
-| World ItemPickups | Host claim/grant | Claimer gets item; unique keys go on the **party key ring**; client bag keys still unlock UseItem (hatch card) |
-| Player-dropped items | Peer + relay | G drop / E pickup; shared “Object” type grants |
-| Death | Asymmetric | Client downed (drops bag); host death `SaveManager.Load` for both |
+| World ItemPickups | Host claim/grant | Claimer gets item; unique **Key/Object** go on the **party key ring**; ammo/docs do not. Client bag keys still unlock UseItem (hatch card) |
+| Player-dropped items | Peer + relay | G drops the selected stack; E pickup rejects a full bag; shared “Object” type grants |
+| Death | Asymmetric | Client downed (drops bag); native `HurtElster` HP; host death `SaveManager.Load` for both |
 | Bosses (END / Chimera / Mynah / Kolibri / Adler) | Host | `END_Boss.Elster` / `BOS_Adler.Elster`; Kolibri dead/intensity |
 | Friendly fire | Opt-in | Default OFF |
 | Inventories | Independent | 6-slot bags stay personal; box + key ring are shared |

@@ -199,21 +199,6 @@ namespace SyncRADation.Players
             return null;
         }
 
-        /// <summary>
-        /// Returns the first direct child of root (or grandchild via intermediate transforms) matching name.
-        /// </summary>
-        private static Transform FindChildByName(Transform root, string name)
-        {
-            for (int i = 0; i < root.childCount; i++)
-            {
-                Transform c = root.GetChild(i);
-                if (c.name == name) return c;
-                Transform sub = FindChildByName(c, name);
-                if (sub != null) return sub;
-            }
-            return null;
-        }
-
         // --- Fallback: full clone for players without a facing-pivot child ---
         private static GameObject CreateFullClone(GameObject source, string objectName, Vector3 positionOffset, MelonLogger.Instance log)
         {

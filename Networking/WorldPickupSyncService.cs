@@ -53,7 +53,6 @@ namespace SyncRADation.Networking
         static bool UniqueWorldItem(ItemPickup p)
         {
             if (p == null) return false;
-            try { if (p.showItemView || p.focusCamera || p.pauseGame) return true; } catch { }
             try
             {
                 if (p._item != null)
@@ -69,8 +68,9 @@ namespace SyncRADation.Networking
 
         void NoteClaimedItem(Items.itemlist item)
         {
-            if (item != Items.itemlist.None)
-                _claimedItems.Add((ushort)item);
+            if (item == Items.itemlist.None) return;
+            if (!PartyKeyRing.IsKeyOrObject(item)) return;
+            _claimedItems.Add((ushort)item);
         }
 
         public void NotifyRevealed()
@@ -424,10 +424,6 @@ namespace SyncRADation.Networking
                     if (!already && !inspect)
                         InventoryManager.AddItem(item, msg.Count > 0 ? msg.Count : 1);
                     PartyKeyRing.Note(item);
-                    if (p != null && !inspect)
-                    {
-                        try { p.pickUp(); } catch { }
-                    }
                 }
                 finally
                 {

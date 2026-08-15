@@ -21,12 +21,6 @@ namespace SyncRADation.Patches
                 PlaytestLog.Event("Scene", "local airlock load '" + scene + "'");
                 return true;
             }
-            if (scene.StartsWith("index:"))
-            {
-                if (NetGate.Host)
-                    return true;
-                return false;
-            }
 
             if (NetGate.Host)
             {
@@ -56,11 +50,7 @@ namespace SyncRADation.Patches
         {
             if (NetGate.IsApplying) return true;
             if (!NetGate.Live) return true;
-            string name = "";
-            try { name = AsyncLoader.targetLevelString ?? ""; } catch { }
-            if (string.IsNullOrEmpty(name))
-                name = "index:" + target;
-            return SceneLoadGate.GateLevel(name);
+            return SceneLoadGate.GateLevel(SceneFollowService.ResolveLevelName(target));
         }
     }
 
@@ -79,7 +69,7 @@ namespace SyncRADation.Patches
         {
             if (NetGate.IsApplying) return true;
             if (!NetGate.Live) return true;
-            return SceneLoadGate.GateLevel("index:" + scene);
+            return SceneLoadGate.GateLevel(SceneFollowService.ResolveLevelName(scene));
         }
     }
 

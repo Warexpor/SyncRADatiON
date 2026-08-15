@@ -8,15 +8,6 @@ namespace SyncRADation.Networking
 {
     public static class SceneFollowService
     {
-        public static void BroadcastHostScene()
-        {
-            var net = LanNetworkManager.Instance;
-            if (net == null || net.Role != NetworkRole.Host || !net.IsConnected) return;
-            string name = SceneManager.GetActiveScene().name ?? "";
-            if (string.IsNullOrEmpty(name) || IsTransient(name)) return;
-            net.SendSceneFollow(name, false);
-        }
-
         public static void RequestFollow(string sceneName)
         {
             var net = LanNetworkManager.Instance;
@@ -35,10 +26,45 @@ namespace SyncRADation.Networking
             }
             if (AirlockCinematic.DeferFollowWhileAirlockPresent())
             {
-                ModRuntime.Log?.Msg("[SceneFollow] Ignore peer airlock load '" + sceneName + "'");
+                try
+                {
+                    string here = SceneManager.GetActiveScene().name ?? "";
+                    if (string.Equals(here, sceneName, System.StringComparison.Ordinal))
+                        return true;
+                }
+                catch { }
+                ModRuntime.Log?.Msg("[SceneFollow] Reject peer request '" + sceneName + "' (host airlock cinematic)");
+                return false;
+            }
+            try
+            {
+                string cur = SceneManager.GetActiveScene().name ?? "";
+                if (string.Equals(cur, sceneName, System.StringComparison.Ordinal))
+                {
+                    var net = LanNetworkManager.Instance;
+                    if (net != null && net.IsConnected)
+                        net.SendSceneFollow(sceneName, false);
+                    return true;
+                }
+            }
+            catch { }
+            try
+            {
+                AsyncLoader.LoadLevel(sceneName);
                 return true;
             }
+            catch (System.Exception ex)
+            {
+                ModRuntime.Log?.Warning("[SceneFollow] Peer request LoadLevel failed: " + ex.Message);
+            }
             Apply(sceneName);
+            try
+            {
+                var net = LanNetworkManager.Instance;
+                if (net != null && net.IsConnected)
+                    net.SendSceneFollow(sceneName, false);
+            }
+            catch { }
             return true;
         }
 
@@ -172,8 +198,22 @@ namespace SyncRADation.Networking
         public static bool IsTransient(string sceneName)
         {
             if (string.IsNullOrEmpty(sceneName)) return true;
-            return string.Equals(sceneName, "LoadingScreen", System.StringComparison.Ordinal)
-                || sceneName.StartsWith("index:", System.StringComparison.Ordinal);
+            return string.Equals(sceneName, "LoadingScreen", System.StringComparison.Ordinal);
+        }
+
+        public static string ResolveLevelName(int index)
+        {
+            string named = NameForBuildIndex(index);
+            if (!string.IsNullOrEmpty(named) && !IsTransient(named))
+                return named;
+            try
+            {
+                string stored = AsyncLoader.targetLevelString;
+                if (!string.IsNullOrEmpty(stored) && !IsTransient(stored))
+                    return stored;
+            }
+            catch { }
+            return named ?? "";
         }
 
         public static void Apply(string sceneName)

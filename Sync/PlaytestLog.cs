@@ -8,11 +8,6 @@ namespace SyncRADation.Sync
             ModRuntime.Log?.Msg("[" + tag + "] " + msg);
         }
 
-        public static void Warn(string tag, string msg)
-        {
-            ModRuntime.Log?.Warning("[" + tag + "] " + msg);
-        }
-
         public static void Verbose(string tag, string msg)
         {
             if (!ModRuntime.VerboseLogging) return;

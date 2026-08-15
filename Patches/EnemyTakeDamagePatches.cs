@@ -25,6 +25,7 @@ namespace SyncRADation.Patches
         public static bool PrefixSimple(EnemyController __instance)
         {
             float fire = 0f, crit = 0f, hurt = 0f;
+            bool noSneak = true;
             try
             {
                 fire = PlayerAttack.fireChance;
@@ -32,7 +33,8 @@ namespace SyncRADation.Patches
                 hurt = PlayerAttack.hurtChance;
             }
             catch { }
-            return Handle(__instance, fire, crit, hurt, false);
+            try { noSneak = !PlayerState.sneaking; } catch { }
+            return Handle(__instance, fire, crit, hurt, noSneak);
         }
 
         private static bool Handle(EnemyController enemy, float fire, float crit, float hurt, bool noSneak)

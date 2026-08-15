@@ -26,6 +26,10 @@ namespace SyncRADation.Patches
             if (id != 0) _fired.Add(id);
         }
 
+        public static bool MarkMultiOnce(ulong id) => id != 0 && _fired.Add(id ^ 0x9E3779B97F4A7C15UL);
+
+        public static bool MarkMultiTrigger(ulong id) => id != 0 && _fired.Add(id ^ 0xC2B2AE3D27D4EB4FUL);
+
         private static readonly System.Collections.Generic.Dictionary<ulong, float> _lastRequest
             = new System.Collections.Generic.Dictionary<ulong, float>();
 
@@ -43,17 +47,19 @@ namespace SyncRADation.Patches
             catch { }
             if (NetGate.Host) return true;
 
+            bool inRange = false;
+            try { inRange = __instance.inter != null && __instance.inter.inRange; } catch { }
+            if (!inRange) return true;
+
             try
             {
-                if (__instance.inter != null && __instance.inter.inRange)
-                {
-                    ulong id = WorldId.FromGameObject(__instance.gameObject);
-                    float last;
-                    if (_lastRequest.TryGetValue(id, out last) && Time.unscaledTime - last < 0.25f)
-                        return false;
-                    _lastRequest[id] = Time.unscaledTime;
-                    LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.EventZone);
-                }
+                ulong id = WorldId.FromGameObject(__instance.gameObject);
+                if (id != 0 && _fired.Contains(id)) return false;
+                float last;
+                if (_lastRequest.TryGetValue(id, out last) && Time.unscaledTime - last < 0.25f)
+                    return false;
+                _lastRequest[id] = Time.unscaledTime;
+                LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.EventZone);
             }
             catch { }
             return false;
@@ -71,133 +77,6 @@ namespace SyncRADation.Patches
         }
     }
 
-    internal static class LocalInspect
-    {
-        public static bool Dialogue(Dialogue d)
-        {
-            if (d == null) return true;
-            try
-            {
-                if (PlayerState.eventScreen) return true;
-                var gs = PlayerState.gameState;
-                if (gs == PlayerState.gameStates.eventScreen || gs == PlayerState.gameStates.book)
-                    return true;
-            }
-            catch { }
-            try
-            {
-                if (DialoguerFlavor((int)d._dialogue)) return true;
-            }
-            catch { }
-            return UnderEventCamera(d.gameObject) || LockFlavor(d);
-        }
-
-        public static bool DialoguerFlavor(int id)
-        {
-            // Pickup / lock / one-liner flavor. DialoguerPatches IL-skip, so these
-            // also have to be filtered on ApplyPresentation / InteractionRequest.
-            switch (id)
-            {
-                case 0:  // noDialogue
-                case 6:  // Pickup_dialogue
-                case 17: // Pickup_cantCarry
-                case 20: // GenericOneLine
-                case 21: // openDoorDialogue
-                case 22: // lockedDoorDialogue
-                case 23: // useItemDialogue
-                case 24: // GenericQuestion
-                case 25: // Pickup_dialogue_long
-                case 26: // Pickup_noSlots
-                case 27: // GenericQuestionFollowup
-                    return true;
-                default:
-                    return false;
-            }
-        }
-
-        static bool LockFlavor(Dialogue d)
-        {
-            if (d == null) return false;
-            Transform t = d.gameObject != null ? d.gameObject.transform : null;
-            while (t != null)
-            {
-                try
-                {
-                    if (t.GetComponent<InteractiveLockSingle>() != null) return true;
-                    if (t.GetComponent<InteractiveLock>() != null) return true;
-                    if (t.GetComponent<ConnectedDoors>() != null) return true;
-                    if (t.GetComponent<AutoTraverseDoor>() != null) return true;
-                    if (t.GetComponent<UseItemInteraction>() != null) return true;
-                    if (t.GetComponent<useItemPuzzleHint>() != null) return true;
-                }
-                catch { }
-                t = t.parent;
-            }
-            return false;
-        }
-
-        static bool UnderEventCamera(GameObject go)
-        {
-            Transform t = go != null ? go.transform : null;
-            while (t != null)
-            {
-                try
-                {
-                    if (t.GetComponent<EventScreen3DCam>() != null) return true;
-                    if (t.GetComponent<EventScreenInteraction>() != null) return true;
-                    if (t.GetComponent<EventOnlyRoom>() != null) return true;
-                    if (t.GetComponent<EventScreen>() != null) return true;
-                    if (t.GetComponent<ZoomInPoint>() != null) return true;
-                    if (t.GetComponent<ItemPickup>() != null) return true;
-                    if (t.GetComponent<ObservationDialogue>() != null) return true;
-                    if (t.GetComponent<ObservationChoice>() != null) return true;
-                    if (t.GetComponent<PEN_Airlock>() != null) return true;
-                    if (t.GetComponent<PenroseAirlockNew>() != null) return true;
-                    if (t.GetComponent<PenroseAirlock>() != null) return true;
-                    if (t.GetComponent<PEN_Titles>() != null) return true;
-                    if (t.GetComponent<AirlockInside>() != null) return true;
-                    if (t.GetComponent<AirlockDoorLoadZone>() != null) return true;
-                }
-                catch { }
-                t = t.parent;
-            }
-            return false;
-        }
-
-        public static bool Cinematic(GameObject go)
-        {
-            return UnderEventCamera(go);
-        }
-
-        public static bool LockWorld(GameObject go)
-        {
-            Transform t = go != null ? go.transform : null;
-            while (t != null)
-            {
-                try
-                {
-                    if (t.GetComponent<InteractiveLockSingle>() != null) return true;
-                    if (t.GetComponent<InteractiveLock>() != null) return true;
-                    if (t.GetComponent<ConnectedDoors>() != null) return true;
-                    if (t.GetComponent<AutoTraverseDoor>() != null) return true;
-                    if (t.GetComponent<useItemPuzzleHint>() != null) return true;
-                }
-                catch { }
-                t = t.parent;
-            }
-            try
-            {
-                if (go != null)
-                {
-                    var d = go.GetComponent<Dialogue>();
-                    if (d != null && Dialogue(d)) return true;
-                }
-            }
-            catch { }
-            return false;
-        }
-    }
-
     internal static class AirlockCinematic
     {
         static readonly System.Collections.Generic.HashSet<ulong> _localUnlock
@@ -206,11 +85,15 @@ namespace SyncRADation.Patches
             = new System.Collections.Generic.HashSet<ulong>();
 
         static string _personalScene;
+        static bool _localCinematic;
+        static float _cinematicAt;
 
         public static void Reset()
         {
             _localUnlock.Clear();
             _remoteUnlock.Clear();
+            _localCinematic = false;
+            _cinematicAt = 0f;
         }
 
         public static void NotePersonalLoad(string scene)
@@ -286,7 +169,8 @@ namespace SyncRADation.Patches
                         return false;
                     if (t.keyCardEvent != null)
                         NoteLocalUnlock(t.keyCardEvent);
-                    try { t.started = false; } catch { }
+                    _localCinematic = true;
+                    _cinematicAt = Time.unscaledTime;
                     PlaytestLog.Event("Story", "local PEN_Titles cinematic");
                     return true;
                 }
@@ -298,6 +182,7 @@ namespace SyncRADation.Patches
         public static bool IsPersonalChapterLoad(string scene)
         {
             if (string.IsNullOrEmpty(scene) || SceneFollowService.IsTransient(scene)) return false;
+            if (DeferFollowWhileAirlockPresent()) return true;
             try
             {
                 var all = UnityEngine.Object.FindObjectsOfType<PEN_Titles>();
@@ -306,9 +191,7 @@ namespace SyncRADation.Patches
                 {
                     var t = all[i];
                     if (t == null) continue;
-                    bool started = false;
-                    try { started = t.started; } catch { }
-                    if (started || IsLocalUnlock(t.keyCardEvent))
+                    if (IsLocalUnlock(t.keyCardEvent))
                         return true;
                 }
             }
@@ -334,8 +217,30 @@ namespace SyncRADation.Patches
 
         public static bool DeferFollowWhileAirlockPresent()
         {
-            try { return UnityEngine.Object.FindObjectOfType<PEN_Titles>() != null; }
-            catch { return false; }
+            if (PenTitlesStarted()) return true;
+            if (_localCinematic)
+            {
+                if (Time.unscaledTime - _cinematicAt < 3f)
+                    return true;
+                _localCinematic = false;
+            }
+            return false;
+        }
+
+        static bool PenTitlesStarted()
+        {
+            try
+            {
+                var all = UnityEngine.Object.FindObjectsOfType<PEN_Titles>();
+                if (all == null) return false;
+                for (int i = 0; i < all.Length; i++)
+                {
+                    if (all[i] != null && all[i].started)
+                        return true;
+                }
+            }
+            catch { }
+            return false;
         }
 
         static ulong Id(UseItemInteraction u)
@@ -445,64 +350,34 @@ namespace SyncRADation.Patches
             return false;
         }
 
-        public static void SubmitIfSolved(Component inst, bool solved)
+        public static void NoteSolved(Component inst)
         {
-            if (!solved) return;
             if (NetGate.IsApplying || !NetGate.Live) return;
-            if (inst == null || NetGate.Host) return;
+            if (inst == null) return;
             ulong id = WorldId.FromGameObject(inst.gameObject);
             if (id == 0 || !_sent.Add(id)) return;
-            PlaytestLog.Event("Interact", "KeypadSubmit " + inst.GetType().Name + " id=" + id.ToString("X16"));
-            LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.KeypadSubmit);
+            if (NetGate.Client)
+            {
+                PlaytestLog.Event("Interact", "KeypadSubmit " + inst.GetType().Name + " id=" + id.ToString("X16"));
+                LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.KeypadSubmit);
+            }
             var pad = inst as PEN_Codepad;
             if (pad != null)
                 LanNetworkManager.Instance.PuzzleSync.Emit(PuzzleType.PEN_Codepad, id, pad);
         }
     }
 
-    [HarmonyPatch(typeof(Keypad3D), "Update")]
-    public static class Keypad3DPatch
-    {
-        [HarmonyPostfix]
-        public static void Postfix(Keypad3D __instance)
-        {
-            if (NetGate.IsApplying || !NetGate.Live || __instance == null) return;
-            try
-            {
-                if (NetGate.Host) return;
-                ClientKeypad.SubmitIfSolved(__instance, __instance.solved);
-            }
-            catch { }
-        }
-    }
-
-    [HarmonyPatch(typeof(ROT_Keypad), "Update")]
-    public static class RotKeypadPatch
+    [HarmonyPatch(typeof(ROT_Keypad), "verify")]
+    public static class RotKeypadVerifyPatch
     {
         [HarmonyPostfix]
         public static void Postfix(ROT_Keypad __instance)
         {
-            if (NetGate.IsApplying || !NetGate.Live || __instance == null) return;
+            if (__instance == null || NetGate.IsApplying || !NetGate.Live) return;
             try
             {
-                if (NetGate.Host) return;
-                ClientKeypad.SubmitIfSolved(__instance, __instance.solved);
-            }
-            catch { }
-        }
-    }
-
-    [HarmonyPatch(typeof(PEN_Codepad), "Update")]
-    public static class PenCodepadPatch
-    {
-        [HarmonyPostfix]
-        public static void Postfix(PEN_Codepad __instance)
-        {
-            if (NetGate.IsApplying || !NetGate.Live || __instance == null) return;
-            try
-            {
-                if (NetGate.Host) return;
-                ClientKeypad.SubmitIfSolved(__instance, __instance.solved);
+                if (!__instance.solved && !__instance.opening) return;
+                ClientKeypad.NoteSolved(__instance);
             }
             catch { }
         }
@@ -518,6 +393,7 @@ namespace SyncRADation.Patches
             try
             {
                 if (!__instance.solved) return;
+                ClientKeypad.NoteSolved(__instance);
                 ulong id = WorldId.FromGameObject(__instance.gameObject);
                 LanNetworkManager.Instance.PuzzleSync.EmitProgressed(PuzzleType.PEN_Codepad, id);
             }
@@ -580,20 +456,6 @@ namespace SyncRADation.Patches
         }
     }
 
-    [HarmonyPatch(typeof(SkippableCutscene), nameof(SkippableCutscene.Check))]
-    public static class CutsceneSkipPatch
-    {
-        [HarmonyPrefix]
-        public static bool Prefix(SkippableCutscene __instance)
-        {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
-            if (__instance == null || __instance.done) return true;
-            if (NetGate.Host) return true;
-            // Let local hold UI run; when skipEvent would fire, host still owns Skip via StartCutscene path.
-            return true;
-        }
-    }
-
     // EventScreen / BookScreen are local inspect (notes, photos, keypad overlay, cryo
     // camera). Party-replaying them opens the document on every Elster and freezes
     // whoever wasn't at the interact. World results go through PuzzleSync.
@@ -608,7 +470,7 @@ namespace SyncRADation.Patches
             if (__instance == null) return true;
             if (NetGate.Host) return true;
             LanNetworkManager.Instance.SendInteractionRequest(
-                WorldId.FromGameObject(__instance.gameObject), InteractionKind.MultiCondition);
+                WorldId.FromGameObject(__instance.gameObject), InteractionKind.MultiCondition, 0);
             return false;
         }
 
@@ -617,8 +479,10 @@ namespace SyncRADation.Patches
         {
             if (!NetGate.Host || NetGate.IsApplying || !NetGate.Live) return;
             if (__instance == null) return;
+            ulong id = WorldId.FromGameObject(__instance.gameObject);
+            if (id == 0 || !EventZonePatch.MarkMultiOnce(id)) return;
             LanNetworkManager.Instance.StorySync.BroadcastPresentation(
-                StoryCmd.MultiConditionFire, WorldId.FromGameObject(__instance.gameObject), 0, "");
+                StoryCmd.MultiConditionFire, id, 0, "");
         }
     }
 
@@ -632,8 +496,19 @@ namespace SyncRADation.Patches
             if (__instance == null) return true;
             if (NetGate.Host) return true;
             LanNetworkManager.Instance.SendInteractionRequest(
-                WorldId.FromGameObject(__instance.gameObject), InteractionKind.MultiCondition);
+                WorldId.FromGameObject(__instance.gameObject), InteractionKind.MultiCondition, 1);
             return false;
+        }
+
+        [HarmonyPostfix]
+        public static void Postfix(MultiConditionEvent __instance)
+        {
+            if (!NetGate.Host || NetGate.IsApplying || !NetGate.Live) return;
+            if (__instance == null) return;
+            ulong id = WorldId.FromGameObject(__instance.gameObject);
+            if (id == 0 || !EventZonePatch.MarkMultiTrigger(id)) return;
+            LanNetworkManager.Instance.StorySync.BroadcastPresentation(
+                StoryCmd.MultiConditionFire, id, 1, "");
         }
     }
 

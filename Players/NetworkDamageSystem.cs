@@ -1,4 +1,4 @@
-// SyncRADation � player HP (100), damage, stagger, death, respawn 5s, inventory drop on death
+// Native HurtElster is the only HP path. Client downed vs host save-reload.
 using FMODUnity;
 using SyncRADation.ItemSystem;
 using SyncRADation.Networking;
@@ -8,29 +8,52 @@ namespace SyncRADation.Players
 {
     public static class NetworkDamageSystem
     {
-        public static float PlayerHP = 100f;
-        public static float MaxHP = 100f;
         private static float _respawnTimer = -1f;
         private static bool _isDead;
+        private static float _wipeSentAt = -99f;
+
+        public static bool IsDead => _isDead;
+
+        public static bool HostDying()
+        {
+            if (_isDead) return true;
+            try { if (PlayerState.charState == PlayerState.charStates.dead) return true; } catch { }
+            try { if (PlayerState.hp <= 0) return true; } catch { }
+            return false;
+        }
+
+        public static bool TrySendHostWipe()
+        {
+            if (Time.unscaledTime - _wipeSentAt < 2f) return false;
+            var net = ModRuntime.Network;
+            if (net == null || !net.IsConnected) return false;
+            _wipeSentAt = Time.unscaledTime;
+            net.SendDeathPolicy(DeathKind.HostWipeReload);
+            return true;
+        }
+
+        public static float PlayerHP
+        {
+            get
+            {
+                try { return PlayerState.hp; } catch { return 0f; }
+            }
+        }
+
+        public static float MaxHP => 100f;
 
         public static void ApplyDamage(float damage, Vector3 hitPoint, Vector3 hitDir)
         {
             if (_isDead) return;
-            if (PlayerHP <= 0f) return;
-
-            PlayerHP -= damage;
-
-            // Keep real game HP in sync when possible
             try
             {
-                if (PlayerState.hp > 0)
-                    PlayerState.hp = Mathf.Max(0, PlayerState.hp - (int)damage);
+                if (PlayerState.hp <= 0 || PlayerState.charState == PlayerState.charStates.dead)
+                    return;
             }
             catch { }
 
             try
             {
-                // Prefer native hurt path if available
                 PlayerState.HurtElster((int)damage, new Vector2(hitDir.x, hitDir.z));
             }
             catch
@@ -43,7 +66,8 @@ namespace SyncRADation.Players
                 }
                 catch { }
 
-                PlayerState.charState = PlayerState.charStates.grabbed;
+                try { PlayerState.hp = Mathf.Max(0, PlayerState.hp - (int)damage); } catch { }
+                try { PlayerState.charState = PlayerState.charStates.grabbed; } catch { }
                 try
                 {
                     var anim = PlayerState.player?.GetComponentInChildren<Animator>(true);
@@ -56,18 +80,21 @@ namespace SyncRADation.Players
                 catch { }
             }
 
-            ModRuntime.Log?.Msg("[Damage] -" + damage.ToString("F0") + " HP, remaining: " + PlayerHP.ToString("F0")
-                + " gameHp=" + PlayerState.hp);
+            int hp = 0;
+            try { hp = PlayerState.hp; } catch { }
+            ModRuntime.Log?.Msg("[Damage] -" + damage.ToString("F0") + " HP, remaining: " + hp);
 
-            if (PlayerHP <= 0f || PlayerState.hp <= 0)
+            bool dead = hp <= 0;
+            try { dead = dead || PlayerState.charState == PlayerState.charStates.dead; } catch { }
+            if (dead)
                 Die();
         }
 
         private static void Die()
         {
+            if (_isDead) return;
             _isDead = true;
-            PlayerHP = 0f;
-            PlayerState.charState = PlayerState.charStates.dead;
+            try { PlayerState.charState = PlayerState.charStates.dead; } catch { }
 
             DropInventoryOnDeath();
 
@@ -85,7 +112,7 @@ namespace SyncRADation.Players
                 if (net.Role == NetworkRole.Host)
                 {
                     ModRuntime.Log?.Msg("[Damage] Host died — wipe reload");
-                    net.SendDeathPolicy(DeathKind.HostWipeReload);
+                    TrySendHostWipe();
                     ReloadHostSave();
                     return;
                 }
@@ -109,14 +136,12 @@ namespace SyncRADation.Players
             if (player == null) return;
 
             Vector3 pos = player.transform.position;
-            var netPos = pos;
 
             try
             {
                 var dict = InventoryManager.elsterItems;
                 if (dict == null) return;
 
-                // Collect items first, then remove (avoid modifying dictionary during enumeration)
                 var itemsToDrop = new System.Collections.Generic.List<(AnItem item, int count, Items.itemlist enumVal)>();
                 var enumerator = dict.GetEnumerator();
                 while (enumerator.MoveNext())
@@ -132,11 +157,17 @@ namespace SyncRADation.Players
                 }
                 enumerator.Dispose();
 
+                int n = 0;
                 foreach (var entry in itemsToDrop)
                 {
                     ushort idx = net.AllocateItemIndex();
                     int key = (net.LocalPlayerId << 16) | idx;
-                    DroppedItemManager.SpawnLocalItem(entry.enumVal, entry.count, key, netPos);
+                    Vector3 dropPos = pos + new Vector3(
+                        UnityEngine.Random.Range(-0.12f, 0.12f),
+                        0f,
+                        UnityEngine.Random.Range(-0.12f, 0.12f));
+                    n++;
+                    DroppedItemManager.SpawnLocalItem(entry.enumVal, entry.count, key, dropPos);
 
                     net.SendDropItem(new Networking.DropItemSpawnMessage
                     {
@@ -144,9 +175,9 @@ namespace SyncRADation.Players
                         LocalIndex = idx,
                         ItemEnum = (ushort)entry.enumVal,
                         Count = entry.count,
-                        PosX = netPos.x,
-                        PosY = netPos.y,
-                        PosZ = netPos.z
+                        PosX = dropPos.x,
+                        PosY = dropPos.y,
+                        PosZ = dropPos.z
                     });
 
                     try { InventoryManager.RemoveItem(entry.item, entry.count); } catch { }
@@ -204,17 +235,16 @@ namespace SyncRADation.Players
 
         private static void Respawn()
         {
-            PlayerHP = MaxHP;
             _isDead = false;
-            PlayerState.charState = PlayerState.charStates.idle;
+            try { PlayerState.charState = PlayerState.charStates.idle; } catch { }
             ModRuntime.Log?.Msg("[Damage] Respawned");
         }
 
         public static void Reset()
         {
-            PlayerHP = MaxHP;
             _isDead = false;
             _respawnTimer = -1f;
+            _wipeSentAt = -99f;
             try { PlayerState.suspendInput = false; } catch { }
         }
     }

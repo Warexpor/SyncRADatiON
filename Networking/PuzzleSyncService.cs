@@ -30,7 +30,7 @@ namespace SyncRADation.Networking
             = new List<PuzzleStateEntry>(16);
 
         private bool _pendingReapply;
-        private static readonly HashSet<ulong> _cryoAnimStarted = new HashSet<ulong>();
+        private static readonly HashSet<string> _worldAnimStarted = new HashSet<string>();
 
         private static FieldInfo _storageBoxOpenField;
 
@@ -40,7 +40,7 @@ namespace SyncRADation.Networking
             _needFullSend = true;
             _lastSent.Clear();
             _held.Clear();
-            _cryoAnimStarted.Clear();
+            _worldAnimStarted.Clear();
             _maps.Clear();
             ModRuntime.Log?.Msg("[PuzzleSync] Scene refreshed");
         }
@@ -80,31 +80,7 @@ namespace SyncRADation.Networking
                 if (!map.ContainsKey(id))
                     map[id] = c;
             }
-        }
-
-        // Buttons/levers only. Ladder / room-link Interactions teleport the local Elster.
-        private void RegisterInteractions()
-        {
-            var map = Map(PuzzleType.InteractionTriggered);
-            Interaction[] arr = null;
-            try { arr = UnityEngine.Object.FindObjectsOfType<Interaction>(true); }
-            catch { try { arr = UnityEngine.Object.FindObjectsOfType<Interaction>(); } catch { return; } }
-            if (arr == null) return;
-            for (int i = 0; i < arr.Length; i++)
-            {
-                var c = arr[i];
-                if (c == null || IsLocalTraverse(c)) continue;
-                try
-                {
-                    if (c.GetComponent<ItemPickup>() != null) continue;
-                }
-                catch { }
-                ulong id = WorldId.FromGameObject(c.gameObject);
-                if (id == 0) continue;
-                if (!map.ContainsKey(id))
-                    map[id] = c;
             }
-        }
 
         private static bool IsLocalTraverse(Component c)
         {
@@ -120,6 +96,7 @@ namespace SyncRADation.Networking
                 if (FindInParents<EventOnlyRoom>(go) != null) return true;
                 if (FindInParents<PEN_Airlock>(go) != null) return true;
                 if (FindInParents<PEN_Titles>(go) != null) return true;
+                if (LocalInspect.Cinematic(go) || LocalInspect.LockWorld(go)) return true;
                 if (FindInParents<PenroseAirlockNew>(go) != null) return true;
                 if (FindInParents<AutoTraverseDoor>(go) != null) return true;
                 if (FindInParents<Doorway_Double>(go) != null) return true;
@@ -575,7 +552,26 @@ namespace SyncRADation.Networking
                         {
                             var x = (EnemyManager)c;
                             int bits = 0;
-                            if (EnemyManager.inCombat) bits |= 1;
+                            bool combat = EnemyManager.inCombat;
+                            try
+                            {
+                                var enemies = UnityEngine.Object.FindObjectsOfType<EnemyController>();
+                                if (enemies != null)
+                                {
+                                    for (int ei = 0; ei < enemies.Length; ei++)
+                                    {
+                                        var en = enemies[ei];
+                                        if (en == null) continue;
+                                        if (en.state == EnemyController.enemystate.attack)
+                                        {
+                                            combat = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            catch { }
+                            if (combat) bits |= 1;
                             if (EnemyManager.enemyPresence) bits |= 2;
                             entry = Mk(type, wid, x.cleared, x.inOperation, false, bits, 0, 0, 0, 0); return true;
                         }
@@ -666,6 +662,7 @@ namespace SyncRADation.Networking
                 case PuzzleType.RES_Shrine:
                 case PuzzleType.ROT_RadioAlignment:
                 case PuzzleType.DET_RadioCodeLock:
+                case PuzzleType.EXC_Elevator:
                     return true;
                 default:
                     return false;
@@ -724,7 +721,12 @@ namespace SyncRADation.Networking
                 case PuzzleType.LAB_Rings:
                 case PuzzleType.BiodomeDoorLock:
                 case PuzzleType.ROT_MeatBlocker:
+                case PuzzleType.FlipSwitch:
+                case PuzzleType.FloodControls:
+                case PuzzleType.StorageBox:
                     return e.Bool0;
+                case PuzzleType.EXC_Elevator:
+                    return e.Bool0 || e.Bool1;
                 default:
                     return false;
             }
@@ -922,7 +924,7 @@ namespace SyncRADation.Networking
                 if (pad != null)
                 {
                     ulong id = WorldId.FromGameObject(pad.gameObject);
-                    if (pad.solved || IsHeld(PuzzleType.PatternLock, id) || CryoFamilyHeldUnmatched())
+                    if (pad.solved || IsHeld(PuzzleType.PatternLock, id))
                         return true;
                 }
             }
@@ -1053,7 +1055,15 @@ namespace SyncRADation.Networking
                 switch (e.Type)
                 {
                     case PuzzleType.PuzzleStatus:
-                        { var x = Get<PuzzleStatus>(e.Type, e.WorldId); if (x != null) x.solved = e.Bool0; break; }
+                        {
+                            var x = Get<PuzzleStatus>(e.Type, e.WorldId);
+                            if (x != null)
+                            {
+                                x.solved = e.Bool0;
+                                if (e.Bool0) TryUnlockDoors(x.gameObject);
+                            }
+                            break;
+                        }
                     case PuzzleType.InteractiveLock:
                         {
                             var x = Get<InteractiveLock>(e.Type, e.WorldId);
@@ -1158,13 +1168,42 @@ namespace SyncRADation.Networking
                             break;
                         }
                     case PuzzleType.FlipSwitch:
-                        { var x = Get<FlipSwitch>(e.Type, e.WorldId); if (x != null) x.flipped = e.Bool0; break; }
+                        {
+                            var x = Get<FlipSwitch>(e.Type, e.WorldId);
+                            if (x != null)
+                            {
+                                if (x.flipped != e.Bool0)
+                                {
+                                    try { x.Flip(); }
+                                    catch { x.flipped = e.Bool0; }
+                                }
+                                if (e.Bool0) TryUnlockDoors(x.gameObject);
+                            }
+                            break;
+                        }
                     case PuzzleType.FloodControlSwitch:
-                        { var x = Get<FloodControlSwitch>(e.Type, e.WorldId); if (x != null) x.state = e.Bool0; break; }
+                        {
+                            var x = Get<FloodControlSwitch>(e.Type, e.WorldId);
+                            if (x != null)
+                            {
+                                x.state = e.Bool0;
+                                if (e.Bool0) TryUnlockDoors(x.gameObject);
+                            }
+                            break;
+                        }
                     case PuzzleType.FloodControls:
                         {
                             var x = Get<FloodControls>(e.Type, e.WorldId);
-                            if (x != null) { x.done = e.Bool0; x.locked = e.Bool1; }
+                            if (x != null)
+                            {
+                                x.done = e.Bool0;
+                                x.locked = e.Bool1;
+                                if (e.Bool0)
+                                {
+                                    try { if (x.dlc != null) x.dlc.locked = false; } catch { }
+                                    TryUnlockDoors(x.gameObject);
+                                }
+                            }
                             break;
                         }
                     case PuzzleType.RES_Power:
@@ -1259,8 +1298,12 @@ namespace SyncRADation.Networking
                     case PuzzleType.MED_Pump:
                         {
                             var x = Get<MED_Pump>(e.Type, e.WorldId);
-                            if (x != null && e.Bool0)
-                                SnapMedPump(x, cinematic);
+                            if (x != null)
+                            {
+                                try { x.a = e.Int0; x.b = e.Int1; x.c = e.Int2; } catch { }
+                                if (e.Bool0)
+                                    SnapMedPump(x, cinematic);
+                            }
                             break;
                         }
                     case PuzzleType.MED_FloodedBathroom:
@@ -1369,9 +1412,14 @@ namespace SyncRADation.Networking
                             var x = Get<EventZone>(e.Type, e.WorldId);
                             if (x != null)
                             {
+                                bool was = false;
+                                try { was = x.triggered; } catch { }
                                 x.triggered = e.Bool0;
-                                if (e.Bool0)
+                                if (e.Bool0 && !was)
+                                {
                                     SyncRADation.Patches.EventZonePatch.MarkFired(unchecked((ulong)e.WorldId));
+                                    try { if (x.onInRange != null) x.onInRange.Invoke(); } catch { }
+                                }
                             }
                             break;
                         }
@@ -1384,14 +1432,18 @@ namespace SyncRADation.Networking
                     case PuzzleType.StorageBox:
                         {
                             var x = Get<StorageBox>(e.Type, e.WorldId);
-                            if (x != null && _storageBoxOpenField != null)
-                                _storageBoxOpenField.SetValue(x, e.Bool0);
+                            if (x != null)
+                                SnapStorageLid(x, e.Bool0, cinematic);
                             break;
                         }
                     case PuzzleType.ROT_Tarot:
                         {
                             var x = Get<ROT_Tarot>(e.Type, e.WorldId);
-                            if (x != null) { x.darkmode = e.Bool0; x.FlipSwitchPos = e.Float0; }
+                            if (x != null)
+                            {
+                                x.darkmode = e.Bool0;
+                                x.FlipSwitchPos = e.Float0;
+                            }
                             break;
                         }
                     case PuzzleType.ROT_Mural:
@@ -1456,6 +1508,7 @@ namespace SyncRADation.Networking
                                 x.correctAntenna = e.Int0;
                                 x.setAntenna = e.Int1;
                                 x.QualityE = e.Float0;
+                                try { x.LoadState(); } catch { }
                             }
                             break;
                         }
@@ -1464,6 +1517,7 @@ namespace SyncRADation.Networking
                             var x = Get<DET_RadioCodeLock>(e.Type, e.WorldId);
                             if (x != null)
                             {
+                                x.frequency = e.Int0;
                                 x.code = e.Int1;
                                 x.hintStation = e.Int2;
                             }
@@ -1494,7 +1548,28 @@ namespace SyncRADation.Networking
                     case PuzzleType.EXC_Elevator:
                         {
                             var x = Get<EXC_Elevator>(e.Type, e.WorldId);
-                            if (x != null) { x.stopped = e.Bool1; }
+                            if (x != null)
+                            {
+                                x.riding = e.Bool0;
+                                x.stopped = e.Bool1;
+                                if (e.Bool1)
+                                {
+                                    try { x.stopInstant(); }
+                                    catch
+                                    {
+                                        try
+                                        {
+                                            if (x.mover != null)
+                                            {
+                                                var p = x.mover.localPosition;
+                                                p.y = x.distance;
+                                                x.mover.localPosition = p;
+                                            }
+                                        }
+                                        catch { }
+                                    }
+                                }
+                            }
                             break;
                         }
                     case PuzzleType.KolibriManager:
@@ -1536,36 +1611,6 @@ namespace SyncRADation.Networking
                 t = t.parent;
             }
             return null;
-        }
-
-        public static bool IsPuzzleOverlay(EventScreenInteraction e)
-        {
-            if (e == null) return false;
-            try
-            {
-                var go = e.gameObject;
-                if (FindInParents<CryoDoorLock>(go) != null) return true;
-                if (FindInParents<PEN_Codepad>(go) != null) return true;
-                if (FindInParents<LAB_PatternLock>(go) != null) return true;
-                if (FindInParents<PEN_Cryo>(go) != null) return true;
-                if (FindInParents<Keypad3D>(go) != null) return true;
-                if (FindInParents<ROT_Keypad>(go) != null) return true;
-            }
-            catch { }
-            try
-            {
-                var locks = UnityEngine.Object.FindObjectsOfType<CryoDoorLock>(true);
-                if (locks != null)
-                {
-                    for (int i = 0; i < locks.Length; i++)
-                    {
-                        if (locks[i] != null && locks[i].Event == e)
-                            return true;
-                    }
-                }
-            }
-            catch { }
-            return false;
         }
 
         public static void UnlockLinked(GameObject go) => TryUnlockDoors(go);
@@ -1862,7 +1907,7 @@ namespace SyncRADation.Networking
             bool active = false;
             try { active = x.gameObject.activeInHierarchy; } catch { active = true; }
             ulong id = WorldId.FromGameObject(x.gameObject);
-            bool animating = id != 0 && _cryoAnimStarted.Contains(id);
+            bool animating = AnimStarted(PuzzleType.PEN_Cryo, id);
 
             if (!active || !playOpen)
                 StampPenCryoOpen(x);
@@ -1895,7 +1940,7 @@ namespace SyncRADation.Networking
             if (playOpen)
             {
                 if (id != 0)
-                    _cryoAnimStarted.Add(id);
+                    NoteAnimStarted(PuzzleType.PEN_Cryo, id);
                 PlaytestLog.Event("Puzzle", "snap PEN_Cryo " + x.gameObject.name + " open");
                 try { x.Open(); }
                 catch
@@ -2141,14 +2186,44 @@ namespace SyncRADation.Networking
             catch { }
         }
 
-        static bool TryStartWorldAnim(GameObject go)
+        static string AnimKey(PuzzleType type, ulong id) => ((byte)type) + "_" + id.ToString("X");
+
+        static bool AnimStarted(PuzzleType type, ulong id)
+            => id != 0 && _worldAnimStarted.Contains(AnimKey(type, id));
+
+        static void NoteAnimStarted(PuzzleType type, ulong id)
+        {
+            if (id != 0) _worldAnimStarted.Add(AnimKey(type, id));
+        }
+
+        static bool TryStartWorldAnim(PuzzleType type, GameObject go)
         {
             if (go == null) return false;
             bool active = false;
             try { active = go.activeInHierarchy; } catch { active = true; }
             if (!active) return false;
             ulong id = WorldId.FromGameObject(go);
-            return id == 0 || _cryoAnimStarted.Add(id);
+            if (id == 0) return true;
+            return _worldAnimStarted.Add(AnimKey(type, id));
+        }
+
+        static void SnapStorageLid(StorageBox x, bool open, bool cinematic)
+        {
+            if (x == null) return;
+            if (_storageBoxOpenField != null)
+                _storageBoxOpenField.SetValue(x, open);
+            if (!open) return;
+            if (cinematic)
+            {
+                try { x.StartCoroutine("Open"); return; }
+                catch { }
+            }
+            try
+            {
+                if (x.lid != null)
+                    x.lid.localEulerAngles = new Vector3(-90f, 0f, 0f);
+            }
+            catch { }
         }
 
         static void SnapMedPump(MED_Pump x, bool play)
@@ -2167,7 +2242,7 @@ namespace SyncRADation.Networking
         static void SnapFlood(MED_FloodedBathroom x, bool play)
         {
             if (x == null) return;
-            if (play && TryStartWorldAnim(x.gameObject))
+            if (play && TryStartWorldAnim(PuzzleType.MED_FloodedBathroom, x.gameObject))
             {
                 try { x.Drain(); }
                 catch { PoseFlood(x); }
@@ -2228,7 +2303,7 @@ namespace SyncRADation.Networking
         {
             if (x == null) return;
             try { x.loaded = true; } catch { }
-            if (play && TryStartWorldAnim(x.gameObject))
+            if (play && TryStartWorldAnim(PuzzleType.ROT_Pipes, x.gameObject))
             {
                 try { x.TurnValve(); }
                 catch { PosePipes(x); }
@@ -2356,7 +2431,7 @@ namespace SyncRADation.Networking
             try { if (x.interaction != null) x.interaction.SetActive(false); } catch { }
             try { if (x.Red != null) x.Red.SetActive(false); } catch { }
             try { if (x.Green != null) x.Green.SetActive(true); } catch { }
-            if (play && TryStartWorldAnim(x.gameObject))
+            if (play && TryStartWorldAnim(PuzzleType.EXC_Seilbahn, x.gameObject))
             {
                 try { x.goDown(); }
                 catch { }
@@ -2374,7 +2449,7 @@ namespace SyncRADation.Networking
                     DoorNative.ApplyConnectedDoors(x.doorway, false);
             }
             catch { }
-            if (play && TryStartWorldAnim(x.gameObject))
+            if (play && TryStartWorldAnim(PuzzleType.EXC_Hatch, x.gameObject))
             {
                 try { x.OpenHatch(); }
                 catch { }

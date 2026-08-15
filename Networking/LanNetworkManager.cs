@@ -50,7 +50,7 @@ namespace SyncRADation.Networking
 
         private ushort _nextItemIndex = 1;
         public NetworkRole Role => _role;
-        public bool IsConnected => _peers.Count > 0 && _handshakeComplete;
+        public bool IsConnected => _handshakeComplete && (_role == NetworkRole.Host || _peers.Count > 0);
         public int LocalPlayerId => _localPlayerId;
         public string StatusText { get; private set; } = "Offline";
         public bool SceneMismatch => _sceneMismatch;
@@ -99,6 +99,7 @@ namespace SyncRADation.Networking
                 return;
             }
             _sessionPlayerIds.Add(0);
+            _handshakeComplete = true;
             StatusText = "Hosting on port " + port;
             ModRuntime.Log?.Msg("[Network] Hosting on port " + port);
         }
@@ -131,7 +132,7 @@ namespace SyncRADation.Networking
             NetGate.Reset();
             SourceAnimReader.Reset();
             HitchTrace.Reset();
-            DroppedItemManager.SaveToFile();
+            NetworkDamageSystem.Reset();
             DroppedItemManager.ClearAll();
             _handshakeComplete = false;
             _vitalTimer = 0f;
@@ -222,11 +223,19 @@ namespace SyncRADation.Networking
 
             // Pickup nearby dropped item
             DroppedItemManager.TickNearby();
-            if (Input.GetKeyDown(KeyCode.E) && WorldItem.NearbyID >= 0
+            if (Input.GetKeyDown(KeyCode.E) && DroppedItemManager.NearbyID >= 0
                 && PlayerState.gameState == PlayerState.gameStates.play)
             {
-                int localID = WorldItem.NearbyID;
-                WorldItem.NearbyID = -1;
+                int localID = DroppedItemManager.NearbyID;
+                DroppedItemManager.NearbyID = -1;
+                Items.itemlist peekItem;
+                int peekCount;
+                if (DroppedItemManager.TryGet(localID, out peekItem, out peekCount)
+                    && !BagHasRoom(peekItem))
+                {
+                    ModRuntime.Log?.Msg("[Pickup] bag full");
+                    return;
+                }
                 if (_role == NetworkRole.Host)
                     TryClaimDropped(localID, _localPlayerId, out _);
                 else
@@ -691,10 +700,7 @@ namespace SyncRADation.Networking
                 maxHp = 100;
                 gameState = (byte)PlayerState.gameState;
                 charState = (byte)PlayerState.charState;
-                dead = PlayerState.charState == PlayerState.charStates.dead
-                    || NetworkDamageSystem.PlayerHP <= 0f;
-                if (NetworkDamageSystem.PlayerHP > 0f && NetworkDamageSystem.PlayerHP < hp)
-                    hp = (int)NetworkDamageSystem.PlayerHP;
+                dead = PlayerState.charState == PlayerState.charStates.dead || hp <= 0;
             }
             catch { }
 
@@ -757,29 +763,6 @@ namespace SyncRADation.Networking
             msg.Serialize(writer);
             BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
             ModRuntime.Log?.Msg("[Network] Snapshot request sent to host");
-        }
-
-        public void SendPlayerShotEnemy(ulong enemyWorldId, float damage)
-        {
-            // Legacy path (debug/cheats) — prefer SendNativeEnemyHit
-            var msg = new EnemyDamageMessage
-            {
-                AttackerPlayerId = _localPlayerId,
-                TargetPlayerId = -1,
-                EnemyWorldId = unchecked((long)enemyWorldId),
-                Damage = damage,
-                IsStagger = false,
-                NativeTakeDamage = false
-            };
-            var writer = new NetDataWriter();
-            writer.Put((byte)NetMessageType.EnemyDamage);
-            msg.Serialize(writer);
-
-            if (_role == NetworkRole.Host)
-                _enemySync.ApplyDamageOnHost(enemyWorldId, damage);
-            else if (_peers.TryGetValue(0, out var peer)
-                && peer.ConnectionState == ConnectionState.Connected)
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
 
         /// <summary>Client → host: real TakeDamage chances from PlayerAttack / EnemyController patch.</summary>
@@ -995,7 +978,7 @@ namespace SyncRADation.Networking
 
             AnItem anItem = null;
             Items.itemlist itemToDrop = Items.itemlist.None;
-            int count = 1;
+            int count = 0;
 
             try
             {
@@ -1052,7 +1035,7 @@ namespace SyncRADation.Networking
                     ModRuntime.Log?.Msg("[Drop] count 0 for " + itemToDrop);
                     return;
                 }
-                if (count > have) count = have;
+                count = have;
                 InventoryManager.RemoveItem(anItem, count);
             }
             catch (Exception ex)
@@ -1109,7 +1092,11 @@ namespace SyncRADation.Networking
             DroppedItemManager.DespawnItem(itemKey);
 
             if (shared)
+            {
+                PartyKeyRing.Note(item);
+                PartyKeyRing.Broadcast();
                 return true;
+            }
 
             if (claimerId == _localPlayerId)
             {
@@ -1119,6 +1106,8 @@ namespace SyncRADation.Networking
                     ModRuntime.Log?.Warning("[Pickup] AddItem failed: " + ex.Message);
                     return false;
                 }
+                PartyKeyRing.Note(item);
+                PartyKeyRing.Broadcast();
             }
             else
                 reason = "grant:" + (int)itemEnum + ":" + count;
@@ -1136,6 +1125,29 @@ namespace SyncRADation.Networking
                 return itemData.type == AnItem.AnItemType.Object;
             }
             catch { return false; }
+        }
+
+        static bool BagHasRoom(Items.itemlist itemEnum)
+        {
+            try
+            {
+                var item = InventoryManager.getItem(itemEnum);
+                if (item != null && PartyKeyRing.InLocalBag(item)) return true;
+                int used = 0;
+                var dict = InventoryManager.elsterItems;
+                if (dict == null) return true;
+                var en = dict.GetEnumerator();
+                while (en.MoveNext())
+                {
+                    if (en.Current.key != null && en.Current.value > 0)
+                        used++;
+                }
+                en.Dispose();
+                int max = InventoryManager.maxSlots;
+                if (max <= 0) max = 6;
+                return used < max;
+            }
+            catch { return true; }
         }
 
         // --- Network events ---
@@ -1446,7 +1458,11 @@ namespace SyncRADation.Networking
             var item = InventoryManager.getItem((Items.itemlist)enumVal);
             if (item == null) return;
             if (consume) InventoryManager.RemoveItem(item, count);
-            else InventoryManager.AddItem(item, count);
+            else
+            {
+                InventoryManager.AddItem(item, count);
+                PartyKeyRing.OfferToHost(item);
+            }
         }
 
         private void HandleHandshake(HandshakeMessage handshake, int senderId)
@@ -1653,6 +1669,7 @@ namespace SyncRADation.Networking
                     if (item != null)
                     {
                         InventoryManager.AddItem(item, msg.Count);
+                        PartyKeyRing.OfferToHost(item);
                         ModRuntime.Log?.Msg("[Drop] Shared item granted: " + (Items.itemlist)msg.ItemEnum);
                     }
                 }
@@ -1743,12 +1760,6 @@ namespace SyncRADation.Networking
             {
                 if (msg.SenderPlayerId == 0)
                     _hostSceneName = msg.SceneName ?? "";
-            }
-
-            if (SceneFollowService.IsTransient(msg.SceneName))
-            {
-                PlaytestLog.Event("Scene", "Peer " + msg.SenderPlayerId + " still loading");
-                return;
             }
 
             _localSceneName = SceneManager.GetActiveScene().name ?? "";

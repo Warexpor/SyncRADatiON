@@ -12,8 +12,8 @@ namespace SyncRADation.Networking
 
         private const float SendInterval = 1f / 15f;
 
-        private readonly Dictionary<int, (MonoBehaviour comp, BossType type)> _hostToLocal
-            = new Dictionary<int, (MonoBehaviour comp, BossType type)>();
+        private readonly Dictionary<long, (MonoBehaviour comp, BossType type)> _hostToLocal
+            = new Dictionary<long, (MonoBehaviour comp, BossType type)>();
 
         public void TickHost(LanNetworkManager net)
         {
@@ -95,11 +95,6 @@ namespace SyncRADation.Networking
                 net.SendBossState(list.ToArray());
         }
 
-        public void TickClient(LanNetworkManager net)
-        {
-            if (net.Role == NetworkRole.Host) return;
-        }
-
         public void OnBossStateReceived(BossStateMessage msg)
         {
             var net = LanNetworkManager.Instance;
@@ -118,7 +113,7 @@ namespace SyncRADation.Networking
 
         private void ApplyBossState(BossSnapshotNet snap)
         {
-            int hostID = (int)(snap.WorldId & 0x7FFFFFFF); // dictionary key only
+            long hostID = snap.WorldId;
 
             MonoBehaviour comp;
             BossType type;

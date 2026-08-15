@@ -95,7 +95,7 @@ namespace SyncRADation.Networking
                         ok = true;
                         break;
                     case InteractionKind.MultiCondition:
-                        ok = ApplyMultiCondition(id);
+                        ok = ApplyMultiCondition(id, msg.Int0);
                         break;
                     case InteractionKind.SceneFollowRequest:
                         ok = SceneFollowService.TryApplyRequest(msg.Text);
@@ -106,6 +106,9 @@ namespace SyncRADation.Networking
                         break;
                     case InteractionKind.DroppedPickup:
                         ok = net.TryClaimDropped(msg.Int0, msg.SenderPlayerId, out reason);
+                        break;
+                    case InteractionKind.InspectFlag:
+                        ok = ApplyInspectFlag(msg);
                         break;
                 }
             }
@@ -146,7 +149,9 @@ namespace SyncRADation.Networking
             AnItem key = u.key;
             if (key != null && !PartyKeyRing.LocalOrRingHas(key))
             {
-                if (senderId <= 0) return false;
+                var net = LanNetworkManager.Instance;
+                int localId = net != null ? net.LocalPlayerId : 0;
+                if (senderId == localId || senderId < 0) return false;
                 try { PartyKeyRing.Note(key._item); } catch { return false; }
                 PlaytestLog.Event("KeyRing", "trust UseItem from=" + senderId + " " + key._item);
             }
@@ -162,17 +167,7 @@ namespace SyncRADation.Networking
             }
             catch { }
 
-            bool consumes = false;
-            try
-            {
-                var lockComp = u.GetComponent<InteractiveLock>();
-                if (lockComp != null)
-                {
-                    lockComp.locked = false;
-                    consumes = lockComp.ConsumesKey && key != null;
-                }
-            }
-            catch { }
+            bool consumes = UnlockInteractiveLocks(u, key);
 
             if (consumes)
             {
@@ -206,7 +201,9 @@ namespace SyncRADation.Networking
                         if (u == null) continue;
                         AnItem key = u.key;
                         if (key == null || PartyKeyRing.LocalOrRingHas(key)) continue;
-                        if (senderId <= 0) return false;
+                        var net = LanNetworkManager.Instance;
+                        int localId = net != null ? net.LocalPlayerId : 0;
+                        if (senderId == localId || senderId < 0) return false;
                         try { PartyKeyRing.Note(key._item); } catch { return false; }
                         PlaytestLog.Event("KeyRing", "trust UseItemMulti from=" + senderId + " " + key._item);
                     }
@@ -234,14 +231,7 @@ namespace SyncRADation.Networking
                         if (u == null) continue;
                         AnItem key = u.key;
                         if (key == null) continue;
-                        bool consumes = false;
-                        try
-                        {
-                            var lockComp = u.GetComponent<InteractiveLock>();
-                            if (lockComp != null)
-                                consumes = lockComp.ConsumesKey;
-                        }
-                        catch { }
+                        bool consumes = UnlockInteractiveLocks(u, key);
                         if (consumes)
                         {
                             bool hostHad = PartyKeyRing.InLocalBag(key);
@@ -282,6 +272,47 @@ namespace SyncRADation.Networking
             }
             catch { }
             try { PartyKeyRing.Remove(key._item); } catch { }
+        }
+
+        static bool UnlockInteractiveLocks(UseItemInteraction u, AnItem key)
+        {
+            bool consumes = false;
+            if (u == null) return false;
+            try
+            {
+                var lockComp = u.GetComponent<InteractiveLock>()
+                    ?? u.GetComponentInChildren<InteractiveLock>(true);
+                if (lockComp != null)
+                {
+                    lockComp.locked = false;
+                    consumes = consumes || (lockComp.ConsumesKey && key != null);
+                }
+            }
+            catch { }
+            try
+            {
+                var single = u.GetComponent<InteractiveLockSingle>()
+                    ?? u.GetComponentInChildren<InteractiveLockSingle>(true)
+                    ?? u.GetComponentInParent<InteractiveLockSingle>();
+                if (single != null)
+                {
+                    consumes = consumes || (single.ConsumesKey && key != null);
+                    try
+                    {
+                        if (single.master != null)
+                            single.master.locked = false;
+                    }
+                    catch { }
+                    try
+                    {
+                        if (single.door != null)
+                            single.door.locked = false;
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+            return consumes;
         }
 
         private static bool ApplyKeypad(ulong id)
@@ -426,39 +457,74 @@ namespace SyncRADation.Networking
             return best;
         }
 
-        private static bool ApplyMultiCondition(ulong id)
+        private static bool ApplyMultiCondition(ulong id, int kind)
         {
             var m = Find<MultiConditionEvent>(id);
             if (m == null) return false;
             NetGate.BeginApply();
-            try { m.TryOnce(); }
+            try
+            {
+                if (kind == 1) m.TryTrigger();
+                else m.TryOnce();
+            }
             finally { NetGate.EndApply(); }
-            LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.MultiConditionFire, id, 0, "");
+            LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.MultiConditionFire, id, kind, "");
+            return true;
+        }
+
+        private static bool ApplyInspectFlag(InteractionRequestMessage msg)
+        {
+            string key = msg.Text;
+            string strVal = "";
+            if (msg.Int0 == 3)
+            {
+                int split = key.IndexOf('\n');
+                if (split >= 0)
+                {
+                    strVal = key.Substring(split + 1);
+                    key = key.Substring(0, split);
+                }
+            }
+            if (string.IsNullOrEmpty(key)) return false;
+            var story = LanNetworkManager.Instance.StorySync;
+            NetGate.BeginApply();
+            try
+            {
+                switch (msg.Int0)
+                {
+                    case 0:
+                        SProgress.SetBool(key, msg.Int1 != 0);
+                        story.NoteBool(key, msg.Int1 != 0);
+                        break;
+                    case 1:
+                        SProgress.SetInt(key, msg.Int1);
+                        story.NoteInt(key, msg.Int1);
+                        break;
+                    case 2:
+                        SProgress.SetFloat(key, msg.Float0);
+                        story.NoteFloat(key, msg.Float0);
+                        break;
+                    case 3:
+                        SProgress.SetString(key, strVal);
+                        story.NoteString(key, strVal);
+                        break;
+                    case 4:
+                        var v = new Vector3(msg.Float0, msg.Float1, msg.Float2);
+                        SProgress.SetVector(key, v);
+                        story.NoteVector(key, v);
+                        break;
+                }
+            }
+            finally { NetGate.EndApply(); }
             return true;
         }
 
         private static T Find<T>(ulong worldId) where T : Component
         {
-            if (worldId == 0) return null;
-            try
-            {
-                var all = FindAll<T>();
-                if (all == null) return null;
-                for (int i = 0; i < all.Length; i++)
-                {
-                    if (all[i] == null) continue;
-                    if (WorldId.FromGameObject(all[i].gameObject) == worldId)
-                        return all[i];
-                }
-            }
-            catch { }
-            return null;
-        }
-
-        private static T[] FindAll<T>() where T : Component
-        {
-            try { return Object.FindObjectsOfType<T>(true); }
-            catch { return Object.FindObjectsOfType<T>(); }
+            var found = WorldLookup.Find<T>(worldId);
+            if (found == null && worldId != 0)
+                PlaytestLog.Miss("Interact", typeof(T).Name, worldId);
+            return found;
         }
     }
 }

@@ -326,8 +326,15 @@ namespace SyncRADation.Networking
                         }
                         break;
                     case StoryCmd.DialogueContinue:
+                        try
+                        {
+                            if (msg.Int0 != 0) Dialoguer.ContinueDialogue(msg.Int0);
+                            else Dialoguer.ContinueDialogue();
+                        }
+                        catch { }
+                        break;
                     case StoryCmd.DialogueEnd:
-                        PlaytestLog.Event("Story", "skip " + msg.Cmd);
+                        try { Dialoguer.EndDialogue(); } catch { }
                         break;
                     case StoryCmd.CutsceneStart:
                     {
@@ -383,7 +390,12 @@ namespace SyncRADation.Networking
                         var m = Find<MultiConditionEvent>(id);
                         if (m != null)
                         {
-                            try { m.TryOnce(); } catch { }
+                            try
+                            {
+                                if (msg.Int0 == 1) m.TryTrigger();
+                                else m.TryOnce();
+                            }
+                            catch { }
                             try { if (m.OnTryDone != null) m.OnTryDone.Invoke(); } catch { }
                         }
                         break;
@@ -422,21 +434,10 @@ namespace SyncRADation.Networking
 
         private static T Find<T>(ulong worldId) where T : Component
         {
-            if (worldId == 0) return null;
-            try
-            {
-                var all = Object.FindObjectsOfType<T>();
-                if (all == null) return null;
-                for (int i = 0; i < all.Length; i++)
-                {
-                    if (all[i] == null) continue;
-                    if (WorldId.FromGameObject(all[i].gameObject) == worldId)
-                        return all[i];
-                }
-            }
-            catch { }
-            PlaytestLog.Miss("Story", typeof(T).Name, worldId);
-            return null;
+            var found = WorldLookup.Find<T>(worldId);
+            if (found == null && worldId != 0)
+                PlaytestLog.Miss("Story", typeof(T).Name, worldId);
+            return found;
         }
     }
 }

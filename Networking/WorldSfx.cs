@@ -42,15 +42,6 @@ namespace SyncRADation.Networking
             Start(path, RuntimeUtils.To3DAttributes(pos), vol * Mathf.Clamp01(gain));
         }
 
-        public static void PlayClip(AudioClip clip, Vector3 pos, float gain = 1f, float range = Range)
-        {
-            if (clip == null) return;
-            float vol;
-            if (!TryVolume(pos, out vol, range)) return;
-            try { AudioSource.PlayClipAtPoint(clip, pos, vol * Mathf.Clamp01(gain)); }
-            catch { }
-        }
-
         public static void PlayFootstep(string path, Transform at, bool running, float gain = 1f)
         {
             if (string.IsNullOrEmpty(path) || at == null) return;

@@ -4,6 +4,16 @@
 
 Protocol **v7** (incompatible with v6). Join dump is the live SProgress slot. UnityEvents and world FMOD replay on the client. Native puzzle solve methods on the solved edge. Session roster for 3–4 players.
 
+### Correctness pass
+- Party key ring is **Key/Object only** (ammo/weapons no longer lie in `hasItem`). Dropped and crafted keys (client Tape+BrokenKey) note the ring; host merges client ring deltas
+- HP is native `HurtElster` only (no parallel pool). Host AI no longer double-hits the host. Parameterless `TakeDamage` reads `PlayerAttack.sneaking`. Host `SaveManager.Load` wipes peers. Disconnect resets downed state
+- World pickup claims by **WorldId**; unique-enum hide is Key/Object copies only. Grant is `AddItem` + hide, never a second `pickUp()`. `InteractiveLockSingle` consume/unlock including host-self sender 0
+- One `setInRange` prefix. `index:` chapter loads gate SceneFollow (transient is `LoadingScreen` only). Penrose defer is cinematic (`PEN_Titles.started` / local ViewPoint, 3s latch then clear if `started` never rose)
+- Dialoguer `StartDialogue` (including callback overloads) sends to the host. Continue/End replay on clients; flavor/inspect lines stay fully local. Inspect-originated `SProgress.Set*` notes the host. Client `EvaluateEnding` blocked. EventZone idle timer runs; keypad Update polling removed
+- Elevator snaps `riding`/`stopped` (still no remote `startRide`). Radio lock applies `frequency`. EventZone join fires `onInRange` on the false→true edge only. Overlay kill is per WorldId
+- FMOD join dump scans live `IsPlaying()` including inactive room chunks. WorldId hashes `go.scene`. Host session is live with zero peers. Boss keyed by full WorldId. Drops: stack count, bag-full reject (raw bag, not ring-patched `hasItem`), no fake save file
+- `ExperimentalPuzzles` migrates into `SyncPuzzles` and never forces puzzles off
+
 ### Added
 - Full `SProgress.progress` list dump (bool/int/float/string/vector) + mid-presentation WorldId on join
 - `EventZone.onInRange` / MultiCondition / BookScreen / `CutsceneCut.Proceed` presentation relay
@@ -44,6 +54,10 @@ Protocol **v7** (incompatible with v6). Join dump is the live SProgress slot. Un
 - Friendly fire no longer double-hits; storage put/take mutates the shared box, not the host bag
 - StoryCommit replays presentation on join/resync only; host ignores client world-apply packets
 - Client Dialoguer / UseItemMulti / keypad / cutscene proceed / books actually reach the host
+- Dialoguer Continue/End no longer freeze after the first page (presentation applies them; flavor stays local). Callback `StartDialogue` overloads take the host path
+- Host world-pickup reserves the WorldId in the prefix (same-room race). `SaveManager.Load` only wipes peers on host death
+- Int chapter loads use the build-index name first. Client F7/scene requests load on the host without `BeginApply` so `SendSceneFollow` reaches the requester
+- `MultiConditionEvent.TryTrigger` broadcasts once. FMOD dump includes inactive emitters
 - Dropped E pickup is host-claimed; pickup deny no longer hides the prop
 - Sequenced pose no longer embeds the WeaponMount tree (261 eulers blew the 1020-byte LiteNetLib cap and crashed `Network.Update` every bone tick). Bind bones only; overflow goes as `BonePose` chunks
 - Proxy weapon hold/aim uses Elster controller names (`Weapon/Pistol`, not `Pistol`) so ADS actually poses the arms
@@ -122,7 +136,7 @@ Version reset: former `1.2.x-dev` is now **0.4.0-dev**. Protocol still **v4** (n
 - **Enemy damage** uses native `EnemyController.TakeDamage(fire, crit, hurt, noSneak)` on host; clients no longer DIY raycast + raw `hitbox.HP` math
 - **Harmony** prefixes on both `TakeDamage` overloads → client hits report to host, host sim is authoritative
 - **Puzzles** keyed by **WorldId** (FNV scene+hierarchy), not `FindObjectsOfType` index (cross-peer identity fix)
-- **Doors** apply via `DoorNative` → private `openDoors`/`closeDoors`/`cycle` + `ConnectedDoors.StartA`/`StartB` when possible
+- **Doors** apply via `DoorNative` → private `openDoors`/`closeDoors`/`cycle`. ConnectedDoors lock/plates only — never `StartA`/`StartB`
 - **World ItemPickup** host claim/grant: only claimer gets inventory; everyone else only hides; race-safe reservation
 
 ### Added

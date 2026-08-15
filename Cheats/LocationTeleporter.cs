@@ -2,6 +2,8 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using SyncRADation.Networking;
+using SyncRADation.Sync;
 
 namespace SyncRADation.Cheats
 {
@@ -125,6 +127,14 @@ namespace SyncRADation.Cheats
 
         private static void LoadChapter(LocationEntry loc)
         {
+            if (NetGate.Client)
+            {
+                SceneFollowService.RequestFollow(loc.Scene);
+                SetStatus("Requested host load: " + loc.Scene);
+                ShowMenu = false;
+                return;
+            }
+
             // Prefer AsyncLoader (same path as SceneFollow). Native Cheats.cheat often no-ops.
             string err = null;
 
