@@ -31,12 +31,15 @@ namespace SyncRADation.Players
     private byte _facing;
     private bool _snappedToFirst;
     private BoneSyncManager _boneSync;
-    private float[] _prevBones;
-    private float[] _curBones;
-    private float _prevBoneTime;
-    private float _curBoneTime;
     private float[] _boneAssemble;
     private int _boneAssembleGot;
+        private struct BoneSnap
+        {
+            public float Time;
+            public float[] Eulers;
+        }
+        private readonly System.Collections.Generic.List<BoneSnap> _boneSnaps = new System.Collections.Generic.List<BoneSnap>(8);
+        private const int BoneSnapCap = 8;
 
         public Vector3 AimDirection
         {
@@ -48,8 +51,8 @@ namespace SyncRADation.Players
             }
         }
 
-        private const float SmoothRate = 4f;
-        private const float FacingSmoothRate = 8f;
+        private const float SmoothRate = 12f;
+        private const float FacingSmoothRate = 16f;
 
         public RemoteAnimatorDriver(GameObject target)
         {
@@ -92,17 +95,14 @@ namespace SyncRADation.Players
             _weapon = state.Weapon;
             _facing = state.Facing;
             _targetFacing = state.RotY;
-            // Store bone snapshot for interpolation � use fixed 50ms window for smooth blending
+            // Timestamped bone snapshot; sampled on the same delay as root pose.
             if (state.BoneRotations != null && state.BoneRotations.Length > 0)
             {
                 if (_boneSync != null && _boneSync.BoneCount > 0 && _boneSync.BoneCount != state.BoneRotations.Length / 3)
                 {
                     SyncRADation.ModRuntime.Log?.Msg("[DRV] BONE COUNT MISMATCH! proxy=" + _boneSync.BoneCount + " source=" + (state.BoneRotations.Length / 3));
                 }
-                _prevBones = _curBones;
-                _curBones = state.BoneRotations;
-                _prevBoneTime = Time.time;
-                _curBoneTime = Time.time + 0.05f; // fixed 50ms window for 20Hz bone rate
+                CommitBoneSnapshot(state.BoneRotations);
             }
 
             if (!_snappedToFirst)
@@ -158,12 +158,42 @@ namespace SyncRADation.Players
 
         private void CommitBoneSnapshot(float[] data)
         {
-            _prevBones = _curBones;
-            _curBones = data;
-            _prevBoneTime = Time.time;
-            _curBoneTime = Time.time + 0.05f;
+            if (data == null || data.Length < 3) return;
+            var copy = new float[data.Length];
+            System.Array.Copy(data, copy, data.Length);
+            _boneSnaps.Add(new BoneSnap { Time = Time.time, Eulers = copy });
+            while (_boneSnaps.Count > BoneSnapCap)
+                _boneSnaps.RemoveAt(0);
             if (!_snappedToFirst && _boneSync != null)
-                _boneSync.ApplyRotationsSnap(data);
+                _boneSync.ApplyRotationsSnap(copy);
+        }
+
+        private void SampleBones(float renderTime)
+        {
+            int n = _boneSnaps.Count;
+            if (n == 0 || _boneSync == null) return;
+            var newest = _boneSnaps[n - 1];
+            var oldest = _boneSnaps[0];
+            if (n == 1 || renderTime <= oldest.Time)
+            {
+                _boneSync.ApplyRotationsSnap(oldest.Eulers);
+                return;
+            }
+            if (renderTime >= newest.Time)
+            {
+                _boneSync.ApplyRotationsSnap(newest.Eulers);
+                return;
+            }
+            int hi = n - 1;
+            while (hi > 0 && _boneSnaps[hi].Time > renderTime)
+                hi--;
+            int lo = hi;
+            hi = Mathf.Min(lo + 1, n - 1);
+            var a = _boneSnaps[lo];
+            var b = _boneSnaps[hi];
+            float span = b.Time - a.Time;
+            float t = span > 0.0001f ? Mathf.Clamp01((renderTime - a.Time) / span) : 1f;
+            _boneSync.ApplyRotationsInterpolated(a.Eulers, b.Eulers, t);
         }
 
         public void PreTick()
@@ -281,18 +311,8 @@ namespace SyncRADation.Players
             }
 
             // Apply bone rotations � interpolate between snapshots
-            if (_boneSync != null && _curBones != null)
-            {
-                if (_prevBones != null && _curBoneTime > _prevBoneTime)
-                {
-                    float t = Mathf.Clamp01((Time.time - _prevBoneTime) / (_curBoneTime - _prevBoneTime));
-                    _boneSync.ApplyRotationsInterpolated(_prevBones, _curBones, t);
-                }
-                else
-                {
-                    _boneSync.ApplyRotationsSnap(_curBones);
-                }
-            }
+            if (_boneSync != null && _boneSnaps.Count > 0)
+                SampleBones(Time.time - PluginInfo.PoseInterpDelay);
 
             if (SyncRADation.ModRuntime.VerboseLogging && Time.time - _lastLog > 30f)
             {

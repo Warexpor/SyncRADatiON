@@ -12,6 +12,8 @@ namespace SyncRADation.Players
         private Transform _proxyTransform;
         private GameObject _audioAnchor;
         private bool _lastShooting;
+        private bool _lastAiming;
+        private bool _lastEmptyClick;
         private float _lastReloadTime;
         private float _lastHurtTime;
         private WeaponType _lastWeapon;
@@ -31,9 +33,11 @@ namespace SyncRADation.Players
         private const string LadderUpPath = "event:/Elster/Ladder/Up";
         private const string LadderDownPath = "event:/Elster/Ladder/Down";
 
-        // Pump/action sound scheduling
-        private float _actionSoundTimer;
-        private string _pendingActionPath;
+        // Delayed case-land / pump (proxy has no ParticleCollisionSound MBs)
+        private const int PendingCap = 4;
+        private readonly float[] _pendingT = new float[PendingCap];
+        private readonly string[] _pendingP = new string[PendingCap];
+        private const float CaseLandDelay = 0.32f;
 
         private float _climbTimer;
         private Vector3 _lastPos;
@@ -42,6 +46,7 @@ namespace SyncRADation.Players
         private static bool _weaponCacheBuilt;
         private static readonly Dictionary<WeaponType, string> _shootFMOD = new Dictionary<WeaponType, string>();
         private static readonly Dictionary<WeaponType, string> _reloadFMOD = new Dictionary<WeaponType, string>();
+        private static readonly Dictionary<WeaponType, string> _emptyFMOD = new Dictionary<WeaponType, string>();
 
         // CombatSfxManager paths — weapon secondary action sounds
         private static bool _combatSfxCached;
@@ -183,6 +188,8 @@ namespace SyncRADation.Players
 
             _tickCount++;
             bool shooting = bools.HasFlag(AnimBools.Shooting);
+            bool aiming = bools.HasFlag(AnimBools.Aiming) || state.AimingTime > 0.5f;
+            bool emptyClick = bools.HasFlag(AnimBools.EmptyClick);
 
             // Distance check: only play proxy sounds if within hearing range of local player
             float distToLocal = float.MaxValue;
@@ -201,10 +208,16 @@ namespace SyncRADation.Players
             bool nearby = distToLocal < 40f;
             bool farRange = distToLocal < 75f;
 
-            // Shooting — far range (gunshots are loud)
-            if (farRange && shooting && !_lastShooting)
+            // Live shot — Fire pulse only (Shooting-held used to bang on empty clicks)
+            if (farRange && triggers.HasFlag(AnimTriggers.Fire))
                 PlayShootSound(state.Weapon);
+            if (nearby && emptyClick && !_lastEmptyClick)
+                PlayEmptySound(state.Weapon);
+            if (nearby && aiming && !_lastAiming)
+                PlayFMODAttached(_drawSound, 0.25f);
             _lastShooting = shooting;
+            _lastEmptyClick = emptyClick;
+            _lastAiming = aiming;
 
             // Footsteps — synced with animation via StepHappened flag, nearby only (<40m)
             if (nearby && state.StepHappened)
@@ -262,16 +275,7 @@ namespace SyncRADation.Players
                 _climbTimer = 0f;
                 _wasClimbing = false;
             }
-            // Action sound timer (pump, eject, etc.)
-            if (_actionSoundTimer > 0f)
-            {
-                _actionSoundTimer -= Mathf.Min(Time.deltaTime, 0.1f);
-                if (_actionSoundTimer <= 0f && !string.IsNullOrEmpty(_pendingActionPath))
-                {
-                    PlayFMODAttached(_pendingActionPath, 0.4f);
-                    _pendingActionPath = null;
-                }
-            }
+            TickPendingSfx();
 
             _lastPos = _proxyTransform.position;
         }
@@ -279,37 +283,48 @@ namespace SyncRADation.Players
         public void OnWeaponShot(WeaponType weapon)
         {
             if (!_combatSfxCached) BuildCombatSfxCache();
+            QueueSfx(CaseEvent(weapon), CaseLandDelay);
+            if (weapon == WeaponType.Shotgun)
+                QueueSfx(_shotgunPumpPath, 0.45f);
+        }
 
-            // Delayed mechanical / case sounds after the bang (proxy has no native ReloadCaseEject MBs)
+        private void QueueSfx(string path, float delay)
+        {
+            if (string.IsNullOrEmpty(path)) return;
+            for (int i = 0; i < PendingCap; i++)
+            {
+                if (_pendingP[i] != null) continue;
+                _pendingT[i] = delay;
+                _pendingP[i] = path;
+                return;
+            }
+        }
+
+        private void TickPendingSfx()
+        {
+            float dt = Mathf.Min(Time.deltaTime, 0.1f);
+            for (int i = 0; i < PendingCap; i++)
+            {
+                if (_pendingP[i] == null) continue;
+                _pendingT[i] -= dt;
+                if (_pendingT[i] > 0f) continue;
+                PlayFMODAttached(_pendingP[i], 0.35f);
+                _pendingP[i] = null;
+            }
+        }
+
+        private static string CaseEvent(WeaponType weapon)
+        {
             switch (weapon)
             {
-                case WeaponType.Shotgun:
-                    _pendingActionPath = _shotgunPumpPath;
-                    _actionSoundTimer = 0.45f;
-                    break;
-                case WeaponType.CAR:
-                    _pendingActionPath = _fgunEjectPath;
-                    _actionSoundTimer = 0.25f;
-                    break;
-                case WeaponType.Pistol:
-                case WeaponType.Handgun:
-                    // slide rack / case-ish secondary — best available CombatSfx paths
-                    _pendingActionPath = !string.IsNullOrEmpty(_pistolSlideForwardPath)
-                        ? _pistolSlideForwardPath
-                        : _pistolMagDropPath;
-                    _actionSoundTimer = 0.12f;
-                    break;
-                case WeaponType.Revolver:
-                    _pendingActionPath = _revolverEjectPath;
-                    _actionSoundTimer = 0.18f;
-                    break;
-                case WeaponType.Rifle:
-                    _pendingActionPath = _rifleEjectPath;
-                    _actionSoundTimer = 0.2f;
-                    break;
-                case WeaponType.SMG:
-                    // no dedicated case path — skip noisy spam on full-auto
-                    break;
+                case WeaponType.Pistol: return "event:/Elster/Weapons/Pistol/Case";
+                case WeaponType.Revolver: return "event:/Elster/Weapons/Revolver/Case";
+                case WeaponType.Rifle: return "event:/Elster/Weapons/Rifle/Case";
+                case WeaponType.SMG: return "event:/Elster/Weapons/SMG/Case";
+                case WeaponType.Shotgun: return "event:/Elster/Weapons/Shotgun/Shell";
+                case WeaponType.Flare:
+                case WeaponType.CAR: return "event:/Elster/Weapons/FlareGun/Case";
+                default: return null;
             }
         }
 
@@ -317,7 +332,14 @@ namespace SyncRADation.Players
         {
             string path;
             if (_shootFMOD.TryGetValue(weapon, out path))
-                PlayFMODAttached(path, 0.5f);
+                PlayFMODAttached(path, 0.55f, WorldSfx.CombatRange);
+        }
+
+        private void PlayEmptySound(WeaponType weapon)
+        {
+            string path;
+            if (_emptyFMOD.TryGetValue(weapon, out path))
+                PlayFMODAttached(path, 0.4f);
         }
 
         private void PlayReloadSound(WeaponType weapon)
@@ -342,10 +364,10 @@ namespace SyncRADation.Players
             }
         }
 
-        private void PlayFMODAttached(string path, float volume)
+        private void PlayFMODAttached(string path, float volume, float range = WorldSfx.Range)
         {
             if (string.IsNullOrEmpty(path) || _audioAnchor == null) return;
-            WorldSfx.Play(path, _audioAnchor.transform, volume);
+            WorldSfx.Play(path, _audioAnchor.transform, volume, range);
         }
 
         private static void BuildWeaponCache()
@@ -377,7 +399,12 @@ namespace SyncRADation.Players
                             reloadCount++;
                         }
 
-                        ModRuntime.Log?.Msg("[Audio] Weapon " + wt + ": shotMod=" + (w.shotMod ?? "null") + " reloadMod=" + (w.reloadMod ?? "null"));
+                        if (!string.IsNullOrEmpty(w.emptyMod) && !_emptyFMOD.ContainsKey(wt))
+                            _emptyFMOD[wt] = w.emptyMod;
+
+                        ModRuntime.Log?.Msg("[Audio] Weapon " + wt + ": shotMod=" + (w.shotMod ?? "null")
+                            + " emptyMod=" + (w.emptyMod ?? "null")
+                            + " reloadMod=" + (w.reloadMod ?? "null"));
                     }
                     catch { }
                 }

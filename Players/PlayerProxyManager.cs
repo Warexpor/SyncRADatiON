@@ -1,6 +1,7 @@
 // SyncRADation � Dictionary<int,RemotePlayerProxy>, position interpolation, collider lookup
 using System.Collections.Generic;
 using SyncRADation.Networking;
+using SyncRADation.Sync;
 using UnityEngine;
 
 namespace SyncRADation.Players
@@ -11,8 +12,8 @@ namespace SyncRADation.Players
         private readonly Dictionary<int, GameObject> _proxyObjects = new Dictionary<int, GameObject>();
         private readonly Dictionary<Collider, int> _proxyColliders = new Dictionary<Collider, int>();
 
-        // Snapshot interpolation: render ~2 packets behind so 30 Hz pose never
-        // exponential-lerps toward a moving target (that hitch is visible as a metronome stutter).
+        // Snapshot interpolation: render ~1 packet behind so 30 Hz pose is
+        // sampled between snaps (Hermite + Slerp), not exponential-lerped at the live packet.
         private struct PoseSnap
         {
             public float Time;
@@ -28,7 +29,6 @@ namespace SyncRADation.Players
         private readonly Dictionary<int, InterpState> _interp = new Dictionary<int, InterpState>();
 
         private const float TeleportDistance = 15f;
-        private const float InterpDelay = 0.07f;
         private const float ExtrapolateMax = 0.12f;
         private const int SnapshotCap = 8;
         private int _proxyLayer = -1;
@@ -139,6 +139,7 @@ namespace SyncRADation.Players
                 proxy.ApplyState(state);
                 var targetPos = new Vector3(state.PosX, state.PosY, state.PosZ);
                 ApplyPosition(playerId, targetPos, new Vector3(state.VelX, 0f, state.VelZ), state.GetFacingWorld());
+                HitchTrace.Recv(playerId);
             }
         }
 
@@ -181,7 +182,7 @@ namespace SyncRADation.Players
 
         public void LateUpdate()
         {
-            float renderTime = Time.time - InterpDelay;
+            float renderTime = Time.time - PluginInfo.PoseInterpDelay;
             var stale = new List<int>();
 
             foreach (var kvp in _proxyObjects)
@@ -216,6 +217,7 @@ namespace SyncRADation.Players
             {
                 pos = oldest.Pos;
                 facing = oldest.Facing;
+                HitchTrace.Interp("hold", n, (Time.time - newest.Time) * 1000f);
                 return;
             }
 
@@ -224,6 +226,7 @@ namespace SyncRADation.Players
                 float extra = Mathf.Min(renderTime - newest.Time, ExtrapolateMax);
                 pos = newest.Pos + newest.Vel * extra;
                 facing = newest.Facing;
+                HitchTrace.Interp("extrap", n, extra * 1000f);
                 return;
             }
 
@@ -236,8 +239,19 @@ namespace SyncRADation.Players
             var b = snaps[hi];
             float span = b.Time - a.Time;
             float t = span > 0.0001f ? Mathf.Clamp01((renderTime - a.Time) / span) : 1f;
-            pos = Vector3.Lerp(a.Pos, b.Pos, t);
+            pos = span > 0.0001f ? Hermite(a.Pos, a.Vel, b.Pos, b.Vel, span, t) : a.Pos;
             facing = Quaternion.Slerp(a.Facing, b.Facing, t);
+            HitchTrace.Interp("lerp", n, (Time.time - newest.Time) * 1000f);
+        }
+
+        static Vector3 Hermite(Vector3 p0, Vector3 v0, Vector3 p1, Vector3 v1, float dt, float t)
+        {
+            float t2 = t * t;
+            float t3 = t2 * t;
+            return (2f * t3 - 3f * t2 + 1f) * p0
+                + (t3 - 2f * t2 + t) * (dt * v0)
+                + (-2f * t3 + 3f * t2) * p1
+                + (t3 - t2) * (dt * v1);
         }
 
         static Quaternion YawOnPlane(Quaternion facingWorld, Vector3 up)

@@ -231,7 +231,7 @@ namespace SyncRADation.Patches
             {
                 if (!__instance.solved) return;
                 ulong id = WorldId.FromGameObject(__instance.gameObject);
-                LanNetworkManager.Instance.PuzzleSync.Emit(PuzzleType.PEN_Codepad, id, __instance);
+                LanNetworkManager.Instance.PuzzleSync.EmitProgressed(PuzzleType.PEN_Codepad, id);
             }
             catch { }
         }
@@ -304,45 +304,9 @@ namespace SyncRADation.Patches
         }
     }
 
-    [HarmonyPatch(typeof(EventScreenInteraction), nameof(EventScreenInteraction.startEventInstant))]
-    public static class EventScreenStartPatch
-    {
-        [HarmonyPrefix]
-        public static bool Prefix(EventScreenInteraction __instance)
-        {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
-            if (__instance == null) return true;
-            if (PuzzleSyncService.IsPuzzleOverlay(__instance)) return true;
-            ulong id = WorldId.FromGameObject(__instance.gameObject);
-            if (NetGate.Host)
-            {
-                LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.EventScreenStart, id, 0, "");
-                return true;
-            }
-            LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.EventScreenStart);
-            return false;
-        }
-    }
-
-    [HarmonyPatch(typeof(EventScreenInteraction), nameof(EventScreenInteraction.exitEvent))]
-    public static class EventScreenExitPatch
-    {
-        [HarmonyPrefix]
-        public static bool Prefix(EventScreenInteraction __instance)
-        {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
-            if (__instance == null) return true;
-            if (PuzzleSyncService.IsPuzzleOverlay(__instance)) return true;
-            ulong id = WorldId.FromGameObject(__instance.gameObject);
-            if (NetGate.Host)
-            {
-                LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.EventScreenExit, id, 0, "");
-                return true;
-            }
-            LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.EventScreenExit);
-            return true;
-        }
-    }
+    // EventScreen / BookScreen are local inspect (notes, photos, keypad overlay, cryo
+    // camera). Party-replaying them opens the document on every Elster and freezes
+    // whoever wasn't at the interact. World results go through PuzzleSync.
 
     [HarmonyPatch(typeof(MultiConditionEvent), nameof(MultiConditionEvent.TryOnce))]
     public static class MultiConditionPatch
@@ -402,65 +366,6 @@ namespace SyncRADation.Patches
         }
     }
 
-    [HarmonyPatch(typeof(BookScreen), nameof(BookScreen.OpenBookMemory))]
-    public static class BookMemoryPatch
-    {
-        [HarmonyPrefix]
-        public static bool Prefix(BookScreen __instance, Book memo)
-        {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
-            if (__instance == null) return true;
-            string bookName = "";
-            try { if (memo != null) bookName = memo.name; } catch { }
-            if (NetGate.Host)
-            {
-                LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.OpenBookMemory, 0, 0, bookName);
-                return true;
-            }
-            LanNetworkManager.Instance.SendInteractionRequest(0, InteractionKind.BookMemory, 0, 0, 0f, 0f, 0f, bookName);
-            return false;
-        }
-    }
-
-    [HarmonyPatch(typeof(BookScreen), nameof(BookScreen.OpenBook))]
-    public static class BookOpenPatch
-    {
-        [HarmonyPrefix]
-        public static bool Prefix(BookScreen __instance)
-        {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
-            if (__instance == null) return true;
-            string bookName = "";
-            try { if (__instance.book != null) bookName = __instance.book.name; } catch { }
-            if (NetGate.Host)
-            {
-                LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.BookOpen, 0, 0, bookName);
-                return true;
-            }
-            LanNetworkManager.Instance.SendInteractionRequest(0, InteractionKind.BookOpen, 0, 0, 0f, 0f, 0f, bookName);
-            return false;
-        }
-    }
-
-    [HarmonyPatch(typeof(EventScreenInteraction), nameof(EventScreenInteraction.startEventDelayed))]
-    public static class EventScreenDelayedPatch
-    {
-        [HarmonyPrefix]
-        public static bool Prefix(EventScreenInteraction __instance)
-        {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
-            if (__instance == null) return true;
-            if (PuzzleSyncService.IsPuzzleOverlay(__instance)) return true;
-            ulong id = WorldId.FromGameObject(__instance.gameObject);
-            if (NetGate.Host)
-            {
-                LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.EventScreenStart, id, 0, "");
-                return true;
-            }
-            LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.EventScreenStart);
-            return false;
-        }
-    }
 
     [HarmonyPatch(typeof(PlayerState), nameof(PlayerState.fireGun))]
     public static class FireGunWakePatch

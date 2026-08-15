@@ -818,6 +818,19 @@ namespace SyncRADation.Networking
         BOS_Adler = 48,
         CryoDoorLock = 49,
         PEN_Cryo = 50,
+        MED_Pump = 51,
+        MED_FloodedBathroom = 52,
+        MED_CardWriter = 53,
+        RES_Shutters = 54,
+        ROT_Pipes = 55,
+        ROT_Magpie = 56,
+        PEN_Reaktor = 57,
+        DET_ServiceLock = 58,
+        EXC_Seilbahn = 59,
+        EXC_Hatch = 60,
+        LAB_Rings = 61,
+        BiodomeDoorLock = 62,
+        ROT_MeatBlocker = 63,
     }
 
     public struct PuzzleStateEntry

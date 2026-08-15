@@ -129,6 +129,7 @@ namespace SyncRADation.Networking
             FmodEmitterSync.Reset();
             NetGate.Reset();
             SourceAnimReader.Reset();
+            HitchTrace.Reset();
             DroppedItemManager.SaveToFile();
             DroppedItemManager.ClearAll();
             _handshakeComplete = false;
@@ -253,6 +254,7 @@ namespace SyncRADation.Networking
 
             var msg = BuildPlayerStateMessage(player);
             SendPlayerState(msg);
+            HitchTrace.Send();
 
             // Host also needs to relay states it received from clients — but that's handled
             // in OnReceive: the host stores the state and re-sends to all other peers
@@ -1703,6 +1705,7 @@ namespace SyncRADation.Networking
             _lastSentPosition = Vector3.zero;
             _lastSentTime = 0f;
             SourceAnimReader.Reset();
+            HitchTrace.Reset();
             _sendTimer = 0f;
             _lastStateTime = 0f;
             _proxyManager.DestroyAll();

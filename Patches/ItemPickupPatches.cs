@@ -8,14 +8,20 @@ namespace SyncRADation.Patches
     [HarmonyPatch(typeof(ItemPickup), nameof(ItemPickup.pickUp))]
     public static class ItemPickupPatches
     {
+        static bool IsInspect(ItemPickup p)
+        {
+            if (p == null) return false;
+            try { if (p.showItemView) return true; } catch { }
+            try { if (p.focusCamera) return true; } catch { }
+            try { if (p.pauseGame) return true; } catch { }
+            return false;
+        }
+
         [HarmonyPrefix]
         public static bool Prefix(ItemPickup __instance)
         {
             if (__instance == null) return true;
-
-            bool inspectView = false;
-            try { inspectView = __instance.showItemView || __instance.focusCamera || __instance.pauseGame; }
-            catch { }
+            if (NetGate.IsApplying) return true;
 
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected)
@@ -29,24 +35,33 @@ namespace SyncRADation.Patches
                 if (__instance.slave) return true;
                 if (__instance.triggered)
                 {
-                    PlaytestLog.Event("Pickup", "skip triggered " + __instance.gameObject.name);
-                    return false;
+                    ulong stuckId = WorldId.FromGameObject(__instance.gameObject);
+                    if (stuckId != 0 && net.PickupSync.IsClaimed(stuckId))
+                    {
+                        PlaytestLog.Event("Pickup", "skip triggered " + __instance.gameObject.name);
+                        return false;
+                    }
+                    try { __instance.triggered = false; } catch { }
+                    PlaytestLog.Event("Pickup", "unstick " + __instance.gameObject.name
+                        + " id=" + stuckId.ToString("X16"));
                 }
             }
             catch { }
 
             ulong id = WorldId.FromGameObject(__instance.gameObject);
+            if (id == 0) return true;
 
-            // 3D item inspect (photo card etc.) calls pickUp twice: open view, then take.
-            // Claiming on the first call blocks the second.
-            if (inspectView)
+            if (net.PickupSync.IsClaimed(id))
             {
-                PlaytestLog.Event("Pickup", "inspect native " + __instance.gameObject.name
+                PlaytestLog.Event("Pickup", "skip claimed " + __instance.gameObject.name
                     + " id=" + id.ToString("X16"));
-                return true;
+                try { net.PickupSync.HidePickup(__instance); } catch { }
+                return false;
             }
 
-            if (id == 0) return true;
+            // Inspect cards: native pickUp shows yes/no. Claim only after the item is in the bag.
+            if (IsInspect(__instance))
+                return true;
 
             if (net.Role == NetworkRole.Host)
             {
@@ -72,31 +87,48 @@ namespace SyncRADation.Patches
             if (!__runOriginal) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
-            if (net.Role != NetworkRole.Host) return;
             if (Config.ModConfig.SyncWorldPickups?.Value != true) return;
             if (__instance == null) return;
 
-            try
-            {
-                if (__instance.slave) return;
-                if (!__instance.triggered) return;
-            }
-            catch { }
+            try { if (__instance.slave) return; } catch { }
 
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             if (id == 0) return;
 
-            // After successful host pickUp, force hide for peers.
-            net.PickupSync.BroadcastTriggered(id, true);
+            bool inBag = false;
+            try { inBag = __instance._item != null && InventoryManager.hasItem(__instance._item); }
+            catch { }
+
+            if (IsInspect(__instance) && !inBag)
+                return;
+
             try
             {
-                if (__instance._item != null)
-                {
-                    PartyKeyRing.Note(__instance._item);
-                    PartyKeyRing.Broadcast();
-                }
+                if (!__instance.triggered && !inBag) return;
             }
             catch { }
+
+            if (net.Role == NetworkRole.Host)
+            {
+                net.PickupSync.TryClaimOnHost(id, net.LocalPlayerId, out _, out _, hideNow: true);
+                net.PickupSync.BroadcastTriggered(id, true);
+                try
+                {
+                    if (__instance._item != null)
+                    {
+                        PartyKeyRing.Note(__instance._item);
+                        PartyKeyRing.Broadcast();
+                    }
+                }
+                catch { }
+                return;
+            }
+
+            if (!inBag) return;
+            if (net.PickupSync.IsClaimed(id)) return;
+            PlaytestLog.Event("Pickup", "claim after inspect " + __instance.gameObject.name
+                + " id=" + id.ToString("X16"));
+            net.SendWorldPickupClaim(id);
         }
     }
 }

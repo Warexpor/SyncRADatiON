@@ -18,6 +18,8 @@ namespace SyncRADation.Players
         private static float _lastSrcLog;
         private static int _lastMagAmmo = -1;
         private static bool _hasMagAmmo;
+        private static bool _lastTriggerHeld;
+        private static bool _magReloadPulse;
 
         public static void ReadFromPlayer(GameObject player, ref PlayerStateMessage msg)
         {
@@ -81,17 +83,48 @@ namespace SyncRADation.Players
             // Aiming: AimingTime float. Shot edge: equipped magAmmo decrease → AnimTriggers.Fire.
             AnimBools b = 0;
 
-            // Aiming from AimingTime float
             if (msg.AimingTime > 0.5f)
                 b |= AnimBools.Aiming;
+            try { if (PlayerState.aiming) b |= AnimBools.Aiming; } catch { }
 
-            // Shot pulse from magazine ammo (works full-auto + semi; independent of held Fire1)
+            bool aiming = b.HasFlag(AnimBools.Aiming);
+            bool inventory = false;
+            try { inventory = SafeGetBool(anim, "Inventory"); } catch { }
+            bool playOk = true;
+            try
+            {
+                playOk = PlayerState.gameState == PlayerState.gameStates.play
+                    && !PlayerState.reloading;
+            }
+            catch { }
+            bool canFire = aiming && playOk && !inventory;
+
+            // Live round: magAmmo decreased. Empty click is a separate flag — never Fire.
             bool ammoShot = TryDetectAmmoShot();
+            bool triggerHeld = Input.GetButton("Fire1") || Input.GetMouseButton(0);
+            bool triggerEdge = triggerHeld && !_lastTriggerHeld;
+            _lastTriggerHeld = triggerHeld;
+            bool magEmpty = false;
+            try
+            {
+                var eq = InventoryManager.EquippedWeapon;
+                if (eq != null && _hasMagAmmo)
+                    magEmpty = eq.magAmmo <= 0;
+            }
+            catch { }
+
             if (ammoShot)
                 b |= AnimBools.Shooting;
-            // Fallback while trigger held (empty click / non-mag weapons) — still useful for aim anim
-            else if (Input.GetButton("Fire1") || Input.GetMouseButton(0))
+            else if (canFire && triggerHeld && !magEmpty && _hasMagAmmo)
                 b |= AnimBools.Shooting;
+            else if (canFire && triggerHeld && !_hasMagAmmo && msg.Weapon != Networking.WeaponType.None
+                && msg.Weapon != Networking.WeaponType.Melee)
+                b |= AnimBools.Shooting;
+
+            if (canFire && triggerEdge && magEmpty && _hasMagAmmo
+                && msg.Weapon != Networking.WeaponType.None
+                && msg.Weapon != Networking.WeaponType.Melee)
+                b |= AnimBools.EmptyClick;
 
             if (SafeGetBool(anim, "Running")) b |= AnimBools.Running;
             if (SafeGetBool(anim, "Grounded")) b |= AnimBools.Grounded;
@@ -99,6 +132,8 @@ namespace SyncRADation.Players
             if (SafeGetBool(anim, "Blocked")) b |= AnimBools.Blocked;
             if (SafeGetBool(anim, "Dead")) b |= AnimBools.Dead;
             if (SafeGetBool(anim, "Inventory")) b |= AnimBools.Inventory;
+            try { if (PlayerState.reloading) b |= AnimBools.Reload; } catch { }
+            try { if (PlayerAttack.reloading) b |= AnimBools.Reload; } catch { }
             if (SafeGetBool(anim, "Attack")) b |= AnimBools.Attack;
             if (SafeGetBool(anim, "Injured")) b |= AnimBools.Injured;
             if (SafeGetBool(anim, "Stomp")) b |= AnimBools.Stomp;
@@ -134,6 +169,11 @@ namespace SyncRADation.Players
             AnimTriggers triggers = 0;
             if (ammoShot)
                 triggers |= AnimTriggers.Fire;
+            if (_magReloadPulse)
+            {
+                triggers |= AnimTriggers.ReloadTrigger;
+                _magReloadPulse = false;
+            }
             if (_hasLast)
             {
                 if (!_lastBools.HasFlag(AnimBools.Reload) && b.HasFlag(AnimBools.Reload))
@@ -154,9 +194,6 @@ namespace SyncRADation.Players
                     triggers |= AnimTriggers.Hurt;
                 if (!_lastBools.HasFlag(AnimBools.Dead) && b.HasFlag(AnimBools.Dead))
                     triggers |= AnimTriggers.Die;
-                // Rising edge of held-fire as backup when magAmmo unreadable (melee/empty)
-                if (!ammoShot && !_lastBools.HasFlag(AnimBools.Shooting) && b.HasFlag(AnimBools.Shooting))
-                    triggers |= AnimTriggers.Fire;
             }
             triggers |= _accumulatedTriggers;
             _accumulatedTriggers = 0;
@@ -208,6 +245,8 @@ namespace SyncRADation.Players
             _lastWeaponRead = 0;
             _lastMagAmmo = -1;
             _hasMagAmmo = false;
+            _lastTriggerHeld = false;
+            _magReloadPulse = false;
         }
 
         /// <summary>True once per expended round when EquippedWeapon.magAmmo decreases.</summary>
@@ -232,6 +271,8 @@ namespace SyncRADation.Players
                 // Reload / swap can increase mag — resync, not a shot
                 if (mag > _lastMagAmmo)
                 {
+                    if (_hasMagAmmo)
+                        _magReloadPulse = true;
                     _lastMagAmmo = mag;
                     return false;
                 }

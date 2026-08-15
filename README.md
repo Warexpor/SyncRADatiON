@@ -57,11 +57,11 @@ Debug builds copy into both `$(SignalisDir)\Mods` and `$(ClientSignalisDir)\Mods
 
 | Area | Authority | Notes |
 |------|-----------|--------|
-| Avatar proxy, anim, bones, weapons | Peer | State ~30 Hz, bones ~15 Hz |
+| Avatar proxy, anim, bones, weapons | Peer | State + bones ~30 Hz |
 | Enemies | Host | WorldId snaps; native `TakeDamage`; client hits Harmony → host |
 | Doors (double / sliding) | Any peer emit, host relay | Visual open/close via native methods |
 | ConnectedDoors (room links) | Lock only | **Never** sync traverse / `StartA`/`StartB` — room entry is local |
-| Story (Dialoguer, cutscenes, EventScreen, SProgress) | Host | Host commits flags; peers play the same native presentation |
+| Story (Dialoguer, cutscenes, SProgress) | Host | Flags commit; books/notes/EventScreen inspect stay local |
 | Puzzles / locks / elevators / radio module / storage / event zones | Host | WorldId-keyed; storage **contents** shared |
 | World ItemPickups | Host claim/grant | Claimer gets the item; unique keys go on the **party key ring** so either Elster can use them |
 | Player-dropped items | Peer + relay | G drop / E pickup |

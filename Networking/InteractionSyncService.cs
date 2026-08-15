@@ -52,10 +52,10 @@ namespace SyncRADation.Networking
                         ok = ApplyCutscene(id, net);
                         break;
                     case InteractionKind.EventScreenStart:
-                        ok = ApplyEventScreen(id, net, true);
-                        break;
                     case InteractionKind.EventScreenExit:
-                        ok = ApplyEventScreen(id, net, false);
+                    case InteractionKind.BookMemory:
+                    case InteractionKind.BookOpen:
+                        ok = true;
                         break;
                     case InteractionKind.CutsceneSkip:
                         ok = ApplyCutsceneSkip(id, net);
@@ -97,12 +97,6 @@ namespace SyncRADation.Networking
                         break;
                     case InteractionKind.CutsceneProceed:
                         ok = ApplyCutsceneProceed(id, net);
-                        break;
-                    case InteractionKind.BookOpen:
-                        ok = ApplyBook(net, msg.Text, false);
-                        break;
-                    case InteractionKind.BookMemory:
-                        ok = ApplyBook(net, msg.Text, true);
                         break;
                     case InteractionKind.DroppedPickup:
                         ok = net.TryClaimDropped(msg.Int0, msg.SenderPlayerId, out reason);
@@ -265,16 +259,6 @@ namespace SyncRADation.Networking
             return true;
         }
 
-        private static bool ApplyBook(LanNetworkManager net, string bookName, bool memory)
-        {
-            NetGate.BeginApply();
-            try { net.StorySync.ReplayBook(bookName, memory); }
-            finally { NetGate.EndApply(); }
-            net.StorySync.BroadcastPresentation(
-                memory ? StoryCmd.OpenBookMemory : StoryCmd.BookOpen, 0, 0, bookName ?? "");
-            return true;
-        }
-
         private static void ConsumeKey(AnItem key)
         {
             try
@@ -347,32 +331,6 @@ namespace SyncRADation.Networking
                 }
                 finally { NetGate.EndApply(); }
             }
-            return true;
-        }
-
-        private static bool ApplyEventScreen(ulong id, LanNetworkManager net, bool start)
-        {
-            var e = Find<EventScreenInteraction>(id);
-            if (e == null) return false;
-            if (PuzzleSyncService.IsPuzzleOverlay(e))
-                return true;
-            try
-            {
-                if (!e.gameObject.activeInHierarchy)
-                {
-                    PlaytestLog.Event("Interact", "skip EventScreen (room off) " + e.gameObject.name);
-                    return true;
-                }
-            }
-            catch { }
-            NetGate.BeginApply();
-            try
-            {
-                if (start) e.startEventInstant();
-                else e.exitEvent();
-            }
-            finally { NetGate.EndApply(); }
-            net.StorySync.BroadcastPresentation(start ? StoryCmd.EventScreenStart : StoryCmd.EventScreenExit, id, 0, "");
             return true;
         }
 

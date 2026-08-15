@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.2-dev — 2026-08-13
+## 0.4.2-dev — 2026-08-15
 
 Protocol **v7** (incompatible with v6). Join dump is the live SProgress slot. UnityEvents and world FMOD replay on the client. Native puzzle solve methods on the solved edge. Session roster for 3–4 players.
 
@@ -14,17 +14,31 @@ Protocol **v7** (incompatible with v6). Join dump is the live SProgress slot. Un
 - Client ids recycled in `1..MaxPlayers-1` (cap 4 including host)
 
 ### Changed
-- Proxy locomotion interpolates between pose snapshots ~70ms behind (not exponential-lerp to the latest packet)
+- Proxy locomotion interpolates between pose snapshots ~45ms behind (Hermite, not exponential-lerp to the latest packet)
+- Proxy bones send at 30 Hz and sample on the same snapshot clock as locomotion (quaternion slerp, no 50ms predicted hold)
 - Version `0.4.2-dev`, protocol 7
 - Join and F2 client resync world dump **unicast** to that peer (host F2 Resync is a no-op; scene-change dump still goes to all clients)
 
 ### Fixed
+- Notes/documents/`EventScreen` inspect no longer open on every Elster (local camera only)
+- Cryo codepad buttons stay disabled after solve (solved flag alone still left the pad usable)
+- Cryo late room-enter stamps `doorPos`/`opened` so native Update shows the lid already open (no replay). Claimed pickups stay hidden after content wakes. Inspect pickups keep yes/no; claimed/inspect grants no longer duplicate the item
+- Chapter machines that only set a bool now also run native world methods on the live edge (`MED_Pump`/`Drain`, `ROT_Pipes.TurnValve`, `EXC_Hatch.OpenHatch`, shutters, magpie, reactor, rings, biodome lock, meat blocker)
 - Friendly fire no longer double-hits; storage put/take mutates the shared box, not the host bag
 - StoryCommit replays presentation on join/resync only; host ignores client world-apply packets
 - Client Dialoguer / UseItemMulti / keypad / cutscene proceed / books actually reach the host
 - Dropped E pickup is host-claimed; pickup deny no longer hides the prop
 - Sequenced pose no longer embeds the WeaponMount tree (261 eulers blew the 1020-byte LiteNetLib cap and crashed `Network.Update` every bone tick). Bind bones only; overflow goes as `BonePose` chunks
 - Proxy weapon hold/aim uses Elster controller names (`Weapon/Pistol`, not `Pistol`) so ADS actually poses the arms
+- Proxy dry-fire no longer plays bang/flash/shells on the observer (empty click uses `emptyMod`; live Fire is ammo-spent only)
+- Empty click / hip Fire1 ignored unless ADS (`PlayerState.aiming`) so door/use clicks are not gunshots
+- Reload sound from `PlayerState.reloading` / mag refill (animator Reload bool never rose)
+- Proxy laser point unparented + red sprite fallback (was magenta missing-mat, stretched with the gun)
+- First weapon clone no longer nested-scans every renderer (that was the ~1s aim-then-walk hitch)
+- Proxy shot no longer layers CombatSfx slide/eject (that was the extra empty-click); case-land is `Pistol/Case` etc., shotgun still pumps
+- Proxy laser stays local-space on the weapon (follows recoil) instead of a world-space 90° guess
+- Proxy ADS plays `WeaponDraw`; wall hits play `ricochetSound`
+- Puzzle poll no longer TryReads every inactive-room component every 0.5s (~70ms main-thread hitch that starved pose)
 - Proxy movement interpolates between received snapshots instead of exponential-lerping at the live packet (that retarget was the remaining metronome hitch)
 - Scene-follow requests only apply known current-scene names; F7 rooms and client F11 spawn are gated while connected
 - Downed clients stay downed across SceneFollow; sliding doors emit on `cycle`; FMOD join dump + reset

@@ -1,5 +1,6 @@
 // SyncRADation � weapon model clone with mesh/material fix, damage cache from AnWeapon.Damage
 using SyncRADation.Networking;
+using SyncRADation.Sync;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -44,6 +45,7 @@ namespace SyncRADation.Players
         private readonly GameObject _proxy;
         private readonly Dictionary<WeaponType, GameObject> _weapons = new Dictionary<WeaponType, GameObject>();
         private readonly Dictionary<WeaponType, RemoteWeaponEffects> _effects = new Dictionary<WeaponType, RemoteWeaponEffects>();
+        private static readonly Dictionary<WeaponType, Transform> _sourceWeaponCache = new Dictionary<WeaponType, Transform>();
         private WeaponType _currentWeapon = WeaponType.None;
         private int _targetLayer;
         private GameObject _source;
@@ -75,7 +77,9 @@ namespace SyncRADation.Players
 
             if (!_weapons.TryGetValue(weapon, out var go) || go == null)
             {
+                float t0 = Time.realtimeSinceStartup;
                 go = CreateFromSource(weapon);
+                HitchTrace.Cost("weaponClone", (Time.realtimeSinceStartup - t0) * 1000f);
                 if (go != null) _weapons[weapon] = go;
             }
 
@@ -103,8 +107,8 @@ namespace SyncRADation.Players
                 else
                     _muzzlePos = proxyPos + Vector3.up * 0.95f + _facingDir * 0.35f;
                 Vector3 mdir;
-                if (fxMuzzle.TryGetMuzzleForward(out mdir))
-                    _facingDir = Quaternion.AngleAxis(90f, _proxy.transform.up) * mdir;
+                if (fxMuzzle.TryGetLaserForward(out mdir) || fxMuzzle.TryGetMuzzleForward(out mdir))
+                    _facingDir = mdir;
             }
             else
                 _muzzlePos = proxyPos + Vector3.up * 0.95f + _facingDir * 0.35f;
@@ -126,7 +130,7 @@ namespace SyncRADation.Players
                     fx.OnReload();
 
                 bool aiming = bools.HasFlag(AnimBools.Aiming) || state.AimingTime > 0.5f;
-                fx.UpdateLaser(aiming, _muzzlePos, _facingDir, 30f);
+                fx.UpdateLaser(aiming);
             }
 
             _lastBools = bools;
@@ -150,42 +154,7 @@ namespace SyncRADation.Players
             if (_source == null) _source = FindSourcePlayer();
             if (_source == null) return null;
 
-            var all = _source.GetComponentsInChildren<Transform>(true);
-            Transform sourceWeaponTransform = null;
-            int candidates = 0;
-            foreach (var t in all)
-            {
-                if (t == null) continue;
-                if (t.GetComponentsInChildren<Renderer>(true).Length == 0) continue;
-                if (MatchesWeapon(t.name, weapon))
-                {
-                    candidates++;
-                    string low = t.name.ToLowerInvariant();
-                    string wepLow = weapon.ToString().ToLowerInvariant();
-                    bool exact = low == wepLow || low == wepLow + "(clone)" || low.StartsWith(wepLow + "(");
-                    if (sourceWeaponTransform == null || exact)
-                    {
-                        sourceWeaponTransform = t;
-                        ModRuntime.Log?.Msg("[WeaponSync] " + (exact ? "EXACT" : "partial") + " match '" + t.name + "' at " + GetPath(t) + " for " + weapon);
-                        if (exact) break;
-                    }
-                }
-            }
-            ModRuntime.Log?.Msg("[WeaponSync] Scan " + all.Length + " transforms, " + candidates + " match " + weapon);
-
-            if (sourceWeaponTransform == null)
-            {
-                int dumped = 0;
-                foreach (var t in all)
-                {
-                    if (t == null || dumped >= 20) continue;
-                    if (t.GetComponentsInChildren<Renderer>(true).Length > 0)
-                    {
-                        ModRuntime.Log?.Msg("[WeaponSync]   (no match) '" + t.name + "' at " + GetPath(t));
-                        dumped++;
-                    }
-                }
-            }
+            Transform sourceWeaponTransform = FindSourceWeapon(weapon);
 
             if (sourceWeaponTransform == null)
             {
@@ -255,7 +224,7 @@ namespace SyncRADation.Players
                     }
                     catch { }
                 }
-                dstLrs[i].useWorldSpace = true;
+                dstLrs[i].useWorldSpace = false;
                 dstLrs[i].enabled = false;
             }
             var srcPsrs = sourceWeaponTransform.GetComponentsInChildren<ParticleSystemRenderer>(true);
@@ -298,6 +267,34 @@ namespace SyncRADation.Players
             foreach (var t in all)
                 if (t != null && t.name == name) return t;
             return null;
+        }
+
+        private Transform FindSourceWeapon(WeaponType weapon)
+        {
+            if (_sourceWeaponCache.TryGetValue(weapon, out var cached) && cached != null)
+                return cached;
+            if (_source == null) return null;
+            var all = _source.GetComponentsInChildren<Transform>(true);
+            Transform best = null;
+            string wepLow = weapon.ToString().ToLowerInvariant();
+            for (int i = 0; i < all.Length; i++)
+            {
+                var t = all[i];
+                if (t == null || !MatchesWeapon(t.name, weapon)) continue;
+                string low = t.name.ToLowerInvariant();
+                bool exact = low == wepLow || low == wepLow + "(clone)" || low.StartsWith(wepLow + "(");
+                if (best == null || exact)
+                {
+                    best = t;
+                    if (exact) break;
+                }
+            }
+            if (best != null)
+            {
+                _sourceWeaponCache[weapon] = best;
+                ModRuntime.Log?.Msg("[WeaponSync] source '" + best.name + "' for " + weapon);
+            }
+            return best;
         }
 
         private static bool MatchesWeapon(string name, WeaponType weapon)
@@ -409,6 +406,7 @@ namespace SyncRADation.Players
                 fx.Cleanup();
             _effects.Clear();
             _weapons.Clear();
+            _sourceWeaponCache.Clear();
         }
     }
 }

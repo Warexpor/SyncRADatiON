@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using FMODUnity;
 using SyncRADation.Sync;
 using UnityEngine;
 
@@ -92,6 +93,11 @@ namespace SyncRADation.Networking
             {
                 var c = arr[i];
                 if (c == null || IsLocalTraverse(c)) continue;
+                try
+                {
+                    if (c.GetComponent<ItemPickup>() != null) continue;
+                }
+                catch { }
                 ulong id = WorldId.FromGameObject(c.gameObject);
                 if (id == 0) continue;
                 if (!map.ContainsKey(id))
@@ -150,6 +156,19 @@ namespace SyncRADation.Networking
             RegisterAll<CryoDoorController>(PuzzleType.CryoDoorController);
             RegisterAll<CryoDoorLock>(PuzzleType.CryoDoorLock);
             RegisterAll<PEN_Cryo>(PuzzleType.PEN_Cryo);
+            RegisterAll<MED_Pump>(PuzzleType.MED_Pump);
+            RegisterAll<MED_FloodedBathroom>(PuzzleType.MED_FloodedBathroom);
+            RegisterAll<MED_CardWriter>(PuzzleType.MED_CardWriter);
+            RegisterAll<RES_Shutters>(PuzzleType.RES_Shutters);
+            RegisterAll<ROT_Pipes>(PuzzleType.ROT_Pipes);
+            RegisterAll<ROT_Magpie>(PuzzleType.ROT_Magpie);
+            RegisterAll<PEN_Reaktor>(PuzzleType.PEN_Reaktor);
+            RegisterAll<DET_ServiceLock>(PuzzleType.DET_ServiceLock);
+            RegisterAll<EXC_Seilbahn>(PuzzleType.EXC_Seilbahn);
+            RegisterAll<EXC_Hatch>(PuzzleType.EXC_Hatch);
+            RegisterAll<LAB_Rings>(PuzzleType.LAB_Rings);
+            RegisterAll<BiodomeDoorLock>(PuzzleType.BiodomeDoorLock);
+            RegisterAll<ROT_MeatBlocker>(PuzzleType.ROT_MeatBlocker);
             RegisterAll<FoldingShutterDoor>(PuzzleType.FoldingShutterDoor);
             RegisterInteractions();
             RegisterAll<EventZone>(PuzzleType.EventZoneTriggered);
@@ -197,7 +216,10 @@ namespace SyncRADation.Networking
             if (fullNow)
                 _lastFullSend = Time.unscaledTime;
 
+            float t0 = Time.realtimeSinceStartup;
             EnsureScanned();
+            try
+            {
 
             // Clients only emit real local puzzle/lock changes. Buttons, event zones,
             // combat flags and cutscenes are not world-authoring — echoing those
@@ -207,7 +229,7 @@ namespace SyncRADation.Networking
                 if (_needFullSend)
                 {
                     var seed = new List<PuzzleStateEntry>(64);
-                    ReadAll(seed, true, clientFilter: true);
+                    ReadAll(seed, true, clientFilter: true, activeOnly: false);
                     _needFullSend = false;
                     var progressed = new List<PuzzleStateEntry>(8);
                     for (int i = 0; i < seed.Count; i++)
@@ -224,7 +246,7 @@ namespace SyncRADation.Networking
                     return;
                 }
                 var local = new List<PuzzleStateEntry>(16);
-                ReadAll(local, false, clientFilter: true);
+                ReadAll(local, false, clientFilter: true, activeOnly: true);
                 if (local.Count > 0)
                 {
                     PlaytestLog.Event("Puzzle", "client diff " + local.Count
@@ -236,13 +258,18 @@ namespace SyncRADation.Networking
 
             var entries = new List<PuzzleStateEntry>(64);
             bool full = fullNow;
-            ReadAll(entries, full, clientFilter: false);
+            ReadAll(entries, full, clientFilter: false, activeOnly: !full);
             _needFullSend = false;
             if (entries.Count == 0) return;
             net.SendPuzzleState(entries.ToArray(), full);
+            }
+            finally
+            {
+                HitchTrace.Cost("puzzle", (Time.realtimeSinceStartup - t0) * 1000f);
+            }
         }
 
-        private void ReadAll(List<PuzzleStateEntry> entries, bool full, bool clientFilter)
+        private void ReadAll(List<PuzzleStateEntry> entries, bool full, bool clientFilter, bool activeOnly)
         {
             bool emittedMultiBlocked = false;
             foreach (var typeMap in _maps)
@@ -252,6 +279,7 @@ namespace SyncRADation.Networking
                 foreach (var kvp in typeMap.Value)
                 {
                     if (kvp.Value == null) continue;
+                    if (activeOnly && !IsActiveInScene(kvp.Value)) continue;
                     if (type == PuzzleType.UseItemMulti)
                     {
                         if (emittedMultiBlocked) continue;
@@ -279,6 +307,19 @@ namespace SyncRADation.Networking
                 catch { }
                 var radio = Mk(PuzzleType.RadioManagerState, 0, radioBools != 0, false, false, radioBools, 0, 0, 0, 0f);
                 if (ChangedOrFirst(radio, full)) entries.Add(radio);
+            }
+        }
+
+        private static bool IsActiveInScene(Component c)
+        {
+            try
+            {
+                var go = c.gameObject;
+                return go != null && go.activeInHierarchy;
+            }
+            catch
+            {
+                return false;
             }
         }
 
@@ -364,6 +405,52 @@ namespace SyncRADation.Networking
                         { var x = (CryoDoorLock)c; entry = Mk(type, wid, x.done, false, false, 0, 0, 0, 0, 0); return true; }
                     case PuzzleType.PEN_Cryo:
                         { var x = (PEN_Cryo)c; entry = Mk(type, wid, x.opened, false, false, 0, 0, 0, 0, 0); return true; }
+                    case PuzzleType.MED_Pump:
+                        { var x = (MED_Pump)c; entry = Mk(type, wid, x.solved, false, false, x.a, x.b, x.c, 0, 0); return true; }
+                    case PuzzleType.MED_FloodedBathroom:
+                        {
+                            var x = (MED_FloodedBathroom)c;
+                            bool drained = x.Ladder != null && x.Ladder.activeSelf;
+                            entry = Mk(type, wid, drained, false, false, 0, 0, 0, 0, x.level);
+                            return true;
+                        }
+                    case PuzzleType.MED_CardWriter:
+                        { var x = (MED_CardWriter)c; entry = Mk(type, wid, x.solved, x.hasCard, false, 0, 0, 0, 0, 0); return true; }
+                    case PuzzleType.RES_Shutters:
+                        { var x = (RES_Shutters)c; entry = Mk(type, wid, x.unlocked, false, false, 0, 0, 0, 0, 0); return true; }
+                    case PuzzleType.ROT_Pipes:
+                        {
+                            var x = (ROT_Pipes)c;
+                            bool off = x.loaded || (x.Blockers != null && !x.Blockers.activeSelf);
+                            entry = Mk(type, wid, off, false, false, 0, 0, 0, 0, 0);
+                            return true;
+                        }
+                    case PuzzleType.ROT_Magpie:
+                        { var x = (ROT_Magpie)c; entry = Mk(type, wid, x.opened, false, false, 0, 0, 0, 0, 0); return true; }
+                    case PuzzleType.PEN_Reaktor:
+                        { var x = (PEN_Reaktor)c; entry = Mk(type, wid, x.solved, x.valid, false, 0, 0, 0, 0, 0); return true; }
+                    case PuzzleType.DET_ServiceLock:
+                        {
+                            var x = (DET_ServiceLock)c;
+                            bool ok = x.solved != null && x.solved.solved;
+                            entry = Mk(type, wid, ok, false, false, 0, 0, 0, 0, 0);
+                            return true;
+                        }
+                    case PuzzleType.EXC_Seilbahn:
+                        { var x = (EXC_Seilbahn)c; entry = Mk(type, wid, x.down, false, false, 0, 0, 0, 0, 0); return true; }
+                    case PuzzleType.EXC_Hatch:
+                        {
+                            var x = (EXC_Hatch)c;
+                            bool open = x.Ladder != null && x.Ladder.activeSelf;
+                            entry = Mk(type, wid, open, false, false, 0, 0, 0, 0, 0);
+                            return true;
+                        }
+                    case PuzzleType.LAB_Rings:
+                        { var x = (LAB_Rings)c; entry = Mk(type, wid, x.solved, false, false, 0, 0, 0, 0, 0); return true; }
+                    case PuzzleType.BiodomeDoorLock:
+                        { var x = (BiodomeDoorLock)c; entry = Mk(type, wid, !x.hasLock, false, false, x.KeyLevel, 0, 0, 0, 0); return true; }
+                    case PuzzleType.ROT_MeatBlocker:
+                        { var x = (ROT_MeatBlocker)c; entry = Mk(type, wid, !x.blocked, false, false, x.pickups, x.required, 0, 0, 0); return true; }
                     case PuzzleType.FoldingShutterDoor:
                         { var x = (FoldingShutterDoor)c; entry = Mk(type, wid, false, false, false, 0, 0, 0, 0, x.open); return true; }
                     case PuzzleType.InteractionTriggered:
@@ -542,6 +629,20 @@ namespace SyncRADation.Networking
                 case PuzzleType.CryoDoorController:
                 case PuzzleType.CryoDoorLock:
                 case PuzzleType.PEN_Cryo:
+                case PuzzleType.MED_Pump:
+                case PuzzleType.MED_FloodedBathroom:
+                case PuzzleType.MED_CardWriter:
+                case PuzzleType.RES_Shutters:
+                case PuzzleType.ROT_Pipes:
+                case PuzzleType.ROT_Magpie:
+                case PuzzleType.PEN_Reaktor:
+                case PuzzleType.DET_ServiceLock:
+                case PuzzleType.EXC_Seilbahn:
+                case PuzzleType.EXC_Hatch:
+                case PuzzleType.LAB_Rings:
+                case PuzzleType.BiodomeDoorLock:
+                case PuzzleType.ROT_MeatBlocker:
+                case PuzzleType.UseItemMulti:
                 case PuzzleType.FoldingShutterDoor:
                 case PuzzleType.ROT_Tarot:
                 case PuzzleType.ROT_Mural:
@@ -595,6 +696,19 @@ namespace SyncRADation.Networking
                 case PuzzleType.CryoDoorController:
                 case PuzzleType.PatternLock:
                 case PuzzleType.EvidenceLockerPuzzle:
+                case PuzzleType.MED_Pump:
+                case PuzzleType.MED_FloodedBathroom:
+                case PuzzleType.MED_CardWriter:
+                case PuzzleType.RES_Shutters:
+                case PuzzleType.ROT_Pipes:
+                case PuzzleType.ROT_Magpie:
+                case PuzzleType.PEN_Reaktor:
+                case PuzzleType.DET_ServiceLock:
+                case PuzzleType.EXC_Seilbahn:
+                case PuzzleType.EXC_Hatch:
+                case PuzzleType.LAB_Rings:
+                case PuzzleType.BiodomeDoorLock:
+                case PuzzleType.ROT_MeatBlocker:
                     return e.Bool0;
                 default:
                     return false;
@@ -612,11 +726,12 @@ namespace SyncRADation.Networking
                 + " from=" + msg.SenderPlayerId + (msg.FullRefresh ? " full" : "")
                 + " " + Describe(msg.Entries));
             EnsureScanned();
+            bool cinematic = !msg.FullRefresh;
             NetGate.BeginApply();
             try
             {
                 for (int i = 0; i < msg.Entries.Length; i++)
-                    ApplyEntry(msg.Entries[i], cinematic: false);
+                    ApplyEntry(msg.Entries[i], cinematic);
             }
             finally
             {
@@ -647,6 +762,13 @@ namespace SyncRADation.Networking
             {
                 NetGate.EndApply();
             }
+            try
+            {
+                var net = LanNetworkManager.Instance;
+                if (net != null)
+                    net.PickupSync.HideClaimed(null);
+            }
+            catch { }
         }
 
         private void HoldIfProgressed(PuzzleStateEntry e)
@@ -672,6 +794,21 @@ namespace SyncRADation.Networking
             if (!TryRead(type, worldId, c, out entry)) return;
             if (!ChangedOrFirst(entry, false)) return;
             PlaytestLog.Event("Puzzle", "emit " + type + " id=" + worldId.ToString("X16"));
+            net.SendPuzzleState(new[] { entry }, false);
+        }
+
+        /// <summary>
+        /// solved()/Open() are coroutines — native flags are still false when the
+        /// Harmony postfix runs. Force Bool0 so peers apply the world result now.
+        /// </summary>
+        public void EmitProgressed(PuzzleType type, ulong worldId)
+        {
+            if (worldId == 0 || NetGate.IsApplying) return;
+            var net = LanNetworkManager.Instance;
+            if (net == null || !net.IsConnected) return;
+            var entry = Mk(type, unchecked((long)worldId), true, false, false, 0, 0, 0, 0, 0f);
+            if (!ChangedOrFirst(entry, false)) return;
+            PlaytestLog.Event("Puzzle", "emit progressed " + type + " id=" + worldId.ToString("X16"));
             net.SendPuzzleState(new[] { entry }, false);
         }
 
@@ -754,7 +891,7 @@ namespace SyncRADation.Networking
                                 if (x.solved && !e.Bool0) break;
                                 x.solved = e.Bool0 || x.solved;
                                 if (e.Bool0)
-                                    ApplyCodepadConsequences(x);
+                                    ApplyCodepadConsequences(x, cinematic);
                             }
                             else
                                 PlaytestLog.Miss("Puzzle", "PEN_Codepad", unchecked((ulong)e.WorldId));
@@ -869,7 +1006,7 @@ namespace SyncRADation.Networking
                         {
                             var x = Get<CryoDoorLock>(e.Type, e.WorldId);
                             if (x != null && e.Bool0)
-                                SnapCryoLock(x);
+                                SnapCryoLock(x, cinematic);
                             else if (x == null)
                                 PlaytestLog.Miss("Puzzle", "CryoDoorLock", unchecked((ulong)e.WorldId));
                             break;
@@ -883,13 +1020,112 @@ namespace SyncRADation.Networking
                                 PlaytestLog.Miss("Puzzle", "PEN_Cryo", unchecked((ulong)e.WorldId));
                             break;
                         }
+                    case PuzzleType.MED_Pump:
+                        {
+                            var x = Get<MED_Pump>(e.Type, e.WorldId);
+                            if (x != null && e.Bool0)
+                                SnapMedPump(x, cinematic);
+                            break;
+                        }
+                    case PuzzleType.MED_FloodedBathroom:
+                        {
+                            var x = Get<MED_FloodedBathroom>(e.Type, e.WorldId);
+                            if (x != null && e.Bool0)
+                                SnapFlood(x, cinematic);
+                            break;
+                        }
+                    case PuzzleType.MED_CardWriter:
+                        {
+                            var x = Get<MED_CardWriter>(e.Type, e.WorldId);
+                            if (x != null)
+                                SnapCardWriter(x, e.Bool0, e.Bool1);
+                            break;
+                        }
+                    case PuzzleType.RES_Shutters:
+                        {
+                            var x = Get<RES_Shutters>(e.Type, e.WorldId);
+                            if (x != null && e.Bool0)
+                                SnapShutters(x);
+                            break;
+                        }
+                    case PuzzleType.ROT_Pipes:
+                        {
+                            var x = Get<ROT_Pipes>(e.Type, e.WorldId);
+                            if (x != null && e.Bool0)
+                                SnapPipes(x, cinematic);
+                            break;
+                        }
+                    case PuzzleType.ROT_Magpie:
+                        {
+                            var x = Get<ROT_Magpie>(e.Type, e.WorldId);
+                            if (x != null && e.Bool0)
+                                SnapMagpie(x);
+                            break;
+                        }
+                    case PuzzleType.PEN_Reaktor:
+                        {
+                            var x = Get<PEN_Reaktor>(e.Type, e.WorldId);
+                            if (x != null && e.Bool0)
+                                SnapReaktor(x);
+                            break;
+                        }
+                    case PuzzleType.DET_ServiceLock:
+                        {
+                            var x = Get<DET_ServiceLock>(e.Type, e.WorldId);
+                            if (x != null && e.Bool0)
+                                SnapServiceLock(x);
+                            break;
+                        }
+                    case PuzzleType.EXC_Seilbahn:
+                        {
+                            var x = Get<EXC_Seilbahn>(e.Type, e.WorldId);
+                            if (x != null && e.Bool0)
+                                SnapSeilbahn(x, cinematic);
+                            break;
+                        }
+                    case PuzzleType.EXC_Hatch:
+                        {
+                            var x = Get<EXC_Hatch>(e.Type, e.WorldId);
+                            if (x != null && e.Bool0)
+                                SnapHatch(x, cinematic);
+                            break;
+                        }
+                    case PuzzleType.LAB_Rings:
+                        {
+                            var x = Get<LAB_Rings>(e.Type, e.WorldId);
+                            if (x != null && e.Bool0)
+                                SnapLabRings(x);
+                            break;
+                        }
+                    case PuzzleType.BiodomeDoorLock:
+                        {
+                            var x = Get<BiodomeDoorLock>(e.Type, e.WorldId);
+                            if (x != null)
+                                SnapBiodomeLock(x, e.Bool0, e.Int0);
+                            break;
+                        }
+                    case PuzzleType.ROT_MeatBlocker:
+                        {
+                            var x = Get<ROT_MeatBlocker>(e.Type, e.WorldId);
+                            if (x != null)
+                                SnapMeatBlocker(x, e.Bool0, e.Int0);
+                            break;
+                        }
                     case PuzzleType.FoldingShutterDoor:
                         { var x = Get<FoldingShutterDoor>(e.Type, e.WorldId); if (x != null) x.open = e.Float0; break; }
                     case PuzzleType.InteractionTriggered:
                         {
                             var x = Get<Interaction>(e.Type, e.WorldId);
                             if (x != null && !IsLocalTraverse(x))
+                            {
+                                try
+                                {
+                                    if (x.GetComponent<ItemPickup>() != null)
+                                        break;
+                                }
+                                catch { }
                                 x.triggered = e.Bool0;
+                            }
                             break;
                         }
                     case PuzzleType.EventZoneTriggered:
@@ -1098,9 +1334,13 @@ namespace SyncRADation.Networking
         public static void UnlockLinked(GameObject go) => TryUnlockDoors(go);
 
         public static void ApplyCodepadConsequences(PEN_Codepad pad)
+            => ApplyCodepadConsequences(pad, playAnim: true);
+
+        static void ApplyCodepadConsequences(PEN_Codepad pad, bool playAnim)
         {
             if (pad == null) return;
             pad.solved = true;
+            DisablePad(pad);
             TryUnlockDoors(pad.gameObject);
             PlaytestLog.Event("Puzzle", "codepad solved " + pad.gameObject.name);
             try
@@ -1116,20 +1356,71 @@ namespace SyncRADation.Networking
                         if (c.puzzle != null && c.puzzle != pad) continue;
                     }
                     catch { continue; }
-                    SnapCryoLock(c);
+                    SnapCryoLock(c, playAnim);
                 }
             }
             catch { }
         }
 
-        // World result only. CryoDoorLock.solved() starts EventScreen on the local
-        // Elster — that is why the other player froze / could not walk.
-        internal static void SnapCryoLock(CryoDoorLock c)
+        static void DisablePad(PEN_Codepad pad)
+        {
+            if (pad == null) return;
+            try { pad.solved = true; } catch { }
+            DisableInteractions(pad);
+            try
+            {
+                var buttons = pad.buttons;
+                if (buttons != null)
+                {
+                    for (int i = 0; i < buttons.Length; i++)
+                        DisableOne(buttons[i]);
+                }
+            }
+            catch { }
+            try
+            {
+                var counter = pad.counterButtons;
+                if (counter != null)
+                {
+                    for (int i = 0; i < counter.Length; i++)
+                        DisableOne(counter[i]);
+                }
+            }
+            catch { }
+        }
+
+        static void DisableInteractions(Component root)
+        {
+            if (root == null) return;
+            try
+            {
+                var all = root.GetComponentsInChildren<Interaction>(true);
+                if (all == null) return;
+                for (int i = 0; i < all.Length; i++)
+                    DisableOne(all[i]);
+            }
+            catch { }
+        }
+
+        static void DisableOne(Interaction it)
+        {
+            if (it == null) return;
+            try
+            {
+                if (it.GetComponent<ItemPickup>() != null) return;
+            }
+            catch { }
+            try { it.triggered = true; } catch { }
+            try { it.enabled = false; } catch { }
+        }
+
+        // World result only. Never EventScreen — that camera-locks the remote Elster.
+        internal static void SnapCryoLock(CryoDoorLock c, bool playAnim = false)
         {
             if (c == null) return;
-            try { if (c.done) { TryUnlockDoors(c.gameObject); return; } } catch { }
 
-            PlaytestLog.Event("Puzzle", "snap CryoDoorLock " + c.gameObject.name);
+            PlaytestLog.Event("Puzzle", "snap CryoDoorLock " + c.gameObject.name
+                + (playAnim ? " anim" : " pose"));
             try { c.done = true; } catch { }
             try
             {
@@ -1148,27 +1439,77 @@ namespace SyncRADation.Networking
             catch { }
             try
             {
+                if (c.Event != null)
+                {
+                    DisableInteractions(c.Event);
+                    try { c.Event.enabled = false; } catch { }
+                }
+            }
+            catch { }
+            if (c.puzzle != null)
+                DisablePad(c.puzzle);
+            try
+            {
                 if (c.Door != null)
                 {
                     c.Door.SetActive(true);
                     UnlockDoorObject(c.Door);
+                    TryOpenCryoController(c.Door, animate: playAnim);
                 }
             }
             catch { }
             TryUnlockDoors(c.gameObject);
+            try
+            {
+                var pen = c.GetComponent<PEN_Cryo>()
+                    ?? FindInParents<PEN_Cryo>(c.gameObject)
+                    ?? c.GetComponentInChildren<PEN_Cryo>(true);
+                if (pen != null)
+                    SnapPenCryo(pen, playAnim);
+            }
+            catch { }
+        }
+
+        static void TryOpenCryoController(GameObject door, bool animate)
+        {
+            if (door == null) return;
+            CryoDoorController ctrl = null;
+            try { ctrl = door.GetComponent<CryoDoorController>(); } catch { }
+            if (ctrl == null)
+            {
+                try { ctrl = door.GetComponentInChildren<CryoDoorController>(true); } catch { }
+            }
+            if (ctrl == null) return;
+            try
+            {
+                if (ctrl.open) return;
+                if (animate)
+                    ctrl.toggleDoors();
+                else
+                    ctrl.open = true;
+            }
+            catch { ctrl.open = true; }
         }
 
         static void SnapPenCryo(PEN_Cryo x, bool playOpen)
         {
             if (x == null) return;
-            PlaytestLog.Event("Puzzle", "snap PEN_Cryo " + x.gameObject.name
-                + (playOpen ? " open" : " pose"));
-            try
+
+            bool active = false;
+            try { active = x.gameObject.activeInHierarchy; } catch { active = true; }
+            ulong id = WorldId.FromGameObject(x.gameObject);
+            bool animating = id != 0 && _cryoAnimStarted.Contains(id);
+
+            if (!active || !playOpen)
+                StampPenCryoOpen(x);
+
+            if (!active)
             {
-                if (x.contentLateActivated != null)
-                    x.contentLateActivated.SetActive(true);
+                PlaytestLog.Event("Puzzle", "snap PEN_Cryo " + x.gameObject.name + " wait inactive");
+                DisableCryoAccess(x);
+                return;
             }
-            catch { }
+
             try
             {
                 if (x.interaction != null)
@@ -1183,24 +1524,144 @@ namespace SyncRADation.Networking
             catch { }
             TryUnlockDoors(x.gameObject);
 
-            bool active = false;
-            try { active = x.gameObject.activeInHierarchy; } catch { active = true; }
-            ulong id = WorldId.FromGameObject(x.gameObject);
-
-            if (playOpen && active && (id == 0 || _cryoAnimStarted.Add(id)))
+            if (animating)
             {
+                PlaytestLog.Event("Puzzle", "snap PEN_Cryo " + x.gameObject.name + " skip");
+                DisableCryoAccess(x);
+                HideClaimedAround(x.gameObject);
+                return;
+            }
+
+            if (playOpen)
+            {
+                if (id != 0)
+                    _cryoAnimStarted.Add(id);
+                PlaytestLog.Event("Puzzle", "snap PEN_Cryo " + x.gameObject.name + " open");
                 try { x.Open(); }
-                catch { }
+                catch
+                {
+                    PosePenCryoOpen(x);
+                    ActivateCryoContent(x);
+                }
             }
             else
+            {
+                PlaytestLog.Event("Puzzle", "snap PEN_Cryo " + x.gameObject.name + " pose");
                 PosePenCryoOpen(x);
+                ActivateCryoContent(x);
+            }
 
+            DisableCryoAccess(x);
+        }
+
+        static void StampPenCryoOpen(PEN_Cryo x)
+        {
+            if (x == null) return;
             try { x.opened = true; } catch { }
+            try { x.doorPos = 1f; } catch { }
+            try { x.coverPos = 1f; } catch { }
+            try { x.moverPos = 1f; } catch { }
+            try { x.openerPos = 1f; } catch { }
+            try { x.fluidPos = 1f; } catch { }
+            try { x.brightness = 0f; } catch { }
+        }
+
+        static void ActivateCryoContent(PEN_Cryo x)
+        {
+            if (x == null) return;
+            if (x.contentLateActivated != null)
+            {
+                try { x.contentLateActivated.SetActive(true); } catch { }
+                try { RevealPickups(x.contentLateActivated); } catch { }
+            }
+            HideClaimedAround(x.gameObject);
+        }
+
+        static void HideClaimedAround(GameObject root)
+        {
+            try
+            {
+                var net = LanNetworkManager.Instance;
+                if (net != null)
+                    net.PickupSync.HideClaimed(root);
+            }
+            catch { }
+        }
+
+        static void DisableCryoAccess(PEN_Cryo x)
+        {
+            if (x == null) return;
+            try
+            {
+                var lockGo = x.GetComponentInParent<CryoDoorLock>();
+                if (lockGo == null)
+                    lockGo = x.GetComponentInChildren<CryoDoorLock>(true);
+                if (lockGo == null)
+                {
+                    var locks = UnityEngine.Object.FindObjectsOfType<CryoDoorLock>(true);
+                    if (locks != null)
+                    {
+                        for (int i = 0; i < locks.Length; i++)
+                        {
+                            var c = locks[i];
+                            if (c == null || c.Door == null) continue;
+                            PEN_Cryo linked = null;
+                            try { linked = c.Door.GetComponent<PEN_Cryo>(); } catch { }
+                            if (linked == null)
+                            {
+                                try { linked = c.Door.GetComponentInChildren<PEN_Cryo>(true); } catch { }
+                            }
+                            if (linked == null)
+                                linked = FindInParents<PEN_Cryo>(c.Door);
+                            if (linked == x)
+                            {
+                                lockGo = c;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (lockGo != null)
+                {
+                    try { lockGo.done = true; } catch { }
+                    try { DisableOne(lockGo.inter); } catch { }
+                    try
+                    {
+                        if (lockGo.Event != null)
+                        {
+                            DisableInteractions(lockGo.Event);
+                            try { lockGo.Event.enabled = false; } catch { }
+                        }
+                    }
+                    catch { }
+                    if (lockGo.puzzle != null)
+                        DisablePad(lockGo.puzzle);
+                }
+            }
+            catch { }
+            try
+            {
+                var pads = x.GetComponentsInChildren<PEN_Codepad>(true);
+                if (pads != null)
+                {
+                    for (int i = 0; i < pads.Length; i++)
+                        DisablePad(pads[i]);
+                }
+            }
+            catch { }
+            try
+            {
+                var parentPad = x.GetComponentInParent<PEN_Codepad>();
+                if (parentPad != null)
+                    DisablePad(parentPad);
+            }
+            catch { }
         }
 
         static void PosePenCryoOpen(PEN_Cryo x)
         {
             if (x == null) return;
+            StampPenCryoOpen(x);
             try
             {
                 if (x.Door != null)
@@ -1242,6 +1703,393 @@ namespace SyncRADation.Networking
             }
             catch { }
             try { if (x.scanner != null) x.scanner.enabled = false; } catch { }
+            try
+            {
+                if (x.fluid != null)
+                {
+                    var p = x.fluid.localPosition;
+                    p.y = x.fluidLevel;
+                    x.fluid.localPosition = p;
+                }
+            }
+            catch { }
+            try
+            {
+                if (x.Fog != null)
+                {
+                    for (int i = 0; i < x.Fog.Length; i++)
+                    {
+                        try { if (x.Fog[i] != null) x.Fog[i].Stop(true); } catch { }
+                    }
+                }
+            }
+            catch { }
+            try
+            {
+                if (x.Steam != null)
+                {
+                    for (int i = 0; i < x.Steam.Length; i++)
+                    {
+                        try { if (x.Steam[i] != null) x.Steam[i].Stop(true); } catch { }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        static bool TryStartWorldAnim(GameObject go)
+        {
+            if (go == null) return false;
+            bool active = false;
+            try { active = go.activeInHierarchy; } catch { active = true; }
+            if (!active) return false;
+            ulong id = WorldId.FromGameObject(go);
+            return id == 0 || _cryoAnimStarted.Add(id);
+        }
+
+        static void SnapMedPump(MED_Pump x, bool play)
+        {
+            if (x == null) return;
+            try { x.solved = true; } catch { }
+            try
+            {
+                if (x.flood != null)
+                    SnapFlood(x.flood, play);
+            }
+            catch { }
+            TryUnlockDoors(x.gameObject);
+        }
+
+        static void SnapFlood(MED_FloodedBathroom x, bool play)
+        {
+            if (x == null) return;
+            if (play && TryStartWorldAnim(x.gameObject))
+            {
+                try { x.Drain(); }
+                catch { PoseFlood(x); }
+            }
+            else
+                PoseFlood(x);
+        }
+
+        static void PoseFlood(MED_FloodedBathroom x)
+        {
+            if (x == null) return;
+            try { x.setLevel(x.endDepth); } catch { }
+            try { x.level = x.endDepth; } catch { }
+            try
+            {
+                if (x.waterTrans != null)
+                {
+                    var p = x.waterTrans.localPosition;
+                    p.y = x.endDepth;
+                    x.waterTrans.localPosition = p;
+                }
+            }
+            catch { }
+            try { if (x.Ladder != null) x.Ladder.SetActive(true); } catch { }
+            try { if (x.ObservationFlood != null) x.ObservationFlood.SetActive(false); } catch { }
+        }
+
+        static void SnapCardWriter(MED_CardWriter x, bool solved, bool hasCard)
+        {
+            if (x == null) return;
+            try { x.solved = solved; } catch { }
+            try { x.hasCard = hasCard || solved; } catch { }
+            if (!solved) return;
+            try { if (x.insertCard != null) x.insertCard.SetActive(false); } catch { }
+            try { if (x.insertCardPrompt != null) x.insertCardPrompt.SetActive(false); } catch { }
+            try { if (x.pickUpBlank != null) x.pickUpBlank.SetActive(true); } catch { }
+            try { if (x.tinyCard != null) x.tinyCard.SetActive(true); } catch { }
+            try { RevealPickups(x.pickUpBlank); } catch { }
+            try { RevealPickups(x.gameObject); } catch { }
+        }
+
+        static void SnapShutters(RES_Shutters x)
+        {
+            if (x == null) return;
+            try { x.unlocked = true; } catch { }
+            try { if (x.Shutter != null) x.Shutter.SetActive(false); } catch { }
+            try { if (x.Handle != null) x.Handle.SetActive(false); } catch { }
+            try
+            {
+                if (x._lock != null)
+                    DoorNative.ApplyConnectedDoors(x._lock, false);
+            }
+            catch { }
+            TryUnlockDoors(x.gameObject);
+        }
+
+        static void SnapPipes(ROT_Pipes x, bool play)
+        {
+            if (x == null) return;
+            try { x.loaded = true; } catch { }
+            if (play && TryStartWorldAnim(x.gameObject))
+            {
+                try { x.TurnValve(); }
+                catch { PosePipes(x); }
+            }
+            else
+                PosePipes(x);
+        }
+
+        static void PosePipes(ROT_Pipes x)
+        {
+            if (x == null) return;
+            try { if (x.Blockers != null) x.Blockers.SetActive(false); } catch { }
+            try { if (x.interaction != null) x.interaction.SetActive(false); } catch { }
+            try
+            {
+                var leaks = x.leaks;
+                if (leaks != null)
+                {
+                    for (int i = 0; i < leaks.Length; i++)
+                    {
+                        try { if (leaks[i] != null) leaks[i].Stop(); } catch { }
+                    }
+                }
+            }
+            catch { }
+            try
+            {
+                var lights = x.lights;
+                if (lights != null)
+                {
+                    for (int i = 0; i < lights.Length; i++)
+                    {
+                        try { if (lights[i] != null) lights[i].enabled = false; } catch { }
+                    }
+                }
+            }
+            catch { }
+            try { if (x.loopSFX != null) x.loopSFX.Stop(); } catch { }
+        }
+
+        static void SnapMagpie(ROT_Magpie x)
+        {
+            if (x == null) return;
+            try { x.opened = true; } catch { }
+            try { if (x.CardPickup != null) x.CardPickup.SetActive(true); } catch { }
+            try { if (x.BoxObs != null) x.BoxObs.SetActive(false); } catch { }
+            try { RevealPickups(x.CardPickup); } catch { }
+            try { RevealPickups(x.gameObject); } catch { }
+        }
+
+        static void SnapReaktor(PEN_Reaktor x)
+        {
+            if (x == null) return;
+            try { x.solved = true; } catch { }
+            try
+            {
+                if (x.doorLock != null)
+                    DoorNative.ApplyConnectedDoors(x.doorLock, false);
+            }
+            catch { }
+            try
+            {
+                if (x._event != null)
+                {
+                    DisableInteractions(x._event);
+                    try { x._event.enabled = false; } catch { }
+                }
+            }
+            catch { }
+            TryUnlockDoors(x.gameObject);
+        }
+
+        static void SnapServiceLock(DET_ServiceLock x)
+        {
+            if (x == null) return;
+            try
+            {
+                if (x.solved != null)
+                    x.solved.solved = true;
+            }
+            catch { }
+            DisableInteractions(x);
+            try
+            {
+                var buttons = x.Buttons;
+                if (buttons != null)
+                {
+                    for (int i = 0; i < buttons.Length; i++)
+                        DisableOne(buttons[i]);
+                }
+            }
+            catch { }
+            try
+            {
+                var counter = x.CounterButtons;
+                if (counter != null)
+                {
+                    for (int i = 0; i < counter.Length; i++)
+                        DisableOne(counter[i]);
+                }
+            }
+            catch { }
+            try { DisableOne(x.TestButton); } catch { }
+            TryUnlockDoors(x.gameObject);
+        }
+
+        static void SnapSeilbahn(EXC_Seilbahn x, bool play)
+        {
+            if (x == null) return;
+            try { x.down = true; } catch { }
+            try { if (x.interaction != null) x.interaction.SetActive(false); } catch { }
+            try { if (x.Red != null) x.Red.SetActive(false); } catch { }
+            try { if (x.Green != null) x.Green.SetActive(true); } catch { }
+            if (play && TryStartWorldAnim(x.gameObject))
+            {
+                try { x.goDown(); }
+                catch { }
+            }
+        }
+
+        static void SnapHatch(EXC_Hatch x, bool play)
+        {
+            if (x == null) return;
+            try { if (x.Inter != null) x.Inter.SetActive(false); } catch { }
+            try { if (x.Ladder != null) x.Ladder.SetActive(true); } catch { }
+            try
+            {
+                if (x.doorway != null)
+                    DoorNative.ApplyConnectedDoors(x.doorway, false);
+            }
+            catch { }
+            if (play && TryStartWorldAnim(x.gameObject))
+            {
+                try { x.OpenHatch(); }
+                catch { }
+            }
+        }
+
+        static void SnapLabRings(LAB_Rings x)
+        {
+            if (x == null) return;
+            try { x.solved = true; } catch { }
+            try { if (x.solvedState != null) x.solvedState.SetActive(true); } catch { }
+            try { if (x.FakePlate != null) x.FakePlate.SetActive(false); } catch { }
+            try { if (x.PlatePickup != null) x.PlatePickup.SetActive(true); } catch { }
+            try { RevealPickups(x.PlatePickup); } catch { }
+            try { RevealPickups(x.gameObject); } catch { }
+            TryUnlockDoors(x.gameObject);
+        }
+
+        static void SnapBiodomeLock(BiodomeDoorLock x, bool unlocked, int keyLevel)
+        {
+            if (x == null) return;
+            try { x.KeyLevel = keyLevel; } catch { }
+            try { x.hasLock = !unlocked; } catch { }
+            try { x.setSprites(); } catch { }
+            if (unlocked)
+            {
+                try
+                {
+                    if (x.door != null)
+                        x.door.locked = false;
+                }
+                catch { }
+                TryUnlockDoors(x.gameObject);
+            }
+        }
+
+        static void SnapMeatBlocker(ROT_MeatBlocker x, bool unblocked, int pickups)
+        {
+            if (x == null) return;
+            try { x.pickups = pickups; } catch { }
+            try { x.blocked = !unblocked; } catch { }
+            if (!unblocked) return;
+            try
+            {
+                var blockers = x.Blockers;
+                if (blockers != null)
+                {
+                    for (int i = 0; i < blockers.Length; i++)
+                    {
+                        try { if (blockers[i] != null) blockers[i].SetActive(false); } catch { }
+                    }
+                }
+            }
+            catch { }
+            try
+            {
+                var open = x.UnBlockers;
+                if (open != null)
+                {
+                    for (int i = 0; i < open.Length; i++)
+                    {
+                        try { if (open[i] != null) open[i].SetActive(true); } catch { }
+                    }
+                }
+            }
+            catch { }
+            try
+            {
+                var locks = x.Locks;
+                if (locks != null)
+                {
+                    for (int i = 0; i < locks.Length; i++)
+                    {
+                        try
+                        {
+                            if (locks[i] != null)
+                                DoorNative.ApplyConnectedDoors(locks[i], false);
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        internal static void RevealPickups(GameObject root)
+        {
+            if (root == null) return;
+            try
+            {
+                var picks = root.GetComponentsInChildren<ItemPickup>(true);
+                if (picks != null)
+                {
+                    for (int i = 0; i < picks.Length; i++)
+                    {
+                        var p = picks[i];
+                        if (p == null) continue;
+                        ulong pid = 0;
+                        try { pid = WorldId.FromGameObject(p.gameObject); } catch { }
+                        try
+                        {
+                            var netClaim = LanNetworkManager.Instance;
+                            if (netClaim != null && pid != 0 && netClaim.PickupSync.IsClaimed(pid))
+                            {
+                                netClaim.PickupSync.HidePickup(p);
+                                continue;
+                            }
+                        }
+                        catch { }
+                        try { p.triggered = false; } catch { }
+                        try { p.gameObject.SetActive(true); } catch { }
+                        try { p.enabled = true; } catch { }
+                        try
+                        {
+                            var it = p.GetComponent<Interaction>();
+                            if (it != null)
+                            {
+                                it.enabled = true;
+                                it.triggered = false;
+                            }
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
+            try
+            {
+                var net = LanNetworkManager.Instance;
+                if (net != null)
+                    net.PickupSync.NotifyRevealed();
+            }
+            catch { }
         }
 
         static void UnlockDoorObject(GameObject door)

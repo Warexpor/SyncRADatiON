@@ -110,11 +110,10 @@ namespace SyncRADation.Players
             for (int i = 0; i < count; i++)
             {
                 if (_bones[i] == null) continue;
-                _bones[i].localEulerAngles = new Vector3(
-                    Mathf.LerpAngle(prev[i * 3], cur[i * 3], t),
-                    Mathf.LerpAngle(prev[i * 3 + 1], cur[i * 3 + 1], t),
-                    Mathf.LerpAngle(prev[i * 3 + 2], cur[i * 3 + 2], t)
-                );
+                _bones[i].localRotation = Quaternion.Slerp(
+                    Quaternion.Euler(prev[i * 3], prev[i * 3 + 1], prev[i * 3 + 2]),
+                    Quaternion.Euler(cur[i * 3], cur[i * 3 + 1], cur[i * 3 + 2]),
+                    t);
             }
         }
     }

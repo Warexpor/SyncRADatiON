@@ -264,18 +264,23 @@ namespace SyncRADation.Networking
 
             if (msg.FullRefresh && msg.ActiveStoryCmd != 0 && msg.ActiveWorldId != 0)
             {
-                ApplyPresentation(new StoryPresentationMessage
+                var replay = (StoryCmd)msg.ActiveStoryCmd;
+                if (!IsLocalInspect(replay))
                 {
-                    WorldId = msg.ActiveWorldId,
-                    Cmd = (StoryCmd)msg.ActiveStoryCmd,
-                    Int0 = 0,
-                    Text = ""
-                });
+                    ApplyPresentation(new StoryPresentationMessage
+                    {
+                        WorldId = msg.ActiveWorldId,
+                        Cmd = replay,
+                        Int0 = 0,
+                        Text = ""
+                    });
+                }
             }
         }
 
         public void BroadcastPresentation(StoryCmd cmd, ulong worldId, int int0, string text)
         {
+            if (IsLocalInspect(cmd)) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
             LastCmd = cmd;
@@ -350,20 +355,10 @@ namespace SyncRADation.Networking
                         break;
                     }
                     case StoryCmd.EventScreenStart:
-                    {
-                        var e = Find<EventScreenInteraction>(id);
-                        if (e != null) e.startEventInstant();
-                        break;
-                    }
                     case StoryCmd.EventScreenExit:
-                    {
-                        var e = Find<EventScreenInteraction>(id);
-                        if (e != null) e.exitEvent();
-                        break;
-                    }
                     case StoryCmd.OpenBookMemory:
                     case StoryCmd.BookOpen:
-                        ApplyBook(msg.Text, msg.Cmd == StoryCmd.OpenBookMemory);
+                        PlaytestLog.Event("Story", "skip local inspect " + msg.Cmd);
                         break;
                     case StoryCmd.EventZoneFire:
                     {
@@ -409,47 +404,12 @@ namespace SyncRADation.Networking
             }
         }
 
-        public void ReplayBook(string bookName, bool memory)
+        private static bool IsLocalInspect(StoryCmd cmd)
         {
-            ApplyBook(bookName, memory);
-        }
-
-        private static void ApplyBook(string bookName, bool memory)
-        {
-            Book book = null;
-            if (!string.IsNullOrEmpty(bookName))
-            {
-                try
-                {
-                    var all = Resources.FindObjectsOfTypeAll<Book>();
-                    if (all != null)
-                    {
-                        for (int i = 0; i < all.Length; i++)
-                        {
-                            if (all[i] != null && all[i].name == bookName)
-                            {
-                                book = all[i];
-                                break;
-                            }
-                        }
-                    }
-                }
-                catch { }
-            }
-            try
-            {
-                var screens = Object.FindObjectsOfType<BookScreen>();
-                if (screens == null || screens.Length == 0) return;
-                var s = screens[0];
-                if (s == null) return;
-                if (memory && book != null) s.OpenBookMemory(book);
-                else
-                {
-                    if (book != null) s.book = book;
-                    s.OpenBook();
-                }
-            }
-            catch { }
+            return cmd == StoryCmd.EventScreenStart
+                || cmd == StoryCmd.EventScreenExit
+                || cmd == StoryCmd.OpenBookMemory
+                || cmd == StoryCmd.BookOpen;
         }
 
         private static T Find<T>(ulong worldId) where T : Component

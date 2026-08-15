@@ -12,7 +12,9 @@ namespace SyncRADation
         public const int DefaultPort = 7777;
         public const int MaxPlayers = 4;
         public const float SendInterval = 1f / 30f;
-        public const int BoneSendDivider = 2; // bones every 2nd state packet (~15 Hz)
+        public const int BoneSendDivider = 1; // bones with every state packet (~30 Hz)
+        /// <summary>~1.35 packets behind at 30 Hz. Shared by root pose and bone sampling.</summary>
+        public const float PoseInterpDelay = 0.045f;
         public const float EntitySendInterval = 1f / 15f;
         public const string ConnectionKey = "SyncRADation";
     }

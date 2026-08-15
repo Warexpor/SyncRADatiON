@@ -13,6 +13,7 @@ namespace SyncRADation.Networking
         private readonly Dictionary<ulong, bool> _lastTriggered = new Dictionary<ulong, bool>();
         private readonly Dictionary<ulong, bool> _lastActive = new Dictionary<ulong, bool>();
         private readonly HashSet<ulong> _claimed = new HashSet<ulong>();
+        private readonly Dictionary<ulong, int> _claimerOf = new Dictionary<ulong, int>();
         private readonly Dictionary<ulong, ItemPickup> _byId = new Dictionary<ulong, ItemPickup>();
         private bool _scanned;
 
@@ -23,12 +24,66 @@ namespace SyncRADation.Networking
             _lastTriggered.Clear();
             _lastActive.Clear();
             _claimed.Clear();
+            _claimerOf.Clear();
             _byId.Clear();
             _timer = 0f;
         }
 
         public void Reset() => RefreshScene();
         public void RequestFullSend() => _needFull = true;
+        public bool IsClaimed(ulong worldId) => worldId != 0 && _claimed.Contains(worldId);
+
+        public void NotifyRevealed()
+        {
+            _scanned = false;
+            _needFull = true;
+            HideClaimed(null);
+        }
+
+        public void HidePickup(ItemPickup p)
+        {
+            if (p == null) return;
+            try
+            {
+                p.triggered = true;
+                if (!p.dontDestroyOnPickup)
+                    p.gameObject.SetActive(false);
+                else
+                    p.enabled = false;
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Re-hide claimed props after a parent chunk/content wakes (SetActive re-enables children).
+        /// </summary>
+        public void HideClaimed(GameObject root)
+        {
+            EnsureScanned();
+            if (root != null)
+            {
+                ItemPickup[] picks = null;
+                try { picks = root.GetComponentsInChildren<ItemPickup>(true); } catch { }
+                if (picks != null)
+                {
+                    for (int i = 0; i < picks.Length; i++)
+                    {
+                        var p = picks[i];
+                        if (p == null) continue;
+                        ulong id = WorldId.FromGameObject(p.gameObject);
+                        if (id == 0 || !_claimed.Contains(id)) continue;
+                        HidePickup(p);
+                    }
+                }
+                return;
+            }
+
+            foreach (var kvp in _byId)
+            {
+                if (!_claimed.Contains(kvp.Key) || kvp.Value == null) continue;
+                HidePickup(kvp.Value);
+            }
+        }
 
         private void EnsureScanned()
         {
@@ -121,7 +176,12 @@ namespace SyncRADation.Networking
             EnsureScanned();
 
             if (_claimed.Contains(worldId))
+            {
+                int who;
+                if (_claimerOf.TryGetValue(worldId, out who) && who == claimerPlayerId)
+                    return true;
                 return false;
+            }
 
             ItemPickup p;
             if (!_byId.TryGetValue(worldId, out p) || p == null)
@@ -131,12 +191,6 @@ namespace SyncRADation.Networking
                 if (!_byId.TryGetValue(worldId, out p) || p == null)
                     return false;
             }
-
-            try
-            {
-                if (p.triggered) return false;
-            }
-            catch { }
 
             try
             {
@@ -150,19 +204,10 @@ namespace SyncRADation.Networking
             }
 
             _claimed.Add(worldId);
+            _claimerOf[worldId] = claimerPlayerId;
 
             if (hideNow)
-            {
-                try
-                {
-                    p.triggered = true;
-                    if (!p.dontDestroyOnPickup)
-                        p.gameObject.SetActive(false);
-                    else
-                        p.enabled = false;
-                }
-                catch { }
-            }
+                HidePickup(p);
 
             return true;
         }
@@ -191,24 +236,21 @@ namespace SyncRADation.Networking
             for (int i = 0; i < msg.Entries.Length; i++)
             {
                 var e = msg.Entries[i];
-                ulong id = unchecked((ulong)e.WorldId);
-                ItemPickup p;
-                if (!_byId.TryGetValue(id, out p) || p == null) continue;
-
-                // Inactive room chunks are not picked up. Only Triggered hides the prop.
                 if (!e.Triggered) continue;
 
+                ulong id = unchecked((ulong)e.WorldId);
                 _claimed.Add(id);
-                try
+                ItemPickup p;
+                if (!_byId.TryGetValue(id, out p) || p == null)
                 {
-                    p.triggered = true;
-                    if (!p.dontDestroyOnPickup)
-                        p.gameObject.SetActive(false);
-                    else
-                        p.enabled = false;
-                    PlaytestLog.Event("Pickup", "hide id=" + id.ToString("X16") + " " + p.gameObject.name);
+                    _scanned = false;
+                    EnsureScanned();
+                    _byId.TryGetValue(id, out p);
                 }
-                catch { }
+                if (p == null) continue;
+
+                HidePickup(p);
+                PlaytestLog.Event("Pickup", "hide id=" + id.ToString("X16") + " " + p.gameObject.name);
             }
         }
 
@@ -221,33 +263,69 @@ namespace SyncRADation.Networking
 
             try
             {
-                var item = InventoryManager.getItem((Items.itemlist)msg.ItemEnum);
-                if (item == null)
+                ulong id = unchecked((ulong)msg.WorldId);
+                _claimed.Add(id);
+                EnsureScanned();
+                ItemPickup p;
+                _byId.TryGetValue(id, out p);
+                if (p == null)
                 {
-                    ModRuntime.Log?.Warning("[WorldPickup] Grant unknown item " + msg.ItemEnum);
-                    return;
+                    _scanned = false;
+                    EnsureScanned();
+                    _byId.TryGetValue(id, out p);
                 }
-                InventoryManager.AddItem(item, msg.Count > 0 ? msg.Count : 1);
-                PartyKeyRing.Note(item);
+
+                NetGate.BeginApply();
+                try
+                {
+                    bool inspect = false;
+                    try
+                    {
+                        inspect = p != null && (p.showItemView || p.focusCamera || p.pauseGame);
+                    }
+                    catch { }
+
+                    var item = InventoryManager.getItem((Items.itemlist)msg.ItemEnum);
+                    if (item == null && p != null)
+                    {
+                        try { item = p._item; } catch { }
+                    }
+                    if (item == null)
+                    {
+                        ModRuntime.Log?.Warning("[WorldPickup] Grant unknown item " + msg.ItemEnum);
+                        return;
+                    }
+                    bool already = false;
+                    try { already = InventoryManager.hasItem((Items.itemlist)msg.ItemEnum); } catch { }
+                    if (!already)
+                    {
+                        try { already = InventoryManager.hasItem(item); } catch { }
+                    }
+                    // Inspect pickups already ran native pickUp() on the claimer.
+                    if (!already && !inspect)
+                        InventoryManager.AddItem(item, msg.Count > 0 ? msg.Count : 1);
+                    PartyKeyRing.Note(item);
+                    if (p != null && !inspect)
+                    {
+                        try { p.pickUp(); } catch { }
+                    }
+                }
+                finally
+                {
+                    NetGate.EndApply();
+                }
+
+                if (p != null)
+                {
+                    HidePickup(p);
+                    try { if (p._item != null) PartyKeyRing.Note(p._item); } catch { }
+                }
+
                 ModRuntime.Log?.Msg("[WorldPickup] Granted " + (Items.itemlist)msg.ItemEnum + " x" + msg.Count);
             }
             catch (System.Exception ex)
             {
                 ModRuntime.Log?.Warning("[WorldPickup] Grant failed: " + ex.Message);
-            }
-
-            // Hide local prop
-            ulong id = unchecked((ulong)msg.WorldId);
-            _claimed.Add(id);
-            ItemPickup p;
-            if (_byId.TryGetValue(id, out p) && p != null)
-            {
-                try
-                {
-                    p.triggered = true;
-                    if (!p.dontDestroyOnPickup) p.gameObject.SetActive(false);
-                }
-                catch { }
             }
         }
     }

@@ -60,13 +60,13 @@ namespace SyncRADation.Patches
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
             ulong id = WorldId.FromGameObject(__instance.gameObject);
-            net.PuzzleSync.Emit(PuzzleType.CryoDoorLock, id, __instance);
+            net.PuzzleSync.EmitProgressed(PuzzleType.CryoDoorLock, id);
             try
             {
                 if (__instance.puzzle != null)
                 {
                     ulong pid = WorldId.FromGameObject(__instance.puzzle.gameObject);
-                    net.PuzzleSync.Emit(PuzzleType.PEN_Codepad, pid, __instance.puzzle);
+                    net.PuzzleSync.EmitProgressed(PuzzleType.PEN_Codepad, pid);
                 }
             }
             catch { }
@@ -83,7 +83,25 @@ namespace SyncRADation.Patches
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
             ulong id = WorldId.FromGameObject(__instance.gameObject);
-            net.PuzzleSync.Emit(PuzzleType.PEN_Cryo, id, __instance);
+            net.PuzzleSync.EmitProgressed(PuzzleType.PEN_Cryo, id);
+            try
+            {
+                var cryoLock = __instance.GetComponentInParent<CryoDoorLock>()
+                    ?? __instance.GetComponentInChildren<CryoDoorLock>(true);
+                if (cryoLock != null)
+                {
+                    ulong lid = WorldId.FromGameObject(cryoLock.gameObject);
+                    if (lid != 0)
+                        net.PuzzleSync.EmitProgressed(PuzzleType.CryoDoorLock, lid);
+                    if (cryoLock.puzzle != null)
+                    {
+                        ulong pid = WorldId.FromGameObject(cryoLock.puzzle.gameObject);
+                        if (pid != 0)
+                            net.PuzzleSync.EmitProgressed(PuzzleType.PEN_Codepad, pid);
+                    }
+                }
+            }
+            catch { }
         }
     }
 

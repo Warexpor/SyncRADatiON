@@ -17,6 +17,8 @@ namespace SyncRADation.Players
         private ParticleSystem _ricochet;
         private LineRenderer _laser;
         private SpriteRenderer _laserPoint;
+        private float _laserMaxDist = 30f;
+        private string _ricochetPath;
         private Transform _slide;
         private float _slideRestPos;
         private float _flashTimer;
@@ -42,6 +44,21 @@ namespace SyncRADation.Players
         public void SetWallMask(int mask)
         {
             _wallMask = mask;
+        }
+
+        public bool TryGetLaserForward(out Vector3 dir)
+        {
+            if (_laser != null)
+            {
+                dir = _laser.transform.forward;
+                if (dir.sqrMagnitude > 0.0001f)
+                {
+                    dir.Normalize();
+                    return true;
+                }
+            }
+            dir = default;
+            return false;
         }
 
         public bool TryGetMuzzleForward(out Vector3 dir)
@@ -80,7 +97,12 @@ namespace SyncRADation.Players
             try
             {
                 var pa = PlayerState.player?.GetComponentInChildren<PlayerAttack>(true);
-                if (pa != null) _wallMask = pa.WallMask;
+                if (pa != null)
+                {
+                    _wallMask = pa.WallMask;
+                    if (!string.IsNullOrEmpty(pa.ricochetSound))
+                        _ricochetPath = pa.ricochetSound;
+                }
             }
             catch { }
         }
@@ -186,7 +208,10 @@ namespace SyncRADation.Players
                         if (_laserPoint != null && srcSr != null)
                         {
                             _laserPoint.sprite = srcSr.sprite;
-                            _laserPoint.sharedMaterial = srcSr.sharedMaterial;
+                            if (srcSr.sharedMaterial != null)
+                                _laserPoint.sharedMaterial = srcSr.sharedMaterial;
+                            if (srcSr.sharedMaterials != null && srcSr.sharedMaterials.Length > 0)
+                                _laserPoint.sharedMaterials = srcSr.sharedMaterials;
                             _laserPoint.color = srcSr.color;
                         }
                     }
@@ -194,6 +219,8 @@ namespace SyncRADation.Players
                         _missedShot = FindMatchingPs(allTransforms, srcAl.missedShot.gameObject.name);
                     if (srcAl.ricochet != null)
                         _ricochet = FindMatchingPs(allTransforms, srcAl.ricochet.gameObject.name);
+                    if (srcAl.laserMaxDist > 0.5f)
+                        _laserMaxDist = srcAl.laserMaxDist;
                 }
             }
             catch { }
@@ -202,7 +229,7 @@ namespace SyncRADation.Players
                 _laser = FindLineRenderer(allTransforms);
             if (_laser != null)
             {
-                _laser.useWorldSpace = true;
+                _laser.useWorldSpace = false;
                 _laser.enabled = false;
                 try
                 {
@@ -222,6 +249,7 @@ namespace SyncRADation.Players
                 catch { }
             }
             ModRuntime.Log?.Msg("[FX] Laser " + (_laser != null ? "FOUND mat=" + (_laser.sharedMaterial != null ? _laser.sharedMaterial.name : "NULL") : "NOT FOUND"));
+            PrepareLaserPoint();
 
             if (_missedShot == null)
                 _missedShot = FindParticleSystemByName(allTransforms, "Miss", allowAnyFallback: false);
@@ -459,6 +487,8 @@ namespace SyncRADation.Players
                 }
 
                 PlayAt(_ricochet, hit.point, hit.normal);
+                if (!string.IsNullOrEmpty(_ricochetPath))
+                    WorldSfx.Play(_ricochetPath, hit.point, 0.4f, WorldSfx.CombatRange);
             }
             else
             {
@@ -494,7 +524,7 @@ namespace SyncRADation.Players
             return false;
         }
 
-        public void UpdateLaser(bool aiming, Vector3 origin, Vector3 direction, float maxDist)
+        public void UpdateLaser(bool aiming)
         {
             if (_laser == null)
             {
@@ -502,20 +532,24 @@ namespace SyncRADation.Players
                 return;
             }
 
-            _laser.useWorldSpace = true;
+            _laser.useWorldSpace = false;
             _laser.enabled = aiming;
             if (_laserPoint != null) _laserPoint.enabled = aiming;
             if (!aiming) return;
 
-            if (direction.sqrMagnitude < 0.0001f)
-                direction = Vector3.forward;
-            direction.Normalize();
+            Transform t = _laser.transform;
+            Vector3 origin = t.position;
+            Vector3 dir = t.forward;
+            if (dir.sqrMagnitude < 0.0001f)
+                dir = Vector3.forward;
+            else
+                dir.Normalize();
 
-            Vector3 end = origin + direction * maxDist;
+            float dist = _laserMaxDist;
             RaycastHit hit;
-            if (Physics.Raycast(origin, direction, out hit, maxDist, _wallMask))
+            if (Physics.Raycast(origin, dir, out hit, _laserMaxDist, _wallMask))
             {
-                end = hit.point;
+                dist = hit.distance;
                 if (_laserPoint != null)
                 {
                     _laserPoint.transform.position = hit.point;
@@ -524,12 +558,54 @@ namespace SyncRADation.Players
             }
             else if (_laserPoint != null)
             {
-                _laserPoint.transform.position = end;
+                _laserPoint.transform.position = origin + dir * dist;
             }
 
             _laser.positionCount = 2;
-            _laser.SetPosition(0, origin);
-            _laser.SetPosition(1, end);
+            _laser.SetPosition(0, Vector3.zero);
+            _laser.SetPosition(1, new Vector3(0f, 0f, dist));
+            BillboardLaserPoint();
+        }
+
+        private void PrepareLaserPoint()
+        {
+            if (_laserPoint == null && _laser != null)
+            {
+                var srs = _weapon.GetComponentsInChildren<SpriteRenderer>(true);
+                for (int i = 0; i < srs.Length; i++)
+                {
+                    var sr = srs[i];
+                    if (sr == null) continue;
+                    string n = sr.name.ToLowerInvariant();
+                    if (n.IndexOf("point", StringComparison.OrdinalIgnoreCase) < 0
+                        && n.IndexOf("decal", StringComparison.OrdinalIgnoreCase) < 0)
+                        continue;
+                    _laserPoint = sr;
+                    break;
+                }
+            }
+            if (_laserPoint == null) return;
+            _laserPoint.transform.SetParent(_weaponRoot.transform, true);
+            _laserPoint.transform.localScale = Vector3.one;
+            if (_laserPoint.sharedMaterial == null)
+            {
+                Shader sh = Shader.Find("Sprites/Default");
+                if (sh == null) sh = Shader.Find("Unlit/Color");
+                if (sh != null)
+                    _laserPoint.sharedMaterial = new Material(sh);
+            }
+            Color c = _laserPoint.color;
+            if (c.r < 0.5f || c.g > 0.4f || c.b > 0.4f)
+                _laserPoint.color = Color.red;
+            _laserPoint.enabled = false;
+        }
+
+        private void BillboardLaserPoint()
+        {
+            if (_laserPoint == null) return;
+            Camera cam = Camera.main;
+            if (cam == null) return;
+            _laserPoint.transform.rotation = Quaternion.LookRotation(cam.transform.forward, cam.transform.up);
         }
 
         public void Tick(float dt)
