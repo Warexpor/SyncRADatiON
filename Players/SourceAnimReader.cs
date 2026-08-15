@@ -127,6 +127,8 @@ namespace SyncRADation.Players
                 b |= AnimBools.EmptyClick;
 
             if (SafeGetBool(anim, "Running")) b |= AnimBools.Running;
+            try { if (AlternatePlayerController.running) b |= AnimBools.Running; } catch { }
+            try { if (PlayerState.charState == PlayerState.charStates.run) b |= AnimBools.Running; } catch { }
             if (SafeGetBool(anim, "Grounded")) b |= AnimBools.Grounded;
             if (SafeGetBool(anim, "Crouch")) b |= AnimBools.Crouch;
             if (SafeGetBool(anim, "Blocked")) b |= AnimBools.Blocked;

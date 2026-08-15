@@ -212,6 +212,7 @@ namespace SyncRADation.Networking
         {
             var net = LanNetworkManager.Instance;
             if (net != null && net.Role == NetworkRole.Host) return;
+            if (SceneFollowService.LocalIsTransient()) return;
 
             NetGate.BeginApply();
             try
@@ -312,25 +313,21 @@ namespace SyncRADation.Networking
                     case StoryCmd.DialogueStart:
                     {
                         var d = Find<Dialogue>(id);
-                        if (d != null && !LocalInspect.Dialogue(d))
-                            d.StartDialogue();
-                        else if (d != null)
+                        if (d == null || LocalInspect.Dialogue(d))
                             PlaytestLog.Event("Story", "skip local inspect DialogueStart");
                         break;
                     }
                     case StoryCmd.DialoguerStartId:
-                        try { Dialoguer.StartDialogue(msg.Int0); } catch { }
+                        if (LocalInspect.DialoguerFlavor(msg.Int0))
+                            PlaytestLog.Event("Story", "skip flavor DialoguerStartId i=" + msg.Int0);
+                        else
+                        {
+                            try { Dialoguer.StartDialogue(msg.Int0); } catch { }
+                        }
                         break;
                     case StoryCmd.DialogueContinue:
-                        try
-                        {
-                            if (msg.Int0 != 0) Dialoguer.ContinueDialogue(msg.Int0);
-                            else Dialoguer.ContinueDialogue();
-                        }
-                        catch { }
-                        break;
                     case StoryCmd.DialogueEnd:
-                        try { Dialoguer.EndDialogue(); } catch { }
+                        PlaytestLog.Event("Story", "skip " + msg.Cmd);
                         break;
                     case StoryCmd.CutsceneStart:
                     {
@@ -344,7 +341,9 @@ namespace SyncRADation.Networking
                     case StoryCmd.CutsceneSkip:
                     {
                         var c = Find<CutsceneManager>(id);
-                        if (c != null)
+                        if (c != null && LocalInspect.Cinematic(c.gameObject))
+                            PlaytestLog.Event("Story", "skip local cinematic CutsceneSkip");
+                        else if (c != null)
                         {
                             try
                             {
@@ -370,7 +369,9 @@ namespace SyncRADation.Networking
                     case StoryCmd.EventZoneFire:
                     {
                         var z = Find<EventZone>(id);
-                        if (z != null)
+                        if (z != null && LocalInspect.LockWorld(z.gameObject))
+                            PlaytestLog.Event("Story", "skip lock EventZoneFire");
+                        else if (z != null)
                         {
                             z.triggered = true;
                             try { if (z.onInRange != null) z.onInRange.Invoke(); } catch { }

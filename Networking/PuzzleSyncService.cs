@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using FMODUnity;
+using SyncRADation.Patches;
 using SyncRADation.Sync;
 using UnityEngine;
 
@@ -118,6 +119,7 @@ namespace SyncRADation.Networking
                 if (FindInParents<AirlockDoorLoadZone>(go) != null) return true;
                 if (FindInParents<EventOnlyRoom>(go) != null) return true;
                 if (FindInParents<PEN_Airlock>(go) != null) return true;
+                if (FindInParents<PEN_Titles>(go) != null) return true;
                 if (FindInParents<PenroseAirlockNew>(go) != null) return true;
                 if (FindInParents<AutoTraverseDoor>(go) != null) return true;
                 if (FindInParents<Doorway_Double>(go) != null) return true;
@@ -620,8 +622,6 @@ namespace SyncRADation.Networking
             switch (type)
             {
                 case PuzzleType.PuzzleStatus:
-                case PuzzleType.InteractiveLock:
-                case PuzzleType.InteractiveLockSingle:
                 case PuzzleType.Keypad3D:
                 case PuzzleType.ROT_Keypad:
                 case PuzzleType.PEN_Codepad:
@@ -735,6 +735,8 @@ namespace SyncRADation.Networking
             var net = LanNetworkManager.Instance;
             if (msg.Entries == null || msg.Entries.Length == 0) return;
             if (net != null && msg.SenderPlayerId == net.LocalPlayerId)
+                return;
+            if (SceneFollowService.LocalIsTransient())
                 return;
 
             PlaytestLog.Event("Puzzle", "apply n=" + msg.Entries.Length
@@ -1070,13 +1072,21 @@ namespace SyncRADation.Networking
                     case PuzzleType.InteractiveLockSingle:
                         {
                             var x = Get<InteractiveLockSingle>(e.Type, e.WorldId);
-                            if (x != null && x.door != null)
+                            if (x != null)
                             {
-                                bool was = x.door.locked;
-                                x.door.locked = e.Bool0;
-                                DoorNative.ApplyLockPlate(x, e.Bool1);
-                                if (was && !e.Bool0)
-                                    TryUnlockDoors(x.gameObject);
+                                ConnectedDoors master = null;
+                                try { master = x.master; } catch { }
+                                if (master == null)
+                                {
+                                    try { master = x.GetComponentInParent<ConnectedDoors>(); } catch { }
+                                }
+                                bool noPath = master != null && DoorNative.IsNoPathLock(master);
+                                bool locked = noPath || (master != null && master.locked) || e.Bool0;
+                                if (noPath)
+                                    DoorNative.PresentNoPath(master);
+                                if (x.door != null)
+                                    x.door.locked = locked;
+                                DoorNative.ApplyLockPlate(x, locked);
                             }
                             break;
                         }
@@ -1564,12 +1574,21 @@ namespace SyncRADation.Networking
         {
             if (x == null) return;
             try { x.unlocked = true; } catch { }
+            try { AirlockCinematic.NoteRemoteUnlock(x); } catch { }
             try
             {
                 if (x.inter != null)
                 {
-                    x.inter.triggered = true;
-                    x.inter.enabled = false;
+                    if (AirlockCinematic.IsPenTitlesCard(x))
+                    {
+                        x.inter.triggered = false;
+                        x.inter.enabled = true;
+                    }
+                    else
+                    {
+                        x.inter.triggered = true;
+                        x.inter.enabled = false;
+                    }
                 }
             }
             catch { }
@@ -2268,6 +2287,20 @@ namespace SyncRADation.Networking
             {
                 if (x.doorLock != null)
                     DoorNative.ApplyConnectedDoors(x.doorLock, false);
+            }
+            catch { }
+            try
+            {
+                var singles = x.GetComponentsInChildren<InteractiveLockSingle>(true);
+                if (singles != null)
+                {
+                    for (int i = 0; i < singles.Length; i++)
+                    {
+                        if (singles[i] == null) continue;
+                        try { if (singles[i].door != null) singles[i].door.locked = false; } catch { }
+                        DoorNative.ApplyLockPlate(singles[i], false);
+                    }
+                }
             }
             catch { }
             try

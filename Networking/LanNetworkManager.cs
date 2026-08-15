@@ -7,6 +7,7 @@ using LiteNetLib;
 using LiteNetLib.Utils;
 using SyncRADation.Config;
 using SyncRADation.ItemSystem;
+using SyncRADation.Patches;
 using SyncRADation.Players;
 using SyncRADation.Sync;
 // NetworkDamageSystem lives in Players
@@ -220,6 +221,7 @@ namespace SyncRADation.Networking
             }
 
             // Pickup nearby dropped item
+            DroppedItemManager.TickNearby();
             if (Input.GetKeyDown(KeyCode.E) && WorldItem.NearbyID >= 0
                 && PlayerState.gameState == PlayerState.gameStates.play)
             {
@@ -231,7 +233,7 @@ namespace SyncRADation.Networking
                     SendInteractionRequest(0, InteractionKind.DroppedPickup, localID);
             }
 
-            if (Input.GetKeyDown(KeyCode.G) && PlayerState.gameState == PlayerState.gameStates.play)
+            if (Input.GetKeyDown(KeyCode.G))
             {
                 TryDropCurrentItem();
             }
@@ -736,7 +738,8 @@ namespace SyncRADation.Networking
                 _storageSync.SendNow(this);
                 PartyKeyRing.Broadcast();
                 FmodEmitterSync.DumpPlaying();
-                SendSceneFollow(SceneManager.GetActiveScene().name ?? "", false);
+                if (!SceneFollowService.IsTransient(SceneManager.GetActiveScene().name ?? ""))
+                    SendSceneFollow(SceneManager.GetActiveScene().name ?? "", false);
                 BroadcastSceneHello();
             }
             finally
@@ -973,31 +976,83 @@ namespace SyncRADation.Networking
 
         private void TryDropCurrentItem()
         {
-            if (_localPlayer == null) return;
+            PlayerState.gameStates gs;
+            try { gs = PlayerState.gameState; }
+            catch { return; }
+            if (gs != PlayerState.gameStates.play && gs != PlayerState.gameStates.inventory)
+            {
+                ModRuntime.Log?.Msg("[Drop] skip state=" + gs);
+                return;
+            }
+
+            if (_localPlayer == null) _localPlayer = PlayerState.player;
+            if (_localPlayer == null)
+            {
+                ModRuntime.Log?.Msg("[Drop] No local player");
+                return;
+            }
             var pos = _localPlayer.transform.position;
 
+            AnItem anItem = null;
             Items.itemlist itemToDrop = Items.itemlist.None;
             int count = 1;
 
             try
             {
-                var current = InventoryManager.CurrentItem;
-                if (current != null && current._item != Items.itemlist.None && current._item != Items.itemlist.Injector)
-                    itemToDrop = current._item;
+                anItem = InventoryManager.CurrentItem;
+                if (anItem != null) itemToDrop = anItem._item;
             }
             catch { }
 
-            if (itemToDrop == Items.itemlist.None)
+            if (itemToDrop == Items.itemlist.None || itemToDrop == Items.itemlist.Injector)
             {
-                ModRuntime.Log?.Msg("[Drop] No item to drop");
+                try
+                {
+                    var tool = InventoryManager.EquippedTool;
+                    if (tool != null && tool._item != Items.itemlist.None && tool._item != Items.itemlist.Injector)
+                    {
+                        anItem = tool;
+                        itemToDrop = tool._item;
+                    }
+                }
+                catch { }
+            }
+
+            if (itemToDrop == Items.itemlist.None || itemToDrop == Items.itemlist.Injector)
+            {
+                try
+                {
+                    var w = InventoryManager.EquippedWeapon;
+                    if (w != null && w.parentItem != null)
+                    {
+                        anItem = w.parentItem;
+                        itemToDrop = anItem._item;
+                    }
+                }
+                catch { }
+            }
+
+            if (itemToDrop == Items.itemlist.None || itemToDrop == Items.itemlist.Injector)
+            {
+                ModRuntime.Log?.Msg("[Drop] No item to drop (select a slot, then G)");
                 return;
             }
 
             try
             {
-                var anItem = InventoryManager.getItem(itemToDrop);
-                if (anItem == null) return;
-                if (InventoryManager.getCount(anItem) <= 0) return;
+                if (anItem == null) anItem = InventoryManager.getItem(itemToDrop);
+                if (anItem == null)
+                {
+                    ModRuntime.Log?.Msg("[Drop] getItem failed " + itemToDrop);
+                    return;
+                }
+                int have = InventoryManager.getCount(anItem);
+                if (have <= 0)
+                {
+                    ModRuntime.Log?.Msg("[Drop] count 0 for " + itemToDrop);
+                    return;
+                }
+                if (count > have) count = have;
                 InventoryManager.RemoveItem(anItem, count);
             }
             catch (Exception ex)
@@ -1029,13 +1084,15 @@ namespace SyncRADation.Networking
             reason = "";
             var go = DroppedItemManager.GetItem(itemKey);
             if (go == null) return false;
-            var wi = go.GetComponent<WorldItem>();
-            if (wi == null) return false;
+            Items.itemlist itemEnum;
+            int storedCount;
+            if (!DroppedItemManager.TryGet(itemKey, out itemEnum, out storedCount))
+                return false;
 
-            var item = InventoryManager.getItem(wi.ItemEnum);
+            var item = InventoryManager.getItem(itemEnum);
             if (item == null) return false;
-            int count = wi.Count;
-            bool shared = IsSharedItem(wi.ItemEnum);
+            int count = storedCount;
+            bool shared = IsSharedItem(itemEnum);
 
             int senderID = (itemKey >> 16) & 0xFF;
             ushort localIdx = (ushort)(itemKey & 0xFFFF);
@@ -1044,7 +1101,7 @@ namespace SyncRADation.Networking
             {
                 SenderID = (byte)senderID,
                 LocalIndex = localIdx,
-                ItemEnum = (ushort)wi.ItemEnum,
+                ItemEnum = (ushort)itemEnum,
                 Count = count,
                 GrantToReceiver = shared
             });
@@ -1064,9 +1121,9 @@ namespace SyncRADation.Networking
                 }
             }
             else
-                reason = "grant:" + (int)wi.ItemEnum + ":" + count;
+                reason = "grant:" + (int)itemEnum + ":" + count;
 
-            ModRuntime.Log?.Msg("[Pickup] Claimed " + wi.ItemEnum + " x" + count + " by " + claimerId);
+            ModRuntime.Log?.Msg("[Pickup] Claimed " + itemEnum + " x" + count + " by " + claimerId);
             return true;
         }
 
@@ -1675,6 +1732,12 @@ namespace SyncRADation.Networking
 
         private void HandleSceneHello(SceneHelloMessage msg)
         {
+            if (SceneFollowService.IsTransient(msg.SceneName))
+            {
+                PlaytestLog.Event("Scene", "Peer " + msg.SenderPlayerId + " still loading");
+                return;
+            }
+
             _peerScenes[msg.SenderPlayerId] = msg.SceneName ?? "";
             if (msg.SenderPlayerId == 0 || _role == NetworkRole.Client)
             {
@@ -1682,21 +1745,39 @@ namespace SyncRADation.Networking
                     _hostSceneName = msg.SceneName ?? "";
             }
 
+            if (SceneFollowService.IsTransient(msg.SceneName))
+            {
+                PlaytestLog.Event("Scene", "Peer " + msg.SenderPlayerId + " still loading");
+                return;
+            }
+
             _localSceneName = SceneManager.GetActiveScene().name ?? "";
             string compareTo = !string.IsNullOrEmpty(_hostSceneName) ? _hostSceneName : msg.SceneName;
-            _sceneMismatch = !string.IsNullOrEmpty(compareTo)
+            bool hostTransient = SceneFollowService.IsTransient(compareTo);
+            bool localTransient = SceneFollowService.IsTransient(_localSceneName);
+            _sceneMismatch = !hostTransient && !localTransient
+                && !string.IsNullOrEmpty(compareTo)
                 && !string.IsNullOrEmpty(_localSceneName)
                 && !string.Equals(compareTo, _localSceneName, StringComparison.Ordinal);
 
-            if (_sceneMismatch)
+            if (_role == NetworkRole.Client && !hostTransient && !string.IsNullOrEmpty(compareTo)
+                && (_sceneMismatch || localTransient))
             {
-                StatusText = "Following host scene '" + compareTo + "'";
-                ModRuntime.Log?.Warning("[Scene] MISMATCH local='" + _localSceneName + "' host='" + compareTo
-                    + "' — following host");
-                if (_role == NetworkRole.Client && !string.IsNullOrEmpty(compareTo))
-                    SceneFollowService.Apply(compareTo);
+                if (_sceneMismatch && AirlockCinematic.ShouldIgnoreHostFollow(compareTo))
+                {
+                    PlaytestLog.Event("Scene", "defer airlock follow host='" + compareTo
+                        + "' local='" + _localSceneName + "'");
+                    return;
+                }
+                if (_sceneMismatch)
+                {
+                    StatusText = "Following host scene '" + compareTo + "'";
+                    ModRuntime.Log?.Warning("[Scene] MISMATCH local='" + _localSceneName + "' host='" + compareTo
+                        + "' — following host");
+                }
+                SceneFollowService.Apply(compareTo);
             }
-            else
+            else if (!_sceneMismatch)
             {
                 ModRuntime.Log?.Msg("[Scene] Peer " + msg.SenderPlayerId + " scene='" + msg.SceneName
                     + "' room='" + msg.RoomName + "' OK");
@@ -1726,9 +1807,16 @@ namespace SyncRADation.Networking
             _sceneMismatch = false;
             if (_handshakeComplete)
             {
+                if (SceneFollowService.LocalIsTransient())
+                {
+                    PlaytestLog.Event("Scene", "skip hello/dump (loading)");
+                    return;
+                }
                 BroadcastSceneHello();
                 if (_role == NetworkRole.Host)
                     SendFullWorldSnapshot();
+                else if (AirlockCinematic.ShouldIgnoreHostFollow(_hostSceneName))
+                    PlaytestLog.Event("Scene", "skip wreck dump (airlock split)");
                 else
                 {
                     RequestWorldSnapshot();

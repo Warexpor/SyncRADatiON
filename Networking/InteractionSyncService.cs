@@ -30,7 +30,7 @@ namespace SyncRADation.Networking
                         else if (!string.IsNullOrEmpty(consumeReason)) reason = consumeReason;
                         break;
                     case InteractionKind.UseItemMulti:
-                        ok = ApplyUseItemMulti(id, out string multiReason);
+                        ok = ApplyUseItemMulti(id, msg.SenderPlayerId, out string multiReason);
                         if (!ok) reason = "no key";
                         else if (!string.IsNullOrEmpty(multiReason)) reason = multiReason;
                         break;
@@ -38,6 +38,11 @@ namespace SyncRADation.Networking
                         ok = ApplyKeypad(id);
                         break;
                     case InteractionKind.DialogueStart:
+                        if (LocalInspect.DialoguerFlavor(msg.Int0))
+                        {
+                            ok = true;
+                            break;
+                        }
                         if (id == 0 && msg.Int0 != 0)
                         {
                             NetGate.BeginApply();
@@ -122,6 +127,7 @@ namespace SyncRADation.Networking
         {
             var z = Find<EventZone>(id);
             if (z == null) return false;
+            if (LocalInspect.LockWorld(z.gameObject)) return true;
             if (z.triggered) return true;
             z.triggered = true;
             try { if (z.onInRange != null) z.onInRange.Invoke(); } catch { }
@@ -139,7 +145,11 @@ namespace SyncRADation.Networking
 
             AnItem key = u.key;
             if (key != null && !PartyKeyRing.LocalOrRingHas(key))
-                return false;
+            {
+                if (senderId <= 0) return false;
+                try { PartyKeyRing.Note(key._item); } catch { return false; }
+                PlaytestLog.Event("KeyRing", "trust UseItem from=" + senderId + " " + key._item);
+            }
 
             u.unlocked = true;
             PuzzleSyncService.UnlockLinked(u.gameObject);
@@ -179,7 +189,7 @@ namespace SyncRADation.Networking
             return true;
         }
 
-        private static bool ApplyUseItemMulti(ulong id, out string consumeReason)
+        private static bool ApplyUseItemMulti(ulong id, int senderId, out string consumeReason)
         {
             consumeReason = "";
             var m = Find<UseItemMultiInteraction>(id);
@@ -195,8 +205,10 @@ namespace SyncRADation.Networking
                         var u = list[i];
                         if (u == null) continue;
                         AnItem key = u.key;
-                        if (key != null && !PartyKeyRing.LocalOrRingHas(key))
-                            return false;
+                        if (key == null || PartyKeyRing.LocalOrRingHas(key)) continue;
+                        if (senderId <= 0) return false;
+                        try { PartyKeyRing.Note(key._item); } catch { return false; }
+                        PlaytestLog.Event("KeyRing", "trust UseItemMulti from=" + senderId + " " + key._item);
                     }
                 }
             }
@@ -264,8 +276,9 @@ namespace SyncRADation.Networking
         {
             try
             {
-                if (PartyKeyRing.InLocalBag(key))
-                    InventoryManager.RemoveItem(key, 1);
+                var held = PartyKeyRing.FindInBag(key);
+                if (held != null)
+                    InventoryManager.RemoveItem(held, 1);
             }
             catch { }
             try { PartyKeyRing.Remove(key._item); } catch { }
@@ -299,13 +312,9 @@ namespace SyncRADation.Networking
         private static bool ApplyDialogue(ulong id, LanNetworkManager net)
         {
             var d = Find<Dialogue>(id);
-            if (d == null) return false;
+            if (d == null) return true;
             if (LocalInspect.Dialogue(d))
                 return true;
-            NetGate.BeginApply();
-            try { d.StartDialogue(); }
-            finally { NetGate.EndApply(); }
-            net.StorySync.BroadcastPresentation(StoryCmd.DialogueStart, id, 0, "");
             return true;
         }
 
@@ -324,8 +333,10 @@ namespace SyncRADation.Networking
 
         private static bool ApplyCutsceneSkip(ulong id, LanNetworkManager net)
         {
-            net.StorySync.BroadcastPresentation(StoryCmd.CutsceneSkip, id, 0, "");
             var c = Find<CutsceneManager>(id);
+            if (c != null && LocalInspect.Cinematic(c.gameObject))
+                return true;
+            net.StorySync.BroadcastPresentation(StoryCmd.CutsceneSkip, id, 0, "");
             if (c != null)
             {
                 NetGate.BeginApply();

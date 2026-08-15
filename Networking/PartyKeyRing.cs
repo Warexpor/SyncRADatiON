@@ -63,27 +63,31 @@ namespace SyncRADation.Networking
             net.SendPartyKeyRing(arr);
         }
 
-        public static bool InLocalBag(AnItem item)
+        public static AnItem FindInBag(AnItem item)
         {
-            if (item == null) return false;
+            if (item == null) return null;
             try
             {
                 var dict = InventoryManager.elsterItems;
-                if (dict == null) return false;
+                if (dict == null) return null;
+                Items.itemlist want = item._item;
                 var en = dict.GetEnumerator();
                 while (en.MoveNext())
                 {
-                    if (en.Current.key == item && en.Current.value > 0)
+                    var held = en.Current.key;
+                    if (held != null && en.Current.value > 0 && held._item == want)
                     {
                         en.Dispose();
-                        return true;
+                        return held;
                     }
                 }
                 en.Dispose();
             }
             catch { }
-            return false;
+            return null;
         }
+
+        public static bool InLocalBag(AnItem item) => FindInBag(item) != null;
 
         public static bool LocalOrRingHas(AnItem item)
         {

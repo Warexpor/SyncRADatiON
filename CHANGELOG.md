@@ -22,6 +22,12 @@ Protocol **v7** (incompatible with v6). Join dump is the live SProgress slot. Un
 ### Fixed
 - Notes/documents/`EventScreen` inspect no longer open on every Elster (local camera only)
 - Hatch / unique-key doors: one party-ring solve, both walk. Airlock/EventOnlyRoom cinematic stays on the user; chapter load still SceneFollows
+- Client UseItem (Penrose hatch card) is accepted on the host when that Elster has the item. The ring used to check only the host bag, so `UseItem … no key` rejected the repaired `AirlockKey`. Combine Tape+BrokenKey also notes the result on the ring.
+- Client skip/load of `PEN_Hole` no longer yanks the host, and host remaining on the wreck no longer yanks the client back. If a peer is already in the airlock cinematic, Escape/skip is not blocked.
+- Client walking the Penrose airlock into `PEN_Hole` is a real chapter follow. Host used to reject it as an unknown scene (no `LoadLevelZone` on the wreck), so the client sat in the hatch for ~12s until the host loaded. LoadingScreen no longer hellos/dumps/applies puzzles or FMOD.
+- Locked room-links that are not a real key-hint (`GiveKeyHint` + a key) stay on the red NO ENTRY plate for both Elsters. Yellow padlock / blue Open prompts are suppressed while `ConnectedDoors.locked` (reactor, external unlock, no-key). Real key doors still show the padlock.
+- G drop works from play and inventory (selected slot / equipped tool / weapon). Dropped props use world-space distance pickup.
+- Proxy run footsteps set FMOD Run/Speed on `ElsterStep` and read `AlternatePlayerController.running` (animator `Running` was stuck off)
 - `InventoryManager.hasItem(Items.itemlist)` also honors the party key ring (native use checks that overload)
 - Penrose `ObservationDialogue` flavor (control-panel look-at, loc `PEN_Controls*`) stays local. Remoting it ran `Dialogue.StartDialogue` without the loc string, so the other Elster got a different line (or the sealed-door text) for the same WorldId
 - `InteractiveLockSingle` now also syncs `AutoTraverseDoor.blocker` (the red “cannot be opened” plate). `door.locked` alone left the plate/inspect mismatch

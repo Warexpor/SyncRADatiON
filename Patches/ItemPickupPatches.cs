@@ -14,6 +14,14 @@ namespace SyncRADation.Patches
 
         internal static void NoteTakenFromCallback(ItemPickup p) => NoteTaken(p);
 
+        internal static void NoteCraftedKey(AnItem item)
+        {
+            if (NetGate.IsApplying || !NetGate.Live) return;
+            PartyKeyRing.Note(item);
+            if (NetGate.Host)
+                PartyKeyRing.Broadcast();
+        }
+
         internal static void NoteTakenFromAddItem(AnItem item)
         {
             if (NetGate.IsApplying) return;
@@ -239,6 +247,7 @@ namespace SyncRADation.Patches
         public static void Postfix(AnItem item)
         {
             ItemPickupPatches.NoteTakenFromAddItem(item);
+            ItemPickupPatches.NoteCraftedKey(item);
         }
     }
 
@@ -249,6 +258,7 @@ namespace SyncRADation.Patches
         public static void Postfix(AnItem item)
         {
             ItemPickupPatches.NoteTakenFromAddItem(item);
+            ItemPickupPatches.NoteCraftedKey(item);
         }
     }
 }

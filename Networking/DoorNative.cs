@@ -72,14 +72,154 @@ namespace SyncRADation.Networking
             try
             {
                 cd.locked = locked;
+                if (!locked)
+                {
+                    try { cd.Unlock(); } catch { }
+                    ReleaseTraverse(cd);
+                }
                 try { cd.UpdateProperties(); } catch { }
-                SetTraversePlate(cd.A, locked);
-                SetTraversePlate(cd.B, locked);
+                if (locked && IsNoPathLock(cd))
+                    PresentNoPath(cd);
+                else
+                    EnsurePlates(cd, locked);
             }
             catch (System.Exception ex)
             {
                 ModRuntime.Log?.Warning("[DoorNative] ConnectedDoors lock: " + ex.Message);
             }
+        }
+
+        static void ReleaseTraverse(ConnectedDoors cd)
+        {
+            ReleaseTraverseDoor(cd.A);
+            ReleaseTraverseDoor(cd.B);
+        }
+
+        static void ReleaseTraverseDoor(AutoTraverseDoor atd)
+        {
+            if (atd == null) return;
+            try { atd.enabled = true; } catch { }
+            try
+            {
+                var inters = atd.GetComponentsInChildren<Interaction>(true);
+                if (inters == null) return;
+                for (int i = 0; i < inters.Length; i++)
+                {
+                    var it = inters[i];
+                    if (it == null) continue;
+                    try
+                    {
+                        var t = it.type;
+                        if (t == Interaction.interType.open || t == Interaction.interType.move)
+                        {
+                            it.triggered = false;
+                            it.enabled = true;
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
+
+        public static bool IsKeyHintLock(ConnectedDoors cd)
+        {
+            if (cd == null) return false;
+            try
+            {
+                if (!cd.locked) return false;
+                if (cd.externalUnlocker) return false;
+                if (cd.key == null) return false;
+                return cd.GiveKeyHint;
+            }
+            catch { return false; }
+        }
+
+        public static bool IsNoPathLock(ConnectedDoors cd)
+        {
+            if (cd == null) return false;
+            try { if (!cd.locked) return false; } catch { return false; }
+            return !IsKeyHintLock(cd);
+        }
+
+        public static void PresentNoPath(ConnectedDoors cd)
+        {
+            if (cd == null) return;
+            try { cd.locked = true; } catch { }
+            EnsurePlates(cd, true);
+            SuppressWalkPrompts(cd.A);
+            SuppressWalkPrompts(cd.B);
+            try
+            {
+                var inters = cd.GetComponentsInChildren<Interaction>(true);
+                if (inters == null) return;
+                for (int i = 0; i < inters.Length; i++)
+                    SuppressWalkPrompt(inters[i]);
+            }
+            catch { }
+        }
+
+        static void SuppressWalkPrompts(AutoTraverseDoor atd)
+        {
+            if (atd == null) return;
+            try
+            {
+                var inters = atd.GetComponentsInChildren<Interaction>(true);
+                if (inters == null) return;
+                for (int i = 0; i < inters.Length; i++)
+                    SuppressWalkPrompt(inters[i]);
+            }
+            catch { }
+        }
+
+        public static bool ShouldHideWalkPrompt(Interaction it)
+        {
+            if (it == null) return false;
+            try
+            {
+                var t = it.type;
+                if (t != Interaction.interType.use && t != Interaction.interType.open
+                    && t != Interaction.interType.move && t != Interaction.interType.generic)
+                    return false;
+            }
+            catch { return false; }
+
+            try
+            {
+                var cd = it.GetComponentInParent<ConnectedDoors>();
+                if (cd != null && cd.locked)
+                {
+                    if (IsKeyHintLock(cd))
+                        return it.type == Interaction.interType.open
+                            || it.type == Interaction.interType.move;
+                    return true;
+                }
+            }
+            catch { }
+            try
+            {
+                var dbl = it.GetComponentInParent<Doorway_Double>();
+                if (dbl != null && dbl.locked)
+                    return it.type == Interaction.interType.open
+                        || it.type == Interaction.interType.move
+                        || it.type == Interaction.interType.use;
+            }
+            catch { }
+            return false;
+        }
+
+        static void SuppressWalkPrompt(Interaction it)
+        {
+            if (it == null || !ShouldHideWalkPrompt(it)) return;
+            try { it.inRange = false; } catch { }
+            try { it.enabled = false; } catch { }
+        }
+
+        public static void EnsurePlates(ConnectedDoors cd, bool on)
+        {
+            if (cd == null) return;
+            try { SetTraversePlate(cd.A, on); } catch { }
+            try { SetTraversePlate(cd.B, on); } catch { }
         }
 
         public static bool TraversePlateActive(InteractiveLockSingle x)

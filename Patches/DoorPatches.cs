@@ -293,4 +293,45 @@ namespace SyncRADation.Patches
             net.PuzzleSync.QueueReapply();
         }
     }
+
+    [HarmonyPatch(typeof(Interaction), nameof(Interaction.setInRange))]
+    public static class InteractionLockedPromptPatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(Interaction __instance, bool _inRange)
+        {
+            if (!_inRange || __instance == null || !NetGate.Live) return true;
+            if (!DoorNative.ShouldHideWalkPrompt(__instance)) return true;
+            try { __instance.inRange = false; } catch { }
+            return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(ConnectedDoors), "Update")]
+    public static class ConnectedDoorsPlatePatch
+    {
+        [HarmonyPrefix]
+        public static void Prefix(ConnectedDoors __instance)
+        {
+            if (__instance == null || !NetGate.Live) return;
+            try
+            {
+                if (DoorNative.IsNoPathLock(__instance))
+                    DoorNative.PresentNoPath(__instance);
+            }
+            catch { }
+        }
+
+        [HarmonyPostfix]
+        public static void Postfix(ConnectedDoors __instance)
+        {
+            if (__instance == null || !NetGate.Live) return;
+            try
+            {
+                if (DoorNative.IsNoPathLock(__instance))
+                    DoorNative.PresentNoPath(__instance);
+            }
+            catch { }
+        }
+    }
 }

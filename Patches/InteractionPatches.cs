@@ -17,6 +17,8 @@ namespace SyncRADation.Patches
             _fired.Clear();
             _lastRequest.Clear();
             ClientKeypad.OnSceneChanged();
+            UseItemInteractionPatch.OnSceneChanged();
+            AirlockCinematic.Reset();
         }
 
         public static void MarkFired(ulong id)
@@ -32,6 +34,13 @@ namespace SyncRADation.Patches
         {
             if (NetGate.IsApplying || !NetGate.Live) return true;
             if (__instance == null || __instance.triggered) return true;
+            if (LocalInspect.LockWorld(__instance.gameObject)) return true;
+            try
+            {
+                if (__instance.inter != null && LocalInspect.LockWorld(__instance.inter.gameObject))
+                    return true;
+            }
+            catch { }
             if (NetGate.Host) return true;
 
             try
@@ -55,6 +64,7 @@ namespace SyncRADation.Patches
         {
             if (!NetGate.Host || NetGate.IsApplying || !NetGate.Live) return;
             if (__instance == null || !__instance.triggered) return;
+            if (LocalInspect.LockWorld(__instance.gameObject)) return;
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             if (!_fired.Add(id)) return;
             LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.EventZoneFire, id, 0, "");
@@ -65,7 +75,7 @@ namespace SyncRADation.Patches
     {
         public static bool Dialogue(Dialogue d)
         {
-            if (d == null) return false;
+            if (d == null) return true;
             try
             {
                 if (PlayerState.eventScreen) return true;
@@ -74,7 +84,56 @@ namespace SyncRADation.Patches
                     return true;
             }
             catch { }
-            return UnderEventCamera(d.gameObject);
+            try
+            {
+                if (DialoguerFlavor((int)d._dialogue)) return true;
+            }
+            catch { }
+            return UnderEventCamera(d.gameObject) || LockFlavor(d);
+        }
+
+        public static bool DialoguerFlavor(int id)
+        {
+            // Pickup / lock / one-liner flavor. DialoguerPatches IL-skip, so these
+            // also have to be filtered on ApplyPresentation / InteractionRequest.
+            switch (id)
+            {
+                case 0:  // noDialogue
+                case 6:  // Pickup_dialogue
+                case 17: // Pickup_cantCarry
+                case 20: // GenericOneLine
+                case 21: // openDoorDialogue
+                case 22: // lockedDoorDialogue
+                case 23: // useItemDialogue
+                case 24: // GenericQuestion
+                case 25: // Pickup_dialogue_long
+                case 26: // Pickup_noSlots
+                case 27: // GenericQuestionFollowup
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        static bool LockFlavor(Dialogue d)
+        {
+            if (d == null) return false;
+            Transform t = d.gameObject != null ? d.gameObject.transform : null;
+            while (t != null)
+            {
+                try
+                {
+                    if (t.GetComponent<InteractiveLockSingle>() != null) return true;
+                    if (t.GetComponent<InteractiveLock>() != null) return true;
+                    if (t.GetComponent<ConnectedDoors>() != null) return true;
+                    if (t.GetComponent<AutoTraverseDoor>() != null) return true;
+                    if (t.GetComponent<UseItemInteraction>() != null) return true;
+                    if (t.GetComponent<useItemPuzzleHint>() != null) return true;
+                }
+                catch { }
+                t = t.parent;
+            }
+            return false;
         }
 
         static bool UnderEventCamera(GameObject go)
@@ -95,6 +154,7 @@ namespace SyncRADation.Patches
                     if (t.GetComponent<PEN_Airlock>() != null) return true;
                     if (t.GetComponent<PenroseAirlockNew>() != null) return true;
                     if (t.GetComponent<PenroseAirlock>() != null) return true;
+                    if (t.GetComponent<PEN_Titles>() != null) return true;
                     if (t.GetComponent<AirlockInside>() != null) return true;
                     if (t.GetComponent<AirlockDoorLoadZone>() != null) return true;
                 }
@@ -108,83 +168,254 @@ namespace SyncRADation.Patches
         {
             return UnderEventCamera(go);
         }
-    }
 
-    [HarmonyPatch(typeof(Dialogue), "OnTriggerEnter2D")]
-    public static class DialogueTriggerPatch
-    {
-        [HarmonyPrefix]
-        public static bool Prefix(Dialogue __instance)
+        public static bool LockWorld(GameObject go)
         {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
-            if (__instance == null) return true;
-            if (LocalInspect.Dialogue(__instance)) return true;
-            if (NetGate.Host) return true;
+            Transform t = go != null ? go.transform : null;
+            while (t != null)
+            {
+                try
+                {
+                    if (t.GetComponent<InteractiveLockSingle>() != null) return true;
+                    if (t.GetComponent<InteractiveLock>() != null) return true;
+                    if (t.GetComponent<ConnectedDoors>() != null) return true;
+                    if (t.GetComponent<AutoTraverseDoor>() != null) return true;
+                    if (t.GetComponent<useItemPuzzleHint>() != null) return true;
+                }
+                catch { }
+                t = t.parent;
+            }
             try
             {
-                if (!__instance.autoTriggered) return true;
-                if (!__instance.repeatable && __instance.playedOnce) return false;
+                if (go != null)
+                {
+                    var d = go.GetComponent<Dialogue>();
+                    if (d != null && Dialogue(d)) return true;
+                }
             }
             catch { }
-            LanNetworkManager.Instance.SendInteractionRequest(
-                WorldId.FromGameObject(__instance.gameObject), InteractionKind.DialogueStart);
             return false;
         }
     }
 
-    [HarmonyPatch(typeof(Dialogue), nameof(Dialogue.StartDialogue))]
-    public static class DialogueStartPatch
+    internal static class AirlockCinematic
     {
-        [HarmonyPrefix]
-        public static bool Prefix(Dialogue __instance)
+        static readonly System.Collections.Generic.HashSet<ulong> _localUnlock
+            = new System.Collections.Generic.HashSet<ulong>();
+        static readonly System.Collections.Generic.HashSet<ulong> _remoteUnlock
+            = new System.Collections.Generic.HashSet<ulong>();
+
+        static string _personalScene;
+
+        public static void Reset()
         {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
-            if (__instance == null) return true;
-            if (LocalInspect.Dialogue(__instance)) return true;
-            if (NetGate.Host)
+            _localUnlock.Clear();
+            _remoteUnlock.Clear();
+        }
+
+        public static void NotePersonalLoad(string scene)
+        {
+            if (!string.IsNullOrEmpty(scene))
+                _personalScene = scene;
+        }
+
+        public static void NoteLocalUnlock(UseItemInteraction u)
+        {
+            ulong id = Id(u);
+            if (id == 0) return;
+            _localUnlock.Add(id);
+            _remoteUnlock.Remove(id);
+        }
+
+        public static void NoteRemoteUnlock(UseItemInteraction u)
+        {
+            ulong id = Id(u);
+            if (id == 0 || _localUnlock.Contains(id)) return;
+            _remoteUnlock.Add(id);
+        }
+
+        public static bool IsRemoteUnlock(UseItemInteraction u)
+        {
+            ulong id = Id(u);
+            return id != 0 && _remoteUnlock.Contains(id) && !_localUnlock.Contains(id);
+        }
+
+        public static bool IsLocalUnlock(UseItemInteraction u)
+        {
+            ulong id = Id(u);
+            return id != 0 && _localUnlock.Contains(id);
+        }
+
+        public static bool IsPenTitlesCard(UseItemInteraction x)
+        {
+            if (x == null) return false;
+            try
             {
-                ulong id = WorldId.FromGameObject(__instance.gameObject);
-                PlaytestLog.Event("Interact", "DialogueStart " + __instance.gameObject.name
-                    + " d=" + (int)__instance._dialogue + " id=" + id.ToString("X16"));
-                LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.DialogueStart, id, 0, "");
-                return true;
+                var all = UnityEngine.Object.FindObjectsOfType<PEN_Titles>();
+                if (all == null) return false;
+                for (int i = 0; i < all.Length; i++)
+                {
+                    if (all[i] != null && all[i].keyCardEvent == x)
+                        return true;
+                }
             }
-            PlaytestLog.Event("Interact", "request DialogueStart " + __instance.gameObject.name
-                + " d=" + (int)__instance._dialogue);
-            LanNetworkManager.Instance.SendInteractionRequest(
-                WorldId.FromGameObject(__instance.gameObject), InteractionKind.DialogueStart);
+            catch { }
             return false;
+        }
+
+        public static bool TryBeginLocal(Interaction inter)
+        {
+            if (inter == null || !NetGate.Live) return false;
+            try
+            {
+                var all = UnityEngine.Object.FindObjectsOfType<PEN_Titles>();
+                if (all == null) return false;
+                for (int i = 0; i < all.Length; i++)
+                {
+                    var t = all[i];
+                    if (t == null) continue;
+                    bool match = false;
+                    try
+                    {
+                        if (t.ViewPoint == inter) match = true;
+                        else if (t.keyCardEvent != null && t.keyCardEvent.inter == inter) match = true;
+                    }
+                    catch { }
+                    if (!match) continue;
+                    if (t.started)
+                        return false;
+                    if (t.keyCardEvent != null)
+                        NoteLocalUnlock(t.keyCardEvent);
+                    try { t.started = false; } catch { }
+                    PlaytestLog.Event("Story", "local PEN_Titles cinematic");
+                    return true;
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        public static bool IsPersonalChapterLoad(string scene)
+        {
+            if (string.IsNullOrEmpty(scene) || SceneFollowService.IsTransient(scene)) return false;
+            try
+            {
+                var all = UnityEngine.Object.FindObjectsOfType<PEN_Titles>();
+                if (all == null) return false;
+                for (int i = 0; i < all.Length; i++)
+                {
+                    var t = all[i];
+                    if (t == null) continue;
+                    bool started = false;
+                    try { started = t.started; } catch { }
+                    if (started || IsLocalUnlock(t.keyCardEvent))
+                        return true;
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        public static bool ShouldIgnoreHostFollow(string hostScene)
+        {
+            if (DeferFollowWhileAirlockPresent()) return true;
+            try
+            {
+                string local = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name ?? "";
+                if (!string.IsNullOrEmpty(_personalScene)
+                    && string.Equals(local, _personalScene, System.StringComparison.Ordinal)
+                    && !string.IsNullOrEmpty(hostScene)
+                    && !string.Equals(hostScene, local, System.StringComparison.Ordinal))
+                    return true;
+            }
+            catch { }
+            return false;
+        }
+
+        public static bool DeferFollowWhileAirlockPresent()
+        {
+            try { return UnityEngine.Object.FindObjectOfType<PEN_Titles>() != null; }
+            catch { return false; }
+        }
+
+        static ulong Id(UseItemInteraction u)
+        {
+            if (u == null) return 0;
+            return WorldId.FromGameObject(u.gameObject);
         }
     }
 
     [HarmonyPatch(typeof(UseItemInteraction), "Update")]
     public static class UseItemInteractionPatch
     {
-        private static readonly System.Collections.Generic.Dictionary<ulong, float> _lastSend
-            = new System.Collections.Generic.Dictionary<ulong, float>();
+        private static readonly System.Collections.Generic.HashSet<ulong> _sent
+            = new System.Collections.Generic.HashSet<ulong>();
+
+        public static void OnSceneChanged() => _sent.Clear();
+
+        internal static void OnLocalUnlocked(UseItemInteraction u)
+        {
+            if (NetGate.IsApplying || !NetGate.Live) return;
+            if (u == null || !u.unlocked) return;
+            ulong id = WorldId.FromGameObject(u.gameObject);
+            if (id == 0) return;
+            AirlockCinematic.NoteLocalUnlock(u);
+            if (!_sent.Add(id)) return;
+            if (!NetGate.Client) return;
+            PlaytestLog.Event("Interact", "request UseItem (unlocked) id=" + id.ToString("X16"));
+            LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.UseItem);
+        }
+
+        [HarmonyPostfix]
+        public static void Postfix(UseItemInteraction __instance) => OnLocalUnlocked(__instance);
+    }
+
+    [HarmonyPatch(typeof(UseItemInteraction), "dialogueOver")]
+    public static class UseItemDialogueOverPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(UseItemInteraction __instance) => UseItemInteractionPatch.OnLocalUnlocked(__instance);
+    }
+
+    [HarmonyPatch(typeof(UseItemInteraction), nameof(UseItemInteraction.onMessageEvent))]
+    public static class UseItemMessageEventPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(UseItemInteraction __instance) => UseItemInteractionPatch.OnLocalUnlocked(__instance);
+    }
+
+    [HarmonyPatch(typeof(PEN_Titles), "Update")]
+    public static class PenTitlesCinematicPatch
+    {
+        static ulong _skipLogged;
 
         [HarmonyPrefix]
-        public static bool Prefix(UseItemInteraction __instance)
+        public static bool Prefix(PEN_Titles __instance)
         {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
-            if (__instance == null) return true;
-            if (__instance.unlocked && !__instance.repeatable) return true;
-            if (NetGate.Host) return true;
-
-            try
+            if (__instance == null || !NetGate.Live) return true;
+            if (__instance.keyCardEvent == null || !__instance.keyCardEvent.unlocked) return true;
+            if (!AirlockCinematic.IsRemoteUnlock(__instance.keyCardEvent)) return true;
+            bool started = false;
+            try { started = __instance.started; } catch { }
+            if (started) return true;
+            ulong id = WorldId.FromGameObject(__instance.gameObject);
+            if (id != _skipLogged)
             {
-                if (__instance.inter == null || !__instance.inter.inRange) return false;
-                ulong id = WorldId.FromGameObject(__instance.gameObject);
-                float last;
-                if (!_lastSend.TryGetValue(id, out last) || Time.unscaledTime - last >= 0.25f)
-                {
-                    _lastSend[id] = Time.unscaledTime;
-                    LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.UseItem);
-                }
-                return PartyKeyRing.LocalOrRingHas(__instance.key);
+                _skipLogged = id;
+                PlaytestLog.Event("Story", "hold PEN_Titles until local use");
             }
-            catch { }
             return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(Interaction), nameof(Interaction.trigger))]
+    public static class AirlockLocalTriggerPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(Interaction __instance)
+        {
+            if (NetGate.IsApplying || !NetGate.Live) return;
+            AirlockCinematic.TryBeginLocal(__instance);
         }
     }
 

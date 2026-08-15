@@ -13,7 +13,7 @@ LAN multiplayer MelonLoader mod for SIGNALIS (Unity IL2CPP / Unhollower-style Ma
 - F6 / F11 — item giver / entity spawner
 - F7 — location teleporter (chapters + rooms in current level)
 
-- G — drop selected item
+- G — drop selected item (inventory or play)
 - E — pick up nearby **dropped** (player-dropped) item
 
 ## What is synced (0.4.2)
@@ -25,12 +25,12 @@ LAN multiplayer MelonLoader mod for SIGNALIS (Unity IL2CPP / Unhollower-style Ma
 | Doors (double / sliding) | Any peer emit, host relay | Visual open/close via native methods |
 | ConnectedDoors (room links) | Lock only | **Never** sync traverse / StartA/B — room entry is local. Unique key doors: one solve (party key ring), both walk |
 | Ladders | Local traverse | Climb is per-player; other peer only hears proxy SFX (no `Interaction.trigger`) |
-| Chapter / scene load | Host | SceneFollow via `AsyncLoader` / `SceneHelper` / `LoadLevelZone` / `AirlockDoorLoadZone` — only yank on chapter change |
-| Story (SProgress, Dialoguer, cutscenes, END_Manager) | Host | Full slot dump on join; **books / notes / EventScreen / EventOnlyRoom / airlock hatch cinematics stay local** |
+| Chapter / scene load | Host | SceneFollow via `AsyncLoader` / `SceneHelper` / `LoadLevelZone` — only yank on chapter change. Penrose airlock (`PEN_Titles` → `PEN_Hole`) is per-Elster: skip/load does not pull the other out of the wreck |
+| Story (SProgress, Dialoguer, cutscenes, END_Manager) | Host | Full slot dump on join; **books / notes / EventScreen / EventOnlyRoom / airlock (`PEN_Titles`) / lock-flavor lines stay local** |
 | World FMOD | Host Play/Stop | StudioEventEmitter by WorldId; skip Elster + radio UI; tuner freq local |
 | Puzzles / locks / elevators / radio module / storage / event zones / alert | Host + client emit | **WorldId-keyed**; client emits puzzle/lock types only (not `Interaction.trigger` / EventZone / combat); apply **snaps flags + doors**, never EventScreen / `trigger()`; cryo/codepad/pump/pipes/hatch live-apply native Open/Drain/TurnValve; unlocked location doors stay open for the party |
 | Host disconnect | Client goes offline | Restores play + input (no freeze) |
-| World ItemPickups | Host claim/grant | Claimer gets item; unique keys go on the **party key ring** |
+| World ItemPickups | Host claim/grant | Claimer gets item; unique keys go on the **party key ring**; client bag keys still unlock UseItem (hatch card) |
 | Player-dropped items | Peer + relay | G drop / E pickup; shared “Object” type grants |
 | Death | Asymmetric | Client downed (drops bag); host death `SaveManager.Load` for both |
 | Bosses (END / Chimera / Mynah / Kolibri / Adler) | Host | `END_Boss.Elster` / `BOS_Adler.Elster`; Kolibri dead/intensity |

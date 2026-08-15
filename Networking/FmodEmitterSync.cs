@@ -14,6 +14,7 @@ namespace SyncRADation.Networking
         {
             var net = LanNetworkManager.Instance;
             if (net != null && net.Role == NetworkRole.Host) return;
+            if (SceneFollowService.LocalIsTransient()) return;
 
             NetGate.BeginApply();
             try
@@ -120,7 +121,47 @@ namespace SyncRADation.Networking
                 }
             }
             catch { }
+            Transform p = t;
+            int hops = 0;
+            while (p != null && hops++ < 16)
+            {
+                try
+                {
+                    if (p.GetComponent<PEN_Titles>() != null) return true;
+                    if (p.GetComponent<PEN_Airlock>() != null) return true;
+                    if (p.GetComponent<PenroseAirlock>() != null) return true;
+                    if (p.GetComponent<PenroseAirlockNew>() != null) return true;
+                    if (p.GetComponent<EventOnlyRoom>() != null) return true;
+                    if (p.GetComponent<EventScreen>() != null) return true;
+                    if (p.GetComponent<EventScreen3DCam>() != null) return true;
+                }
+                catch { }
+                p = p.parent;
+            }
+            try
+            {
+                var titles = Object.FindObjectsOfType<PEN_Titles>();
+                if (titles != null)
+                {
+                    for (int i = 0; i < titles.Length; i++)
+                    {
+                        var title = titles[i];
+                        if (title == null) continue;
+                        if (TitleEmitter(title.PCSound, t) || TitleEmitter(title.SuitSceneSound, t)
+                            || TitleEmitter(title.DoorSound, t) || TitleEmitter(title.LiftSound, t)
+                            || TitleEmitter(title.HatchSound, t))
+                            return true;
+                    }
+                }
+            }
+            catch { }
             return false;
+        }
+
+        static bool TitleEmitter(StudioEventEmitter e, Transform t)
+        {
+            try { return e != null && t != null && e.transform == t; }
+            catch { return false; }
         }
 
         public static void Reset() => _sentPlaying.Clear();

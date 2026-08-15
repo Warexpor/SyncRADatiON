@@ -219,15 +219,16 @@ namespace SyncRADation.Players
             _lastEmptyClick = emptyClick;
             _lastAiming = aiming;
 
-            // Footsteps — synced with animation via StepHappened flag, nearby only (<40m)
+            // Footsteps — StepHappened from the sender's loop; run vs walk is an FMOD param.
             if (nearby && state.StepHappened)
             {
-                float vol = 0.4f + Mathf.Abs(state.Forward) * 0.2f;
+                bool running = state.AnimBools.HasFlag(AnimBools.Running);
+                float vol = running ? 0.7f : 0.4f + Mathf.Abs(state.Forward) * 0.2f;
                 if (vol > 1f) vol = 1f;
                 if (!string.IsNullOrEmpty(_footstepPath))
-                    PlayFMODAttached(_footstepPath, vol);
+                    WorldSfx.PlayFootstep(_footstepPath, _audioAnchor.transform, running, vol);
                 else if (_footstepClip != null)
-                    AudioSource.PlayClipAtPoint(_footstepClip, _proxyTransform.position, vol * 0.6f);
+                    AudioSource.PlayClipAtPoint(_footstepClip, _proxyTransform.position, vol * (running ? 0.85f : 0.6f));
             }
 
             // Reload — medium range

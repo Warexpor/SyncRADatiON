@@ -51,6 +51,27 @@ namespace SyncRADation.Networking
             catch { }
         }
 
+        public static void PlayFootstep(string path, Transform at, bool running, float gain = 1f)
+        {
+            if (string.IsNullOrEmpty(path) || at == null) return;
+            float vol;
+            if (!TryVolume(at.position, out vol)) return;
+            try
+            {
+                var inst = RuntimeManager.CreateInstance(path);
+                inst.setVolume(vol * Mathf.Clamp01(gain));
+                inst.set3DAttributes(RuntimeUtils.To3DAttributes(at));
+                float run = running ? 1f : 0f;
+                inst.setParameterByName("Run", run);
+                inst.setParameterByName("Running", run);
+                inst.setParameterByName("Speed", running ? 1f : 0.35f);
+                inst.setParameterByName("runMod", running ? 1f : 0f);
+                inst.start();
+                inst.release();
+            }
+            catch { }
+        }
+
         static void Start(string path, FMOD.ATTRIBUTES_3D attrs, float volume)
         {
             try
