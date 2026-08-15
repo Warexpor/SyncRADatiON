@@ -89,6 +89,22 @@ namespace SyncRADation.Patches
             return GateLevel(scene);
         }
 
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(AirlockDoorLoadZone), "OnTriggerEnter2D")]
+        public static bool PrefixAirlockLoad(AirlockDoorLoadZone __instance)
+        {
+            if (NetGate.IsApplying || !NetGate.Live) return true;
+            if (__instance == null) return true;
+            if (NetGate.Host) return true;
+            string scene = "";
+            try { scene = AsyncLoader.targetLevelString ?? ""; } catch { }
+            if (string.IsNullOrEmpty(scene))
+                scene = "index:" + __instance.targetLevel;
+            PlaytestLog.Event("Scene", "client airlock load request '" + scene + "'");
+            SceneFollowService.RequestFollow(scene);
+            return false;
+        }
+
         private static bool GateLevel(string scene)
         {
             if (NetGate.IsApplying) return true;

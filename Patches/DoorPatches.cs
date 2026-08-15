@@ -86,8 +86,18 @@ namespace SyncRADation.Patches
             net.PuzzleSync.EmitProgressed(PuzzleType.PEN_Cryo, id);
             try
             {
-                var cryoLock = __instance.GetComponentInParent<CryoDoorLock>()
-                    ?? __instance.GetComponentInChildren<CryoDoorLock>(true);
+                CryoDoorLock cryoLock = null;
+                try { cryoLock = __instance.GetComponentInChildren<CryoDoorLock>(true); } catch { }
+                if (cryoLock == null)
+                {
+                    var t = __instance.transform;
+                    while (t != null)
+                    {
+                        try { cryoLock = t.GetComponent<CryoDoorLock>(); } catch { }
+                        if (cryoLock != null) break;
+                        t = t.parent;
+                    }
+                }
                 if (cryoLock != null)
                 {
                     ulong lid = WorldId.FromGameObject(cryoLock.gameObject);
@@ -109,10 +119,11 @@ namespace SyncRADation.Patches
     public static class CryoLockEnablePatch
     {
         [HarmonyPostfix]
-        public static void Postfix()
+        public static void Postfix(CryoDoorLock __instance)
         {
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
+            net.PuzzleSync.HandleCryoLockEnabled(__instance);
             net.PuzzleSync.QueueReapply();
         }
     }
@@ -121,11 +132,137 @@ namespace SyncRADation.Patches
     public static class PenCryoEnablePatch
     {
         [HarmonyPostfix]
-        public static void Postfix()
+        public static void Postfix(PEN_Cryo __instance)
         {
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
+            net.PuzzleSync.HandlePenCryoEnabled(__instance);
+            try { net.PickupSync.HideClaimed(null); } catch { }
             net.PuzzleSync.QueueReapply();
+        }
+    }
+
+    [HarmonyPatch(typeof(PEN_Codepad), "OnEnable")]
+    public static class PenCodepadEnablePatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(PEN_Codepad __instance)
+        {
+            var net = LanNetworkManager.Instance;
+            if (net == null || !net.IsConnected) return;
+            net.PuzzleSync.HandleCodepadEnabled(__instance);
+            net.PuzzleSync.QueueReapply();
+        }
+    }
+
+    [HarmonyPatch(typeof(Lab_PatternLockControl), "OnEnable")]
+    public static class PatternLockControlEnablePatch
+    {
+        internal static void KillIfSpent(Lab_PatternLockControl ctrl)
+        {
+            var net = LanNetworkManager.Instance;
+            if (net == null || !net.IsConnected || ctrl == null) return;
+            LAB_PatternLock pad = null;
+            try { pad = ctrl._lock; } catch { }
+            if (pad == null)
+            {
+                try { pad = ctrl.GetComponent<LAB_PatternLock>(); } catch { }
+            }
+            if (pad == null)
+            {
+                try { pad = ctrl.GetComponentInChildren<LAB_PatternLock>(true); } catch { }
+            }
+            net.PuzzleSync.HandlePatternLockEnabled(pad);
+            net.PuzzleSync.QueueReapply();
+        }
+
+        [HarmonyPostfix]
+        public static void Postfix(Lab_PatternLockControl __instance)
+        {
+            KillIfSpent(__instance);
+        }
+    }
+
+    [HarmonyPatch(typeof(Lab_PatternLockControl), "Start")]
+    public static class PatternLockControlStartPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(Lab_PatternLockControl __instance)
+        {
+            if (__instance == null) return;
+            PatternLockControlEnablePatch.KillIfSpent(__instance);
+        }
+    }
+
+    [HarmonyPatch(typeof(Interaction), nameof(Interaction.reset))]
+    public static class InteractionResetSpentPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(Interaction __instance)
+        {
+            var net = LanNetworkManager.Instance;
+            if (net == null || !net.IsConnected || __instance == null) return;
+            if (!net.PuzzleSync.ShouldKillOverlay(__instance)) return;
+            try { __instance.triggered = true; } catch { }
+            try { __instance.enabled = false; } catch { }
+        }
+    }
+
+    [HarmonyPatch(typeof(Interaction), nameof(Interaction.trigger))]
+    public static class InteractionTriggerSpentPatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(Interaction __instance)
+        {
+            var net = LanNetworkManager.Instance;
+            if (net == null || !net.IsConnected || __instance == null) return true;
+            if (!net.PuzzleSync.ShouldKillOverlay(__instance)) return true;
+            try { __instance.triggered = true; } catch { }
+            try { __instance.enabled = false; } catch { }
+            return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(Interaction), nameof(Interaction.setInRange))]
+    public static class InteractionRangeSpentPatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(Interaction __instance, bool _inRange)
+        {
+            if (!_inRange) return true;
+            var net = LanNetworkManager.Instance;
+            if (net == null || !net.IsConnected || __instance == null) return true;
+            if (!net.PuzzleSync.ShouldKillOverlay(__instance)) return true;
+            try { __instance.triggered = true; } catch { }
+            try { __instance.inRange = false; } catch { }
+            try { __instance.enabled = false; } catch { }
+            return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(EventScreenInteraction), nameof(EventScreenInteraction.startEvent))]
+    public static class EventScreenSpentPatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(EventScreenInteraction __instance)
+        {
+            var net = LanNetworkManager.Instance;
+            if (net == null || !net.IsConnected || __instance == null) return true;
+            Interaction inter = null;
+            try { inter = __instance.inter; } catch { }
+            if (inter == null || !net.PuzzleSync.ShouldKillOverlay(inter)) return true;
+            try { __instance.enabled = false; } catch { }
+            return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(EventScreenInteraction), nameof(EventScreenInteraction.startEventInstant))]
+    public static class EventScreenSpentInstantPatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(EventScreenInteraction __instance)
+        {
+            return EventScreenSpentPatch.Prefix(__instance);
         }
     }
 
@@ -138,6 +275,7 @@ namespace SyncRADation.Patches
             if (NetGate.IsApplying) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
+            try { net.PickupSync.HideClaimed(null); } catch { }
             net.PuzzleSync.QueueReapply();
         }
     }
@@ -151,6 +289,7 @@ namespace SyncRADation.Patches
             if (!value || NetGate.IsApplying) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
+            try { net.PickupSync.HideClaimed(null); } catch { }
             net.PuzzleSync.QueueReapply();
         }
     }

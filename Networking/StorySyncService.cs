@@ -1,5 +1,6 @@
 // Host commits SProgress / Dialoguer / END_Manager; peers apply presentation natives.
 using System.Collections.Generic;
+using SyncRADation.Patches;
 using SyncRADation.Sync;
 using UnityEngine;
 
@@ -311,7 +312,10 @@ namespace SyncRADation.Networking
                     case StoryCmd.DialogueStart:
                     {
                         var d = Find<Dialogue>(id);
-                        if (d != null) d.StartDialogue();
+                        if (d != null && !LocalInspect.Dialogue(d))
+                            d.StartDialogue();
+                        else if (d != null)
+                            PlaytestLog.Event("Story", "skip local inspect DialogueStart");
                         break;
                     }
                     case StoryCmd.DialoguerStartId:
@@ -331,7 +335,10 @@ namespace SyncRADation.Networking
                     case StoryCmd.CutsceneStart:
                     {
                         var c = Find<CutsceneManager>(id);
-                        if (c != null) c.StartCutscene();
+                        if (c != null && LocalInspect.Cinematic(c.gameObject))
+                            PlaytestLog.Event("Story", "skip local cinematic CutsceneStart");
+                        else if (c != null)
+                            c.StartCutscene();
                         break;
                     }
                     case StoryCmd.CutsceneSkip:

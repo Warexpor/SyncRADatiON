@@ -225,6 +225,7 @@ namespace SyncRADation.Players
             {
                 float extra = Mathf.Min(renderTime - newest.Time, ExtrapolateMax);
                 pos = newest.Pos + newest.Vel * extra;
+                pos.y = newest.Pos.y;
                 facing = newest.Facing;
                 HitchTrace.Interp("extrap", n, extra * 1000f);
                 return;
@@ -240,6 +241,7 @@ namespace SyncRADation.Players
             float span = b.Time - a.Time;
             float t = span > 0.0001f ? Mathf.Clamp01((renderTime - a.Time) / span) : 1f;
             pos = span > 0.0001f ? Hermite(a.Pos, a.Vel, b.Pos, b.Vel, span, t) : a.Pos;
+            pos.y = Mathf.Lerp(a.Pos.y, b.Pos.y, t);
             facing = Quaternion.Slerp(a.Facing, b.Facing, t);
             HitchTrace.Interp("lerp", n, (Time.time - newest.Time) * 1000f);
         }

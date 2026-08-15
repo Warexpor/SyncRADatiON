@@ -13,6 +13,7 @@ namespace SyncRADation.Networking
         private readonly Dictionary<ulong, bool> _lastTriggered = new Dictionary<ulong, bool>();
         private readonly Dictionary<ulong, bool> _lastActive = new Dictionary<ulong, bool>();
         private readonly HashSet<ulong> _claimed = new HashSet<ulong>();
+        private readonly HashSet<ushort> _claimedItems = new HashSet<ushort>();
         private readonly Dictionary<ulong, int> _claimerOf = new Dictionary<ulong, int>();
         private readonly Dictionary<ulong, ItemPickup> _byId = new Dictionary<ulong, ItemPickup>();
         private bool _scanned;
@@ -24,6 +25,7 @@ namespace SyncRADation.Networking
             _lastTriggered.Clear();
             _lastActive.Clear();
             _claimed.Clear();
+            _claimedItems.Clear();
             _claimerOf.Clear();
             _byId.Clear();
             _timer = 0f;
@@ -33,19 +35,70 @@ namespace SyncRADation.Networking
         public void RequestFullSend() => _needFull = true;
         public bool IsClaimed(ulong worldId) => worldId != 0 && _claimed.Contains(worldId);
 
+        public bool IsClaimedPickup(ItemPickup p)
+        {
+            if (p == null) return false;
+            ulong id = 0;
+            try { id = WorldId.FromGameObject(p.gameObject); } catch { }
+            if (id != 0 && _claimed.Contains(id)) return true;
+            try
+            {
+                if (p._item != null && _claimedItems.Contains((ushort)p._item._item))
+                    return UniqueWorldItem(p);
+            }
+            catch { }
+            return false;
+        }
+
+        static bool UniqueWorldItem(ItemPickup p)
+        {
+            if (p == null) return false;
+            try { if (p.showItemView || p.focusCamera || p.pauseGame) return true; } catch { }
+            try
+            {
+                if (p._item != null)
+                {
+                    var t = p._item.type;
+                    if (t == AnItem.AnItemType.Key || t == AnItem.AnItemType.Object)
+                        return true;
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        void NoteClaimedItem(Items.itemlist item)
+        {
+            if (item != Items.itemlist.None)
+                _claimedItems.Add((ushort)item);
+        }
+
         public void NotifyRevealed()
         {
-            _scanned = false;
-            _needFull = true;
             HideClaimed(null);
         }
 
         public void HidePickup(ItemPickup p)
         {
+            HideOnePickup(p);
+        }
+
+        static void HideOnePickup(ItemPickup p)
+        {
             if (p == null) return;
+            try { p.triggered = true; } catch { }
             try
             {
-                p.triggered = true;
+                var it = p.GetComponent<Interaction>();
+                if (it != null)
+                {
+                    it.triggered = true;
+                    it.enabled = false;
+                }
+            }
+            catch { }
+            try
+            {
                 if (!p.dontDestroyOnPickup)
                     p.gameObject.SetActive(false);
                 else
@@ -71,8 +124,16 @@ namespace SyncRADation.Networking
                         var p = picks[i];
                         if (p == null) continue;
                         ulong id = WorldId.FromGameObject(p.gameObject);
-                        if (id == 0 || !_claimed.Contains(id)) continue;
-                        HidePickup(p);
+                        if (id != 0 && _claimed.Contains(id))
+                        {
+                            HidePickup(p);
+                            continue;
+                        }
+                        if (IsClaimedPickup(p))
+                        {
+                            if (id != 0) _claimed.Add(id);
+                            HidePickup(p);
+                        }
                     }
                 }
                 return;
@@ -80,8 +141,9 @@ namespace SyncRADation.Networking
 
             foreach (var kvp in _byId)
             {
-                if (!_claimed.Contains(kvp.Key) || kvp.Value == null) continue;
-                HidePickup(kvp.Value);
+                if (kvp.Value == null) continue;
+                if (_claimed.Contains(kvp.Key) || IsClaimedPickup(kvp.Value))
+                    HidePickup(kvp.Value);
             }
         }
 
@@ -132,17 +194,36 @@ namespace SyncRADation.Networking
             foreach (var kvp in _byId)
             {
                 var p = kvp.Value;
-                if (p == null) continue;
                 ulong id = kvp.Key;
-
-                bool triggered = false;
-                bool active = false;
+                bool gone = p == null;
                 try
                 {
-                    triggered = p.triggered || _claimed.Contains(id);
-                    active = p.gameObject.activeInHierarchy && p.enabled && !triggered;
+                    if (!gone && p.gameObject == null)
+                        gone = true;
                 }
-                catch { continue; }
+                catch
+                {
+                    // Inactive EventObject props can throw; do not treat as claimed.
+                    continue;
+                }
+
+                bool triggered = gone || _claimed.Contains(id);
+                bool active = false;
+                if (!gone)
+                {
+                    try
+                    {
+                        triggered = p.triggered || triggered;
+                        active = p.gameObject.activeInHierarchy && p.enabled && !triggered;
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+                }
+
+                if (gone || triggered)
+                    _claimed.Add(id);
 
                 bool lt, la;
                 _lastTriggered.TryGetValue(id, out lt);
@@ -163,23 +244,28 @@ namespace SyncRADation.Networking
 
             if (list.Count == 0) return;
             net.SendWorldPickupState(list.ToArray(), full);
+            HideClaimed(null);
         }
 
         /// <summary>
         /// Host: reserve a pickup for claimer.
         /// hideNow=false when host is about to run native pickUp() itself.
         /// </summary>
-        public bool TryClaimOnHost(ulong worldId, int claimerPlayerId, out Items.itemlist itemEnum, out int count, bool hideNow = true)
+        public bool TryClaimOnHost(ulong worldId, int claimerPlayerId, out Items.itemlist itemEnum, out int count,
+            bool hideNow = true, Items.itemlist hintItem = Items.itemlist.None, int hintCount = 0)
         {
-            itemEnum = Items.itemlist.None;
-            count = 0;
+            itemEnum = hintItem;
+            count = hintCount > 0 ? hintCount : 1;
             EnsureScanned();
 
             if (_claimed.Contains(worldId))
             {
                 int who;
                 if (_claimerOf.TryGetValue(worldId, out who) && who == claimerPlayerId)
+                {
+                    HideClaimed(null);
                     return true;
+                }
                 return false;
             }
 
@@ -188,26 +274,36 @@ namespace SyncRADation.Networking
             {
                 _scanned = false;
                 EnsureScanned();
-                if (!_byId.TryGetValue(worldId, out p) || p == null)
-                    return false;
+                _byId.TryGetValue(worldId, out p);
             }
 
-            try
+            if (p != null)
             {
-                if (p._item != null)
-                    itemEnum = p._item._item;
-                count = p.count > 0 ? p.count : 1;
+                try
+                {
+                    if (p._item != null)
+                        itemEnum = p._item._item;
+                    count = p.count > 0 ? p.count : count;
+                }
+                catch { }
             }
-            catch
+            else if (itemEnum == Items.itemlist.None)
             {
-                count = 1;
+                // Other room: still reserve the WorldId so the prop hides when the chunk wakes.
+                PlaytestLog.Event("Pickup", "claim without local prop id=" + worldId.ToString("X16")
+                    + " hint=" + hintItem);
             }
 
             _claimed.Add(worldId);
             _claimerOf[worldId] = claimerPlayerId;
+            NoteClaimedItem(itemEnum);
 
             if (hideNow)
-                HidePickup(p);
+            {
+                if (p != null)
+                    HidePickup(p);
+                HideClaimed(null);
+            }
 
             return true;
         }
@@ -217,6 +313,16 @@ namespace SyncRADation.Networking
             var net = LanNetworkManager.Instance;
             if (net == null) return;
             _claimed.Add(worldId);
+            ItemPickup p;
+            if (_byId.TryGetValue(worldId, out p) && p != null)
+            {
+                try
+                {
+                    if (p._item != null)
+                        NoteClaimedItem(p._item._item);
+                }
+                catch { }
+            }
             net.SendWorldPickupState(new[]
             {
                 new WorldPickupEntry
@@ -231,6 +337,7 @@ namespace SyncRADation.Networking
         public void ApplyHide(WorldPickupStateMessage msg)
         {
             if (msg.Entries == null) return;
+            _scanned = false;
             EnsureScanned();
 
             for (int i = 0; i < msg.Entries.Length; i++)
@@ -247,11 +354,22 @@ namespace SyncRADation.Networking
                     EnsureScanned();
                     _byId.TryGetValue(id, out p);
                 }
-                if (p == null) continue;
-
-                HidePickup(p);
-                PlaytestLog.Event("Pickup", "hide id=" + id.ToString("X16") + " " + p.gameObject.name);
+                if (p != null)
+                {
+                    HidePickup(p);
+                    try
+                    {
+                        if (p._item != null)
+                            NoteClaimedItem(p._item._item);
+                    }
+                    catch { }
+                    PlaytestLog.Event("Pickup", "hide id=" + id.ToString("X16") + " " + p.gameObject.name);
+                }
+                else
+                    PlaytestLog.Event("Pickup", "hide pending id=" + id.ToString("X16"));
             }
+
+            HideClaimed(null);
         }
 
         /// <summary>Client-side inventory grant after host approved claim.</summary>
@@ -265,6 +383,7 @@ namespace SyncRADation.Networking
             {
                 ulong id = unchecked((ulong)msg.WorldId);
                 _claimed.Add(id);
+                NoteClaimedItem((Items.itemlist)msg.ItemEnum);
                 EnsureScanned();
                 ItemPickup p;
                 _byId.TryGetValue(id, out p);

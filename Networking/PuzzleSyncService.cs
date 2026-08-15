@@ -115,7 +115,20 @@ namespace SyncRADation.Networking
                 if (FindInParents<ConnectedDoors>(go) != null) return true;
                 if (FindInParents<LoadLevelZone>(go) != null) return true;
                 if (FindInParents<LoadLevelInteraction>(go) != null) return true;
+                if (FindInParents<AirlockDoorLoadZone>(go) != null) return true;
+                if (FindInParents<EventOnlyRoom>(go) != null) return true;
+                if (FindInParents<PEN_Airlock>(go) != null) return true;
+                if (FindInParents<PenroseAirlockNew>(go) != null) return true;
                 if (FindInParents<AutoTraverseDoor>(go) != null) return true;
+                if (FindInParents<Doorway_Double>(go) != null) return true;
+                if (FindInParents<Doorway_simple>(go) != null) return true;
+                if (FindInParents<EventSlidingDoor>(go) != null) return true;
+                if (FindInParents<EventDoor>(go) != null) return true;
+                if (FindInParents<SwingDoor>(go) != null) return true;
+                var inter = c as Interaction ?? go.GetComponent<Interaction>();
+                if (inter != null && (inter.type == Interaction.interType.move
+                    || inter.type == Interaction.interType.open))
+                    return true;
             }
             catch { }
             return false;
@@ -170,7 +183,8 @@ namespace SyncRADation.Networking
             RegisterAll<BiodomeDoorLock>(PuzzleType.BiodomeDoorLock);
             RegisterAll<ROT_MeatBlocker>(PuzzleType.ROT_MeatBlocker);
             RegisterAll<FoldingShutterDoor>(PuzzleType.FoldingShutterDoor);
-            RegisterInteractions();
+            // Do not poll Interaction.triggered. Door/move Interactions teleport the local
+            // Elster when the other peer walks through a ConnectedDoors link.
             RegisterAll<EventZone>(PuzzleType.EventZoneTriggered);
             RegisterAll<EnemyManager>(PuzzleType.EnemyManagerState);
             RegisterAll<StorageBox>(PuzzleType.StorageBox);
@@ -338,8 +352,9 @@ namespace SyncRADation.Networking
                     case PuzzleType.InteractiveLockSingle:
                         {
                             var x = (InteractiveLockSingle)c;
-                            bool locked = x.timedOut || x.door == null || x.door.locked;
-                            entry = Mk(type, wid, locked, false, false, 0, 0, 0, 0, 0); return true;
+                            bool locked = x.door != null && x.door.locked;
+                            bool plate = DoorNative.TraversePlateActive(x);
+                            entry = Mk(type, wid, locked, plate, false, 0, 0, 0, 0, 0); return true;
                         }
                     case PuzzleType.Keypad3D:
                         { var x = (Keypad3D)c; entry = Mk(type, wid, x.solved || x.opening, x.opening, x.blocked, 0, 0, 0, 0, 0); return true; }
@@ -747,10 +762,208 @@ namespace SyncRADation.Networking
             _pendingReapply = true;
         }
 
+        bool IsHeld(PuzzleType type, ulong worldId)
+        {
+            if (worldId == 0) return false;
+            for (int i = 0; i < _held.Count; i++)
+            {
+                if (_held[i].Type == type && _held[i].WorldId == unchecked((long)worldId) && IsProgressed(_held[i]))
+                    return true;
+            }
+            return false;
+        }
+
+        bool HeldUnmatched(PuzzleType type)
+        {
+            for (int i = 0; i < _held.Count; i++)
+            {
+                if (_held[i].Type != type || !IsProgressed(_held[i])) continue;
+                if (Get<Component>(type, _held[i].WorldId) == null)
+                    return true;
+            }
+            return false;
+        }
+
+        void RemapHeld(PuzzleType type, ulong newId)
+        {
+            if (newId == 0) return;
+            for (int i = 0; i < _held.Count; i++)
+            {
+                if (_held[i].Type != type || !IsProgressed(_held[i])) continue;
+                if (Get<Component>(type, _held[i].WorldId) != null) continue;
+                var e = _held[i];
+                e.WorldId = unchecked((long)newId);
+                _held[i] = e;
+                PlaytestLog.Event("Puzzle", "remap " + type + " -> " + newId.ToString("X16"));
+                return;
+            }
+        }
+
+        bool CryoFamilyHeldUnmatched()
+        {
+            return HeldUnmatched(PuzzleType.PEN_Cryo)
+                || HeldUnmatched(PuzzleType.CryoDoorLock)
+                || HeldUnmatched(PuzzleType.PEN_Codepad)
+                || HeldUnmatched(PuzzleType.PatternLock);
+        }
+
+        public void InvalidateScan() => _scanned = false;
+
+        /// <summary>Native OnEnable re-enables pad/open. Shut them in the same callback if already solved.</summary>
+        public void HandlePenCryoEnabled(PEN_Cryo x)
+        {
+            if (x == null) return;
+            ulong id = 0;
+            try { id = WorldId.FromGameObject(x.gameObject); } catch { }
+            bool open = false;
+            try { open = x.opened; } catch { }
+            if (!open && !IsHeld(PuzzleType.PEN_Cryo, id) && !CryoFamilyHeldUnmatched())
+                return;
+            if (!IsHeld(PuzzleType.PEN_Cryo, id))
+                RemapHeld(PuzzleType.PEN_Cryo, id);
+            NetGate.BeginApply();
+            try { SnapPenCryo(x, playOpen: false); }
+            finally { NetGate.EndApply(); }
+        }
+
+        public void HandleCryoLockEnabled(CryoDoorLock c)
+        {
+            if (c == null) return;
+            ulong id = 0;
+            try { id = WorldId.FromGameObject(c.gameObject); } catch { }
+            bool done = false;
+            try { done = c.done; } catch { }
+            if (!done && !IsHeld(PuzzleType.CryoDoorLock, id))
+            {
+                try
+                {
+                    if (c.puzzle != null && c.puzzle.solved)
+                        done = true;
+                }
+                catch { }
+                try
+                {
+                    var pen = FindInParents<PEN_Cryo>(c.gameObject)
+                        ?? (c.Door != null ? FindInParents<PEN_Cryo>(c.Door) : null);
+                    if (pen != null && pen.opened) done = true;
+                }
+                catch { }
+            }
+            if (!done && !IsHeld(PuzzleType.CryoDoorLock, id) && !CryoFamilyHeldUnmatched())
+                return;
+            if (!IsHeld(PuzzleType.CryoDoorLock, id))
+                RemapHeld(PuzzleType.CryoDoorLock, id);
+            NetGate.BeginApply();
+            try { SnapCryoLock(c, playAnim: false); }
+            finally { NetGate.EndApply(); }
+        }
+
+        public void HandleCodepadEnabled(PEN_Codepad pad)
+        {
+            if (pad == null) return;
+            ulong id = 0;
+            try { id = WorldId.FromGameObject(pad.gameObject); } catch { }
+            bool solved = false;
+            try { solved = pad.solved; } catch { }
+            if (!solved && !IsHeld(PuzzleType.PEN_Codepad, id))
+            {
+                try
+                {
+                    var cryo = FindInParents<PEN_Cryo>(pad.gameObject);
+                    if (cryo != null && cryo.opened) solved = true;
+                }
+                catch { }
+            }
+            if (!solved && !IsHeld(PuzzleType.PEN_Codepad, id) && !CryoFamilyHeldUnmatched())
+                return;
+            if (!IsHeld(PuzzleType.PEN_Codepad, id))
+                RemapHeld(PuzzleType.PEN_Codepad, id);
+            NetGate.BeginApply();
+            try { DisablePad(pad); }
+            finally { NetGate.EndApply(); }
+        }
+
+        public void HandlePatternLockEnabled(LAB_PatternLock pad)
+        {
+            if (pad == null) return;
+            ulong id = 0;
+            try { id = WorldId.FromGameObject(pad.gameObject); } catch { }
+            bool solved = false;
+            try { solved = pad.solved; } catch { }
+            if (!solved && !IsHeld(PuzzleType.PatternLock, id))
+            {
+                try
+                {
+                    var cryo = FindInParents<PEN_Cryo>(pad.gameObject);
+                    if (cryo != null && cryo.opened) solved = true;
+                }
+                catch { }
+            }
+            if (!solved && !IsHeld(PuzzleType.PatternLock, id) && !CryoFamilyHeldUnmatched())
+                return;
+            if (!IsHeld(PuzzleType.PatternLock, id))
+                RemapHeld(PuzzleType.PatternLock, id);
+            NetGate.BeginApply();
+            try { DisablePatternLock(pad); }
+            finally { NetGate.EndApply(); }
+        }
+
+        public bool ShouldKillOverlay(Interaction it)
+        {
+            if (it == null) return false;
+            GameObject go = null;
+            try { go = it.gameObject; } catch { }
+            if (go == null) return false;
+            try
+            {
+                var pad = FindInParents<LAB_PatternLock>(go);
+                if (pad != null)
+                {
+                    ulong id = WorldId.FromGameObject(pad.gameObject);
+                    if (pad.solved || IsHeld(PuzzleType.PatternLock, id) || CryoFamilyHeldUnmatched())
+                        return true;
+                }
+            }
+            catch { }
+            try
+            {
+                var cryo = FindInParents<PEN_Cryo>(go);
+                if (cryo != null)
+                {
+                    ulong id = WorldId.FromGameObject(cryo.gameObject);
+                    if (cryo.opened || IsHeld(PuzzleType.PEN_Cryo, id))
+                        return true;
+                }
+            }
+            catch { }
+            try
+            {
+                var doorLock = FindInParents<CryoDoorLock>(go);
+                if (doorLock != null)
+                {
+                    ulong id = WorldId.FromGameObject(doorLock.gameObject);
+                    if (doorLock.done || IsHeld(PuzzleType.CryoDoorLock, id))
+                        return true;
+                }
+            }
+            catch { }
+            try
+            {
+                var code = FindInParents<PEN_Codepad>(go);
+                if (code != null)
+                {
+                    ulong id = WorldId.FromGameObject(code.gameObject);
+                    if (code.solved || IsHeld(PuzzleType.PEN_Codepad, id))
+                        return true;
+                }
+            }
+            catch { }
+            return false;
+        }
+
         public void ReapplyHeld()
         {
             if (_held.Count == 0) return;
-            EnsureScanned();
             PlaytestLog.Event("Puzzle", "reapply held " + _held.Count + " " + Describe(_held));
             NetGate.BeginApply();
             try
@@ -793,6 +1006,7 @@ namespace SyncRADation.Networking
             PuzzleStateEntry entry;
             if (!TryRead(type, worldId, c, out entry)) return;
             if (!ChangedOrFirst(entry, false)) return;
+            HoldIfProgressed(entry);
             PlaytestLog.Event("Puzzle", "emit " + type + " id=" + worldId.ToString("X16"));
             net.SendPuzzleState(new[] { entry }, false);
         }
@@ -808,6 +1022,7 @@ namespace SyncRADation.Networking
             if (net == null || !net.IsConnected) return;
             var entry = Mk(type, unchecked((long)worldId), true, false, false, 0, 0, 0, 0, 0f);
             if (!ChangedOrFirst(entry, false)) return;
+            HoldIfProgressed(entry);
             PlaytestLog.Event("Puzzle", "emit progressed " + type + " id=" + worldId.ToString("X16"));
             net.SendPuzzleState(new[] { entry }, false);
         }
@@ -855,7 +1070,14 @@ namespace SyncRADation.Networking
                     case PuzzleType.InteractiveLockSingle:
                         {
                             var x = Get<InteractiveLockSingle>(e.Type, e.WorldId);
-                            if (x != null) { x.timedOut = e.Bool0; if (x.door != null) x.door.locked = e.Bool0; }
+                            if (x != null && x.door != null)
+                            {
+                                bool was = x.door.locked;
+                                x.door.locked = e.Bool0;
+                                DoorNative.ApplyLockPlate(x, e.Bool1);
+                                if (was && !e.Bool0)
+                                    TryUnlockDoors(x.gameObject);
+                            }
                             break;
                         }
                     case PuzzleType.Keypad3D:
@@ -903,7 +1125,11 @@ namespace SyncRADation.Networking
                             if (x != null)
                             {
                                 x.solved = e.Bool0;
-                                if (e.Bool0) TryUnlockDoors(x.gameObject);
+                                if (e.Bool0)
+                                {
+                                    DisablePatternLock(x);
+                                    TryUnlockDoors(x.gameObject);
+                                }
                             }
                             break;
                         }
@@ -944,7 +1170,7 @@ namespace SyncRADation.Networking
                             {
                                 x.unlocked = e.Bool0;
                                 if (e.Bool0)
-                                    TryUnlockDoors(x.gameObject);
+                                    SnapUseItemWorld(x);
                             }
                             break;
                         }
@@ -1310,6 +1536,7 @@ namespace SyncRADation.Networking
                 var go = e.gameObject;
                 if (FindInParents<CryoDoorLock>(go) != null) return true;
                 if (FindInParents<PEN_Codepad>(go) != null) return true;
+                if (FindInParents<LAB_PatternLock>(go) != null) return true;
                 if (FindInParents<PEN_Cryo>(go) != null) return true;
                 if (FindInParents<Keypad3D>(go) != null) return true;
                 if (FindInParents<ROT_Keypad>(go) != null) return true;
@@ -1332,6 +1559,96 @@ namespace SyncRADation.Networking
         }
 
         public static void UnlockLinked(GameObject go) => TryUnlockDoors(go);
+
+        public static void SnapUseItemWorld(UseItemInteraction x)
+        {
+            if (x == null) return;
+            try { x.unlocked = true; } catch { }
+            try
+            {
+                if (x.inter != null)
+                {
+                    x.inter.triggered = true;
+                    x.inter.enabled = false;
+                }
+            }
+            catch { }
+            try
+            {
+                if (x.slaveInteraction != null)
+                {
+                    x.slaveInteraction.enabled = true;
+                    x.slaveInteraction.triggered = false;
+                }
+            }
+            catch { }
+            try
+            {
+                var lockComp = x.GetComponent<InteractiveLock>();
+                if (lockComp != null) lockComp.locked = false;
+            }
+            catch { }
+            TryUnlockDoors(x.gameObject);
+            UnlockMatchingKeyLocks(x);
+        }
+
+        static bool SameKey(AnItem a, AnItem b)
+        {
+            if (a == null || b == null) return false;
+            try { if (a == b) return true; } catch { }
+            try { return a._item == b._item; } catch { return false; }
+        }
+
+        static void UnlockMatchingKeyLocks(UseItemInteraction x)
+        {
+            AnItem key = null;
+            try { key = x.key; } catch { }
+            if (key == null) return;
+            GameObject root = x.gameObject;
+            try
+            {
+                var room = FindInParents<Room>(x.gameObject);
+                if (room != null) root = room.gameObject;
+            }
+            catch { }
+            try
+            {
+                var singles = root.GetComponentsInChildren<InteractiveLockSingle>(true);
+                if (singles != null)
+                {
+                    for (int i = 0; i < singles.Length; i++)
+                    {
+                        var s = singles[i];
+                        if (s == null || !SameKey(s.key, key)) continue;
+                        try
+                        {
+                            if (s.door != null) s.door.locked = false;
+                        }
+                        catch { }
+                        DoorNative.ApplyLockPlate(s, false);
+                    }
+                }
+            }
+            catch { }
+            try
+            {
+                var locks = root.GetComponentsInChildren<InteractiveLock>(true);
+                if (locks != null)
+                {
+                    for (int i = 0; i < locks.Length; i++)
+                    {
+                        var l = locks[i];
+                        if (l == null) continue;
+                        try
+                        {
+                            if (SameKey(l.key, key)) l.locked = false;
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
+        }
 
         public static void ApplyCodepadConsequences(PEN_Codepad pad)
             => ApplyCodepadConsequences(pad, playAnim: true);
@@ -1357,6 +1674,34 @@ namespace SyncRADation.Networking
                     }
                     catch { continue; }
                     SnapCryoLock(c, playAnim);
+                }
+            }
+            catch { }
+        }
+
+        static void DisablePatternLock(LAB_PatternLock pad)
+        {
+            if (pad == null) return;
+            try { pad.solved = true; } catch { }
+            DisableInteractions(pad);
+            try
+            {
+                var ctrl = pad.GetComponent<Lab_PatternLockControl>()
+                    ?? pad.GetComponentInChildren<Lab_PatternLockControl>(true);
+                if (ctrl == null)
+                    ctrl = FindInParents<Lab_PatternLockControl>(pad.gameObject);
+                if (ctrl != null)
+                {
+                    DisableInteractions(ctrl);
+                    try
+                    {
+                        if (ctrl._event != null)
+                        {
+                            DisableInteractions(ctrl._event.transform);
+                            try { ctrl._event.SetActive(false); } catch { }
+                        }
+                    }
+                    catch { }
                 }
             }
             catch { }
@@ -1510,12 +1855,8 @@ namespace SyncRADation.Networking
                 return;
             }
 
-            try
-            {
-                if (x.interaction != null)
-                    x.interaction.triggered = true;
-            }
-            catch { }
+            try { DisableOne(x.interaction); } catch { }
+            try { DisableInteractions(x); } catch { }
             try
             {
                 if (x.RoomDoor != null)
@@ -1593,7 +1934,7 @@ namespace SyncRADation.Networking
             if (x == null) return;
             try
             {
-                var lockGo = x.GetComponentInParent<CryoDoorLock>();
+                var lockGo = FindInParents<CryoDoorLock>(x.gameObject);
                 if (lockGo == null)
                     lockGo = x.GetComponentInChildren<CryoDoorLock>(true);
                 if (lockGo == null)
@@ -1625,6 +1966,7 @@ namespace SyncRADation.Networking
                 {
                     try { lockGo.done = true; } catch { }
                     try { DisableOne(lockGo.inter); } catch { }
+                    try { DisableInteractions(lockGo); } catch { }
                     try
                     {
                         if (lockGo.Event != null)
@@ -1651,9 +1993,52 @@ namespace SyncRADation.Networking
             catch { }
             try
             {
-                var parentPad = x.GetComponentInParent<PEN_Codepad>();
+                var parentPad = FindInParents<PEN_Codepad>(x.gameObject);
                 if (parentPad != null)
                     DisablePad(parentPad);
+            }
+            catch { }
+            try
+            {
+                var patterns = x.GetComponentsInChildren<LAB_PatternLock>(true);
+                if (patterns != null)
+                {
+                    for (int i = 0; i < patterns.Length; i++)
+                        DisablePatternLock(patterns[i]);
+                }
+            }
+            catch { }
+            try
+            {
+                var parentPat = FindInParents<LAB_PatternLock>(x.gameObject);
+                if (parentPat != null)
+                    DisablePatternLock(parentPat);
+            }
+            catch { }
+            try
+            {
+                var all = UnityEngine.Object.FindObjectsOfType<LAB_PatternLock>(true);
+                if (all != null)
+                {
+                    Vector3 origin = Vector3.zero;
+                    try { origin = x.transform.position; } catch { }
+                    for (int i = 0; i < all.Length; i++)
+                    {
+                        var p = all[i];
+                        if (p == null) continue;
+                        if (FindInParents<PEN_Cryo>(p.gameObject) == x)
+                        {
+                            DisablePatternLock(p);
+                            continue;
+                        }
+                        try
+                        {
+                            if ((p.transform.position - origin).sqrMagnitude < 64f)
+                                DisablePatternLock(p);
+                        }
+                        catch { }
+                    }
+                }
             }
             catch { }
         }
@@ -2059,7 +2444,7 @@ namespace SyncRADation.Networking
                         try
                         {
                             var netClaim = LanNetworkManager.Instance;
-                            if (netClaim != null && pid != 0 && netClaim.PickupSync.IsClaimed(pid))
+                            if (netClaim != null && pid != 0 && (netClaim.PickupSync.IsClaimed(pid) || netClaim.PickupSync.IsClaimedPickup(p)))
                             {
                                 netClaim.PickupSync.HidePickup(p);
                                 continue;

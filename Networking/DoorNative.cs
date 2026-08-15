@@ -73,11 +73,59 @@ namespace SyncRADation.Networking
             {
                 cd.locked = locked;
                 try { cd.UpdateProperties(); } catch { }
+                SetTraversePlate(cd.A, locked);
+                SetTraversePlate(cd.B, locked);
             }
             catch (System.Exception ex)
             {
                 ModRuntime.Log?.Warning("[DoorNative] ConnectedDoors lock: " + ex.Message);
             }
+        }
+
+        public static bool TraversePlateActive(InteractiveLockSingle x)
+        {
+            if (x == null) return false;
+            try
+            {
+                if (x.master != null)
+                {
+                    if (PlateOn(x.master.A) || PlateOn(x.master.B)) return true;
+                }
+            }
+            catch { }
+            try
+            {
+                var atd = x.GetComponentInParent<AutoTraverseDoor>();
+                if (PlateOn(atd)) return true;
+            }
+            catch { }
+            return false;
+        }
+
+        public static void ApplyLockPlate(InteractiveLockSingle x, bool on)
+        {
+            if (x == null) return;
+            try
+            {
+                if (x.master != null)
+                {
+                    SetTraversePlate(x.master.A, on);
+                    SetTraversePlate(x.master.B, on);
+                }
+            }
+            catch { }
+            try { SetTraversePlate(x.GetComponentInParent<AutoTraverseDoor>(), on); } catch { }
+        }
+
+        static bool PlateOn(AutoTraverseDoor atd)
+        {
+            return atd != null && atd.blocker != null && atd.blocker.activeSelf;
+        }
+
+        static void SetTraversePlate(AutoTraverseDoor atd, bool on)
+        {
+            if (atd == null || atd.blocker == null) return;
+            try { atd.blocker.SetActive(on); } catch { }
         }
 
         public static void ApplySlidingDoor(EventSlidingDoor sd, bool opened, bool moving)

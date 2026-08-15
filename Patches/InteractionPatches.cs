@@ -61,6 +61,55 @@ namespace SyncRADation.Patches
         }
     }
 
+    internal static class LocalInspect
+    {
+        public static bool Dialogue(Dialogue d)
+        {
+            if (d == null) return false;
+            try
+            {
+                if (PlayerState.eventScreen) return true;
+                var gs = PlayerState.gameState;
+                if (gs == PlayerState.gameStates.eventScreen || gs == PlayerState.gameStates.book)
+                    return true;
+            }
+            catch { }
+            return UnderEventCamera(d.gameObject);
+        }
+
+        static bool UnderEventCamera(GameObject go)
+        {
+            Transform t = go != null ? go.transform : null;
+            while (t != null)
+            {
+                try
+                {
+                    if (t.GetComponent<EventScreen3DCam>() != null) return true;
+                    if (t.GetComponent<EventScreenInteraction>() != null) return true;
+                    if (t.GetComponent<EventOnlyRoom>() != null) return true;
+                    if (t.GetComponent<EventScreen>() != null) return true;
+                    if (t.GetComponent<ZoomInPoint>() != null) return true;
+                    if (t.GetComponent<ItemPickup>() != null) return true;
+                    if (t.GetComponent<ObservationDialogue>() != null) return true;
+                    if (t.GetComponent<ObservationChoice>() != null) return true;
+                    if (t.GetComponent<PEN_Airlock>() != null) return true;
+                    if (t.GetComponent<PenroseAirlockNew>() != null) return true;
+                    if (t.GetComponent<PenroseAirlock>() != null) return true;
+                    if (t.GetComponent<AirlockInside>() != null) return true;
+                    if (t.GetComponent<AirlockDoorLoadZone>() != null) return true;
+                }
+                catch { }
+                t = t.parent;
+            }
+            return false;
+        }
+
+        public static bool Cinematic(GameObject go)
+        {
+            return UnderEventCamera(go);
+        }
+    }
+
     [HarmonyPatch(typeof(Dialogue), "OnTriggerEnter2D")]
     public static class DialogueTriggerPatch
     {
@@ -69,6 +118,7 @@ namespace SyncRADation.Patches
         {
             if (NetGate.IsApplying || !NetGate.Live) return true;
             if (__instance == null) return true;
+            if (LocalInspect.Dialogue(__instance)) return true;
             if (NetGate.Host) return true;
             try
             {
@@ -90,12 +140,17 @@ namespace SyncRADation.Patches
         {
             if (NetGate.IsApplying || !NetGate.Live) return true;
             if (__instance == null) return true;
+            if (LocalInspect.Dialogue(__instance)) return true;
             if (NetGate.Host)
             {
                 ulong id = WorldId.FromGameObject(__instance.gameObject);
+                PlaytestLog.Event("Interact", "DialogueStart " + __instance.gameObject.name
+                    + " d=" + (int)__instance._dialogue + " id=" + id.ToString("X16"));
                 LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.DialogueStart, id, 0, "");
                 return true;
             }
+            PlaytestLog.Event("Interact", "request DialogueStart " + __instance.gameObject.name
+                + " d=" + (int)__instance._dialogue);
             LanNetworkManager.Instance.SendInteractionRequest(
                 WorldId.FromGameObject(__instance.gameObject), InteractionKind.DialogueStart);
             return false;
@@ -121,10 +176,12 @@ namespace SyncRADation.Patches
                 if (__instance.inter == null || !__instance.inter.inRange) return false;
                 ulong id = WorldId.FromGameObject(__instance.gameObject);
                 float last;
-                if (_lastSend.TryGetValue(id, out last) && Time.unscaledTime - last < 0.25f)
-                    return false;
-                _lastSend[id] = Time.unscaledTime;
-                LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.UseItem);
+                if (!_lastSend.TryGetValue(id, out last) || Time.unscaledTime - last >= 0.25f)
+                {
+                    _lastSend[id] = Time.unscaledTime;
+                    LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.UseItem);
+                }
+                return PartyKeyRing.LocalOrRingHas(__instance.key);
             }
             catch { }
             return false;
@@ -260,6 +317,7 @@ namespace SyncRADation.Patches
         {
             if (NetGate.IsApplying || !NetGate.Live) return true;
             if (__instance == null) return true;
+            if (LocalInspect.Cinematic(__instance.gameObject)) return true;
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             if (NetGate.Host)
             {
@@ -279,6 +337,7 @@ namespace SyncRADation.Patches
         {
             if (NetGate.IsApplying || !NetGate.Live) return true;
             if (__instance == null) return true;
+            if (LocalInspect.Cinematic(__instance.gameObject)) return true;
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             if (NetGate.Host)
             {
@@ -355,6 +414,7 @@ namespace SyncRADation.Patches
         {
             if (NetGate.IsApplying || !NetGate.Live) return true;
             if (__instance == null) return true;
+            if (LocalInspect.Cinematic(__instance.gameObject)) return true;
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             if (NetGate.Host)
             {

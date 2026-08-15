@@ -810,12 +810,14 @@ namespace SyncRADation.Networking
             }
         }
 
-        public void SendWorldPickupClaim(ulong worldId)
+        public void SendWorldPickupClaim(ulong worldId, Items.itemlist item = Items.itemlist.None, int count = 1)
         {
             var msg = new WorldPickupClaimMessage
             {
                 ClaimerPlayerId = _localPlayerId,
-                WorldId = unchecked((long)worldId)
+                WorldId = unchecked((long)worldId),
+                ItemEnum = (ushort)item,
+                Count = count > 0 ? count : 1
             };
             var writer = new NetDataWriter();
             writer.Put((byte)NetMessageType.WorldPickupClaim);
@@ -1639,7 +1641,8 @@ namespace SyncRADation.Networking
             ulong id = unchecked((ulong)claim.WorldId);
             Items.itemlist item;
             int count;
-            if (!_pickupSync.TryClaimOnHost(id, claim.ClaimerPlayerId, out item, out count, hideNow: true))
+            if (!_pickupSync.TryClaimOnHost(id, claim.ClaimerPlayerId, out item, out count, hideNow: true,
+                    hintItem: (Items.itemlist)claim.ItemEnum, hintCount: claim.Count))
             {
                 ModRuntime.Log?.Msg("[WorldPickup] Claim denied id=" + id.ToString("X16")
                     + " by " + claim.ClaimerPlayerId);
@@ -1667,6 +1670,7 @@ namespace SyncRADation.Networking
             }
 
             _pickupSync.BroadcastTriggered(id, true);
+            _pickupSync.HideClaimed(null);
         }
 
         private void HandleSceneHello(SceneHelloMessage msg)

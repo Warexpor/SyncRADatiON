@@ -173,6 +173,18 @@ namespace SyncRADation.Patches
         }
     }
 
+    [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.hasItem), new[] { typeof(Items.itemlist) })]
+    public static class InventoryHasItemEnumPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(Items.itemlist item, ref bool __result)
+        {
+            if (__result || !NetGate.Live) return;
+            if (PartyKeyRing.Has(item))
+                __result = true;
+        }
+    }
+
     [HarmonyPatch]
     public static class StorageBoxInventoryPatches
     {

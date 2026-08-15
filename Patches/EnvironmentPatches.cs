@@ -178,4 +178,32 @@ namespace SyncRADation.Patches
             catch { }
         }
     }
+
+    [HarmonyPatch(typeof(LAB_PatternLock), nameof(LAB_PatternLock.toggleButton))]
+    public static class PatternLockTogglePatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(LAB_PatternLock __instance)
+        {
+            if (__instance == null) return true;
+            try
+            {
+                if (__instance.solved) return false;
+            }
+            catch { }
+            return true;
+        }
+
+        [HarmonyPostfix]
+        public static void Postfix(LAB_PatternLock __instance)
+        {
+            if (__instance == null || NetGate.IsApplying) return;
+            try
+            {
+                if (__instance.solved)
+                    EnvEmit.Progressed(PuzzleType.PatternLock, __instance);
+            }
+            catch { }
+        }
+    }
 }

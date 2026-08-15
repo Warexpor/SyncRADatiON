@@ -1,5 +1,6 @@
 // Host validates client interaction intents and applies native world mutations.
 using System.Reflection;
+using SyncRADation.Patches;
 using SyncRADation.Sync;
 using UnityEngine;
 
@@ -141,8 +142,8 @@ namespace SyncRADation.Networking
                 return false;
 
             u.unlocked = true;
-            try { if (u.onSuccessful != null) u.onSuccessful.Invoke(); } catch { }
             PuzzleSyncService.UnlockLinked(u.gameObject);
+            try { PuzzleSyncService.SnapUseItemWorld(u); } catch { }
             try
             {
                 var netPuzzle = LanNetworkManager.Instance;
@@ -299,6 +300,8 @@ namespace SyncRADation.Networking
         {
             var d = Find<Dialogue>(id);
             if (d == null) return false;
+            if (LocalInspect.Dialogue(d))
+                return true;
             NetGate.BeginApply();
             try { d.StartDialogue(); }
             finally { NetGate.EndApply(); }
@@ -310,6 +313,8 @@ namespace SyncRADation.Networking
         {
             var c = Find<CutsceneManager>(id);
             if (c == null) return false;
+            if (LocalInspect.Cinematic(c.gameObject))
+                return true;
             NetGate.BeginApply();
             try { c.StartCutscene(); }
             finally { NetGate.EndApply(); }

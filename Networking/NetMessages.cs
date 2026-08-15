@@ -883,15 +883,25 @@ namespace SyncRADation.Networking
     {
         public int ClaimerPlayerId;
         public long WorldId;
+        public ushort ItemEnum;
+        public int Count;
 
         public void Serialize(NetDataWriter w)
         {
             w.Put(ClaimerPlayerId);
             w.Put(WorldId);
+            w.Put(ItemEnum);
+            w.Put(Count);
         }
 
         public static WorldPickupClaimMessage Deserialize(NetDataReader r) =>
-            new WorldPickupClaimMessage { ClaimerPlayerId = r.GetInt(), WorldId = r.GetLong() };
+            new WorldPickupClaimMessage
+            {
+                ClaimerPlayerId = r.GetInt(),
+                WorldId = r.GetLong(),
+                ItemEnum = r.GetUShort(),
+                Count = r.GetInt()
+            };
     }
 
     public struct WorldPickupGrantMessage
