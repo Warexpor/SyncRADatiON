@@ -1,6 +1,6 @@
 # SyncRADation — SIGNALIS Multiplayer Mod
 
-**Status:** v0.4.2-dev — protocol v8. Host-authoritative world/story + native presentation/FMOD. Dual-instance playtest required. Decompile: `C:\Users\amicu\Desktop\Dev\SIGNALIS DECOMPILED`.
+**Status:** v0.4.3-dev — protocol v8. Host-authoritative world/story + native presentation/FMOD. Dual-instance playtest required. Decompile: `C:\Users\amicu\Desktop\Dev\SIGNALIS DECOMPILED`.
 
 ## Product
 
@@ -16,7 +16,7 @@ LAN multiplayer MelonLoader mod for SIGNALIS (Unity IL2CPP / Unhollower-style Ma
 - G — drop selected item (inventory or play)
 - E — pick up nearby **dropped** (player-dropped) item
 
-## What is synced (0.4.2)
+## What is synced (0.4.3)
 
 | Area | Authority | Notes |
 |------|-----------|--------|

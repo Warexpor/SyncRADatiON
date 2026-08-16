@@ -33,6 +33,30 @@ namespace SyncRADation.Networking
 
         public void Reset() => RefreshScene();
         public void RequestFullSend() => _needFull = true;
+        public static Items.itemlist ResolveItem(ItemPickup p)
+        {
+            if (p == null) return Items.itemlist.None;
+            try
+            {
+                if (p._item != null && p._item._item != Items.itemlist.None)
+                    return p._item._item;
+            }
+            catch { }
+            try
+            {
+                if (p._itemEnum != Items.itemlist.None)
+                {
+                    if (p._item == null)
+                    {
+                        try { p._item = InventoryManager.getItem(p._itemEnum); } catch { }
+                    }
+                    return p._itemEnum;
+                }
+            }
+            catch { }
+            return Items.itemlist.None;
+        }
+
         public bool IsClaimed(ulong worldId) => worldId != 0 && _claimed.Contains(worldId);
 
         public bool IsClaimedPickup(ItemPickup p)
@@ -281,8 +305,9 @@ namespace SyncRADation.Networking
             {
                 try
                 {
-                    if (p._item != null)
-                        itemEnum = p._item._item;
+                    var resolved = ResolveItem(p);
+                    if (resolved != Items.itemlist.None)
+                        itemEnum = resolved;
                     count = p.count > 0 ? p.count : count;
                 }
                 catch { }
@@ -404,18 +429,31 @@ namespace SyncRADation.Networking
                     }
                     catch { }
 
-                    var item = InventoryManager.getItem((Items.itemlist)msg.ItemEnum);
-                    if (item == null && p != null)
+                    var kind = (Items.itemlist)msg.ItemEnum;
+                    AnItem item = null;
+                    if (kind != Items.itemlist.None)
                     {
-                        try { item = p._item; } catch { }
+                        try { item = InventoryManager.getItem(kind); } catch { }
                     }
-                    if (item == null)
+                    if ((item == null || kind == Items.itemlist.None) && p != null)
+                    {
+                        kind = ResolveItem(p);
+                        if (kind != Items.itemlist.None)
+                        {
+                            try { item = InventoryManager.getItem(kind); } catch { }
+                        }
+                        if (item == null)
+                        {
+                            try { item = p._item; } catch { }
+                        }
+                    }
+                    if (item == null || kind == Items.itemlist.None)
                     {
                         ModRuntime.Log?.Warning("[WorldPickup] Grant unknown item " + msg.ItemEnum);
                         return;
                     }
                     bool already = false;
-                    try { already = InventoryManager.hasItem((Items.itemlist)msg.ItemEnum); } catch { }
+                    try { already = InventoryManager.hasItem(kind); } catch { }
                     if (!already)
                     {
                         try { already = InventoryManager.hasItem(item); } catch { }

@@ -11,6 +11,7 @@ namespace SyncRADation.Networking
         private readonly Dictionary<string, StoryFlagEntry> _flags
             = new Dictionary<string, StoryFlagEntry>();
         private bool _needSend = true;
+        private bool _fullDump = true;
         private float _timer;
         public StoryCmd LastCmd;
         public ulong LastWorldId;
@@ -19,12 +20,17 @@ namespace SyncRADation.Networking
         {
             _flags.Clear();
             _needSend = true;
+            _fullDump = true;
             _timer = 0f;
             LastCmd = StoryCmd.None;
             LastWorldId = 0;
         }
 
-        public void RequestFullSend() => _needSend = true;
+        public void RequestFullSend()
+        {
+            _needSend = true;
+            _fullDump = true;
+        }
 
         public void NoteBool(string key, bool val) => Note(new StoryFlagEntry { Kind = 0, Key = key, BoolVal = val });
         public void NoteInt(string key, int val) => Note(new StoryFlagEntry { Kind = 1, Key = key, IntVal = val });
@@ -43,12 +49,14 @@ namespace SyncRADation.Networking
         public void TickHost(LanNetworkManager net)
         {
             if (net == null || net.Role != NetworkRole.Host || !net.IsConnected) return;
+            if (!_needSend) return;
             _timer += Mathf.Min(Time.deltaTime, 0.1f);
-            if (_timer < 0.75f && !_needSend) return;
+            if (_timer < 0.75f) return;
             _timer = 0f;
-            if (!_needSend && _flags.Count == 0) return;
-            Send(net, _needSend);
+            bool full = _fullDump;
+            _fullDump = false;
             _needSend = false;
+            Send(net, full);
         }
 
         public void Send(LanNetworkManager net, bool full, bool replayPresentation = false)
@@ -213,6 +221,7 @@ namespace SyncRADation.Networking
             var net = LanNetworkManager.Instance;
             if (net != null && net.Role == NetworkRole.Host) return;
             if (SceneFollowService.LocalIsTransient()) return;
+            if (net != null && net.SceneMismatch) return;
 
             NetGate.BeginApply();
             try
@@ -339,26 +348,27 @@ namespace SyncRADation.Networking
                     case StoryCmd.CutsceneStart:
                     {
                         var c = Find<CutsceneManager>(id);
-                        if (c != null && LocalInspect.Cinematic(c.gameObject))
+                        if (c != null && LocalInspect.AirlockCinematic(c.gameObject))
                             PlaytestLog.Event("Story", "skip local cinematic CutsceneStart");
                         else if (c != null)
+                        {
                             c.StartCutscene();
+                            try
+                            {
+                                if (!c.unskippable)
+                                    CutsceneSkippingUI.skippableCutscene = true;
+                            }
+                            catch { }
+                        }
                         break;
                     }
                     case StoryCmd.CutsceneSkip:
                     {
                         var c = Find<CutsceneManager>(id);
-                        if (c != null && LocalInspect.Cinematic(c.gameObject))
+                        if (c != null && LocalInspect.AirlockCinematic(c.gameObject))
                             PlaytestLog.Event("Story", "skip local cinematic CutsceneSkip");
-                        else if (c != null)
-                        {
-                            try
-                            {
-                                if (c.skipper != null && c.skipper.skipEvent != null)
-                                    c.skipper.skipEvent.Invoke();
-                            }
-                            catch { }
-                        }
+                        else
+                            InteractionSyncService.NativeSkip(c);
                         break;
                     }
                     case StoryCmd.CutsceneProceed:
@@ -378,6 +388,8 @@ namespace SyncRADation.Networking
                         var z = Find<EventZone>(id);
                         if (z != null && LocalInspect.LockWorld(z.gameObject))
                             PlaytestLog.Event("Story", "skip lock EventZoneFire");
+                        else if (z != null && LocalInspect.AirlockCinematic(z.gameObject))
+                            PlaytestLog.Event("Story", "skip airlock EventZoneFire");
                         else if (z != null)
                         {
                             z.triggered = true;

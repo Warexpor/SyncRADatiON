@@ -4,6 +4,8 @@
 [Dd]ebug/
 [Rr]elease/
 *.dll
+!lib/
+!lib/LiteNetLib.dll
 *.pdb
 *.exe
 *.cache
@@ -21,7 +23,10 @@
 *.nupkg
 *.snupkg
 
-# NuGet restore (keep packages.config)
+# Local LiteNetLib 1.3.5 source (rebuild net472 DLL; do not commit)
+third_party/
+
+# NuGet restore
 [Pp]ackages/
 project.lock.json
 project.fragment.lock.json

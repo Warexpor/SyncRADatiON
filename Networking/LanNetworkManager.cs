@@ -1787,6 +1787,8 @@ namespace SyncRADation.Networking
             {
                 SendWorldPickupGrant(claim.ClaimerPlayerId, id, item, count > 0 ? count : 1);
             }
+            else
+                ModRuntime.Log?.Warning("[WorldPickup] Claim OK but item None id=" + id.ToString("X16"));
 
             _pickupSync.BroadcastTriggered(id, true);
             _pickupSync.HideClaimed(null);

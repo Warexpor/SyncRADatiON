@@ -38,6 +38,7 @@ namespace SyncRADation.Patches
         {
             if (NetGate.IsApplying || !NetGate.Live) return true;
             if (__instance == null || __instance.triggered) return true;
+            if (LocalInspect.AirlockCinematic(__instance.gameObject)) return false;
             if (LocalInspect.LockWorld(__instance.gameObject)) return true;
             try
             {
@@ -129,6 +130,82 @@ namespace SyncRADation.Patches
             return id != 0 && _localUnlock.Contains(id);
         }
 
+        public static bool ShouldHoldTitles(PEN_Titles t)
+        {
+            if (t == null) return false;
+            try { if (t.started) return false; } catch { return false; }
+            UseItemInteraction card = null;
+            try { card = t.keyCardEvent; } catch { }
+            if (card == null) return false;
+            try { if (!card.unlocked) return false; } catch { return false; }
+            return !IsLocalUnlock(card);
+        }
+
+        public static bool ShouldHoldGo(GameObject go)
+        {
+            if (go == null) return false;
+            Transform t = go.transform;
+            while (t != null)
+            {
+                try
+                {
+                    var titles = t.GetComponent<PEN_Titles>();
+                    if (titles != null && ShouldHoldTitles(titles)) return true;
+                }
+                catch { }
+                t = t.parent;
+            }
+            return false;
+        }
+
+        public static void KeepTitlesPrompt(PEN_Titles t)
+        {
+            if (t == null) return;
+            try
+            {
+                if (t.keyCardEvent != null)
+                    KeepUsePrompt(t.keyCardEvent);
+            }
+            catch { }
+            try
+            {
+                var vp = t.ViewPoint;
+                if (vp != null)
+                {
+                    vp.triggered = false;
+                    vp.enabled = true;
+                }
+            }
+            catch { }
+        }
+
+        public static void KeepUsePrompt(UseItemInteraction u)
+        {
+            if (u == null) return;
+            try
+            {
+                if (u.inter != null)
+                {
+                    u.inter.triggered = false;
+                    u.inter.enabled = true;
+                }
+            }
+            catch { }
+        }
+
+        public static void ArmTitlesSkip(PEN_Titles t)
+        {
+            if (t == null) return;
+            // CutsceneSkippingUI is for CutsceneManager. PEN_Titles has its own skipper;
+            // arming both made the hold bar fight the titles coroutine.
+            try
+            {
+                if (t.skipper != null)
+                    t.skipper.enabled = true;
+            }
+            catch { }
+        }
+
         public static bool IsPenTitlesCard(UseItemInteraction x)
         {
             if (x == null) return false;
@@ -182,6 +259,7 @@ namespace SyncRADation.Patches
         public static bool IsPersonalChapterLoad(string scene)
         {
             if (string.IsNullOrEmpty(scene) || SceneFollowService.IsTransient(scene)) return false;
+            if (!string.Equals(scene, "PEN_Hole", System.StringComparison.Ordinal)) return false;
             if (DeferFollowWhileAirlockPresent()) return true;
             try
             {
@@ -199,19 +277,36 @@ namespace SyncRADation.Patches
             return false;
         }
 
+        static bool IsWreckOrHole(string scene)
+        {
+            return string.Equals(scene, "PEN_Wreck", System.StringComparison.Ordinal)
+                || string.Equals(scene, "PEN_Hole", System.StringComparison.Ordinal);
+        }
+
         public static bool ShouldIgnoreHostFollow(string hostScene)
         {
-            if (DeferFollowWhileAirlockPresent()) return true;
-            try
-            {
-                string local = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name ?? "";
-                if (!string.IsNullOrEmpty(_personalScene)
-                    && string.Equals(local, _personalScene, System.StringComparison.Ordinal)
-                    && !string.IsNullOrEmpty(hostScene)
-                    && !string.Equals(hostScene, local, System.StringComparison.Ordinal))
-                    return true;
-            }
+            if (string.IsNullOrEmpty(hostScene)) return false;
+            string local = "";
+            try { local = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name ?? ""; }
             catch { }
+            // Host left Penrose — follow. Stale _personalScene=PEN_Hole used to trap the client
+            // in the hole after LOV_Reeducation loaded (pause-only freeze).
+            if (!IsWreckOrHole(hostScene))
+            {
+                _personalScene = null;
+                return false;
+            }
+            bool titles = DeferFollowWhileAirlockPresent();
+            bool localWreck = string.Equals(local, "PEN_Wreck", System.StringComparison.Ordinal);
+            bool hostHole = string.Equals(hostScene, "PEN_Hole", System.StringComparison.Ordinal);
+            bool localHole = string.Equals(local, "PEN_Hole", System.StringComparison.Ordinal);
+            bool hostWreck = string.Equals(hostScene, "PEN_Wreck", System.StringComparison.Ordinal);
+            if (titles && localWreck && hostHole) return true;
+            if (titles && localHole && hostWreck) return true;
+            if (!string.IsNullOrEmpty(_personalScene)
+                && string.Equals(_personalScene, "PEN_Hole", System.StringComparison.Ordinal)
+                && localHole && hostWreck)
+                return true;
             return false;
         }
 
@@ -258,58 +353,185 @@ namespace SyncRADation.Patches
 
         public static void OnSceneChanged() => _sent.Clear();
 
-        internal static void OnLocalUnlocked(UseItemInteraction u)
+        internal static void OnLocalUnlocked(UseItemInteraction u, bool fromUpdate)
         {
             if (NetGate.IsApplying || !NetGate.Live) return;
             if (u == null || !u.unlocked) return;
             ulong id = WorldId.FromGameObject(u.gameObject);
             if (id == 0) return;
-            AirlockCinematic.NoteLocalUnlock(u);
+            if (!fromUpdate || !AirlockCinematic.IsPenTitlesCard(u))
+                AirlockCinematic.NoteLocalUnlock(u);
             if (!_sent.Add(id)) return;
             if (!NetGate.Client) return;
             PlaytestLog.Event("Interact", "request UseItem (unlocked) id=" + id.ToString("X16"));
             LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.UseItem);
         }
 
+        [HarmonyPrefix]
+        public static bool Prefix(UseItemInteraction __instance)
+        {
+            if (!NetGate.Live || __instance == null) return true;
+            try
+            {
+                if (__instance.inter != null && __instance.inter.inRange)
+                    PartyKeyRing.EnsureInBag(__instance.key);
+            }
+            catch { }
+            return true;
+        }
+
         [HarmonyPostfix]
-        public static void Postfix(UseItemInteraction __instance) => OnLocalUnlocked(__instance);
+        public static void Postfix(UseItemInteraction __instance) => OnLocalUnlocked(__instance, true);
+    }
+
+    [HarmonyPatch(typeof(UseItemInteraction), nameof(UseItemInteraction.StartDialogue))]
+    public static class UseItemDialogueNamePatch
+    {
+        [HarmonyPrefix]
+        public static void Prefix(UseItemInteraction __instance)
+        {
+            Bind(__instance);
+        }
+
+        [HarmonyPostfix]
+        public static void Postfix(UseItemInteraction __instance)
+        {
+            Bind(__instance);
+        }
+
+        internal static void Bind(UseItemInteraction u)
+        {
+            AnItem key = null;
+            if (u != null)
+            {
+                try { key = u.key; } catch { }
+            }
+            if (key == null)
+            {
+                try { key = UseItemInteraction.currentUseItem; } catch { }
+            }
+            PartyKeyRing.BindUseDialogue(key);
+        }
+    }
+
+    [HarmonyPatch(typeof(AnItem), nameof(AnItem.localizedName))]
+    public static class ItemLocalizedNamePatch
+    {
+        static bool _resolving;
+
+        [HarmonyPrefix]
+        public static bool Prefix(AnItem __instance, ref string __result)
+        {
+            if (_resolving || __instance == null) return true;
+            var cat = PartyKeyRing.CatalogOf(__instance);
+            if (cat == null) return true;
+            _resolving = true;
+            try
+            {
+                __result = cat.localizedName();
+                return PartyKeyRing.BadLoc(__result);
+            }
+            catch
+            {
+                return true;
+            }
+            finally { _resolving = false; }
+        }
+    }
+
+    [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.getName))]
+    public static class InventoryGetNamePatch
+    {
+        static bool _resolving;
+
+        [HarmonyPrefix]
+        public static bool Prefix(AnItem item, ref string __result)
+        {
+            if (_resolving || item == null) return true;
+            var cat = PartyKeyRing.CatalogOf(item);
+            if (cat == null) return true;
+            _resolving = true;
+            try
+            {
+                __result = InventoryManager.getName(cat);
+                return PartyKeyRing.BadLoc(__result);
+            }
+            catch
+            {
+                return true;
+            }
+            finally { _resolving = false; }
+        }
+    }
+
+    [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.AddItem), typeof(AnItem), typeof(int))]
+    public static class InventoryAddItemNonePatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(AnItem item)
+        {
+            if (!NetGate.Live) return true;
+            if (item == null) return false;
+            try
+            {
+                if (item._item == Items.itemlist.None) return false;
+            }
+            catch { }
+            return true;
+        }
+    }
+
+    [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.AddItem), typeof(AnItem))]
+    public static class InventoryAddItemNoneNoCountPatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(AnItem item)
+        {
+            return InventoryAddItemNonePatch.Prefix(item);
+        }
     }
 
     [HarmonyPatch(typeof(UseItemInteraction), "dialogueOver")]
     public static class UseItemDialogueOverPatch
     {
         [HarmonyPostfix]
-        public static void Postfix(UseItemInteraction __instance) => UseItemInteractionPatch.OnLocalUnlocked(__instance);
+        public static void Postfix(UseItemInteraction __instance) => UseItemInteractionPatch.OnLocalUnlocked(__instance, false);
     }
 
     [HarmonyPatch(typeof(UseItemInteraction), nameof(UseItemInteraction.onMessageEvent))]
     public static class UseItemMessageEventPatch
     {
         [HarmonyPostfix]
-        public static void Postfix(UseItemInteraction __instance) => UseItemInteractionPatch.OnLocalUnlocked(__instance);
+        public static void Postfix(UseItemInteraction __instance) => UseItemInteractionPatch.OnLocalUnlocked(__instance, false);
     }
 
     [HarmonyPatch(typeof(PEN_Titles), "Update")]
     public static class PenTitlesCinematicPatch
     {
-        static ulong _skipLogged;
-
-        [HarmonyPrefix]
-        public static bool Prefix(PEN_Titles __instance)
+        [HarmonyPostfix]
+        public static void Postfix(PEN_Titles __instance)
         {
-            if (__instance == null || !NetGate.Live) return true;
-            if (__instance.keyCardEvent == null || !__instance.keyCardEvent.unlocked) return true;
-            if (!AirlockCinematic.IsRemoteUnlock(__instance.keyCardEvent)) return true;
-            bool started = false;
-            try { started = __instance.started; } catch { }
-            if (started) return true;
-            ulong id = WorldId.FromGameObject(__instance.gameObject);
-            if (id != _skipLogged)
+            if (__instance == null || !NetGate.Live) return;
+            try
             {
-                _skipLogged = id;
-                PlaytestLog.Event("Story", "hold PEN_Titles until local use");
+                if (__instance.started)
+                {
+                    CutsceneSkippingUI.skippableCutscene = false;
+                    AirlockCinematic.ArmTitlesSkip(__instance);
+                }
             }
-            return false;
+            catch { }
+        }
+    }
+
+    [HarmonyPatch(typeof(PEN_Titles), "Skip")]
+    public static class PenTitlesSkipPatch
+    {
+        [HarmonyPrefix]
+        public static void Prefix(PEN_Titles __instance)
+        {
+            if (__instance == null || !NetGate.Live) return;
+            AirlockCinematic.ArmTitlesSkip(__instance);
         }
     }
 
@@ -424,7 +646,7 @@ namespace SyncRADation.Patches
         {
             if (NetGate.IsApplying || !NetGate.Live) return true;
             if (__instance == null) return true;
-            if (LocalInspect.Cinematic(__instance.gameObject)) return true;
+            if (LocalInspect.AirlockCinematic(__instance.gameObject)) return true;
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             if (NetGate.Host)
             {
@@ -432,7 +654,7 @@ namespace SyncRADation.Patches
                 return true;
             }
             LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.CutsceneSkip);
-            return false;
+            return true;
         }
     }
 
@@ -444,7 +666,7 @@ namespace SyncRADation.Patches
         {
             if (NetGate.IsApplying || !NetGate.Live) return true;
             if (__instance == null) return true;
-            if (LocalInspect.Cinematic(__instance.gameObject)) return true;
+            if (LocalInspect.AirlockCinematic(__instance.gameObject)) return true;
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             if (NetGate.Host)
             {
@@ -452,7 +674,159 @@ namespace SyncRADation.Patches
                 return true;
             }
             LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.CutsceneStart);
+            return true;
+        }
+
+        [HarmonyPostfix]
+        public static void Postfix(CutsceneManager __instance)
+        {
+            if (__instance == null || !NetGate.Live) return;
+            if (LocalInspect.AirlockCinematic(__instance.gameObject)) return;
+            try
+            {
+                if (!__instance.unskippable)
+                    CutsceneSkippingUI.skippableCutscene = true;
+            }
+            catch { }
+        }
+    }
+
+    [HarmonyPatch(typeof(PauseMenu), nameof(PauseMenu.TogglePauseAnywhere))]
+    public static class PauseDuringCutscenePatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix()
+        {
+            if (!NetGate.Live) return true;
+            try
+            {
+                var all = UnityEngine.Object.FindObjectsOfType<PEN_Titles>();
+                if (all != null)
+                {
+                    for (int i = 0; i < all.Length; i++)
+                    {
+                        var t = all[i];
+                        if (t == null) continue;
+                        bool started = false;
+                        try { started = t.started; } catch { }
+                        if (!started) continue;
+                        try { CutsceneSkippingUI.skippableCutscene = false; } catch { }
+                        AirlockCinematic.ArmTitlesSkip(t);
+                        return false;
+                    }
+                }
+            }
+            catch { }
+            if (ArmWorldSkippers())
+            {
+                try { CutsceneSkippingUI.skippableCutscene = true; } catch { }
+                return false;
+            }
+            bool inCut = false;
+            try { inCut = PlayerState.cutscene || PlayerState.gameState == PlayerState.gameStates.cutscene; } catch { }
+            try { inCut = inCut || CutsceneSkippingUI.skippableCutscene; } catch { }
+            if (!inCut)
+            {
+                try
+                {
+                    var all = UnityEngine.Object.FindObjectsOfType<CutsceneManager>();
+                    if (all != null)
+                    {
+                        for (int i = 0; i < all.Length; i++)
+                        {
+                            var c = all[i];
+                            if (c == null) continue;
+                            try
+                            {
+                                if (c.cutscene != null && !c.completed)
+                                {
+                                    inCut = true;
+                                    break;
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+                }
+                catch { }
+            }
+            if (!inCut) return true;
+
+            CutsceneManager target = null;
+            try
+            {
+                var all = UnityEngine.Object.FindObjectsOfType<CutsceneManager>();
+                if (all != null)
+                {
+                    for (int i = 0; i < all.Length; i++)
+                    {
+                        var c = all[i];
+                        if (c == null) continue;
+                        try
+                        {
+                            if (LocalInspect.AirlockCinematic(c.gameObject)) continue;
+                            if (c.cutscene != null || (c.skipper != null && !c.skipper.done))
+                            {
+                                target = c;
+                                break;
+                            }
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
+            if (target == null) return true;
+            try { target.Skip(); } catch { }
             return false;
+        }
+
+        static bool ArmWorldSkippers()
+        {
+            bool armed = false;
+            try
+            {
+                var holes = UnityEngine.Object.FindObjectsOfType<PEN_HoleSnowblind>();
+                if (holes != null)
+                {
+                    for (int i = 0; i < holes.Length; i++)
+                    {
+                        var h = holes[i];
+                        if (h == null) continue;
+                        armed |= ArmSkipper(h.skipper) | ArmSkipper(h.skipper2);
+                    }
+                }
+            }
+            catch { }
+            try
+            {
+                var ends = UnityEngine.Object.FindObjectsOfType<PEN_CodeRoomEnd>();
+                if (ends != null)
+                {
+                    for (int i = 0; i < ends.Length; i++)
+                    {
+                        var e = ends[i];
+                        if (e == null) continue;
+                        armed |= ArmSkipper(e.skipper);
+                    }
+                }
+            }
+            catch { }
+            return armed;
+        }
+
+        static bool ArmSkipper(SkippableCutscene s)
+        {
+            if (s == null) return false;
+            try
+            {
+                bool done = false;
+                try { done = s.done; } catch { }
+                if (done) return false;
+                s.enabled = true;
+                return true;
+            }
+            catch { return false; }
         }
     }
 
@@ -520,7 +894,7 @@ namespace SyncRADation.Patches
         {
             if (NetGate.IsApplying || !NetGate.Live) return true;
             if (__instance == null) return true;
-            if (LocalInspect.Cinematic(__instance.gameObject)) return true;
+            if (LocalInspect.AirlockCinematic(__instance.gameObject)) return true;
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             if (NetGate.Host)
             {

@@ -217,6 +217,8 @@ namespace SyncRADation.Patches
             if (NetGate.IsApplying || !NetGate.Live) return true;
             if (LocalInspect.DialoguerFlavor(dialogueId) || InspectScreen())
             {
+                if (dialogueId == (int)DialoguerDialogues.useItemDialogue)
+                    BindUseItemName();
                 _flavorActive = true;
                 return true;
             }
@@ -235,7 +237,12 @@ namespace SyncRADation.Patches
         public static bool Continue(int choice)
         {
             if (NetGate.IsApplying || !NetGate.Live) return true;
-            if (_flavorActive || InspectScreen()) return true;
+            if (_flavorActive || InspectScreen())
+            {
+                if (_flavorActive)
+                    BindUseItemName();
+                return true;
+            }
             if (NetGate.Host)
             {
                 LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.DialogueContinue, 0, choice, "");
@@ -260,6 +267,31 @@ namespace SyncRADation.Patches
             }
             LanNetworkManager.Instance.SendInteractionRequest(0, InteractionKind.DialogueEnd);
             return false;
+        }
+
+        static void BindUseItemName()
+        {
+            try
+            {
+                PartyKeyRing.BindUseDialogue(UseItemInteraction.currentUseItem);
+            }
+            catch { }
+            try
+            {
+                var all = UnityEngine.Object.FindObjectsOfType<UseItemInteraction>();
+                if (all == null) return;
+                for (int i = 0; i < all.Length; i++)
+                {
+                    var u = all[i];
+                    if (u == null) continue;
+                    bool inRange = false;
+                    try { inRange = u.inter != null && u.inter.inRange; } catch { }
+                    if (!inRange && !u.unlocked) continue;
+                    UseItemDialogueNamePatch.Bind(u);
+                    return;
+                }
+            }
+            catch { }
         }
 
         static bool InspectScreen()

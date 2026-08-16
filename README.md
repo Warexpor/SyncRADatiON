@@ -1,7 +1,7 @@
 # SyncRADation
 
 LAN multiplayer MelonLoader mod for **SIGNALIS**.  
-**v0.4.2-dev** — protocol **v8**. Host owns world and story; the client is a real Elster whose interactions go to the host and apply via native game methods (including UnityEvents and world FMOD).
+**v0.4.3-dev** — protocol **v8**. Host owns world and story; the client is a real Elster whose interactions go to the host and apply via native game methods (including UnityEvents and world FMOD).
 
 Formerly labeled `1.2.x-dev`. That was optimistic. This is still early co-op.
 
@@ -86,7 +86,7 @@ World objects are identified by `hash(scene + hierarchy path)` — never `GetIns
 
 Code for protocol **7** is in this build. Dual-instance playtest has **not** been run. Do not treat any of this as proven until you play it.
 
-GitHub zip: `dist/SyncRADation-0.4.2-dev.zip` (`SyncRADation.dll` + `LiteNetLib.dll` + this README). Nexus is out of scope until that run is enjoyable.
+GitHub zip: `dist/SyncRADation-0.4.3-dev.zip` (`SyncRADation.dll` + `LiteNetLib.dll` + this README). Nexus is out of scope until that run is enjoyable.
 
 ## Config (`MelonPreferences`)
 

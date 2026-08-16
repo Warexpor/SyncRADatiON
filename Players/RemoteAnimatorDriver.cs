@@ -26,6 +26,7 @@ namespace SyncRADation.Players
         private float _inputY;
         private float _hurtTime;
     private AnimBools _animBools;
+    private bool _climbing;
     private AnimTriggers _pendingTriggers;
     private Networking.WeaponType _weapon;
     private byte _facing;
@@ -91,6 +92,7 @@ namespace SyncRADation.Players
             _inputY = state.InputY;
             _hurtTime = state.HurtTime;
             _animBools = state.AnimBools;
+            _climbing = state.Climbing;
             _pendingTriggers |= state.AnimTriggers;
             _weapon = state.Weapon;
             _facing = state.Facing;
@@ -122,7 +124,7 @@ namespace SyncRADation.Players
                 foreach (var anim in _animators)
                 {
                     if (anim == null) continue;
-                    ApplyAnimParams(anim, state.Forward, state.Turn, state.AimingTime, state.Stamina, state.Blend, state.IKwalk, state.InputX, state.InputY, state.HurtTime, state.AnimBools);
+                    ApplyAnimParams(anim, state.Forward, state.Turn, state.AimingTime, state.Stamina, state.Blend, state.IKwalk, state.InputX, state.InputY, state.HurtTime, state.AnimBools, state.Climbing);
                     ApplyWeaponParams(anim);
                     ApplyPendingTriggers(anim);
                     // Snap bones directly on first state (no interpolation yet)
@@ -220,7 +222,7 @@ namespace SyncRADation.Players
             foreach (var anim in _animators)
             {
                 if (anim == null) continue;
-                ApplyAnimParams(anim, forwardAmount, _smoothedTurn, _smoothedAimingTime, _stamina, _blend, _ikWalk, _inputX, _inputY, _hurtTime, _animBools);
+                ApplyAnimParams(anim, forwardAmount, _smoothedTurn, _smoothedAimingTime, _stamina, _blend, _ikWalk, _inputX, _inputY, _hurtTime, _animBools, _climbing);
                 ApplyWeaponParams(anim);
                 ApplyPendingTriggers(anim);
             }
@@ -228,7 +230,7 @@ namespace SyncRADation.Players
             _pendingTriggers = 0;
         }
 
-        private static void ApplyAnimParams(Animator anim, float forward, float turn, float aimingTime, float stamina, float blend, float ikWalk, float inputX, float inputY, float hurtTime, AnimBools bools)
+        private static void ApplyAnimParams(Animator anim, float forward, float turn, float aimingTime, float stamina, float blend, float ikWalk, float inputX, float inputY, float hurtTime, AnimBools bools, bool climbing)
         {
             anim.SetFloat("Forward", forward);
             anim.SetFloat("Turn", turn);
@@ -244,7 +246,7 @@ namespace SyncRADation.Players
             anim.SetBool("Shooting", bools.HasFlag(AnimBools.Shooting));
             anim.SetBool("Running", bools.HasFlag(AnimBools.Running));
             anim.SetBool("Grounded", bools.HasFlag(AnimBools.Grounded));
-            anim.SetBool("Crouch", bools.HasFlag(AnimBools.Crouch));
+            anim.SetBool("Crouch", bools.HasFlag(AnimBools.Crouch) || climbing);
             anim.SetBool("Blocked", bools.HasFlag(AnimBools.Blocked));
             anim.SetBool("Dead", bools.HasFlag(AnimBools.Dead));
             anim.SetBool("Inventory", bools.HasFlag(AnimBools.Inventory));
@@ -262,6 +264,8 @@ namespace SyncRADation.Players
             anim.SetBool("Hugged", bools.HasFlag(AnimBools.Hugged));
             anim.SetBool("ReloadRounds", bools.HasFlag(AnimBools.ReloadRounds));
             anim.SetBool("ReloadChamber", bools.HasFlag(AnimBools.ReloadChamber));
+            try { anim.SetBool("Climbing", climbing); } catch { }
+            try { anim.SetBool("Crawl", climbing); } catch { }
         }
 
         private void ApplyWeaponParams(Animator anim)

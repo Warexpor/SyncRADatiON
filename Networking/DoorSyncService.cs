@@ -194,6 +194,19 @@ namespace SyncRADation.Networking
             Doorway_Double d;
             if (!WorldRegistry.TryGetDoubleDoor(id, out d) || d == null) return;
 
+            var net = LanNetworkManager.Instance;
+            bool hostLocked = false;
+            try { hostLocked = d.locked; } catch { }
+            if (net != null && net.Role == NetworkRole.Host && hostLocked)
+            {
+                if (msg.Open)
+                {
+                    PlaytestLog.Event("Door", "ignore client open locked " + d.gameObject.name);
+                    return;
+                }
+                msg.Locked = true;
+            }
+
             DoorNative.ApplyDoubleDoor(d, msg.Open, msg.Locked);
             LastDoubleOpen[id] = msg.Open;
             LastDoubleLocked[id] = msg.Locked;

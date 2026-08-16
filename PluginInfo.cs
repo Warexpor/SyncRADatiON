@@ -4,7 +4,7 @@ namespace SyncRADation
     public static class PluginInfo
     {
         public const string Name = "SyncRADation";
-        public const string Version = "0.4.2-dev";
+        public const string Version = "0.4.3-dev";
         public const string Author = "Warexpor";
         public const string Description = "LAN multiplayer mod for SIGNALIS — host-authoritative world/story, native client UX";
         /// <summary>Protocol v8: v7 roster + host-authored enemy spawn.</summary>

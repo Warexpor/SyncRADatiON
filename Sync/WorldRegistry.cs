@@ -100,6 +100,7 @@ namespace SyncRADation.Sync
                 + " doubleDoors=" + DoubleDoors.Count
                 + " connectedDoors=" + ConnectedDoorMap.Count
                 + " slidingDoors=" + SlidingDoors.Count);
+
         }
 
         public static void Clear()

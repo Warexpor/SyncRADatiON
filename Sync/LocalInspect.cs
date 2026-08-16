@@ -94,9 +94,29 @@ namespace SyncRADation.Sync
             return false;
         }
 
+        public static bool AirlockCinematic(GameObject go)
+        {
+            Transform t = go != null ? go.transform : null;
+            while (t != null)
+            {
+                try
+                {
+                    if (t.GetComponent<PEN_Titles>() != null) return true;
+                    if (t.GetComponent<PEN_Airlock>() != null) return true;
+                    if (t.GetComponent<PenroseAirlockNew>() != null) return true;
+                    if (t.GetComponent<PenroseAirlock>() != null) return true;
+                    if (t.GetComponent<AirlockInside>() != null) return true;
+                    if (t.GetComponent<AirlockDoorLoadZone>() != null) return true;
+                }
+                catch { }
+                t = t.parent;
+            }
+            return false;
+        }
+
         public static bool Cinematic(GameObject go)
         {
-            return UnderEventCamera(go);
+            return AirlockCinematic(go) || UnderEventCamera(go);
         }
 
         public static bool LockWorld(GameObject go)

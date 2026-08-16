@@ -31,6 +31,10 @@ namespace SyncRADation.Networking
 
         private bool _pendingReapply;
         private static readonly HashSet<string> _worldAnimStarted = new HashSet<string>();
+        // Join/resync dumps are a settled snapshot. Replaying native transitions
+        // (EventZone.Invoke, openDoor, delayedOpen, slaveInteraction.enable)
+        // wakes leftover inactive puzzles and unseals flavor doors the host never touched.
+        private static bool _mutateWorld = true;
 
         private static FieldInfo _storageBoxOpenField;
 
@@ -85,6 +89,10 @@ namespace SyncRADation.Networking
         private static bool IsLocalTraverse(Component c)
         {
             if (c == null) return false;
+            // The door/lock component itself must stay in the puzzle map. Parent-walk
+            // would skip every Doorway_simple / SwingDoor / DoorLockControl as "self".
+            if (c is Doorway_simple || c is SwingDoor || c is DoorLockControl)
+                return false;
             try
             {
                 var go = c.gameObject;
@@ -333,6 +341,13 @@ namespace SyncRADation.Networking
                             var x = (InteractiveLockSingle)c;
                             bool locked = x.door != null && x.door.locked;
                             bool plate = DoorNative.TraversePlateActive(x);
+                            try
+                            {
+                                if (!plate && x.key == null && (x.door == null || !x.door.open))
+                                    plate = DoorNative.IsFlavorSeal(x.gameObject)
+                                        || (x.door != null && DoorNative.IsFlavorSeal(x.door.gameObject));
+                            }
+                            catch { }
                             entry = Mk(type, wid, locked, plate, false, 0, 0, 0, 0, 0); return true;
                         }
                     case PuzzleType.Keypad3D:
@@ -740,12 +755,16 @@ namespace SyncRADation.Networking
                 return;
             if (SceneFollowService.LocalIsTransient())
                 return;
+            if (net != null && net.SceneMismatch)
+                return;
 
             PlaytestLog.Event("Puzzle", "apply n=" + msg.Entries.Length
                 + " from=" + msg.SenderPlayerId + (msg.FullRefresh ? " full" : "")
                 + " " + Describe(msg.Entries));
             EnsureScanned();
             bool cinematic = !msg.FullRefresh;
+            bool prevMutate = _mutateWorld;
+            _mutateWorld = cinematic;
             NetGate.BeginApply();
             try
             {
@@ -754,7 +773,13 @@ namespace SyncRADation.Networking
             }
             finally
             {
+                _mutateWorld = prevMutate;
                 NetGate.EndApply();
+            }
+
+            if (cinematic)
+            {
+                try { DoorNative.ReassertLockVisuals(); } catch { }
             }
 
             if (net != null && net.Role == NetworkRole.Host && msg.SenderPlayerId != net.LocalPlayerId)
@@ -969,16 +994,26 @@ namespace SyncRADation.Networking
         {
             if (_held.Count == 0) return;
             PlaytestLog.Event("Puzzle", "reapply held " + _held.Count + " " + Describe(_held));
+            bool prevMutate = _mutateWorld;
+            _mutateWorld = true;
             NetGate.BeginApply();
             try
             {
                 for (int i = 0; i < _held.Count; i++)
-                    ApplyEntry(_held[i], cinematic: false);
+                {
+                    var e = _held[i];
+                    var c = Get<Component>(e.Type, e.WorldId);
+                    if (c != null && !IsActiveInScene(c))
+                        continue;
+                    ApplyEntry(e, cinematic: false);
+                }
             }
             finally
             {
+                _mutateWorld = prevMutate;
                 NetGate.EndApply();
             }
+            try { DoorNative.ReassertLockVisuals(); } catch { }
             try
             {
                 var net = LanNetworkManager.Instance;
@@ -1071,7 +1106,7 @@ namespace SyncRADation.Networking
                             {
                                 bool was = x.locked;
                                 x.locked = e.Bool0;
-                                if (was && !e.Bool0)
+                                if (_mutateWorld && was && !e.Bool0)
                                 {
                                     try { x.delayedOpen(); } catch { }
                                     TryUnlockDoors(x.gameObject);
@@ -1081,23 +1116,21 @@ namespace SyncRADation.Networking
                         }
                     case PuzzleType.InteractiveLockSingle:
                         {
+                            if (!_mutateWorld)
+                                break;
                             var x = Get<InteractiveLockSingle>(e.Type, e.WorldId);
-                            if (x != null)
+                            if (x == null) break;
+                            try
                             {
-                                ConnectedDoors master = null;
-                                try { master = x.master; } catch { }
-                                if (master == null)
-                                {
-                                    try { master = x.GetComponentInParent<ConnectedDoors>(); } catch { }
-                                }
-                                bool noPath = master != null && DoorNative.IsNoPathLock(master);
-                                bool locked = noPath || (master != null && master.locked) || e.Bool0;
-                                if (noPath)
-                                    DoorNative.PresentNoPath(master);
-                                if (x.door != null)
-                                    x.door.locked = locked;
-                                DoorNative.ApplyLockPlate(x, locked);
+                                if (DoorNative.IsFlavorSeal(x.gameObject)
+                                    || (x.door != null && DoorNative.IsFlavorSeal(x.door.gameObject)))
+                                    break;
                             }
+                            catch { }
+                            if (e.Bool0 && x.door != null)
+                                x.door.locked = true;
+                            if (e.Bool1)
+                                DoorNative.ApplyLockPlate(x, true);
                             break;
                         }
                     case PuzzleType.Keypad3D:
@@ -1109,7 +1142,7 @@ namespace SyncRADation.Networking
                                 x.solved = e.Bool0; x.opening = e.Bool1; x.blocked = e.Bool2;
                                 if (e.Bool0)
                                 {
-                                    if (!was) { try { x.openDoor(); } catch { } }
+                                    if (_mutateWorld && !was) { try { x.openDoor(); } catch { } }
                                     TryUnlockDoors(x.gameObject);
                                 }
                             }
@@ -1174,8 +1207,13 @@ namespace SyncRADation.Networking
                             {
                                 if (x.flipped != e.Bool0)
                                 {
-                                    try { x.Flip(); }
-                                    catch { x.flipped = e.Bool0; }
+                                    if (_mutateWorld)
+                                    {
+                                        try { x.Flip(); }
+                                        catch { x.flipped = e.Bool0; }
+                                    }
+                                    else
+                                        x.flipped = e.Bool0;
                                 }
                                 if (e.Bool0) TryUnlockDoors(x.gameObject);
                             }
@@ -1200,7 +1238,10 @@ namespace SyncRADation.Networking
                                 x.locked = e.Bool1;
                                 if (e.Bool0)
                                 {
-                                    try { if (x.dlc != null) x.dlc.locked = false; } catch { }
+                                    if (_mutateWorld)
+                                    {
+                                        try { if (x.dlc != null) x.dlc.locked = false; } catch { }
+                                    }
                                     TryUnlockDoors(x.gameObject);
                                 }
                             }
@@ -1215,12 +1256,11 @@ namespace SyncRADation.Networking
                     case PuzzleType.UseItemInteraction:
                         {
                             var x = Get<UseItemInteraction>(e.Type, e.WorldId);
-                            if (x != null)
-                            {
-                                x.unlocked = e.Bool0;
-                                if (e.Bool0)
-                                    SnapUseItemWorld(x);
-                            }
+                            if (x == null) break;
+                            if (e.Bool0)
+                                SnapUseItemWorld(x);
+                            else if (!PerPlayerUse(x))
+                                x.unlocked = false;
                             break;
                         }
                     case PuzzleType.NumberLockNew:
@@ -1238,15 +1278,31 @@ namespace SyncRADation.Networking
                     case PuzzleType.MED_VentPuzzle:
                         { var x = Get<MED_VentPuzzle>(e.Type, e.WorldId); if (x != null) x.uncovered = e.Bool0; break; }
                     case PuzzleType.DoorwaySimple:
-                        { var x = Get<Doorway_simple>(e.Type, e.WorldId); if (x != null) x.locked = e.Bool0; break; }
+                        {
+                            if (!_mutateWorld)
+                                break;
+                            var x = Get<Doorway_simple>(e.Type, e.WorldId);
+                            if (x != null && (e.Bool0 || DoorNative.IsFlavorSeal(x.gameObject)))
+                                x.locked = true;
+                            break;
+                        }
                     case PuzzleType.SwingDoor:
                         {
+                            if (!_mutateWorld)
+                                break;
                             var x = Get<SwingDoor>(e.Type, e.WorldId);
                             if (x != null) { x.Open = e.Bool0; x.locked = e.Bool1; }
                             break;
                         }
                     case PuzzleType.DoorLockControl:
-                        { var x = Get<DoorLockControl>(e.Type, e.WorldId); if (x != null) x.locked = e.Bool0; break; }
+                        {
+                            if (!_mutateWorld)
+                                break;
+                            var x = Get<DoorLockControl>(e.Type, e.WorldId);
+                            if (x != null && e.Bool0)
+                                DoorNative.ApplyDoorLockControl(x, true);
+                            break;
+                        }
                     case PuzzleType.EvidenceLockerPuzzle:
                         { var x = Get<EvidenceLockerLogicPuzzle>(e.Type, e.WorldId); if (x != null) x.solved = e.Bool0; break; }
                     case PuzzleType.RadioStationTutorial:
@@ -1418,7 +1474,12 @@ namespace SyncRADation.Networking
                                 if (e.Bool0 && !was)
                                 {
                                     SyncRADation.Patches.EventZonePatch.MarkFired(unchecked((ulong)e.WorldId));
-                                    try { if (x.onInRange != null) x.onInRange.Invoke(); } catch { }
+                                    if (_mutateWorld)
+                                    {
+                                        try { if (x.onInRange != null) x.onInRange.Invoke(); } catch { }
+                                    }
+                                    else
+                                        PlaytestLog.Verbose("Puzzle", "skip EventZone invoke " + x.gameObject.name);
                                 }
                             }
                             break;
@@ -1615,16 +1676,36 @@ namespace SyncRADation.Networking
 
         public static void UnlockLinked(GameObject go) => TryUnlockDoors(go);
 
+        internal static bool IsPerPlayerUse(UseItemInteraction x) => PerPlayerUse(x);
+
+        static bool PerPlayerUse(UseItemInteraction x)
+        {
+            if (x == null) return false;
+            try
+            {
+                if (LocalInspect.AirlockCinematic(x.gameObject)) return true;
+            }
+            catch { }
+            try { return AirlockCinematic.IsPenTitlesCard(x); } catch { return false; }
+        }
+
         public static void SnapUseItemWorld(UseItemInteraction x)
         {
             if (x == null) return;
-            try { x.unlocked = true; } catch { }
-            try { AirlockCinematic.NoteRemoteUnlock(x); } catch { }
+            bool localUse = PerPlayerUse(x);
+            if (!localUse)
+            {
+                try { x.unlocked = true; } catch { }
+            }
+            else
+            {
+                try { AirlockCinematic.NoteRemoteUnlock(x); } catch { }
+            }
             try
             {
                 if (x.inter != null)
                 {
-                    if (AirlockCinematic.IsPenTitlesCard(x))
+                    if (localUse)
                     {
                         x.inter.triggered = false;
                         x.inter.enabled = true;
@@ -1637,6 +1718,11 @@ namespace SyncRADation.Networking
                 }
             }
             catch { }
+            if (!_mutateWorld)
+            {
+                PlaytestLog.Verbose("Puzzle", "snap UseItem flags only " + x.gameObject.name);
+                return;
+            }
             try
             {
                 if (x.slaveInteraction != null)
@@ -1686,6 +1772,12 @@ namespace SyncRADation.Networking
                         if (s == null || !SameKey(s.key, key)) continue;
                         try
                         {
+                            if (s.door != null && DoorNative.IsFlavorSeal(s.door.gameObject))
+                                continue;
+                        }
+                        catch { }
+                        try
+                        {
                             if (s.door != null) s.door.locked = false;
                         }
                         catch { }
@@ -1705,6 +1797,7 @@ namespace SyncRADation.Networking
                         if (l == null) continue;
                         try
                         {
+                            if (l.key == null || DoorNative.IsFlavorSeal(l.gameObject)) continue;
                             if (SameKey(l.key, key)) l.locked = false;
                         }
                         catch { }
@@ -1861,7 +1954,8 @@ namespace SyncRADation.Networking
             {
                 if (c.Door != null)
                 {
-                    c.Door.SetActive(true);
+                    if (_mutateWorld)
+                        c.Door.SetActive(true);
                     UnlockDoorObject(c.Door);
                     TryOpenCryoController(c.Door, animate: playAnim);
                 }
@@ -2537,7 +2631,7 @@ namespace SyncRADation.Networking
 
         internal static void RevealPickups(GameObject root)
         {
-            if (root == null) return;
+            if (root == null || !_mutateWorld) return;
             try
             {
                 var picks = root.GetComponentsInChildren<ItemPickup>(true);
@@ -2587,15 +2681,18 @@ namespace SyncRADation.Networking
 
         static void UnlockDoorObject(GameObject door)
         {
-            if (door == null) return;
+            if (door == null || !_mutateWorld) return;
+            if (DoorNative.IsFlavorSeal(door))
+            {
+                PlaytestLog.Verbose("Puzzle", "skip unlock flavor seal " + door.name);
+                return;
+            }
             TryUnlockDoors(door);
             try
             {
                 var dlc = door.GetComponent<DoorLockControl>();
                 if (dlc != null)
-                {
-                    try { dlc.setLock(false); } catch { dlc.locked = false; }
-                }
+                    DoorNative.UnsealDoorLockControl(dlc);
             }
             catch { }
             try
@@ -2613,28 +2710,20 @@ namespace SyncRADation.Networking
             try
             {
                 var cd = door.GetComponent<ConnectedDoors>();
-                if (cd != null) DoorNative.ApplyConnectedDoors(cd, false);
+                if (cd != null && DoorNative.AllowUnlock(cd))
+                    DoorNative.ApplyConnectedDoors(cd, false);
             }
             catch { }
         }
 
         private static void TryUnlockDoors(GameObject go)
         {
-            if (go == null) return;
+            if (go == null || !_mutateWorld) return;
             try
             {
                 var cd = FindInParents<ConnectedDoors>(go);
-                if (cd != null && cd.locked)
+                if (cd != null && cd.locked && DoorNative.AllowUnlock(cd))
                     DoorNative.ApplyConnectedDoors(cd, false);
-            }
-            catch { }
-            try
-            {
-                var dlc = FindInParents<DoorLockControl>(go);
-                if (dlc != null)
-                {
-                    try { dlc.setLock(false); } catch { dlc.locked = false; }
-                }
             }
             catch { }
         }

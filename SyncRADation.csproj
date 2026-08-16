@@ -102,8 +102,9 @@
       <HintPath>$(ManagedDir)\FMODUnity.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <!-- 1.3.5 net472 (NuGet 1.3.5 is netstandard2.0; MelonLoader 0.5.7 has no netstandard). Rebuild: third_party/LiteNetLib -->
     <Reference Include="LiteNetLib">
-      <HintPath>packages\LiteNetLib.1.3.1\lib\net471\LiteNetLib.dll</HintPath>
+      <HintPath>lib\LiteNetLib.dll</HintPath>
       <Private>true</Private>
     </Reference>
   </ItemGroup>
@@ -111,6 +112,8 @@
   <ItemGroup>
     <Compile Remove="_tmp_ref\**" />
     <None Remove="_tmp_ref\**" />
+    <Compile Remove="third_party\**" />
+    <None Remove="third_party\**" />
     <Compile Remove="GameAPI.cs" Condition="Exists('GameAPI.cs')" />
   </ItemGroup>
 

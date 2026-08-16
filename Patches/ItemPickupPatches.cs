@@ -57,6 +57,8 @@ namespace SyncRADation.Patches
             {
                 if (__instance._item != null)
                     _pendingItem = __instance._item._item;
+                if (_pendingItem == Items.itemlist.None)
+                    _pendingItem = WorldPickupSyncService.ResolveItem(__instance);
             }
             catch { }
 
@@ -173,6 +175,8 @@ namespace SyncRADation.Patches
             {
                 if (p != null && p._item != null)
                     item = p._item._item;
+                if (item == Items.itemlist.None)
+                    item = WorldPickupSyncService.ResolveItem(p);
             }
             catch { }
 

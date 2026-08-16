@@ -20,6 +20,8 @@ namespace SyncRADation.Players
         private static bool _hasMagAmmo;
         private static bool _lastTriggerHeld;
         private static bool _magReloadPulse;
+        private static float _crawlCheckAt;
+        private static bool _crawlActive;
 
         public static void ReadFromPlayer(GameObject player, ref PlayerStateMessage msg)
         {
@@ -68,6 +70,8 @@ namespace SyncRADation.Players
                     msg.Climbing = true;
             }
             catch { }
+            if (!msg.Climbing)
+                msg.Climbing = CrawlMeshActive();
 
             msg.Weapon = ReadWeaponFromInventory();
             if (msg.Weapon != _lastWeaponRead)
@@ -249,6 +253,61 @@ namespace SyncRADation.Players
             _hasMagAmmo = false;
             _lastTriggerHeld = false;
             _magReloadPulse = false;
+            _crawlCheckAt = 0f;
+            _crawlActive = false;
+        }
+
+        static bool CrawlMeshActive()
+        {
+            if (Time.unscaledTime - _crawlCheckAt < 0.2f)
+                return _crawlActive;
+            _crawlCheckAt = Time.unscaledTime;
+            _crawlActive = false;
+            try
+            {
+                var rooms = UnityEngine.Object.FindObjectsOfType<PEN_CodeRoom>();
+                if (rooms != null)
+                {
+                    for (int i = 0; i < rooms.Length; i++)
+                    {
+                        var r = rooms[i];
+                        if (r == null) continue;
+                        try
+                        {
+                            if (r.crawlPlayer != null && r.crawlPlayer.activeInHierarchy)
+                            {
+                                _crawlActive = true;
+                                return true;
+                            }
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
+            try
+            {
+                var ovens = UnityEngine.Object.FindObjectsOfType<DET_Oven>();
+                if (ovens != null)
+                {
+                    for (int i = 0; i < ovens.Length; i++)
+                    {
+                        var o = ovens[i];
+                        if (o == null) continue;
+                        try
+                        {
+                            if (o.crawlPlayer != null && o.crawlPlayer.activeInHierarchy)
+                            {
+                                _crawlActive = true;
+                                return true;
+                            }
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
+            return false;
         }
 
         /// <summary>True once per expended round when EquippedWeapon.magAmmo decreases.</summary>

@@ -156,7 +156,8 @@ namespace SyncRADation.Networking
                 PlaytestLog.Event("KeyRing", "trust UseItem from=" + senderId + " " + key._item);
             }
 
-            u.unlocked = true;
+            if (!PuzzleSyncService.IsPerPlayerUse(u))
+                u.unlocked = true;
             PuzzleSyncService.UnlockLinked(u.gameObject);
             try { PuzzleSyncService.SnapUseItemWorld(u); } catch { }
             try
@@ -299,14 +300,18 @@ namespace SyncRADation.Networking
                     consumes = consumes || (single.ConsumesKey && key != null);
                     try
                     {
-                        if (single.master != null)
+                        if (single.master != null && DoorNative.AllowUnlock(single.master))
                             single.master.locked = false;
                     }
                     catch { }
                     try
                     {
                         if (single.door != null)
-                            single.door.locked = false;
+                        {
+                            var master = single.master;
+                            if (master == null || DoorNative.AllowUnlock(master))
+                                single.door.locked = false;
+                        }
                     }
                     catch { }
                 }
@@ -352,12 +357,18 @@ namespace SyncRADation.Networking
         private static bool ApplyCutscene(ulong id, LanNetworkManager net)
         {
             var c = Find<CutsceneManager>(id);
-            if (c == null) return false;
-            if (LocalInspect.Cinematic(c.gameObject))
+            if (c == null) return true;
+            if (LocalInspect.AirlockCinematic(c.gameObject))
                 return true;
             NetGate.BeginApply();
             try { c.StartCutscene(); }
             finally { NetGate.EndApply(); }
+            try
+            {
+                if (c.unskippable) CutsceneSkippingUI.skippableCutscene = false;
+                else CutsceneSkippingUI.skippableCutscene = true;
+            }
+            catch { }
             net.StorySync.BroadcastPresentation(StoryCmd.CutsceneStart, id, 0, "");
             return true;
         }
@@ -365,20 +376,29 @@ namespace SyncRADation.Networking
         private static bool ApplyCutsceneSkip(ulong id, LanNetworkManager net)
         {
             var c = Find<CutsceneManager>(id);
-            if (c != null && LocalInspect.Cinematic(c.gameObject))
+            if (c != null && LocalInspect.AirlockCinematic(c.gameObject))
                 return true;
             net.StorySync.BroadcastPresentation(StoryCmd.CutsceneSkip, id, 0, "");
-            if (c != null)
+            NativeSkip(c);
+            return true;
+        }
+
+        internal static void NativeSkip(CutsceneManager c)
+        {
+            if (c == null) return;
+            NetGate.BeginApply();
+            try { c.Skip(); }
+            catch
             {
-                NetGate.BeginApply();
                 try
                 {
                     if (c.skipper != null && c.skipper.skipEvent != null)
                         c.skipper.skipEvent.Invoke();
                 }
-                finally { NetGate.EndApply(); }
+                catch { }
             }
-            return true;
+            finally { NetGate.EndApply(); }
+            try { CutsceneSkippingUI.skippableCutscene = false; } catch { }
         }
 
         private static bool ApplyStorage(InteractionRequestMessage msg, bool put, out string reasonOut)

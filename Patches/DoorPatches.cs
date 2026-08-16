@@ -9,9 +9,25 @@ namespace SyncRADation.Patches
     [HarmonyPatch(typeof(Doorway_Double), "openDoors")]
     public static class DoubleDoorOpenPatch
     {
-        [HarmonyPostfix]
-        public static void Postfix(Doorway_Double __instance)
+        [HarmonyPrefix]
+        public static bool Prefix(Doorway_Double __instance, ref bool __state)
         {
+            __state = true;
+            if (__instance == null || NetGate.IsApplying) return true;
+            try
+            {
+                if (!__instance.locked) return true;
+            }
+            catch { return true; }
+            __state = false;
+            PlaytestLog.Event("Door", "block locked open " + __instance.gameObject.name);
+            return false;
+        }
+
+        [HarmonyPostfix]
+        public static void Postfix(Doorway_Double __instance, bool __state)
+        {
+            if (!__state) return;
             DoorSyncService.NotifyDoubleDoor(__instance, true);
         }
     }
@@ -227,10 +243,7 @@ namespace SyncRADation.Patches
                 try { __instance.enabled = false; } catch { }
                 return false;
             }
-            if (!NetGate.Live) return true;
-            if (!DoorNative.ShouldHideWalkPrompt(__instance)) return true;
-            try { __instance.inRange = false; } catch { }
-            return false;
+            return true;
         }
     }
 
@@ -285,22 +298,6 @@ namespace SyncRADation.Patches
             if (net == null || !net.IsConnected) return;
             try { net.PickupSync.HideClaimed(null); } catch { }
             net.PuzzleSync.QueueReapply();
-        }
-    }
-
-    [HarmonyPatch(typeof(ConnectedDoors), "Update")]
-    public static class ConnectedDoorsPlatePatch
-    {
-        [HarmonyPostfix]
-        public static void Postfix(ConnectedDoors __instance)
-        {
-            if (__instance == null || !NetGate.Live) return;
-            try
-            {
-                if (DoorNative.IsNoPathLock(__instance))
-                    DoorNative.PresentNoPath(__instance);
-            }
-            catch { }
         }
     }
 }

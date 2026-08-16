@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.4.3-dev — 2026-08-16
+
+Protocol **v8** (same wire as 0.4.2). Client join no longer mutates authored sealed-door faces.
+
+### Fixed
+- Join puzzle dump snaps flags only: no `EventZone.onInRange`, `openDoor`, `delayedOpen`, or `slaveInteraction.enable`. Live solves still run native presentation. Room reapply skips inactive leftovers.
+- Join `InteractiveLockSingle` / `DoorLockControl` no longer `setLock`s flavor seals. ConnectedDoors only `Unlock`s when a key / `externalUnlocker` / hint exists. `Doorway_Double.locked=false` is not written onto a sealed face.
+- Entity spawner no longer `FindObjectsOfType` every IMGUI frame or clone the current room’s corpses. Spawn uses native `ResetEnemy` / `WakeUp`, registers a stable `SR_Spawn_*` WorldId, and host-broadcasts so the client instantiates the same type. Client F11 is a host request at the **client** Elster’s position.
+- F11 no longer additive-loads a whole chapter to steal a prefab. That looped `LOV_Reeducation` (~30 loads), never banked STAR, and killed the session. Templates come from in-memory `EnemyController` + `EnemySpawner.EnemyType` only. Missing types: load that chapter once with F7.
+- Client world pickups that only have `_itemEnum` (`_item` still null) no longer grant `Nothing` / `!!MISSING STRING`.
+- Client `Used !!MISSING STRING` on party-ring keys: `useItemDialogue` substitutes Dialoguer `keyName` (`<s3>`). Join XML leaves that empty; catalog `getName` is written to `s3` on Start/Continue. Scene `AnItem` copies always resolve through `InventoryManager.getItem`.
+- Pickup/use loc: `getName` Prefix skips the scene copy and runs native on the catalog SO (IL2CPP postfix `ref string` was a no-op). `AddItem(None)` is ignored.
+- Party cutscenes under `EventOnlyRoom` now start the native skipper. Escape hold skips instead of opening pause; airlock/PEN_Titles stay local.
+- Airlock split only covers wreck↔hole during `PEN_Titles`. Host loading `LOV_Reeducation` no longer leaves the client frozen in `PEN_Hole` (pause-only). Puzzle dumps skip while scenes mismatch.
+- Client `CutsceneStart` plays locally and notifies the host; missing WorldId is an ack, not a reject. `PEN_HoleSnowblind` / `PEN_CodeRoomEnd` skippers get Esc instead of pause.
+- Story commit no longer repeats every 0.75s (that was Dialoguer XML spam + hitch). Host LOV load hitch is still a real chapter load.
+- Crawl (`PEN_CodeRoom.crawlPlayer`): `Climbing` is sent and applied on the proxy (`Climbing`/`Crawl`/`Crouch`).
+
+### Added
+- Template bank (DDOL) harvested from loaded controllers and native `EnemySpawner` prefab refs
+- `EnemySpawn` net message; join dump includes live F11 spawns
+
 ## 0.4.2-dev — 2026-08-15
 
 Protocol **v7** (incompatible with v6). Join dump is the live SProgress slot. UnityEvents and world FMOD replay on the client. Native puzzle solve methods on the solved edge. Session roster for 3–4 players.
@@ -24,6 +46,7 @@ Protocol **v7** (incompatible with v6). Join dump is the live SProgress slot. Un
 - Client ids recycled in `1..MaxPlayers-1` (cap 4 including host)
 
 ### Changed
+- LiteNetLib **1.3.5** as checked-in `lib/LiteNetLib.dll` (`net472`). NuGet 1.3.5 is `netstandard2.0` and MelonLoader 0.5.7 Mono cannot load it
 - Proxy locomotion interpolates between pose snapshots ~45ms behind (Hermite, not exponential-lerp to the latest packet)
 - Proxy bones send at 30 Hz and sample on the same snapshot clock as locomotion (quaternion slerp, no 50ms predicted hold)
 - Version `0.4.2-dev`, protocol 7
