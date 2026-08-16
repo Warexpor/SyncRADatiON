@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Sockets;
 using LiteNetLib;
 using LiteNetLib.Utils;
+using SyncRADation.Cheats;
 using SyncRADation.Config;
 using SyncRADation.ItemSystem;
 using SyncRADation.Patches;
@@ -631,6 +632,46 @@ namespace SyncRADation.Networking
             BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
         }
 
+        public void SendEnemySpawnRequest(string typeKey, Vector3 pos, float rotY)
+        {
+            var msg = new EnemySpawnMessage
+            {
+                Seq = 0,
+                TypeKey = typeKey ?? "",
+                PosX = pos.x,
+                PosY = pos.y,
+                PosZ = pos.z,
+                RotY = rotY
+            };
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.EnemySpawn);
+            msg.Serialize(writer);
+            if (_role == NetworkRole.Host)
+                HandleEnemySpawn(msg);
+            else if (_peers.TryGetValue(0, out var peer) && peer.ConnectionState == ConnectionState.Connected)
+                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        public void BroadcastEnemySpawn(EnemySpawnMessage msg)
+        {
+            if (_role != NetworkRole.Host) return;
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.EnemySpawn);
+            msg.Serialize(writer);
+            BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        private void HandleEnemySpawn(EnemySpawnMessage msg)
+        {
+            if (_role == NetworkRole.Host)
+            {
+                if (msg.Seq > 0) return;
+                EntitySpawner.FinishSpawn(msg.TypeKey, new Vector3(msg.PosX, msg.PosY, msg.PosZ), msg.RotY, 0, true);
+                return;
+            }
+            EntitySpawner.ApplyFromNet(msg);
+        }
+
         public void SendEnemyDamage(int targetPlayerId, ulong enemyWorldId, float damage, bool stagger)
         {
             var msg = new EnemyDamageMessage
@@ -735,6 +776,7 @@ namespace SyncRADation.Networking
                 _puzzleSync.Tick(this);
                 _pickupSync.RequestFullSend();
                 _pickupSync.TickHost(this);
+                EntitySpawner.DumpLiveSpawns(this);
                 _enemySync.RequestFullSend();
                 _enemySync.TickHost(this);
                 _bossSync.TickHost(this);
@@ -1294,6 +1336,9 @@ namespace SyncRADation.Networking
             }
             case NetMessageType.EnemyState:
                 _enemySync.OnEnemyStateReceived(EnemyStateMessage.Deserialize(reader));
+                break;
+            case NetMessageType.EnemySpawn:
+                HandleEnemySpawn(EnemySpawnMessage.Deserialize(reader));
                 break;
             case NetMessageType.EnemyDamage:
                 HandleEnemyDamage(EnemyDamageMessage.Deserialize(reader));

@@ -66,6 +66,13 @@ namespace SyncRADation.Sync
         public static ulong FromTransform(Transform t)
         {
             if (t == null) return 0;
+            try
+            {
+                string n = t.name;
+                if (!string.IsNullOrEmpty(n) && n.StartsWith("SR_Spawn_", StringComparison.Ordinal))
+                    return Compute("spawn", n);
+            }
+            catch { }
             string scene = "";
             try
             {

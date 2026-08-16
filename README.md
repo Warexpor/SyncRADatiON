@@ -1,7 +1,7 @@
 # SyncRADation
 
 LAN multiplayer MelonLoader mod for **SIGNALIS**.  
-**v0.4.2-dev** — protocol **v7**. Host owns world and story; the client is a real Elster whose interactions go to the host and apply via native game methods (including UnityEvents and world FMOD).
+**v0.4.2-dev** — protocol **v8**. Host owns world and story; the client is a real Elster whose interactions go to the host and apply via native game methods (including UnityEvents and world FMOD).
 
 Formerly labeled `1.2.x-dev`. That was optimistic. This is still early co-op.
 
@@ -10,13 +10,15 @@ Formerly labeled `1.2.x-dev`. That was optimistic. This is still early co-op.
 - SIGNALIS (Steam or a second install)
 - MelonLoader with Managed assemblies (`MelonLoader\Managed`, Unhollower-style)
 - Same chapter/scene on every peer
-- Same mod DLL on every peer (protocol 7)
+- Same mod DLL on every peer (protocol 8)
 
 ## Install
 
 1. Install MelonLoader in the SIGNALIS folder.
 2. Build or copy `SyncRADation.dll` + `LiteNetLib.dll` → `SIGNALIS/Mods/`.
 3. Launch once so assemblies generate if needed.
+
+
 
 ### Build
 
@@ -41,34 +43,42 @@ Debug builds copy into both `$(SignalisDir)\Mods` and `$(ClientSignalisDir)\Mods
 4. Host dumps world state **to that joiner**. If doors/pickups look wrong → **Resync world**.
 5. **SCENE MISMATCH** means the client is loading the host chapter automatically (SceneFollow). If it sticks, load the same chapter manually.
 
+
+
 ## Controls
 
-| Key | Action |
-|-----|--------|
-| F2 | Multiplayer menu (Host / Connect / Resync / status) |
-| F3 | Quick connect (saved IP/port) |
-| G | Drop selected inventory item |
-| E | Pick up a nearby **player-dropped** item |
-| F6 | Item giver |
-| F7 | Location teleporter (chapters + rooms in the current level) |
-| F11 | Entity spawner |
+
+| Key | Action                                                      |
+| --- | ----------------------------------------------------------- |
+| F2  | Multiplayer menu (Host / Connect / Resync / status)         |
+| F3  | Quick connect (saved IP/port)                               |
+| G   | Drop selected inventory item                                |
+| E   | Pick up a nearby **player-dropped** item                    |
+| F6  | Item giver                                                  |
+| F7  | Location teleporter (chapters + rooms in the current level) |
+| F11 | Entity spawner (any replika type; host-authoritative)       |
+
+
+
 
 ## What is synced
 
-| Area | Authority | Notes |
-|------|-----------|--------|
-| Avatar proxy, anim, bones, weapons | Peer | State + bones ~30 Hz |
-| Enemies | Host | WorldId snaps; native `TakeDamage`; client hits Harmony → host |
-| Doors (double / sliding) | Any peer emit, host relay | Visual open/close via native methods |
-| ConnectedDoors (room links) | Lock only | **Never** sync traverse / `StartA`/`StartB` — room entry is local |
-| Story (Dialoguer, cutscenes, SProgress) | Host | Flags commit; books/notes/EventScreen inspect stay local; story Dialoguer Start/Continue/End from the client plays on the host |
-| Puzzles / locks / elevators / radio module / storage / event zones | Host | WorldId-keyed; storage **contents** shared |
-| World ItemPickups | Host claim/grant | Claimer gets the item; unique **Key/Object** go on the **party key ring** |
-| Player-dropped items | Peer + relay | G drops the selected stack; E pickup if bag has room |
-| Death | Asymmetric | Native `HurtElster`; client downed (drops bag); host death reloads last save for both |
-| Bosses (END / Chimera / Mynah / Kolibri / Adler) | Host | Light-field sync |
-| Friendly fire | Opt-in | Default off |
-| Inventories | Independent | By design |
+
+| Area                                                               | Authority                 | Notes                                                                                                                          |
+| ------------------------------------------------------------------ | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Avatar proxy, anim, bones, weapons                                 | Peer                      | State + bones ~30 Hz                                                                                                           |
+| Enemies                                                            | Host                      | WorldId snaps; native `TakeDamage`; client hits Harmony → host                                                                 |
+| Doors (double / sliding)                                           | Any peer emit, host relay | Visual open/close via native methods                                                                                           |
+| ConnectedDoors (room links)                                        | Lock only                 | **Never** sync traverse / `StartA`/`StartB` — room entry is local                                                              |
+| Story (Dialoguer, cutscenes, SProgress)                            | Host                      | Flags commit; books/notes/EventScreen inspect stay local; story Dialoguer Start/Continue/End from the client plays on the host |
+| Puzzles / locks / elevators / radio module / storage / event zones | Host                      | WorldId-keyed; storage **contents** shared                                                                                     |
+| World ItemPickups                                                  | Host claim/grant          | Claimer gets the item; unique **Key/Object** go on the **party key ring**                                                      |
+| Player-dropped items                                               | Peer + relay              | G drops the selected stack; E pickup if bag has room                                                                           |
+| Death                                                              | Asymmetric                | Native `HurtElster`; client downed (drops bag); host death reloads last save for both                                          |
+| Bosses (END / Chimera / Mynah / Kolibri / Adler)                   | Host                      | Light-field sync                                                                                                               |
+| Friendly fire                                                      | Opt-in                    | Default off                                                                                                                    |
+| Inventories                                                        | Independent               | By design                                                                                                                      |
+
 
 World objects are identified by `hash(scene + hierarchy path)` — never `GetInstanceID()`.
 
@@ -80,15 +90,19 @@ GitHub zip: `dist/SyncRADation-0.4.2-dev.zip` (`SyncRADation.dll` + `LiteNetLib.
 
 ## Config (`MelonPreferences`)
 
-| Key | Default | Meaning |
-|-----|---------|---------|
-| ConnectAddress | 127.0.0.1 | F3 IP |
-| ConnectPort | 7777 | UDP |
-| FriendlyFire | false | PvP damage |
-| SyncPuzzles | true | Puzzles / radio / elevators / etc. |
-| SyncWorldPickups | true | Scene ItemPickup |
-| SyncPlayerVitals | true | HP / death packets |
-| VerboseLogging | false | Extra log spam |
+
+| Key              | Default   | Meaning                            |
+| ---------------- | --------- | ---------------------------------- |
+| ConnectAddress   | 127.0.0.1 | F3 IP                              |
+| ConnectPort      | 7777      | UDP                                |
+| FriendlyFire     | false     | PvP damage                         |
+| SyncPuzzles      | true      | Puzzles / radio / elevators / etc. |
+| SyncWorldPickups | true      | Scene ItemPickup                   |
+| SyncPlayerVitals | true      | HP / death packets                 |
+| VerboseLogging   | false     | Extra log spam                     |
+
+
+
 
 ## Playtest gate (before Nexus)
 

@@ -34,7 +34,8 @@ namespace SyncRADation.Sync
                     for (int i = 0; i < enemies.Length; i++)
                     {
                         var e = enemies[i];
-                        if (e == null) continue;
+                        if (e == null || e.gameObject == null) continue;
+                        if (SyncRADation.Cheats.EntitySpawner.IsTemplateObject(e.gameObject)) continue;
                         ulong id = WorldId.FromGameObject(e.gameObject);
                         if (id == 0) continue;
                         if (!Enemies.ContainsKey(id))
@@ -114,6 +115,12 @@ namespace SyncRADation.Sync
         {
             try { return Object.FindObjectsOfType<T>(true); }
             catch { return Object.FindObjectsOfType<T>(); }
+        }
+
+        public static void RegisterEnemy(ulong id, EnemyController enemy)
+        {
+            if (id == 0 || enemy == null) return;
+            Enemies[id] = enemy;
         }
 
         public static bool TryGetEnemy(ulong id, out EnemyController enemy) => Enemies.TryGetValue(id, out enemy);

@@ -1,6 +1,6 @@
 # SyncRADation — SIGNALIS Multiplayer Mod
 
-**Status:** v0.4.2-dev — protocol v7. Host-authoritative world/story + native presentation/FMOD. Dual-instance playtest required. Decompile: `C:\Users\amicu\Desktop\Dev\SIGNALIS DECOMPILED`.
+**Status:** v0.4.2-dev — protocol v8. Host-authoritative world/story + native presentation/FMOD. Dual-instance playtest required. Decompile: `C:\Users\amicu\Desktop\Dev\SIGNALIS DECOMPILED`.
 
 ## Product
 
@@ -10,7 +10,7 @@ LAN multiplayer MelonLoader mod for SIGNALIS (Unity IL2CPP / Unhollower-style Ma
 
 - F2 — multiplayer menu (Host / Connect / Resync / status)
 - F3 — quick connect (saved IP/port)
-- F6 / F11 — item giver / entity spawner
+- F6 / F11 — item giver / entity spawner (any replika type, not current-scene clones)
 - F7 — location teleporter (chapters + rooms in current level)
 
 - G — drop selected item (inventory or play)
@@ -21,7 +21,7 @@ LAN multiplayer MelonLoader mod for SIGNALIS (Unity IL2CPP / Unhollower-style Ma
 | Area | Authority | Notes |
 |------|-----------|--------|
 | Avatar proxy + anim/bones/weapons | Peer | ~30 Hz state + bones |
-| Enemies | Host | WorldId snaps; **native TakeDamage**; client hits Harmony→host; `playerPos` all non-dead states |
+| Enemies | Host | WorldId snaps; **native TakeDamage**; client hits Harmony→host; `playerPos` all non-dead states. F11 spawn is host-authored (`EnemySpawn` + `SR_Spawn_*` WorldId) |
 | Doors (double / sliding) | Any peer emit, host relay | Visual open/close via native methods |
 | ConnectedDoors (room links) | Lock only | **Never** sync traverse / StartA/B — room entry is local. Unique key doors: one solve (party key ring **Key/Object only**), both walk |
 | Ladders | Local traverse | Climb is per-player; other peer only hears proxy SFX (no `Interaction.trigger`) |
@@ -46,10 +46,11 @@ LAN multiplayer MelonLoader mod for SIGNALIS (Unity IL2CPP / Unhollower-style Ma
 
 ## Protocol
 
-- **ProtocolVersion = 7**
+- **ProtocolVersion = 8**
 - Port default `7777`, key `SyncRADation`
 - v6: full SProgress dump, UnityEvent presentation, FmodEmitter Play/Stop
 - v7: `PlayerRoster` (3+ peers), recycled client ids, join/resync dump to the requester only
+- v8: host-authored `EnemySpawn` (F11 templates by `AnEnemyType` from in-memory prefabs; does **not** additive-load chapters)
 
 ## This machine (dual-instance)
 
@@ -64,7 +65,7 @@ Prefs: `...\SIGNALIS\UserData\MelonPreferences.cfg` on each install.
 
 Debug build copies the DLL to **both** `Mods\` folders. csproj names: `SignalisDir` = copy, `ClientSignalisDir` = Steam (deploy labels, not playtest roles).
 
-Grep logs: `[Harmony]` `[Story]` `[Interact]` `[FMOD]` `[KeyRing]` `[StorageBox]` `[Scene]` `[Damage]` `[Door]` `[Puzzle]` `[Pickup]` `[Hitch]`.
+Grep logs: `[Harmony]` `[Story]` `[Interact]` `[FMOD]` `[KeyRing]` `[StorageBox]` `[Scene]` `[Damage]` `[Door]` `[Puzzle]` `[Pickup]` `[Hitch]` `[Spawn]`.
 
 ## Decompile reference
 

@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace SyncRADation.Networking
 {
-    // Protocol v7 wire types. Host relays gameplay; host owns world/story.
+    // Protocol v8 wire types. Host relays gameplay; host owns world/story.
     public enum NetMessageType : byte
     {
         Handshake = 1,
@@ -35,7 +35,8 @@ namespace SyncRADation.Networking
         FmodEmitter = 32,
         PlayerRoster = 33,
         BonePose = 34,
-        _Highest = 35
+        EnemySpawn = 35,
+        _Highest = 36
     }
 
     public enum InteractionKind : byte
@@ -549,6 +550,38 @@ namespace SyncRADation.Networking
                 arr[i] = EnemySnapshotNet.Deserialize(r);
             return new EnemyStateMessage { Enemies = arr };
         }
+    }
+
+    /// <summary>Seq 0 = client request (host assigns). Seq &gt; 0 = host-authoritative spawn.</summary>
+    public struct EnemySpawnMessage
+    {
+        public int Seq;
+        public string TypeKey;
+        public float PosX;
+        public float PosY;
+        public float PosZ;
+        public float RotY;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(Seq);
+            w.Put(TypeKey ?? "");
+            w.Put(PosX);
+            w.Put(PosY);
+            w.Put(PosZ);
+            w.Put(RotY);
+        }
+
+        public static EnemySpawnMessage Deserialize(NetDataReader r) =>
+            new EnemySpawnMessage
+            {
+                Seq = r.GetInt(),
+                TypeKey = r.GetString(),
+                PosX = r.GetFloat(),
+                PosY = r.GetFloat(),
+                PosZ = r.GetFloat(),
+                RotY = r.GetFloat()
+            };
     }
 
     public struct EnemyDamageMessage

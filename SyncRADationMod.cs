@@ -94,6 +94,8 @@ namespace SyncRADation
 
         public override void OnSceneWasLoaded(int buildIndex, string sceneName)
         {
+            if (Cheats.EntitySpawner.OnBankSceneLoaded(sceneName))
+                return;
             ModRuntime.OnSceneChanged();
         }
 
