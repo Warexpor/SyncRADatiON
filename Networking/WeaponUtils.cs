@@ -3,6 +3,17 @@ namespace SyncRADation.Networking
 {
     public static class WeaponUtils
     {
+        public static WeaponType EquippedWeaponType()
+        {
+            try
+            {
+                var equipped = InventoryManager.EquippedWeapon;
+                if (equipped == null || equipped.parentItem == null) return WeaponType.None;
+                return ItemToWeaponType(equipped.parentItem._item);
+            }
+            catch { return WeaponType.None; }
+        }
+
         public static WeaponType ItemToWeaponType(Items.itemlist item)
         {
             switch (item)

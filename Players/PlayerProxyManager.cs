@@ -217,7 +217,7 @@ namespace SyncRADation.Players
             {
                 pos = oldest.Pos;
                 facing = oldest.Facing;
-                HitchTrace.Interp("hold", n, (Time.time - newest.Time) * 1000f);
+                HitchTrace.Interp("hold");
                 return;
             }
 
@@ -227,7 +227,7 @@ namespace SyncRADation.Players
                 pos = newest.Pos + newest.Vel * extra;
                 pos.y = newest.Pos.y;
                 facing = newest.Facing;
-                HitchTrace.Interp("extrap", n, extra * 1000f);
+                HitchTrace.Interp("extrap");
                 return;
             }
 
@@ -243,7 +243,7 @@ namespace SyncRADation.Players
             pos = span > 0.0001f ? Hermite(a.Pos, a.Vel, b.Pos, b.Vel, span, t) : a.Pos;
             pos.y = Mathf.Lerp(a.Pos.y, b.Pos.y, t);
             facing = Quaternion.Slerp(a.Facing, b.Facing, t);
-            HitchTrace.Interp("lerp", n, (Time.time - newest.Time) * 1000f);
+            HitchTrace.Interp("lerp");
         }
 
         static Vector3 Hermite(Vector3 p0, Vector3 v0, Vector3 p1, Vector3 v1, float dt, float t)

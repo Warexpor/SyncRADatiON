@@ -385,7 +385,7 @@ namespace SyncRADation.Players
                     if (w == null || w.parentItem == null) continue;
                     try
                     {
-                        WeaponType wt = ItemToWeaponType(w.parentItem._item);
+                        WeaponType wt = WeaponUtils.ItemToWeaponType(w.parentItem._item);
                         if (wt == WeaponType.None) continue;
 
                         // Read FMOD event paths (string fields — no IL2CPP serialization bug)
@@ -451,11 +451,6 @@ namespace SyncRADation.Players
             {
                 ModRuntime.Log?.Warning("[Audio] BuildCombatSfxCache failed: " + ex.Message);
             }
-        }
-
-        private static WeaponType ItemToWeaponType(Items.itemlist item)
-        {
-            return WeaponUtils.ItemToWeaponType(item);
         }
     }
 }

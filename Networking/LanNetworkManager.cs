@@ -38,7 +38,6 @@ namespace SyncRADation.Networking
         private GameObject _localPlayer;
         private float _sendTimer;
         private float _vitalTimer;
-        private int _boneSendCounter;
         private Vector3 _lastSentPosition;
         private float _lastSentTime;
         private float _lastStateTime;
@@ -339,10 +338,6 @@ namespace SyncRADation.Networking
             msg.SetFacingWorld(SourceAnimReader.ReadFacingWorldRotation(player));
 
             SourceAnimReader.ReadFromPlayer(player, ref msg);
-
-            _boneSendCounter++;
-            if (_boneSendCounter % PluginInfo.BoneSendDivider != 0)
-                msg.BoneRotations = null;
 
             if (PlayerState.aiming) msg.AnimBools |= AnimBools.Aiming;
             if (PlayerState.charState == PlayerState.charStates.run) msg.AnimBools |= AnimBools.Running;
@@ -1256,13 +1251,7 @@ namespace SyncRADation.Networking
 
         static InventoryBase FindInventory()
         {
-            InventoryBase[] all = null;
-            try { all = UnityEngine.Object.FindObjectsOfType<InventoryBase>(true); }
-            catch
-            {
-                try { all = UnityEngine.Object.FindObjectsOfType<InventoryBase>(); }
-                catch { }
-            }
+            var all = WorldLookup.All<InventoryBase>();
             if (all == null) return null;
             InventoryBase fallback = null;
             for (int i = 0; i < all.Length; i++)
@@ -1287,9 +1276,7 @@ namespace SyncRADation.Networking
         {
             try
             {
-                InventoryBase[] all = null;
-                try { all = UnityEngine.Object.FindObjectsOfType<InventoryBase>(true); }
-                catch { try { all = UnityEngine.Object.FindObjectsOfType<InventoryBase>(); } catch { } }
+                var all = WorldLookup.All<InventoryBase>();
                 if (all == null) return;
                 for (int i = 0; i < all.Length; i++)
                 {
@@ -1874,7 +1861,7 @@ namespace SyncRADation.Networking
             if (proxy == null) return;
             try
             {
-                proxy.SetVital(msg.Hp, msg.MaxHp, msg.Dead, msg.GameState, msg.CharState);
+                proxy.SetVital(msg.Dead);
             }
             catch { }
         }

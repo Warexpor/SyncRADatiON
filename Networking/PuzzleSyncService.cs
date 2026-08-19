@@ -72,9 +72,7 @@ namespace SyncRADation.Networking
         private void RegisterAll<T>(PuzzleType type) where T : Component
         {
             var map = Map(type);
-            T[] arr = null;
-            try { arr = UnityEngine.Object.FindObjectsOfType<T>(true); }
-            catch { try { arr = UnityEngine.Object.FindObjectsOfType<T>(); } catch { return; } }
+            T[] arr = WorldLookup.All<T>();
             if (arr == null) return;
             for (int i = 0; i < arr.Length; i++)
             {
@@ -85,7 +83,7 @@ namespace SyncRADation.Networking
                 if (!map.ContainsKey(id))
                     map[id] = c;
             }
-            }
+        }
 
         private static bool IsLocalTraverse(Component c)
         {
@@ -836,8 +834,6 @@ namespace SyncRADation.Networking
                 || HeldUnmatched(PuzzleType.PEN_Codepad)
                 || HeldUnmatched(PuzzleType.PatternLock);
         }
-
-        public void InvalidateScan() => _scanned = false;
 
         /// <summary>Native OnEnable re-enables pad/open. Shut them in the same callback if already solved.</summary>
         public void HandlePenCryoEnabled(PEN_Cryo x)
@@ -1676,11 +1672,7 @@ namespace SyncRADation.Networking
             return null;
         }
 
-        public static void UnlockLinked(GameObject go) => TryUnlockDoors(go);
-
-        internal static bool IsPerPlayerUse(UseItemInteraction x) => PerPlayerUse(x);
-
-        static bool PerPlayerUse(UseItemInteraction x)
+        internal static bool PerPlayerUse(UseItemInteraction x)
         {
             if (x == null) return false;
             try
@@ -2718,7 +2710,7 @@ namespace SyncRADation.Networking
             catch { }
         }
 
-        private static void TryUnlockDoors(GameObject go)
+        internal static void TryUnlockDoors(GameObject go)
         {
             if (go == null || !_mutateWorld) return;
             try

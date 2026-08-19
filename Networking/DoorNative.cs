@@ -205,13 +205,7 @@ namespace SyncRADation.Networking
 
         public static void ReassertLockVisuals()
         {
-            DoorLockControl[] lockCtrls;
-            try { lockCtrls = Object.FindObjectsOfType<DoorLockControl>(true); }
-            catch
-            {
-                try { lockCtrls = Object.FindObjectsOfType<DoorLockControl>(); }
-                catch { return; }
-            }
+            var lockCtrls = WorldLookup.All<DoorLockControl>();
             if (lockCtrls == null) return;
             for (int i = 0; i < lockCtrls.Length; i++)
             {

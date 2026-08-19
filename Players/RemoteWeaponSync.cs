@@ -21,18 +21,13 @@ namespace SyncRADation.Players
                 foreach (var w in allWeapons)
                 {
                     if (w == null || w.parentItem == null) continue;
-                    var wt = MapItemToWeaponType(w.parentItem._item);
+                    var wt = WeaponUtils.ItemToWeaponType(w.parentItem._item);
                     if (wt != WeaponType.None && !_weaponDamageCache.ContainsKey(wt))
                         _weaponDamageCache[wt] = w.Damage;
                 }
                 ModRuntime.Log?.Msg("[WeaponSync] Damage cache built: " + _weaponDamageCache.Count + " weapons");
             }
             catch { }
-        }
-
-        private static WeaponType MapItemToWeaponType(Items.itemlist item)
-        {
-            return WeaponUtils.ItemToWeaponType(item);
         }
 
         public static float GetDamage(WeaponType wt)

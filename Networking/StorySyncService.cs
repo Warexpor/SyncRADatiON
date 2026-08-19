@@ -444,12 +444,7 @@ namespace SyncRADation.Networking
                 || cmd == StoryCmd.BookOpen;
         }
 
-        private static T Find<T>(ulong worldId) where T : Component
-        {
-            var found = WorldLookup.Find<T>(worldId);
-            if (found == null && worldId != 0)
-                PlaytestLog.Miss("Story", typeof(T).Name, worldId);
-            return found;
-        }
+        private static T Find<T>(ulong worldId) where T : Component =>
+            WorldLookup.Find<T>(worldId, "Story");
     }
 }

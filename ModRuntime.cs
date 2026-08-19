@@ -5,7 +5,6 @@ using SyncRADation.ItemSystem;
 using SyncRADation.Networking;
 using SyncRADation.Players;
 using SyncRADation.Sync;
-using System.Collections.Generic;
 using UnityEngine;
 
 namespace SyncRADation
@@ -100,7 +99,7 @@ namespace SyncRADation
                 var local = net?.GetLocalPlayer();
                 if (local != null && PlayerState.player != null && PlayerState.player != local)
                 {
-                    foreach (int pid in GetProxyIds(pm))
+                    foreach (int pid in pm.GetProxyPlayerIds())
                     {
                         var p = pm.GetProxy(pid);
                         if (p != null && p.GameObject == PlayerState.player)
@@ -139,7 +138,7 @@ namespace SyncRADation
                             int hitPid = pm != null ? pm.GetPlayerIdByCollider(hit.collider) : -1;
                             if (hitPid >= 0)
                             {
-                                float dmg = RemoteWeaponSync.GetDamage(ReadWeaponFromInventory());
+                                float dmg = RemoteWeaponSync.GetDamage(WeaponUtils.EquippedWeaponType());
                                 net.SendFriendlyFire(hitPid, dmg, hit.point);
                                 _ffCooldown = 0.2f;
                             }
@@ -164,7 +163,7 @@ namespace SyncRADation
 
             if (pm != null)
             {
-                foreach (int pid in GetProxyIds(pm))
+                foreach (int pid in pm.GetProxyPlayerIds())
                     pm.GetProxy(pid)?.AnimDriver?.PreTick();
             }
         }
@@ -183,26 +182,6 @@ namespace SyncRADation
             WorldRegistry.Rebuild();
             Cheats.EntitySpawner.HarvestLoaded();
             Network?.OnSceneChanged();
-        }
-
-        private static IEnumerable<int> GetProxyIds(PlayerProxyManager pm)
-        {
-            for (int i = 0; i < 256; i++)
-            {
-                if (pm.HasProxy(i))
-                    yield return i;
-            }
-        }
-
-        private static WeaponType ReadWeaponFromInventory()
-        {
-            try
-            {
-                var equipped = InventoryManager.EquippedWeapon;
-                if (equipped == null || equipped.parentItem == null) return 0;
-                return WeaponUtils.ItemToWeaponType(equipped.parentItem._item);
-            }
-            catch { return 0; }
         }
 
         private static int GetWallMask()

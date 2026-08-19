@@ -158,6 +158,12 @@ namespace SyncRADation.Patches
             return false;
         }
 
+        internal static PEN_Titles[] AllTitles()
+        {
+            try { return Object.FindObjectsOfType<PEN_Titles>(); }
+            catch { return null; }
+        }
+
         public static void KeepTitlesPrompt(PEN_Titles t)
         {
             if (t == null) return;
@@ -211,7 +217,7 @@ namespace SyncRADation.Patches
             if (x == null) return false;
             try
             {
-                var all = UnityEngine.Object.FindObjectsOfType<PEN_Titles>();
+                var all = AllTitles();
                 if (all == null) return false;
                 for (int i = 0; i < all.Length; i++)
                 {
@@ -228,7 +234,7 @@ namespace SyncRADation.Patches
             if (inter == null || !NetGate.Live) return false;
             try
             {
-                var all = UnityEngine.Object.FindObjectsOfType<PEN_Titles>();
+                var all = AllTitles();
                 if (all == null) return false;
                 for (int i = 0; i < all.Length; i++)
                 {
@@ -263,7 +269,7 @@ namespace SyncRADation.Patches
             if (DeferFollowWhileAirlockPresent()) return true;
             try
             {
-                var all = UnityEngine.Object.FindObjectsOfType<PEN_Titles>();
+                var all = AllTitles();
                 if (all == null) return false;
                 for (int i = 0; i < all.Length; i++)
                 {
@@ -326,7 +332,7 @@ namespace SyncRADation.Patches
         {
             try
             {
-                var all = UnityEngine.Object.FindObjectsOfType<PEN_Titles>();
+                var all = AllTitles();
                 if (all == null) return false;
                 for (int i = 0; i < all.Length; i++)
                 {
@@ -700,7 +706,7 @@ namespace SyncRADation.Patches
             if (!NetGate.Live) return true;
             try
             {
-                var all = UnityEngine.Object.FindObjectsOfType<PEN_Titles>();
+                var all = AirlockCinematic.AllTitles();
                 if (all != null)
                 {
                     for (int i = 0; i < all.Length; i++)

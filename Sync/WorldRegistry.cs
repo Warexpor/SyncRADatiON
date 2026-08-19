@@ -28,7 +28,7 @@ namespace SyncRADation.Sync
 
             try
             {
-                var enemies = FindAll<EnemyController>();
+                var enemies = WorldLookup.All<EnemyController>();
                 if (enemies != null)
                 {
                     for (int i = 0; i < enemies.Length; i++)
@@ -45,7 +45,7 @@ namespace SyncRADation.Sync
                     }
                 }
 
-                var doubles = FindAll<Doorway_Double>();
+                var doubles = WorldLookup.All<Doorway_Double>();
                 if (doubles != null)
                 {
                     for (int i = 0; i < doubles.Length; i++)
@@ -60,7 +60,7 @@ namespace SyncRADation.Sync
                     }
                 }
 
-                var connected = FindAll<ConnectedDoors>();
+                var connected = WorldLookup.All<ConnectedDoors>();
                 if (connected != null)
                 {
                     for (int i = 0; i < connected.Length; i++)
@@ -75,7 +75,7 @@ namespace SyncRADation.Sync
                     }
                 }
 
-                var sliding = FindAll<EventSlidingDoor>();
+                var sliding = WorldLookup.All<EventSlidingDoor>();
                 if (sliding != null)
                 {
                     for (int i = 0; i < sliding.Length; i++)
@@ -110,12 +110,6 @@ namespace SyncRADation.Sync
             ConnectedDoorMap.Clear();
             SlidingDoors.Clear();
             _sceneName = "";
-        }
-
-        private static T[] FindAll<T>() where T : Object
-        {
-            try { return Object.FindObjectsOfType<T>(true); }
-            catch { return Object.FindObjectsOfType<T>(); }
         }
 
         public static void RegisterEnemy(ulong id, EnemyController enemy)

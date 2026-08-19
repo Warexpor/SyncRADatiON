@@ -83,7 +83,7 @@ namespace SyncRADation.Sync
             _recvs++;
         }
 
-        public static void Interp(string mode, int snaps, float newestAgeMs)
+        public static void Interp(string mode)
         {
             if (!ModRuntime.VerboseLogging) return;
             if (mode == "lerp") _lerp++;

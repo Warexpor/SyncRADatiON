@@ -19,11 +19,7 @@ namespace SyncRADation.Players
         private AnimTriggers _fxTriggers;
         private bool _fxPending;
 
-        public int LastHp { get; private set; } = 100;
-        public int LastMaxHp { get; private set; } = 100;
         public bool LastDead { get; private set; }
-        public byte LastGameState { get; private set; }
-        public byte LastCharState { get; private set; }
 
         public RemotePlayerProxy(GameObject go, int playerId)
         {
@@ -67,14 +63,10 @@ namespace SyncRADation.Players
             WeaponSync?.Cleanup();
         }
 
-        public void SetVital(int hp, int maxHp, bool dead, byte gameState, byte charState)
+        public void SetVital(bool dead)
         {
             bool wasDead = LastDead;
-            LastHp = hp;
-            LastMaxHp = maxHp > 0 ? maxHp : 100;
             LastDead = dead;
-            LastGameState = gameState;
-            LastCharState = charState;
 
             try
             {

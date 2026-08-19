@@ -73,7 +73,7 @@ namespace SyncRADation.Players
             if (!msg.Climbing)
                 msg.Climbing = CrawlMeshActive();
 
-            msg.Weapon = ReadWeaponFromInventory();
+            msg.Weapon = Networking.WeaponUtils.EquippedWeaponType();
             if (msg.Weapon != _lastWeaponRead)
             {
                 ModRuntime.Log?.Msg("[WeaponSync] Source weapon: " + _lastWeaponRead + " -> " + msg.Weapon);
@@ -386,17 +386,6 @@ namespace SyncRADation.Players
         {
             try { return a.GetBool(name); }
             catch { return false; }
-        }
-
-        private static Networking.WeaponType ReadWeaponFromInventory()
-        {
-            try
-            {
-                var equipped = InventoryManager.EquippedWeapon;
-                if (equipped == null || equipped.parentItem == null) return Networking.WeaponType.None;
-                return Networking.WeaponUtils.ItemToWeaponType(equipped.parentItem._item);
-            }
-            catch { return Networking.WeaponType.None; }
         }
     }
 }

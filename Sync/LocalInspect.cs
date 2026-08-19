@@ -8,20 +8,26 @@ namespace SyncRADation.Sync
         public static bool Dialogue(Dialogue d)
         {
             if (d == null) return true;
-            try
-            {
-                if (PlayerState.eventScreen) return true;
-                var gs = PlayerState.gameState;
-                if (gs == PlayerState.gameStates.eventScreen || gs == PlayerState.gameStates.book)
-                    return true;
-            }
-            catch { }
+            if (InspectScreen()) return true;
             try
             {
                 if (DialoguerFlavor((int)d._dialogue)) return true;
             }
             catch { }
             return UnderEventCamera(d.gameObject) || LockFlavor(d);
+        }
+
+        public static bool InspectScreen()
+        {
+            try { if (PlayerState.eventScreen) return true; } catch { }
+            try
+            {
+                var gs = PlayerState.gameState;
+                if (gs == PlayerState.gameStates.eventScreen || gs == PlayerState.gameStates.book)
+                    return true;
+            }
+            catch { }
+            return false;
         }
 
         public static bool DialoguerFlavor(int id)

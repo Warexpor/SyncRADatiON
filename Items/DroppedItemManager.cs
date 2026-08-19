@@ -1,6 +1,7 @@
 // Player-dropped props: clone a native ItemPickup so TAKE / mesh / room-chunk hide match authored pickups.
 using System.Collections.Generic;
 using SyncRADation.Networking;
+using SyncRADation.Sync;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.SceneManagement;
@@ -10,7 +11,6 @@ namespace SyncRADation.ItemSystem
     public static class DroppedItemManager
     {
         public const string NamePrefix = "SR_Drop_";
-        public static int NearbyID = -1;
 
         public struct Drop
         {
@@ -39,26 +39,8 @@ namespace SyncRADation.ItemSystem
 
         public static bool IsDroppedGo(GameObject go)
         {
-            Transform t = null;
-            try { if (go != null) t = go.transform; } catch { return false; }
-            while (t != null)
-            {
-                GameObject g = null;
-                try { g = t.gameObject; } catch { break; }
-                if (g != null)
-                {
-                    string n = null;
-                    try { n = g.name; } catch { }
-                    if (!string.IsNullOrEmpty(n) && n.StartsWith(NamePrefix, System.StringComparison.Ordinal))
-                        return true;
-                    foreach (var kvp in _worldItems)
-                    {
-                        if (kvp.Value.Go == g) return true;
-                    }
-                }
-                try { t = t.parent; } catch { break; }
-            }
-            return false;
+            int key;
+            return FindDrop(go, out key, true);
         }
 
         public static bool TryKeyOf(ItemPickup p, out int key)
@@ -70,6 +52,11 @@ namespace SyncRADation.ItemSystem
         }
 
         public static bool TryKeyOfGo(GameObject go, out int key)
+        {
+            return FindDrop(go, out key, false);
+        }
+
+        static bool FindDrop(GameObject go, out int key, bool prefixCounts)
         {
             key = -1;
             Transform t = null;
@@ -90,6 +77,8 @@ namespace SyncRADation.ItemSystem
                             key = parsed;
                             return true;
                         }
+                        if (prefixCounts)
+                            return true;
                     }
                     foreach (var kvp in _worldItems)
                     {
@@ -195,38 +184,6 @@ namespace SyncRADation.ItemSystem
                 return n;
             }
             catch { return 0; }
-        }
-
-        public static void TickNearby()
-        {
-            var player = PlayerState.player;
-            if (player == null)
-            {
-                NearbyID = -1;
-                return;
-            }
-            Vector3 p = player.transform.position;
-            int nearest = -1;
-            float best = 1.8f;
-            foreach (var kvp in _worldItems)
-            {
-                var go = kvp.Value.Go;
-                if (go == null) continue;
-                try
-                {
-                    if (!go.activeInHierarchy) continue;
-                }
-                catch { continue; }
-                float dx = go.transform.position.x - p.x;
-                float dy = go.transform.position.y - p.y;
-                float dist = Mathf.Sqrt(dx * dx + dy * dy);
-                if (dist < best)
-                {
-                    best = dist;
-                    nearest = kvp.Key;
-                }
-            }
-            NearbyID = nearest;
         }
 
         public static Interaction NearbyInteraction(Vector3 pos, float maxDist)
@@ -418,8 +375,6 @@ namespace SyncRADation.ItemSystem
                 }
                 _worldItems.Remove(netID);
             }
-            if (NearbyID == netID)
-                NearbyID = -1;
         }
 
         public static void ClearVisuals()
@@ -433,7 +388,6 @@ namespace SyncRADation.ItemSystem
                 drop.Go = null;
                 _worldItems[k] = drop;
             }
-            NearbyID = -1;
         }
 
         public static void RespawnCurrentScene()
@@ -459,7 +413,6 @@ namespace SyncRADation.ItemSystem
                 if (drop.Go != null) Object.Destroy(drop.Go);
             }
             _worldItems.Clear();
-            NearbyID = -1;
             _deferKey = -1;
         }
 
@@ -843,8 +796,7 @@ namespace SyncRADation.ItemSystem
 
         static Transform NearestNativeModel(Vector3 pos)
         {
-            ItemPickup[] all = null;
-            try { all = Object.FindObjectsOfType<ItemPickup>(true); } catch { return null; }
+            var all = WorldLookup.All<ItemPickup>();
             if (all == null) return null;
             Transform bestT = null;
             float best = 20f;
@@ -884,8 +836,7 @@ namespace SyncRADation.ItemSystem
 
         static ItemPickup NearestNativePickup(Vector3 pos, float maxDist)
         {
-            ItemPickup[] all = null;
-            try { all = Object.FindObjectsOfType<ItemPickup>(true); } catch { return null; }
+            var all = WorldLookup.All<ItemPickup>();
             if (all == null) return null;
             ItemPickup best = null;
             float bestD = maxDist;
@@ -1015,8 +966,7 @@ namespace SyncRADation.ItemSystem
 
         static Transform RoomAt(Vector3 pos)
         {
-            Room[] rooms = null;
-            try { rooms = Object.FindObjectsOfType<Room>(true); } catch { }
+            var rooms = WorldLookup.All<Room>();
             Transform best = null;
             float bestD = 80f;
             if (rooms != null)
@@ -1086,38 +1036,6 @@ namespace SyncRADation.ItemSystem
             }
             catch { }
             try { return p._itemEnum; } catch { return Items.itemlist.None; }
-        }
-
-        static void ParentToRoom(GameObject go, Vector3 pos)
-        {
-            if (go == null) return;
-            Transform parent = null;
-            float best = 40f;
-            ItemPickup[] all = null;
-            try { all = Object.FindObjectsOfType<ItemPickup>(true); } catch { }
-            if (all != null)
-            {
-                for (int i = 0; i < all.Length; i++)
-                {
-                    var p = all[i];
-                    if (p == null || IsDropped(p) || p.gameObject == go) continue;
-                    float d = Vector3.Distance(p.transform.position, pos);
-                    if (d < best)
-                    {
-                        best = d;
-                        parent = p.transform.parent;
-                    }
-                }
-            }
-            if (parent == null) return;
-            try
-            {
-                var ls = parent.lossyScale;
-                if (Mathf.Abs(ls.x - 1f) > 0.15f || Mathf.Abs(ls.y - 1f) > 0.15f)
-                    return;
-            }
-            catch { }
-            try { go.transform.SetParent(parent, true); } catch { }
         }
 
         static void StripUniqueId(GameObject go, ItemPickup src)

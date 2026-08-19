@@ -52,7 +52,7 @@ namespace SyncRADation.Networking
                             ok = true;
                         }
                         else
-                            ok = ApplyDialogue(id, net);
+                            ok = true;
                         break;
                     case InteractionKind.CutsceneStart:
                         ok = ApplyCutscene(id, net);
@@ -156,9 +156,9 @@ namespace SyncRADation.Networking
                 PlaytestLog.Event("KeyRing", "trust UseItem from=" + senderId + " " + key._item);
             }
 
-            if (!PuzzleSyncService.IsPerPlayerUse(u))
+            if (!PuzzleSyncService.PerPlayerUse(u))
                 u.unlocked = true;
-            PuzzleSyncService.UnlockLinked(u.gameObject);
+            PuzzleSyncService.TryUnlockDoors(u.gameObject);
             try { PuzzleSyncService.SnapUseItemWorld(u); } catch { }
             try
             {
@@ -343,15 +343,6 @@ namespace SyncRADation.Networking
                 return true;
             }
             return false;
-        }
-
-        private static bool ApplyDialogue(ulong id, LanNetworkManager net)
-        {
-            var d = Find<Dialogue>(id);
-            if (d == null) return true;
-            if (LocalInspect.Dialogue(d))
-                return true;
-            return true;
         }
 
         private static bool ApplyCutscene(ulong id, LanNetworkManager net)
@@ -539,12 +530,7 @@ namespace SyncRADation.Networking
             return true;
         }
 
-        private static T Find<T>(ulong worldId) where T : Component
-        {
-            var found = WorldLookup.Find<T>(worldId);
-            if (found == null && worldId != 0)
-                PlaytestLog.Miss("Interact", typeof(T).Name, worldId);
-            return found;
-        }
+        private static T Find<T>(ulong worldId) where T : Component =>
+            WorldLookup.Find<T>(worldId, "Interact");
     }
 }

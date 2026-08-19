@@ -114,7 +114,6 @@
     <None Remove="_tmp_ref\**" />
     <Compile Remove="third_party\**" />
     <None Remove="third_party\**" />
-    <Compile Remove="GameAPI.cs" Condition="Exists('GameAPI.cs')" />
   </ItemGroup>
 
   <Target Name="CopyToMods" AfterTargets="Build">

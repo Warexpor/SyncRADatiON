@@ -25,9 +25,7 @@ namespace SyncRADation.Networking
         static void RebuildCache()
         {
             _byId.Clear();
-            StudioEventEmitter[] all = null;
-            try { all = Object.FindObjectsOfType<StudioEventEmitter>(true); }
-            catch { try { all = Object.FindObjectsOfType<StudioEventEmitter>(); } catch { } }
+            var all = WorldLookup.All<StudioEventEmitter>();
             if (all == null) return;
             for (int i = 0; i < all.Length; i++)
             {

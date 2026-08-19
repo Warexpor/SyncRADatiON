@@ -215,7 +215,7 @@ namespace SyncRADation.Patches
         public static bool Start(int dialogueId)
         {
             if (NetGate.IsApplying || !NetGate.Live) return true;
-            if (LocalInspect.DialoguerFlavor(dialogueId) || InspectScreen())
+            if (LocalInspect.DialoguerFlavor(dialogueId) || LocalInspect.InspectScreen())
             {
                 if (dialogueId == (int)DialoguerDialogues.useItemDialogue)
                     BindUseItemName();
@@ -237,7 +237,7 @@ namespace SyncRADation.Patches
         public static bool Continue(int choice)
         {
             if (NetGate.IsApplying || !NetGate.Live) return true;
-            if (_flavorActive || InspectScreen())
+            if (_flavorActive || LocalInspect.InspectScreen())
             {
                 if (_flavorActive)
                     BindUseItemName();
@@ -255,7 +255,7 @@ namespace SyncRADation.Patches
         public static bool End()
         {
             if (NetGate.IsApplying || !NetGate.Live) return true;
-            if (_flavorActive || InspectScreen())
+            if (_flavorActive || LocalInspect.InspectScreen())
             {
                 _flavorActive = false;
                 return true;
@@ -292,19 +292,6 @@ namespace SyncRADation.Patches
                 }
             }
             catch { }
-        }
-
-        static bool InspectScreen()
-        {
-            try { if (PlayerState.eventScreen) return true; } catch { }
-            try
-            {
-                var gs = PlayerState.gameState;
-                if (gs == PlayerState.gameStates.eventScreen || gs == PlayerState.gameStates.book)
-                    return true;
-            }
-            catch { }
-            return false;
         }
     }
 

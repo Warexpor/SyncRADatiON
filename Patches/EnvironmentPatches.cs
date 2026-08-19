@@ -6,26 +6,21 @@ using UnityEngine;
 
 namespace SyncRADation.Patches
 {
-    static class EnvEmit
-    {
-        public static void Progressed(PuzzleType type, Component c)
+        static class EnvEmit
         {
-            if (c == null || NetGate.IsApplying) return;
-            var net = LanNetworkManager.Instance;
-            if (net == null || !net.IsConnected) return;
-            ulong id = WorldId.FromGameObject(c.gameObject);
-            net.PuzzleSync.EmitProgressed(type, id);
-        }
+            public static void Progressed(PuzzleType type, Component c) => Send(type, c, true);
+            public static void Read(PuzzleType type, Component c) => Send(type, c, false);
 
-        public static void Read(PuzzleType type, Component c)
-        {
-            if (c == null || NetGate.IsApplying) return;
-            var net = LanNetworkManager.Instance;
-            if (net == null || !net.IsConnected) return;
-            ulong id = WorldId.FromGameObject(c.gameObject);
-            net.PuzzleSync.Emit(type, id, c);
+            static void Send(PuzzleType type, Component c, bool progressed)
+            {
+                if (c == null || NetGate.IsApplying) return;
+                var net = LanNetworkManager.Instance;
+                if (net == null || !net.IsConnected) return;
+                ulong id = WorldId.FromGameObject(c.gameObject);
+                if (progressed) net.PuzzleSync.EmitProgressed(type, id);
+                else net.PuzzleSync.Emit(type, id, c);
+            }
         }
-    }
 
     [HarmonyPatch(typeof(MED_Pump), "checkSolved")]
     public static class MedPumpSolvedPatch

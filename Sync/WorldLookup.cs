@@ -5,14 +5,30 @@ namespace SyncRADation.Sync
 {
     public static class WorldLookup
     {
+        public static T[] All<T>() where T : Object
+        {
+            try { return Object.FindObjectsOfType<T>(true); }
+            catch
+            {
+                try { return Object.FindObjectsOfType<T>(); }
+                catch { return null; }
+            }
+        }
+
+        public static T Find<T>(ulong worldId, string missTag) where T : Component
+        {
+            var found = Find<T>(worldId);
+            if (found == null && worldId != 0)
+                PlaytestLog.Miss(missTag, typeof(T).Name, worldId);
+            return found;
+        }
+
         public static T Find<T>(ulong worldId) where T : Component
         {
             if (worldId == 0) return null;
             try
             {
-                T[] all = null;
-                try { all = Object.FindObjectsOfType<T>(true); }
-                catch { all = Object.FindObjectsOfType<T>(); }
+                var all = All<T>();
                 if (all == null) return null;
                 for (int i = 0; i < all.Length; i++)
                 {

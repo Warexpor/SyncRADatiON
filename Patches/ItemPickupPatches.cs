@@ -38,7 +38,7 @@ namespace SyncRADation.Patches
             if (id == Items.itemlist.None && _pendingDropKey >= 0)
                 ItemSystem.DroppedItemManager.TryGet(_pendingDropKey, out id, out _);
             if (id == Items.itemlist.None) return;
-            if (CountOfItem(id) > 0) return;
+            if (ItemSystem.DroppedItemManager.CountInBag(id) > 0) return;
             try
             {
                 var item = InventoryManager.getItem(id);
@@ -71,7 +71,7 @@ namespace SyncRADation.Patches
                 ItemSystem.DroppedItemManager.TryGet(_pendingDropKey, out _pendingDropItem, out c);
                 if (c > 0) _pendingDropCount = c;
             }
-            _countBeforeDrop = CountOfItem(_pendingDropItem);
+            _countBeforeDrop = ItemSystem.DroppedItemManager.CountInBag(_pendingDropItem);
         }
 
         internal static void TickPendingDrop()
@@ -96,7 +96,7 @@ namespace SyncRADation.Patches
             if (id == Items.itemlist.None && _pendingDropKey >= 0)
                 ItemSystem.DroppedItemManager.TryGet(_pendingDropKey, out id, out _);
             if (id == Items.itemlist.None) return false;
-            return CountOfItem(id) > _countBeforeDrop;
+            return ItemSystem.DroppedItemManager.CountInBag(id) > _countBeforeDrop;
         }
 
         internal static void CommitDroppedIfTaken(ItemPickup p)
@@ -316,11 +316,6 @@ namespace SyncRADation.Patches
         {
             if (p == null) return 1;
             try { return p.count > 0 ? p.count : 1; } catch { return 1; }
-        }
-
-        static int CountOfItem(Items.itemlist item)
-        {
-            return ItemSystem.DroppedItemManager.CountInBag(item);
         }
 
         internal static void NoteDroppedGrant(AnItem item)
