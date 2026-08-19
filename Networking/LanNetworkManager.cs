@@ -222,30 +222,11 @@ namespace SyncRADation.Networking
                 }
             }
 
-            // Pickup nearby dropped item
-            DroppedItemManager.TickNearby();
-            if (Input.GetKeyDown(KeyCode.E) && DroppedItemManager.NearbyID >= 0
-                && PlayerState.gameState == PlayerState.gameStates.play)
-            {
-                int localID = DroppedItemManager.NearbyID;
-                DroppedItemManager.NearbyID = -1;
-                Items.itemlist peekItem;
-                int peekCount;
-                if (DroppedItemManager.TryGet(localID, out peekItem, out peekCount)
-                    && !BagHasRoom(peekItem))
-                {
-                    ModRuntime.Log?.Msg("[Pickup] bag full");
-                    return;
-                }
-                if (_role == NetworkRole.Host)
-                    TryClaimDropped(localID, _localPlayerId, out _);
-                else
-                    SendInteractionRequest(0, InteractionKind.DroppedPickup, localID);
-            }
-
+            // Native Interaction TAKE on cloned ItemPickups. No mod E bind.
             if (Input.GetKeyDown(KeyCode.G))
             {
-                TryDropCurrentItem();
+                try { TryDropCurrentItem(); }
+                catch (Exception ex) { ModRuntime.Log?.Warning("[Drop] G crashed: " + ex.Message); }
             }
 
             _sendTimer += Mathf.Min(Time.deltaTime, 0.1f);
@@ -785,6 +766,7 @@ namespace SyncRADation.Networking
                 _storageSync.RequestSend();
                 _storageSync.SendNow(this);
                 PartyKeyRing.Broadcast();
+                DumpDroppedItems();
                 FmodEmitterSync.DumpPlaying();
                 if (!SceneFollowService.IsTransient(SceneManager.GetActiveScene().name ?? ""))
                     SendSceneFollow(SceneManager.GetActiveScene().name ?? "", false);
@@ -999,96 +981,110 @@ namespace SyncRADation.Networking
             return _nextItemIndex++;
         }
 
-        private void TryDropCurrentItem()
+        public void DumpDroppedItems()
         {
+            string scene = "";
+            try { scene = SceneManager.GetActiveScene().name ?? ""; } catch { }
+            foreach (var drop in DroppedItemManager.All())
+            {
+                if (drop.Count <= 0) continue;
+                if (!string.IsNullOrEmpty(drop.Scene) && !string.IsNullOrEmpty(scene)
+                    && drop.Scene != scene)
+                    continue;
+                SendDropItem(new DropItemSpawnMessage
+                {
+                    SenderID = (byte)((drop.Key >> 16) & 0xFF),
+                    LocalIndex = (ushort)(drop.Key & 0xFFFF),
+                    ItemEnum = (ushort)drop.Item,
+                    Count = drop.Count,
+                    PosX = drop.Pos.x,
+                    PosY = drop.Pos.y,
+                    PosZ = drop.Pos.z
+                });
+            }
+        }
+
+        public bool TryDropCurrentItem()
+        {
+            return TryDropItem(ResolveSelectedItem());
+        }
+
+        public bool TryDropItem(AnItem anItem)
+        {
+            if (anItem == null)
+                anItem = ResolveSelectedItem();
             PlayerState.gameStates gs;
             try { gs = PlayerState.gameState; }
-            catch { return; }
+            catch { return false; }
             if (gs != PlayerState.gameStates.play && gs != PlayerState.gameStates.inventory)
             {
                 ModRuntime.Log?.Msg("[Drop] skip state=" + gs);
-                return;
+                return false;
             }
 
             if (_localPlayer == null) _localPlayer = PlayerState.player;
             if (_localPlayer == null)
             {
                 ModRuntime.Log?.Msg("[Drop] No local player");
-                return;
+                return false;
             }
-            var pos = _localPlayer.transform.position;
+            var pos = DroppedItemManager.FloorDropPos(_localPlayer.transform);
 
-            AnItem anItem = null;
             Items.itemlist itemToDrop = Items.itemlist.None;
-            int count = 0;
+            try { if (anItem != null) itemToDrop = anItem._item; } catch { }
 
+            if (itemToDrop == Items.itemlist.None || itemToDrop == Items.itemlist.Injector)
+            {
+                ModRuntime.Log?.Msg("[Drop] No item to drop (select a slot, then G / DROP)");
+                return false;
+            }
+
+            int count;
+            bool fromBag = false;
+            AnItem bagItem = null;
             try
             {
-                anItem = InventoryManager.CurrentItem;
-                if (anItem != null) itemToDrop = anItem._item;
-            }
-            catch { }
-
-            if (itemToDrop == Items.itemlist.None || itemToDrop == Items.itemlist.Injector)
-            {
-                try
+                bagItem = PartyKeyRing.FindInBag(anItem);
+                if (bagItem == null)
+                    bagItem = InventoryManager.getItem(itemToDrop);
+                int have = DroppedItemManager.CountInBag(itemToDrop);
+                if (have > 0)
+                    fromBag = true;
+                else if (PartyKeyRing.Has(itemToDrop))
+                    have = 1;
+                else
                 {
-                    var tool = InventoryManager.EquippedTool;
-                    if (tool != null && tool._item != Items.itemlist.None && tool._item != Items.itemlist.Injector)
-                    {
-                        anItem = tool;
-                        itemToDrop = tool._item;
-                    }
+                    ModRuntime.Log?.Msg("[Drop] count 0 for " + itemToDrop + " (not in bag or key ring)");
+                    return false;
                 }
-                catch { }
-            }
-
-            if (itemToDrop == Items.itemlist.None || itemToDrop == Items.itemlist.Injector)
-            {
-                try
-                {
-                    var w = InventoryManager.EquippedWeapon;
-                    if (w != null && w.parentItem != null)
-                    {
-                        anItem = w.parentItem;
-                        itemToDrop = anItem._item;
-                    }
-                }
-                catch { }
-            }
-
-            if (itemToDrop == Items.itemlist.None || itemToDrop == Items.itemlist.Injector)
-            {
-                ModRuntime.Log?.Msg("[Drop] No item to drop (select a slot, then G)");
-                return;
-            }
-
-            try
-            {
-                if (anItem == null) anItem = InventoryManager.getItem(itemToDrop);
-                if (anItem == null)
-                {
-                    ModRuntime.Log?.Msg("[Drop] getItem failed " + itemToDrop);
-                    return;
-                }
-                int have = InventoryManager.getCount(anItem);
-                if (have <= 0)
-                {
-                    ModRuntime.Log?.Msg("[Drop] count 0 for " + itemToDrop);
-                    return;
-                }
-                count = have;
-                InventoryManager.RemoveItem(anItem, count);
+                count = DroppedItemManager.SanitizeStack(have, PartyKeyRing.IsKeyOrObject(itemToDrop));
             }
             catch (Exception ex)
             {
-                ModRuntime.Log?.Warning("[Drop] RemoveItem failed: " + ex.Message);
-                return;
+                ModRuntime.Log?.Warning("[Drop] resolve count failed: " + ex.Message);
+                return false;
             }
 
             ushort idx = _nextItemIndex++;
             int key = (_localPlayerId << 16) | idx;
-            DroppedItemManager.SpawnLocalItem(itemToDrop, count, key, pos);
+            GameObject spawned = null;
+            try { spawned = DroppedItemManager.SpawnLocalItem(itemToDrop, count, key, pos); }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[Drop] spawn crashed: " + ex.Message);
+                return false;
+            }
+            if (spawned == null)
+            {
+                ModRuntime.Log?.Warning("[Drop] spawn failed " + itemToDrop);
+                return false;
+            }
+
+            try { ConsumeDropped(itemToDrop, bagItem, anItem, count); }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[Drop] consume failed: " + ex.Message);
+            }
 
             SendDropItem(new DropItemSpawnMessage
             {
@@ -1101,14 +1097,258 @@ namespace SyncRADation.Networking
                 PosZ = pos.z
             });
 
-            ModRuntime.Log?.Msg("[Drop] Dropped " + itemToDrop + " x" + count);
+            RefreshInventoryAfterDrop();
+            DetachDroppedKey(itemToDrop);
+            ModRuntime.Log?.Msg("[Drop] Dropped " + itemToDrop + " x" + count
+                + (fromBag ? " from bag" : " from key ring")
+                + " at " + pos.x.ToString("F2") + "," + pos.y.ToString("F2") + "," + pos.z.ToString("F2"));
+            return true;
         }
 
-        public bool TryClaimDropped(int itemKey, int claimerId, out string reason)
+        static void DetachDroppedKey(Items.itemlist item)
+        {
+            if (!PartyKeyRing.IsKeyOrObject(item)) return;
+            PartyKeyRing.Remove(item);
+            if (LanNetworkManager.Instance != null && LanNetworkManager.Instance.Role == NetworkRole.Host)
+                PartyKeyRing.Broadcast();
+        }
+
+        static AnItem ResolveSelectedItem()
+        {
+            PlayerState.gameStates gs = PlayerState.gameStates.play;
+            try { gs = PlayerState.gameState; } catch { }
+            InventoryBase inv = FindInventory();
+            bool inBagUi = gs == PlayerState.gameStates.inventory;
+            try { if (inv != null && inv.inventoryOpen) inBagUi = true; } catch { }
+
+            AnItem picked = null;
+            try
+            {
+                if (inv != null && inv.intMenuOn)
+                    picked = Droppable(inv.intItem);
+            }
+            catch (Exception ex) { ModRuntime.Log?.Warning("[Drop] intItem: " + ex.Message); }
+            if (picked != null) return picked;
+
+            try
+            {
+                if (inv != null)
+                    picked = Droppable(inv.lastItem);
+            }
+            catch (Exception ex) { ModRuntime.Log?.Warning("[Drop] lastItem: " + ex.Message); }
+            if (picked != null && inBagUi) return picked;
+
+            try
+            {
+                var list = InventoryBase.currentItems;
+                int slot = -1;
+                if (inv != null)
+                {
+                    slot = inv.currentSlot;
+                    if (slot < 0)
+                        slot = inv.selectedSlot;
+                    try
+                    {
+                        var igc = inv.igc;
+                        if (igc != null && (slot < 0 || list == null || slot >= list.Count))
+                            slot = igc.currentSlot;
+                    }
+                    catch { }
+                }
+                picked = ItemFromList(list, slot);
+            }
+            catch (Exception ex) { ModRuntime.Log?.Warning("[Drop] currentItems: " + ex.Message); }
+            if (picked != null) return picked;
+
+            try { picked = Droppable(InventoryManager.CurrentItem); } catch { }
+            if (picked != null) return picked;
+            try { picked = Droppable(InventoryManager.EquippedTool); } catch { }
+            if (picked != null) return picked;
+            try
+            {
+                var w = InventoryManager.EquippedWeapon;
+                if (w != null) picked = Droppable(w.parentItem);
+            }
+            catch { }
+            if (picked != null) return picked;
+
+            picked = FirstInBag();
+            if (picked != null) return picked;
+
+            string bag = "";
+            int bagN = 0;
+            try
+            {
+                var dict = InventoryManager.elsterItems;
+                if (dict != null)
+                {
+                    var en = dict.GetEnumerator();
+                    while (en.MoveNext())
+                    {
+                        var it = en.Current.key;
+                        int n = en.Current.value;
+                        if (it == null || n <= 0) continue;
+                        bagN++;
+                        bag += " " + it._item + "x" + n;
+                    }
+                    en.Dispose();
+                }
+            }
+            catch { }
+            ModRuntime.Log?.Msg("[Drop] resolve fail gs=" + gs
+                + " inv=" + (inv != null)
+                + " bagUi=" + inBagUi
+                + " bagN=" + bagN
+                + bag);
+            return null;
+        }
+
+        static AnItem Droppable(AnItem item)
+        {
+            if (item == null) return null;
+            try
+            {
+                var id = item._item;
+                if (id == Items.itemlist.None || id == Items.itemlist.Injector)
+                    return null;
+                return item;
+            }
+            catch { return null; }
+        }
+
+        static AnItem ItemFromList(Il2CppSystem.Collections.Generic.List<AnItem> list, int slot)
+        {
+            if (list == null) return null;
+            int n = list.Count;
+            if (slot >= 0 && slot < n)
+            {
+                var at = Droppable(list[slot]);
+                if (at != null) return at;
+            }
+            for (int i = 0; i < n; i++)
+            {
+                var at = Droppable(list[i]);
+                if (at != null) return at;
+            }
+            return null;
+        }
+
+        static AnItem FirstInBag()
+        {
+            try
+            {
+                var dict = InventoryManager.elsterItems;
+                if (dict == null) return null;
+                var en = dict.GetEnumerator();
+                AnItem found = null;
+                while (en.MoveNext())
+                {
+                    var at = Droppable(en.Current.key);
+                    if (at == null || en.Current.value <= 0) continue;
+                    found = at;
+                    break;
+                }
+                en.Dispose();
+                return found;
+            }
+            catch { return null; }
+        }
+
+        static InventoryBase FindInventory()
+        {
+            InventoryBase[] all = null;
+            try { all = UnityEngine.Object.FindObjectsOfType<InventoryBase>(true); }
+            catch
+            {
+                try { all = UnityEngine.Object.FindObjectsOfType<InventoryBase>(); }
+                catch { }
+            }
+            if (all == null) return null;
+            InventoryBase fallback = null;
+            for (int i = 0; i < all.Length; i++)
+            {
+                var inv = all[i];
+                if (inv == null) continue;
+                try
+                {
+                    if (inv.gameObject == null || !inv.gameObject.scene.IsValid()) continue;
+                    if (inv.inventoryOpen) return inv;
+                    if (fallback == null && inv.gameObject.activeInHierarchy)
+                        fallback = inv;
+                    else if (fallback == null)
+                        fallback = inv;
+                }
+                catch { }
+            }
+            return fallback;
+        }
+
+        static void RefreshInventoryAfterDrop()
+        {
+            try
+            {
+                InventoryBase[] all = null;
+                try { all = UnityEngine.Object.FindObjectsOfType<InventoryBase>(true); }
+                catch { try { all = UnityEngine.Object.FindObjectsOfType<InventoryBase>(); } catch { } }
+                if (all == null) return;
+                for (int i = 0; i < all.Length; i++)
+                {
+                    var inv = all[i];
+                    if (inv == null) continue;
+                    try
+                    {
+                        if (inv.gameObject == null || !inv.gameObject.scene.IsValid()) continue;
+                        if (inv.intMenuOn) inv.ToggleInteractMenu();
+                        inv.updateItems();
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
+
+        static void ConsumeDropped(Items.itemlist itemToDrop, AnItem bagItem, AnItem anItem, int count)
+        {
+            PartyKeyRing.Remove(itemToDrop);
+            int n = count > 0 ? count : 1;
+            AnItem held = PartyKeyRing.FindInBag(anItem);
+            if (held == null) held = bagItem;
+            if (held != null)
+            {
+                try { InventoryManager.RemoveItem(held, n); } catch { }
+            }
+            try
+            {
+                var dict = InventoryManager.elsterItems;
+                if (dict != null)
+                {
+                    var extra = new System.Collections.Generic.List<AnItem>();
+                    var en = dict.GetEnumerator();
+                    while (en.MoveNext())
+                    {
+                        var key = en.Current.key;
+                        if (key != null && key._item == itemToDrop && en.Current.value > 0)
+                            extra.Add(key);
+                    }
+                    en.Dispose();
+                    for (int i = 0; i < extra.Count; i++)
+                    {
+                        try { InventoryManager.RemoveItem(extra[i], n); } catch { }
+                    }
+                }
+            }
+            catch { }
+            try
+            {
+                if (InventoryManager.CurrentItem != null && InventoryManager.CurrentItem._item == itemToDrop)
+                    InventoryManager.CurrentItem = null;
+            }
+            catch { }
+        }
+
+        public bool TryClaimDropped(int itemKey, int claimerId, out string reason, bool skipLocalGrant = false)
         {
             reason = "";
-            var go = DroppedItemManager.GetItem(itemKey);
-            if (go == null) return false;
             Items.itemlist itemEnum;
             int storedCount;
             if (!DroppedItemManager.TryGet(itemKey, out itemEnum, out storedCount))
@@ -1116,8 +1356,13 @@ namespace SyncRADation.Networking
 
             var item = InventoryManager.getItem(itemEnum);
             if (item == null) return false;
-            int count = storedCount;
+            int count = DroppedItemManager.SanitizeStack(storedCount, PartyKeyRing.IsKeyOrObject(itemEnum));
             bool shared = IsSharedItem(itemEnum);
+            if (!shared && claimerId == _localPlayerId && !BagHasRoom(itemEnum))
+            {
+                reason = "bag full";
+                return false;
+            }
 
             int senderID = (itemKey >> 16) & 0xFF;
             ushort localIdx = (ushort)(itemKey & 0xFFFF);
@@ -1131,16 +1376,20 @@ namespace SyncRADation.Networking
                 GrantToReceiver = shared
             });
 
-            DroppedItemManager.DespawnItem(itemKey);
+            if (claimerId == _localPlayerId)
+                DroppedItemManager.DespawnWhenIdle(itemKey);
+            else
+                DroppedItemManager.DespawnItem(itemKey);
+
+            PartyKeyRing.Note(item);
+            PartyKeyRing.Broadcast();
 
             if (shared)
-            {
-                PartyKeyRing.Note(item);
-                PartyKeyRing.Broadcast();
                 return true;
-            }
 
-            if (claimerId == _localPlayerId)
+            bool needGrant = claimerId == _localPlayerId
+                && (!skipLocalGrant || DroppedItemManager.CountInBag(itemEnum) <= 0);
+            if (needGrant)
             {
                 try { InventoryManager.AddItem(item, count); }
                 catch (Exception ex)
@@ -1148,11 +1397,9 @@ namespace SyncRADation.Networking
                     ModRuntime.Log?.Warning("[Pickup] AddItem failed: " + ex.Message);
                     return false;
                 }
-                PartyKeyRing.Note(item);
-                PartyKeyRing.Broadcast();
             }
-            else
-                reason = "grant:" + (int)itemEnum + ":" + count;
+            else if (claimerId != _localPlayerId)
+                reason = "";
 
             ModRuntime.Log?.Msg("[Pickup] Claimed " + itemEnum + " x" + count + " by " + claimerId);
             return true;
@@ -1168,6 +1415,8 @@ namespace SyncRADation.Networking
             }
             catch { return false; }
         }
+
+        public bool HasBagRoom(Items.itemlist itemEnum) => BagHasRoom(itemEnum);
 
         static bool BagHasRoom(Items.itemlist itemEnum)
         {
@@ -1462,6 +1711,8 @@ namespace SyncRADation.Networking
 
             if (!ack.Ok)
             {
+                if (ack.Kind == InteractionKind.DroppedPickup)
+                    ItemPickupPatches.RevertPendingNativeGrant();
                 ModRuntime.Log?.Msg("[Interact] rejected " + ack.Kind
                     + (string.IsNullOrEmpty(ack.Reason) ? "" : ": " + ack.Reason));
                 return;
@@ -1696,24 +1947,43 @@ namespace SyncRADation.Networking
         private void HandleDropItemSpawn(DropItemSpawnMessage msg)
         {
             int key = (msg.SenderID << 16) | msg.LocalIndex;
+            if (DroppedItemManager.GetItem(key) != null)
+            {
+                DetachDroppedKey((Items.itemlist)msg.ItemEnum);
+                return;
+            }
             var pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
-            DroppedItemManager.SpawnLocalItem((Items.itemlist)msg.ItemEnum, msg.Count, key, pos);
-            ModRuntime.Log?.Msg("[Drop] Remote dropped " + (Items.itemlist)msg.ItemEnum);
+            try
+            {
+                DroppedItemManager.SpawnLocalItem((Items.itemlist)msg.ItemEnum, msg.Count, key, pos);
+            }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[Drop] remote spawn crashed: " + ex.Message);
+                return;
+            }
+            DetachDroppedKey((Items.itemlist)msg.ItemEnum);
+            ModRuntime.Log?.Msg("[Drop] Remote dropped " + (Items.itemlist)msg.ItemEnum
+                + " at " + pos.x.ToString("F1") + "," + pos.y.ToString("F1") + "," + pos.z.ToString("F1"));
         }
 
         private void HandleItemPickedUp(ItemPickedUpMessage msg)
         {
             int key = (msg.SenderID << 16) | msg.LocalIndex;
-            DroppedItemManager.DespawnItem(key);
+            DroppedItemManager.DespawnWhenIdle(key);
 
             if (msg.GrantToReceiver)
             {
                 try
                 {
                     var item = InventoryManager.getItem((Items.itemlist)msg.ItemEnum);
-                    if (item != null)
+                    int have = 0;
+                    try { if (item != null) have = DroppedItemManager.CountInBag((Items.itemlist)msg.ItemEnum); } catch { }
+                    if (item != null && have <= 0)
                     {
-                        InventoryManager.AddItem(item, msg.Count);
+                        int grant = DroppedItemManager.SanitizeStack(msg.Count,
+                            PartyKeyRing.IsKeyOrObject((Items.itemlist)msg.ItemEnum));
+                        InventoryManager.AddItem(item, grant);
                         PartyKeyRing.OfferToHost(item);
                         ModRuntime.Log?.Msg("[Drop] Shared item granted: " + (Items.itemlist)msg.ItemEnum);
                     }
@@ -1852,7 +2122,8 @@ namespace SyncRADation.Networking
             _sendTimer = 0f;
             _lastStateTime = 0f;
             _proxyManager.DestroyAll();
-            DroppedItemManager.ClearAll();
+            DroppedItemManager.ClearVisuals();
+            DroppedItemManager.RespawnCurrentScene();
             WorldRegistry.Rebuild();
             DoorSyncService.RefreshScene();
             FmodEmitterSync.Reset();

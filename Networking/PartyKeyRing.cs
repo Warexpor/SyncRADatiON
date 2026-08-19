@@ -60,7 +60,11 @@ namespace SyncRADation.Networking
             try { Note(item._item); } catch { }
         }
 
-        public static void Remove(Items.itemlist item) => _keys.Remove((ushort)item);
+        public static void Remove(Items.itemlist item)
+        {
+            if (_keys.Remove((ushort)item))
+                PlaytestLog.Event("KeyRing", "drop " + item + " count=" + _keys.Count);
+        }
 
         public static void ApplyMessage(PartyKeyRingMessage msg)
         {

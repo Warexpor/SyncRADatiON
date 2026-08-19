@@ -12,7 +12,101 @@ namespace SyncRADation.Patches
         static Items.itemlist _pendingItem;
         static float _pendingTime;
 
-        internal static void NoteTakenFromCallback(ItemPickup p) => NoteTaken(p);
+        internal static void NoteTakenFromCallback(ItemPickup p)
+        {
+            if (p != null && ItemSystem.DroppedItemManager.IsDropped(p))
+            {
+                TakeDropped(p);
+                return;
+            }
+            NoteTaken(p);
+        }
+
+        internal static bool TakeDropped(ItemPickup p)
+        {
+            ArmDropped(p);
+            if (_pendingDropKey < 0) return false;
+            EnsureGranted();
+            FinishDroppedNative(p, true, ignoreCount: true);
+            try { ItemSystem.DroppedItemManager.RestorePlay(); } catch { }
+            return true;
+        }
+
+        static void EnsureGranted()
+        {
+            var id = _pendingDropItem;
+            if (id == Items.itemlist.None && _pendingDropKey >= 0)
+                ItemSystem.DroppedItemManager.TryGet(_pendingDropKey, out id, out _);
+            if (id == Items.itemlist.None) return;
+            if (CountOfItem(id) > 0) return;
+            try
+            {
+                var item = InventoryManager.getItem(id);
+                if (item != null)
+                    InventoryManager.AddItem(item, _pendingDropCount > 0 ? _pendingDropCount : 1);
+            }
+            catch (System.Exception ex)
+            {
+                ModRuntime.Log?.Warning("[Drop] grant: " + ex.Message);
+            }
+        }
+
+        internal static void ArmDropped(ItemPickup p)
+        {
+            if (p == null || !ItemSystem.DroppedItemManager.IsDropped(p)) return;
+            int key;
+            if (ItemSystem.DroppedItemManager.TryKeyOf(p, out key))
+                _pendingDropKey = key;
+            _pendingDropItem = Items.itemlist.None;
+            _pendingDropCount = 1;
+            try
+            {
+                if (p._item != null) _pendingDropItem = p._item._item;
+                _pendingDropCount = p.count > 0 ? p.count : 1;
+            }
+            catch { }
+            if (_pendingDropItem == Items.itemlist.None && _pendingDropKey >= 0)
+            {
+                int c;
+                ItemSystem.DroppedItemManager.TryGet(_pendingDropKey, out _pendingDropItem, out c);
+                if (c > 0) _pendingDropCount = c;
+            }
+            _countBeforeDrop = CountOfItem(_pendingDropItem);
+        }
+
+        internal static void TickPendingDrop()
+        {
+            if (_pendingDropKey < 0) return;
+            if (!ItemSystem.DroppedItemManager.TryGet(_pendingDropKey, out _, out _))
+            {
+                _pendingDropKey = -1;
+                return;
+            }
+            if (!BagGained(null)) return;
+            FinishDroppedNative(null, true, ignoreCount: true);
+        }
+
+        static bool BagGained(ItemPickup p)
+        {
+            var id = _pendingDropItem;
+            if (id == Items.itemlist.None && p != null)
+            {
+                try { if (p._item != null) id = p._item._item; } catch { }
+            }
+            if (id == Items.itemlist.None && _pendingDropKey >= 0)
+                ItemSystem.DroppedItemManager.TryGet(_pendingDropKey, out id, out _);
+            if (id == Items.itemlist.None) return false;
+            return CountOfItem(id) > _countBeforeDrop;
+        }
+
+        internal static void CommitDroppedIfTaken(ItemPickup p)
+        {
+            if (p != null && IsInspect(p)) return;
+            bool trig = false;
+            try { if (p != null) trig = p.triggered; } catch { }
+            if (!trig) return;
+            FinishDroppedNative(p, true, ignoreCount: true);
+        }
 
         internal static void NoteCraftedKey(AnItem item)
         {
@@ -30,10 +124,22 @@ namespace SyncRADation.Patches
             return false;
         }
 
+        static int _pendingDropKey = -1;
+        static Items.itemlist _pendingDropItem;
+        static int _pendingDropCount;
+        static int _countBeforeDrop;
+
         [HarmonyPrefix]
         public static bool Prefix(ItemPickup __instance)
         {
             if (__instance == null) return true;
+
+            if (ItemSystem.DroppedItemManager.IsDropped(__instance))
+            {
+                ArmDropped(__instance);
+                return true;
+            }
+
             if (NetGate.IsApplying) return true;
 
             var net = LanNetworkManager.Instance;
@@ -98,6 +204,11 @@ namespace SyncRADation.Patches
         public static void Postfix(ItemPickup __instance, bool __runOriginal)
         {
             if (!__runOriginal) return;
+            if (__instance != null && ItemSystem.DroppedItemManager.IsDropped(__instance))
+            {
+                CommitDroppedIfTaken(__instance);
+                return;
+            }
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
             if (Config.ModConfig.SyncWorldPickups?.Value != true) return;
@@ -206,6 +317,71 @@ namespace SyncRADation.Patches
             if (p == null) return 1;
             try { return p.count > 0 ? p.count : 1; } catch { return 1; }
         }
+
+        static int CountOfItem(Items.itemlist item)
+        {
+            return ItemSystem.DroppedItemManager.CountInBag(item);
+        }
+
+        internal static void NoteDroppedGrant(AnItem item)
+        {
+            if (_pendingDropKey < 0) return;
+            FinishDroppedNative(null, true, ignoreCount: true);
+        }
+
+        static readonly System.Collections.Generic.HashSet<int> _claimedDrops
+            = new System.Collections.Generic.HashSet<int>();
+
+        static void FinishDroppedNative(ItemPickup p, bool confirmed, bool ignoreCount = false)
+        {
+            if (!confirmed) return;
+            int key = _pendingDropKey;
+            if (p != null)
+            {
+                int k;
+                if (ItemSystem.DroppedItemManager.TryKeyOf(p, out k))
+                    key = k;
+            }
+            if (key < 0) return;
+            if (!ItemSystem.DroppedItemManager.TryGet(key, out _, out _)) return;
+
+            if (!ignoreCount && !BagGained(p)) return;
+
+            if (!_claimedDrops.Add(key))
+            {
+                ItemSystem.DroppedItemManager.DespawnWhenIdle(key);
+                _pendingDropKey = -1;
+                return;
+            }
+
+            var net = LanNetworkManager.Instance;
+            ModRuntime.Log?.Msg("[Drop] claim key=" + key + " " + _pendingDropItem
+                + " by=" + (net != null ? net.LocalPlayerId.ToString() : "?")
+                + " host=" + (net != null && net.Role == NetworkRole.Host));
+            if (net != null && net.IsConnected)
+            {
+                if (net.Role == NetworkRole.Host)
+                    net.TryClaimDropped(key, net.LocalPlayerId, out _, skipLocalGrant: true);
+                else
+                    net.SendInteractionRequest(0, InteractionKind.DroppedPickup, key);
+            }
+            ItemSystem.DroppedItemManager.DespawnWhenIdle(key);
+            _pendingDropKey = -1;
+        }
+
+        internal static void RevertPendingNativeGrant()
+        {
+            if (_pendingDropItem == Items.itemlist.None) return;
+            try
+            {
+                var item = InventoryManager.getItem(_pendingDropItem);
+                if (item != null)
+                    InventoryManager.RemoveItem(item, _pendingDropCount > 0 ? _pendingDropCount : 1);
+            }
+            catch { }
+            _pendingDropKey = -1;
+            _pendingDropItem = Items.itemlist.None;
+        }
     }
 
     [HarmonyPatch(typeof(ItemPickup), "dialoguerCallback")]
@@ -214,7 +390,28 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(ItemPickup __instance)
         {
-            ItemPickupPatches.NoteTakenFromCallback(__instance);
+            try { ItemPickupPatches.NoteTakenFromCallback(__instance); }
+            catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] callback: " + ex.Message); }
+            try { ItemSystem.DroppedItemManager.TickDeferred(); } catch { }
+        }
+    }
+
+    [HarmonyPatch(typeof(ItemPickup), "release")]
+    public static class ItemPickupReleasePatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(ItemPickup __instance)
+        {
+            try
+            {
+                if (__instance != null && ItemSystem.DroppedItemManager.IsDropped(__instance))
+                {
+                    ItemPickupPatches.TakeDropped(__instance);
+                    return false;
+                }
+            }
+            catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] release: " + ex.Message); }
+            return true;
         }
     }
 
@@ -224,6 +421,7 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(AnItem item)
         {
+            ItemPickupPatches.NoteDroppedGrant(item);
             ItemPickupPatches.NoteCraftedKey(item);
         }
     }
@@ -234,6 +432,7 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(AnItem item)
         {
+            ItemPickupPatches.NoteDroppedGrant(item);
             ItemPickupPatches.NoteCraftedKey(item);
         }
     }

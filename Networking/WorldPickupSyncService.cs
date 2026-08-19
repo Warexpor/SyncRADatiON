@@ -1,5 +1,6 @@
 // Host-authoritative world ItemPickup: claim → grant claimer, hide for all peers.
 using System.Collections.Generic;
+using SyncRADation.ItemSystem;
 using SyncRADation.Sync;
 using UnityEngine;
 
@@ -62,6 +63,7 @@ namespace SyncRADation.Networking
         public bool IsClaimedPickup(ItemPickup p)
         {
             if (p == null) return false;
+            if (DroppedItemManager.IsDropped(p)) return false;
             ulong id = 0;
             try { id = WorldId.FromGameObject(p.gameObject); } catch { }
             if (id != 0 && _claimed.Contains(id)) return true;
@@ -147,6 +149,7 @@ namespace SyncRADation.Networking
                     {
                         var p = picks[i];
                         if (p == null) continue;
+                        if (DroppedItemManager.IsDropped(p)) continue;
                         ulong id = WorldId.FromGameObject(p.gameObject);
                         if (id != 0 && _claimed.Contains(id))
                         {
@@ -189,6 +192,7 @@ namespace SyncRADation.Networking
                     var p = all[i];
                     if (p == null) continue;
                     try { if (p.slave) continue; } catch { }
+                    if (DroppedItemManager.IsDropped(p)) continue;
                     ulong id = WorldId.FromGameObject(p.gameObject);
                     if (id == 0) continue;
                     if (!_byId.ContainsKey(id))

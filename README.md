@@ -52,14 +52,12 @@ Debug builds copy into both `$(SignalisDir)\Mods` and `$(ClientSignalisDir)\Mods
 | --- | ----------------------------------------------------------- |
 | F2  | Multiplayer menu (Host / Connect / Resync / status)         |
 | F3  | Quick connect (saved IP/port)                               |
-| G   | Drop selected inventory item                                |
-| E   | Pick up a nearby **player-dropped** item                    |
+| G   | Drop highlighted inventory slot (or DROP in the item command list) |
 | F6  | Item giver                                                  |
 | F7  | Location teleporter (chapters + rooms in the current level) |
 | F11 | Entity spawner (any replika type; host-authoritative)       |
 
-
-
+Walk up to a player-dropped prop for the native TAKE prompt (yes/no inspect, ammo count). No extra pickup key.
 
 ## What is synced
 
@@ -73,7 +71,7 @@ Debug builds copy into both `$(SignalisDir)\Mods` and `$(ClientSignalisDir)\Mods
 | Story (Dialoguer, cutscenes, SProgress)                            | Host                      | Flags commit; books/notes/EventScreen inspect stay local; story Dialoguer Start/Continue/End from the client plays on the host |
 | Puzzles / locks / elevators / radio module / storage / event zones | Host                      | WorldId-keyed; storage **contents** shared                                                                                     |
 | World ItemPickups                                                  | Host claim/grant          | Claimer gets the item; unique **Key/Object** go on the **party key ring**                                                      |
-| Player-dropped items                                               | Peer + relay              | G drops the selected stack; E pickup if bag has room                                                                           |
+| Player-dropped items                                               | Peer + relay              | G / inventory DROP; sits on the floor; native TAKE inspect (yes/no + count); join dump                                         |
 | Death                                                              | Asymmetric                | Native `HurtElster`; client downed (drops bag); host death reloads last save for both                                          |
 | Bosses (END / Chimera / Mynah / Kolibri / Adler)                   | Host                      | Light-field sync                                                                                                               |
 | Friendly fire                                                      | Opt-in                    | Default off                                                                                                                    |

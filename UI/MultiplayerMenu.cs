@@ -81,7 +81,7 @@ namespace SyncRADation.UI
                     net.RequestWorldSnapshot();
             }
 
-            GUI.Label(CR(10, 290, 340, 20), "G=drop E=pickup F6/F7/F11 cheats");
+            GUI.Label(CR(10, 290, 340, 20), "G/DROP=drop  TAKE=pickup  F6/F7/F11 cheats");
 
             if (GUI.Button(CR(10, 320, 330, 25), "Close (F2)"))
                 _showMenu = false;

@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using FMODUnity;
+using SyncRADation.ItemSystem;
 using SyncRADation.Patches;
 using SyncRADation.Sync;
 using UnityEngine;
@@ -943,6 +944,7 @@ namespace SyncRADation.Networking
             GameObject go = null;
             try { go = it.gameObject; } catch { }
             if (go == null) return false;
+            if (DroppedItemManager.IsDroppedGo(go)) return false;
             try
             {
                 var pad = FindInParents<LAB_PatternLock>(go);

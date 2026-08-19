@@ -135,7 +135,7 @@ namespace SyncRADation.Players
             var player = PlayerState.player;
             if (player == null) return;
 
-            Vector3 pos = player.transform.position;
+            Vector3 pos = DroppedItemManager.FloorDropPos(player.transform);
 
             try
             {
@@ -163,9 +163,9 @@ namespace SyncRADation.Players
                     ushort idx = net.AllocateItemIndex();
                     int key = (net.LocalPlayerId << 16) | idx;
                     Vector3 dropPos = pos + new Vector3(
-                        UnityEngine.Random.Range(-0.12f, 0.12f),
-                        0f,
-                        UnityEngine.Random.Range(-0.12f, 0.12f));
+                        UnityEngine.Random.Range(-0.35f, 0.35f),
+                        UnityEngine.Random.Range(-0.08f, 0.08f),
+                        0f);
                     n++;
                     DroppedItemManager.SpawnLocalItem(entry.enumVal, entry.count, key, dropPos);
 
@@ -181,7 +181,10 @@ namespace SyncRADation.Players
                     });
 
                     try { InventoryManager.RemoveItem(entry.item, entry.count); } catch { }
+                    PartyKeyRing.Remove(entry.enumVal);
                 }
+                if (net.Role == NetworkRole.Host)
+                    PartyKeyRing.Broadcast();
             }
             catch (System.Exception ex)
             {

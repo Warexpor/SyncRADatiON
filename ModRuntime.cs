@@ -1,6 +1,7 @@
 // Main orchestrator: guards, friendly fire (optional), network lifecycle
 using MelonLoader;
 using SyncRADation.Config;
+using SyncRADation.ItemSystem;
 using SyncRADation.Networking;
 using SyncRADation.Players;
 using SyncRADation.Sync;
@@ -35,7 +36,7 @@ namespace SyncRADation
                 Log.Msg("  " + PluginInfo.Name + " v" + PluginInfo.Version);
                 Log.Msg("  " + PluginInfo.Description);
                 Log.Msg("  Protocol v" + PluginInfo.ProtocolVersion + " | Port " + PluginInfo.DefaultPort);
-                Log.Msg("  F2 menu | F3 quick connect | G drop | E pickup");
+                Log.Msg("  F2 menu | F3 quick connect | G/DROP drop | native TAKE pickup");
                 Log.Msg("  FriendlyFire=" + (ModConfig.FriendlyFire?.Value == true)
                     + " VerboseLogging=" + VerboseLogging);
                 Log.Msg("  grep: [Story] [Interact] [FMOD] [KeyRing] [StorageBox] [Scene] [Damage] [Door] [Puzzle] [Pickup] [Harmony] [Hitch] [Spawn]");
@@ -91,6 +92,7 @@ namespace SyncRADation
         {
             var pm = Network?.ProxyManager;
             var net = Network;
+            try { DroppedItemManager.TickDeferred(); } catch { }
 
             // Guard: PlayerState.player must never point at a remote proxy
             if (pm != null)

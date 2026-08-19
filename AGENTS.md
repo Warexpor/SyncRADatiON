@@ -13,8 +13,9 @@ LAN multiplayer MelonLoader mod for SIGNALIS (Unity IL2CPP / Unhollower-style Ma
 - F6 / F11 — item giver / entity spawner (any replika type, not current-scene clones)
 - F7 — location teleporter (chapters + rooms in current level)
 
-- G — drop selected item (inventory or play)
-- E — pick up nearby **dropped** (player-dropped) item
+- G — drop selected item (inventory slot, or DROP in the item command list)
+
+Walk up to a dropped prop for the native TAKE prompt (yes/no inspect, ammo count). There is no extra pickup key.
 
 ## What is synced (0.4.3)
 
@@ -31,7 +32,7 @@ LAN multiplayer MelonLoader mod for SIGNALIS (Unity IL2CPP / Unhollower-style Ma
 | Puzzles / locks / elevators / radio module / storage / event zones / alert | Host + client emit | **WorldId-keyed**; client emits puzzle/lock types only (not `Interaction.trigger` / EventZone / combat); apply **snaps flags + doors**, never EventScreen / `trigger()`; cryo/codepad/pump/pipes/hatch live-apply native Open/Drain/TurnValve; unlocked location doors stay open for the party |
 | Host disconnect | Client goes offline | Restores play + input (no freeze) |
 | World ItemPickups | Host claim/grant | Claimer gets item; unique **Key/Object** go on the **party key ring**; ammo/docs do not. Client bag keys still unlock UseItem (hatch card) |
-| Player-dropped items | Peer + relay | G drops the selected stack; E pickup rejects a full bag; shared “Object” type grants |
+| Player-dropped items | Peer + relay | G or inventory **DROP**; floor snap; native TAKE inspect (yes/no + count) then grant; join dump; bag-full reject |
 | Death | Asymmetric | Client downed (drops bag); native `HurtElster` HP; host death `SaveManager.Load` for both |
 | Bosses (END / Chimera / Mynah / Kolibri / Adler) | Host | `END_Boss.Elster` / `BOS_Adler.Elster`; Kolibri dead/intensity |
 | Friendly fire | Opt-in | Default OFF |
