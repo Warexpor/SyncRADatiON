@@ -2,6 +2,12 @@
 
 ## 0.4.3-dev — 2026-09-13
 
+### Changed
+- Linux playtest port: csproj defaults to `~/Work/MyProjects/SIGNALIS` + Steam under `~/.local/share/Steam/...`; `scripts/launch-client.sh` / `secondsignalis` runs the second box under its own Proton prefix. Steam host install gets MelonLoader 0.5.7 + `single-instance=0`.
+- Proton MelonLoader: force native `version.dll` (`WINEDLLOVERRIDES=version=n,b` on Steam launch options + client launcher; prefix `DllOverrides` too). Without this, Steam Play boots vanilla and never writes `MelonLoader/Latest.log`.
+- Dual-box display: windowed 2560x720 + Hyprland float rules — Steam host top half, `secondsignalis` bottom half (not fullscreen).
+- `.gitattributes` enforces LF so Windows/Proton editors don’t churn the tree.
+
 ### Fixed
 - Door open/close SFX: remote apply no longer plays native door emitters ungated (host→client and client→host). Distance-gated `DoorNative` SFX only; `event:/Environment/Doors/*` no longer world-relays via FMOD OneShot/emitter sync.
 
