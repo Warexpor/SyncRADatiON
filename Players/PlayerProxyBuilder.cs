@@ -92,7 +92,8 @@ namespace SyncRADation.Players
                 proxyAnim.speed = 1f;
                 proxyAnim.enabled = true;
                 try { proxyAnim.Rebind(); proxyAnim.Update(0f); } catch { }
-                log?.Msg("[Proxy] Animator ENABLED: ctrl=" + sourceAnim.runtimeAnimatorController
+                if (ModRuntime.VerboseLogging)
+                    log?.Msg("[Proxy] Animator ENABLED: ctrl=" + sourceAnim.runtimeAnimatorController
                     + " avatar=" + sourceAnim.avatar);
             }
             else
@@ -119,7 +120,8 @@ namespace SyncRADation.Players
             var rb3 = proxy.GetComponent<Rigidbody>();
             if (rb3 != null) { rb3.useGravity = false; rb3.isKinematic = true; rb3.Sleep(); }
 
-            log?.Msg("Model-only proxy created: " + proxy.name + " at " + proxy.transform.position.ToString("F1")
+            if (ModRuntime.VerboseLogging)
+                log?.Msg("Model-only proxy created: " + proxy.name + " at " + proxy.transform.position.ToString("F1")
                 + " rootEuler=" + proxy.transform.eulerAngles.ToString("F1"));
 
             // --- Fix IL2CPP: copy sharedMesh from source SMRs to proxy SMRs ---
@@ -145,7 +147,7 @@ namespace SyncRADation.Players
                         proxySmrs[si].sharedMaterials = sourceSmrs[si].sharedMaterials;
                 }
             }
-            if (copyCount > 0)
+            if (copyCount > 0 && ModRuntime.VerboseLogging)
                 log?.Msg("[Proxy] Copied " + copyCount + " sharedMeshes from source to proxy");
 
             // Apply character model variant if present on source
@@ -176,7 +178,8 @@ namespace SyncRADation.Players
             proxyCol.height = 1.8f;
             proxyCol.center = new Vector3(0, 0.9f, 0);
             proxyCol.isTrigger = true;
-            log?.Msg("[Proxy] Kinematic trigger capsule for FF detection");
+            if (ModRuntime.VerboseLogging)
+                log?.Msg("[Proxy] Kinematic trigger capsule for FF detection");
 
             return proxy;
         }
@@ -284,7 +287,8 @@ namespace SyncRADation.Players
 
             Object.Destroy(dummy);
 
-            log?.Msg("Full proxy created: " + proxy.name + " at " + proxy.transform.position.ToString("F1"));
+            if (ModRuntime.VerboseLogging)
+                log?.Msg("Full proxy created: " + proxy.name + " at " + proxy.transform.position.ToString("F1"));
             return proxy;
         }
 

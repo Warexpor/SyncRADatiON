@@ -13,6 +13,8 @@ namespace SyncRADation.Networking
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
             if (string.IsNullOrEmpty(sceneName) || IsTransient(sceneName)) return;
+            if (AlreadyRequested(sceneName) || AlreadyGoingTo(sceneName)) return;
+            NoteRequested(sceneName);
             net.SendSceneFollow(sceneName, true);
         }
 
@@ -21,21 +23,27 @@ namespace SyncRADation.Networking
             if (string.IsNullOrEmpty(sceneName)) return false;
             if (!IsKnownScene(sceneName))
             {
-                ModRuntime.Log?.Warning("[SceneFollow] Rejected unknown scene '" + sceneName + "'");
+                PlaytestLog.Warn("Scene", "unknown '" + sceneName + "'");
                 return false;
             }
-            if (AirlockCinematic.DeferFollowWhileAirlockPresent())
+            try
             {
-                try
+                string here = SceneManager.GetActiveScene().name ?? "";
+                if (AirlockCinematic.IsWreckHoleSplit(here, sceneName))
                 {
-                    string here = SceneManager.GetActiveScene().name ?? "";
+                    PlaytestLog.Event("Scene", "reject peer '" + sceneName
+                        + "' (airlock split, host='" + here + "')");
+                    return true;
+                }
+                if (AirlockCinematic.DeferFollowWhileAirlockPresent())
+                {
                     if (string.Equals(here, sceneName, System.StringComparison.Ordinal))
                         return true;
+                    PlaytestLog.Event("Scene", "reject peer '" + sceneName + "' (host airlock cinematic)");
+                    return false;
                 }
-                catch { }
-                ModRuntime.Log?.Msg("[SceneFollow] Reject peer request '" + sceneName + "' (host airlock cinematic)");
-                return false;
             }
+            catch { }
             try
             {
                 string cur = SceneManager.GetActiveScene().name ?? "";
@@ -48,6 +56,11 @@ namespace SyncRADation.Networking
                 }
             }
             catch { }
+            if (AlreadyGoingTo(sceneName))
+            {
+                PlaytestLog.Event("Scene", "coalesce load '" + sceneName + "'");
+                return true;
+            }
             try
             {
                 AsyncLoader.LoadLevel(sceneName);
@@ -55,7 +68,7 @@ namespace SyncRADation.Networking
             }
             catch (System.Exception ex)
             {
-                ModRuntime.Log?.Warning("[SceneFollow] Peer request LoadLevel failed: " + ex.Message);
+                PlaytestLog.Warn("Scene", "peer LoadLevel failed: " + ex.Message);
             }
             Apply(sceneName);
             try
@@ -194,11 +207,57 @@ namespace SyncRADation.Networking
 
         static string _pending;
         static float _pendingAt;
+        static string _requested;
+        static float _requestedAt;
+        const float InflightWindow = 12f;
 
         public static bool IsTransient(string sceneName)
         {
             if (string.IsNullOrEmpty(sceneName)) return true;
             return string.Equals(sceneName, "LoadingScreen", System.StringComparison.Ordinal);
+        }
+
+        public static bool AlreadyGoingTo(string sceneName)
+        {
+            if (string.IsNullOrEmpty(sceneName) || IsTransient(sceneName)) return false;
+            if (string.Equals(_pending, sceneName, System.StringComparison.Ordinal)
+                && Time.unscaledTime - _pendingAt < InflightWindow)
+                return true;
+            try
+            {
+                if (string.Equals(AsyncLoader.targetLevelString, sceneName, System.StringComparison.Ordinal))
+                    return true;
+            }
+            catch { }
+            return false;
+        }
+
+        static bool AlreadyRequested(string sceneName)
+        {
+            return string.Equals(_requested, sceneName, System.StringComparison.Ordinal)
+                && Time.unscaledTime - _requestedAt < InflightWindow;
+        }
+
+        static void NoteRequested(string sceneName)
+        {
+            _requested = sceneName;
+            _requestedAt = Time.unscaledTime;
+        }
+
+        public static void NoteGoingTo(string sceneName)
+        {
+            if (string.IsNullOrEmpty(sceneName) || IsTransient(sceneName)) return;
+            _pending = sceneName;
+            _pendingAt = Time.unscaledTime;
+        }
+
+        public static void NoteArrived(string sceneName)
+        {
+            if (string.IsNullOrEmpty(sceneName) || IsTransient(sceneName)) return;
+            if (string.Equals(_pending, sceneName, System.StringComparison.Ordinal))
+                _pending = null;
+            if (string.Equals(_requested, sceneName, System.StringComparison.Ordinal))
+                _requested = null;
         }
 
         public static string ResolveLevelName(int index)
@@ -225,13 +284,11 @@ namespace SyncRADation.Networking
                 _pending = null;
                 return;
             }
-            if (string.Equals(_pending, sceneName, System.StringComparison.Ordinal)
-                && Time.unscaledTime - _pendingAt < 10f)
+            if (AlreadyGoingTo(sceneName))
                 return;
 
-            _pending = sceneName;
-            _pendingAt = Time.unscaledTime;
-            ModRuntime.Log?.Msg("[SceneFollow] Loading '" + sceneName + "' (was '" + cur + "')");
+            NoteGoingTo(sceneName);
+            PlaytestLog.Event("Scene", "follow load '" + sceneName + "' (was '" + cur + "')");
             NetGate.BeginApply();
             try
             {
@@ -251,7 +308,7 @@ namespace SyncRADation.Networking
             }
             catch (System.Exception ex)
             {
-                ModRuntime.Log?.Warning("[SceneFollow] Load failed: " + ex.Message);
+                PlaytestLog.Warn("Scene", "load failed: " + ex.Message);
             }
             finally
             {

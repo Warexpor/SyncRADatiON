@@ -239,7 +239,7 @@ namespace SyncRADation.Networking
                     }
                     if (progressed.Count > 0)
                     {
-                        PlaytestLog.Event("Puzzle", "client seed send " + progressed.Count
+                        PlaytestLog.Event("Puzzle", "client seed " + progressed.Count
                             + " " + Describe(progressed));
                         net.SendPuzzleState(progressed.ToArray(), false);
                     }
@@ -249,7 +249,7 @@ namespace SyncRADation.Networking
                 ReadAll(local, false, clientFilter: true, activeOnly: true);
                 if (local.Count > 0)
                 {
-                    PlaytestLog.Event("Puzzle", "client diff " + local.Count
+                    PlaytestLog.Verbose("Puzzle", "client diff " + local.Count
                         + " " + Describe(local));
                     net.SendPuzzleState(local.ToArray(), false);
                 }
@@ -632,6 +632,8 @@ namespace SyncRADation.Networking
             switch (type)
             {
                 case PuzzleType.PuzzleStatus:
+                case PuzzleType.InteractiveLock:
+                case PuzzleType.InteractiveLockSingle:
                 case PuzzleType.Keypad3D:
                 case PuzzleType.ROT_Keypad:
                 case PuzzleType.PEN_Codepad:
@@ -757,9 +759,11 @@ namespace SyncRADation.Networking
             if (net != null && net.SceneMismatch)
                 return;
 
-            PlaytestLog.Event("Puzzle", "apply n=" + msg.Entries.Length
+            string applyLine = "apply n=" + msg.Entries.Length
                 + " from=" + msg.SenderPlayerId + (msg.FullRefresh ? " full" : "")
-                + " " + Describe(msg.Entries));
+                + " " + Describe(msg.Entries);
+            if (msg.FullRefresh) PlaytestLog.Event("Puzzle", applyLine);
+            else PlaytestLog.Verbose("Puzzle", applyLine);
             EnsureScanned();
             bool cinematic = !msg.FullRefresh;
             bool prevMutate = _mutateWorld;
@@ -1125,10 +1129,22 @@ namespace SyncRADation.Networking
                                     break;
                             }
                             catch { }
-                            if (e.Bool0 && x.door != null)
-                                x.door.locked = true;
-                            if (e.Bool1)
-                                DoorNative.ApplyLockPlate(x, true);
+                            if (e.Bool0)
+                            {
+                                if (x.door != null) x.door.locked = true;
+                                if (e.Bool1)
+                                    DoorNative.ApplyLockPlate(x, true);
+                            }
+                            else
+                            {
+                                if (x.door != null)
+                                {
+                                    try { x.door.locked = false; } catch { }
+                                    UnlockDoorObject(x.door.gameObject);
+                                }
+                                TryUnlockDoors(x.gameObject);
+                                DoorNative.ApplyLockPlate(x, false);
+                            }
                             break;
                         }
                     case PuzzleType.Keypad3D:
@@ -1472,7 +1488,7 @@ namespace SyncRADation.Networking
                                 if (e.Bool0 && !was)
                                 {
                                     SyncRADation.Patches.EventZonePatch.MarkFired(unchecked((ulong)e.WorldId));
-                                    if (_mutateWorld)
+                                    if (_mutateWorld && LocalInspect.InLocalRoom(x.gameObject))
                                     {
                                         try { if (x.onInRange != null) x.onInRange.Invoke(); } catch { }
                                     }
@@ -1655,8 +1671,7 @@ namespace SyncRADation.Networking
             }
             catch (Exception ex)
             {
-                if (Config.ModConfig.VerboseLogging?.Value == true)
-                    ModRuntime.Log?.Warning("[PuzzleSync] Apply " + e.Type + ": " + ex.Message);
+                PlaytestLog.Warn("Puzzle", "apply " + e.Type + ": " + ex.Message);
             }
         }
 

@@ -21,6 +21,22 @@ namespace SyncRADation.Networking
 
         public void RefreshScene()
         {
+            var keepItems = new HashSet<ushort>(_claimedItems);
+            _scanned = false;
+            _needFull = true;
+            _lastTriggered.Clear();
+            _lastActive.Clear();
+            _claimed.Clear();
+            _claimedItems.Clear();
+            _claimerOf.Clear();
+            _byId.Clear();
+            _timer = 0f;
+            foreach (var item in keepItems)
+                _claimedItems.Add(item);
+        }
+
+        public void Reset()
+        {
             _scanned = false;
             _needFull = true;
             _lastTriggered.Clear();
@@ -31,8 +47,6 @@ namespace SyncRADation.Networking
             _byId.Clear();
             _timer = 0f;
         }
-
-        public void Reset() => RefreshScene();
         public void RequestFullSend() => _needFull = true;
         public static Items.itemlist ResolveItem(ItemPickup p)
         {
@@ -387,10 +401,10 @@ namespace SyncRADation.Networking
                             NoteClaimedItem(p._item._item);
                     }
                     catch { }
-                    PlaytestLog.Event("Pickup", "hide id=" + id.ToString("X16") + " " + p.gameObject.name);
+                    PlaytestLog.Verbose("Pickup", "hide id=" + id.ToString("X16") + " " + p.gameObject.name);
                 }
                 else
-                    PlaytestLog.Event("Pickup", "hide pending id=" + id.ToString("X16"));
+                    PlaytestLog.Verbose("Pickup", "hide pending id=" + id.ToString("X16"));
             }
 
             HideClaimed(null);
@@ -421,13 +435,6 @@ namespace SyncRADation.Networking
                 NetGate.BeginApply();
                 try
                 {
-                    bool inspect = false;
-                    try
-                    {
-                        inspect = p != null && (p.showItemView || p.focusCamera || p.pauseGame);
-                    }
-                    catch { }
-
                     var kind = (Items.itemlist)msg.ItemEnum;
                     AnItem item = null;
                     if (kind != Items.itemlist.None)
@@ -451,16 +458,12 @@ namespace SyncRADation.Networking
                         ModRuntime.Log?.Warning("[WorldPickup] Grant unknown item " + msg.ItemEnum);
                         return;
                     }
-                    bool already = false;
-                    try { already = InventoryManager.hasItem(kind); } catch { }
-                    if (!already)
-                    {
-                        try { already = InventoryManager.hasItem(item); } catch { }
-                    }
-                    // Inspect pickups already ran native pickUp() on the claimer.
-                    if (!already && !inspect)
+                    // hasItem includes the party key ring — that skipped bag AddItem so
+                    // keys worked on doors but never appeared in the 6-slot UI.
+                    if (!PartyKeyRing.InLocalBag(item))
                         InventoryManager.AddItem(item, msg.Count > 0 ? msg.Count : 1);
                     PartyKeyRing.Note(item);
+                    PartyKeyRing.BindUseDialogue(item);
                 }
                 finally
                 {

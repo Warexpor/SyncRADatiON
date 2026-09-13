@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.3-dev — 2026-09-13
+
+### Fixed
+- Door open/close SFX: remote apply no longer plays native door emitters ungated (host→client and client→host). Distance-gated `DoorNative` SFX only; `event:/Environment/Doors/*` no longer world-relays via FMOD OneShot/emitter sync.
+
 ## 0.4.3-dev — 2026-08-19
 
 Protocol **v8** (same wire as 0.4.2). Client join no longer mutates authored sealed-door faces.
@@ -8,9 +13,18 @@ Protocol **v8** (same wire as 0.4.2). Client join no longer mutates authored sea
 - Player-dropped items (v1): G / inventory **DROP** clones a native floor `ItemPickup`; walk-up TAKE inspect (yes/no + count) then grant. Unique Key/Object go on the party ring; join dump; bag-full reject. Dual-instance verified both drop/TAKE arrows.
 
 ### Changed
+- World FMOD no longer relays Music / Cutscenes / Ambience beds (each Elster plays those locally). Unique Key/Object claims survive chapter loads so copies stay hidden.
 - Dead-code trim: unused overlay/drop leftovers, no-op dialogue apply, unused vital fields, bone-send divider, and one-line aliases. Shared `WorldLookup.All` / `WeaponUtils.EquippedWeaponType` / `LocalInspect.InspectScreen`.
+- Logs: always-on session/world/story edges with `H`/`C` role prefix; identical lines collapse for 3s. Hitch prints only on a real spike. FMOD Play/Stop, proxy clone/FX dumps, and incremental puzzle apply sit behind `VerboseLogging` (default off).
 
 ### Fixed
+- Client chapter request (F7 / cutscene load) no longer double-`LoadLevel`s while the host is on `LoadingScreen`. In-flight target is coalesced; dumps from the loading screen are skipped; `LastCmd` CutsceneStart does not ride into the next chapter.
+- Pickup inspect no longer shows the last UseItem name (Airlock Key) for ammo/cards/books. Dialoguer s0/s3 bind to the catalog item before `pickUp`; story XML dumps restore the local name instead of stomping it.
+- Inspect grants now `AddItem` into the real 6-slot bag (`InLocalBag`), not ring-patched `hasItem`. Keys still open doors; they also show in the inventory.
+- Other-room `CutsceneStart` / `EventZone` / `CutsceneProceed` / `MultiCondition` no longer Invoke on the observer (that was the leaked traverse / cinematic yank). Initiator still plays locally; host relays.
+- Host wakes a sleeping-chunk enemy when a peer is in range or a hit arrives, then logs WorldId misses. Client puppets still use native contact hurtboxes (ramming an enemy is real SIGNALIS damage).
+- `CutsceneManager.Skip` no longer NREs when `cutscene` is null (host never started it). Skip/Start are once per WorldId; join dump only replays a cutscene that is still running in this scene.
+- Client unlock of `InteractiveLockSingle` now emits to the host. Non-flavor `Doorway_Double` opens are honored even if the host lock bit is still set; flavor seals still ignore.
 - Dropped TAKE no longer calls `Dialoguer.EndDialogue` (that broadcast a WorldId-0 `DialogueEnd` storm and crashed). Play flags restore without Dialoguer. Clone `release()` is skipped; grant + despawn still run.
 - Client TAKE no longer destroys the inspect pickup mid-callback (that NRE'd `dialoguerCallback` and froze Elster). Claim still goes to the host; local despawn waits until play restores.
 - Join `InteractiveLockSingle` / `DoorLockControl` no longer `setLock`s flavor seals. ConnectedDoors only `Unlock`s when a key / `externalUnlocker` / hint exists. `Doorway_Double.locked=false` is not written onto a sealed face.
@@ -23,7 +37,9 @@ Protocol **v8** (same wire as 0.4.2). Client join no longer mutates authored sea
 - Airlock split only covers wreck↔hole during `PEN_Titles`. Host loading `LOV_Reeducation` no longer leaves the client frozen in `PEN_Hole` (pause-only). Puzzle dumps skip while scenes mismatch.
 - Client `CutsceneStart` plays locally and notifies the host; missing WorldId is an ack, not a reject. `PEN_HoleSnowblind` / `PEN_CodeRoomEnd` skippers get Esc instead of pause.
 - Story commit no longer repeats every 0.75s (that was Dialoguer XML spam + hitch). Host LOV load hitch is still a real chapter load.
-- Crawl (`PEN_CodeRoom.crawlPlayer`): `Climbing` is sent and applied on the proxy (`Climbing`/`Crawl`/`Crouch`).
+- Host skip of the Penrose airlock no longer SceneFollows the client into `PEN_Hole`. Wreck↔hole is always per-Elster (not only while local `PEN_Titles` is running). Host leaving Penrose still follows. Peer hole-load requests do not teleport the host.
+- Airlock split: other-scene UseItem acks instead of `no key`; host proxy is despawned (no extrapolate ghost); FMOD from the other chapter is ignored. CutsceneSkip is once per WorldId and no-ops if already `completed` (LOV intro no longer double-Skip hitches).
+- Host/client keycard USE at a slot (Penrose airlock): Interactor was highlighting the PC zoom (`ViewPoint`) over `UseItemInteraction` while the repaired `AirlockKey` was selected, so the “want to use this item?” prompt never started. Held-key use inter is preferred; scene `key` / `InteractItem` bind to the bag instance; `getCount` matches by enum. Host EventZones under the airlock still run native.
 
 ### Added
 - Template bank (DDOL) harvested from loaded controllers and native `EnemySpawner` prefab refs

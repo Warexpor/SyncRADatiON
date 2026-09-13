@@ -1,6 +1,7 @@
 // SyncRADation � reads Animator state from local player via individual GetFloat/GetBool (IL2CPP-safe)
 using MelonLoader;
 using SyncRADation.Networking;
+using SyncRADation.Sync;
 using UnityEngine;
 
 namespace SyncRADation.Players
@@ -76,7 +77,7 @@ namespace SyncRADation.Players
             msg.Weapon = Networking.WeaponUtils.EquippedWeaponType();
             if (msg.Weapon != _lastWeaponRead)
             {
-                ModRuntime.Log?.Msg("[WeaponSync] Source weapon: " + _lastWeaponRead + " -> " + msg.Weapon);
+                PlaytestLog.Event("Weapon", "local " + _lastWeaponRead + " -> " + msg.Weapon);
                 _lastWeaponRead = msg.Weapon;
                 _hasMagAmmo = false; // resync mag baseline on weapon swap
                 _lastMagAmmo = -1;
@@ -209,7 +210,7 @@ namespace SyncRADation.Players
 
             if (ModRuntime.VerboseLogging && Time.time - _lastSrcLog > 30f)
             {
-                ModRuntime.Log?.Msg("[SRC] shoot=" + (b.HasFlag(AnimBools.Shooting) ? "1" : "0")
+                PlaytestLog.Verbose("SRC", "shoot=" + (b.HasFlag(AnimBools.Shooting) ? "1" : "0")
                     + " Fire1=" + (Input.GetButton("Fire1") ? "1" : "0")
                     + " Mouse0=" + (Input.GetMouseButton(0) ? "1" : "0")
                     + " aiming=" + (msg.AimingTime > 0.5f ? "1" : "0")

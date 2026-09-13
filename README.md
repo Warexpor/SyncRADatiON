@@ -22,18 +22,26 @@ Formerly labeled `1.2.x-dev`. That was optimistic. This is still early co-op.
 
 ### Build
 
-```powershell
-cd "C:\MyProjects\SyncRADation (SIGNALIS MP REMAKE)"
+```bash
+cd "$HOME/Work/MyProjects/SyncRADation (SIGNALIS MP REMAKE)"
 dotnet build SyncRADation.csproj -c Debug
 ```
 
 Override install paths:
 
-```powershell
-dotnet build -p:SignalisDir="C:\MyProjects\SIGNALIS" -p:ClientSignalisDir="C:\Program Files (x86)\Steam\steamapps\common\SIGNALIS"
+```bash
+dotnet build -p:SignalisDir="$HOME/Work/MyProjects/SIGNALIS" \
+  -p:ClientSignalisDir="$HOME/.local/share/Steam/steamapps/common/SIGNALIS"
 ```
 
-Debug builds copy into both `$(SignalisDir)\Mods` and `$(ClientSignalisDir)\Mods` when those dirs exist.
+Debug builds copy into both `$(SignalisDir)/Mods` and `$(ClientSignalisDir)/Mods` when those dirs exist.
+
+### Dual-instance (this machine)
+
+- **Host:** Steam SIGNALIS (Proton) — MelonLoader 0.5.7 under `steamapps/common/SIGNALIS`. Launch options: `WINEDLLOVERRIDES="version=n,b" %command% -screen-fullscreen 0 -screen-width 2560 -screen-height 720`
+- **Client:** `secondsignalis` → `~/Work/MyProjects/SIGNALIS` (same windowed half-height; separate Proton prefix `compatdata/syncradation-client`)
+- Hyprland stacks them: **host top half**, **client bottom half** (same workspace)
+- Both need `boot.config` `single-instance=0`
 
 ## Play (up to 4 players)
 
@@ -97,14 +105,14 @@ GitHub zip: `dist/SyncRADation-0.4.3-dev.zip` (`SyncRADation.dll` + `LiteNetLib.
 | SyncPuzzles      | true      | Puzzles / radio / elevators / etc. |
 | SyncWorldPickups | true      | Scene ItemPickup                   |
 | SyncPlayerVitals | true      | HP / death packets                 |
-| VerboseLogging   | false     | Extra log spam                     |
+| VerboseLogging   | false     | FMOD, clone/FX internals, puzzle diffs |
 
 
 
 
 ## Playtest gate (before Nexus)
 
-Dual-instance LAN, same protocol-7 build. Steam host + copy client, same chapter, Verbose on. **This is the remaining work.** Do not treat any of this as proven until you play it.
+Dual-instance LAN, same protocol-7 build. Steam host + copy client, same chapter. **This is the remaining work.** Do not treat any of this as proven until you play it.
 
 After this correctness pass:
 
@@ -123,7 +131,7 @@ GitHub zip is the publish path until that run is enjoyable. Nexus waits on that 
 
 ## Logs
 
-`SIGNALIS/MelonLoader/Latest.log` — look for `Handshake OK`, `[Harmony] patched`, `WorldRegistry`, `full world snapshot`.
+`SIGNALIS/MelonLoader/Latest.log` — grep `[Story]` `[Interact]` `[Scene]` `[Puzzle]` `[Pickup]` `[Damage]` `[Door]` `[Enemy]` `[Hitch]`. Look for `Handshake OK`, `[Harmony] patched`, `WorldRegistry`, `full world snapshot`. Lines include `H`/`C` when connected. Identical lines collapse for 3s.
 
 ## License
 

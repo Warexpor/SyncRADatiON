@@ -133,8 +133,13 @@ namespace SyncRADation.Networking
             if (LocalInspect.LockWorld(z.gameObject)) return true;
             if (z.triggered) return true;
             z.triggered = true;
-            try { if (z.onInRange != null) z.onInRange.Invoke(); } catch { }
             SyncRADation.Patches.EventZonePatch.MarkFired(id);
+            if (LocalInspect.InLocalRoom(z.gameObject))
+            {
+                try { if (z.onInRange != null) z.onInRange.Invoke(); } catch { }
+            }
+            else
+                PlaytestLog.Event("Interact", "EventZone other-room id=" + id.ToString("X16"));
             LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.EventZoneFire, id, 0, "");
             return true;
         }
@@ -143,7 +148,12 @@ namespace SyncRADation.Networking
         {
             consumeReason = "";
             var u = Find<UseItemInteraction>(id);
-            if (u == null) return false;
+            if (u == null)
+            {
+                PlaytestLog.Event("Interact", "UseItem other-scene id=" + id.ToString("X16")
+                    + " from=" + senderId);
+                return true;
+            }
             if (u.unlocked && !u.repeatable) return true;
 
             AnItem key = u.key;
@@ -256,9 +266,14 @@ namespace SyncRADation.Networking
         {
             var cut = Find<CutsceneCut>(id);
             if (cut == null) return false;
-            NetGate.BeginApply();
-            try { cut.Proceed(); }
-            finally { NetGate.EndApply(); }
+            if (LocalInspect.InLocalRoom(cut.gameObject))
+            {
+                NetGate.BeginApply();
+                try { cut.Proceed(); }
+                finally { NetGate.EndApply(); }
+            }
+            else
+                PlaytestLog.Event("Interact", "CutsceneProceed other-room id=" + id.ToString("X16"));
             net.StorySync.BroadcastPresentation(StoryCmd.CutsceneProceed, id, 0, "");
             return true;
         }
@@ -351,17 +366,34 @@ namespace SyncRADation.Networking
             if (c == null) return true;
             if (LocalInspect.AirlockCinematic(c.gameObject))
                 return true;
-            NetGate.BeginApply();
-            try { c.StartCutscene(); }
-            finally { NetGate.EndApply(); }
-            try
+            InteractionSyncService.RememberStart(id);
+            if (LocalInspect.InLocalRoom(c.gameObject))
             {
-                if (c.unskippable) CutsceneSkippingUI.skippableCutscene = false;
-                else CutsceneSkippingUI.skippableCutscene = true;
+                NetGate.BeginApply();
+                try { c.StartCutscene(); }
+                finally { NetGate.EndApply(); }
+                try
+                {
+                    if (c.unskippable) CutsceneSkippingUI.skippableCutscene = false;
+                    else CutsceneSkippingUI.skippableCutscene = true;
+                }
+                catch { }
             }
-            catch { }
+            else
+                PlaytestLog.Event("Interact", "CutsceneStart other-room id=" + id.ToString("X16"));
             net.StorySync.BroadcastPresentation(StoryCmd.CutsceneStart, id, 0, "");
             return true;
+        }
+
+        private static readonly System.Collections.Generic.HashSet<ulong> _skippedCuts
+            = new System.Collections.Generic.HashSet<ulong>();
+        private static readonly System.Collections.Generic.HashSet<ulong> _startedCuts
+            = new System.Collections.Generic.HashSet<ulong>();
+
+        public static void OnSceneChanged()
+        {
+            _skippedCuts.Clear();
+            _startedCuts.Clear();
         }
 
         private static bool ApplyCutsceneSkip(ulong id, LanNetworkManager net)
@@ -369,14 +401,49 @@ namespace SyncRADation.Networking
             var c = Find<CutsceneManager>(id);
             if (c != null && LocalInspect.AirlockCinematic(c.gameObject))
                 return true;
+            if (!RememberSkip(id))
+            {
+                PlaytestLog.Event("Interact", "CutsceneSkip already done id=" + id.ToString("X16"));
+                return true;
+            }
             net.StorySync.BroadcastPresentation(StoryCmd.CutsceneSkip, id, 0, "");
             NativeSkip(c);
             return true;
         }
 
+        internal static bool RememberSkip(ulong id)
+        {
+            return id == 0 || _skippedCuts.Add(id);
+        }
+
+        internal static bool WasSkipped(ulong id)
+        {
+            return id != 0 && _skippedCuts.Contains(id);
+        }
+
+        internal static bool RememberStart(ulong id)
+        {
+            return id == 0 || _startedCuts.Add(id);
+        }
+
         internal static void NativeSkip(CutsceneManager c)
         {
             if (c == null) return;
+            try { if (c.completed) return; } catch { }
+            bool running = false;
+            try { running = c.cutscene != null; } catch { }
+            if (!running)
+            {
+                try { c.completed = true; } catch { }
+                try
+                {
+                    if (c.onCutsceneSkip != null)
+                        c.onCutsceneSkip.Invoke();
+                }
+                catch { }
+                try { CutsceneSkippingUI.skippableCutscene = false; } catch { }
+                return;
+            }
             NetGate.BeginApply();
             try { c.Skip(); }
             catch
@@ -439,6 +506,7 @@ namespace SyncRADation.Networking
                 {
                     if (e.state == EnemyController.enemystate.dead) continue;
                     if ((e.transform.position - pos).sqrMagnitude > r2) continue;
+                    EnemySyncService.WakeForCombat(e);
                     Transform t = FindShooterTransform(pos, net);
                     if (t != null) e.playerPos = t;
                     e.WakeUpfromGunShot();

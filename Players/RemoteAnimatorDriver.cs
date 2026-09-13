@@ -1,5 +1,6 @@
 // SyncRADation � drives proxy Animator params (9 floats, 22 bools, 16 triggers), facing pivot, bone lerp
 using SyncRADation.Networking;
+using SyncRADation.Sync;
 using UnityEngine;
 
 namespace SyncRADation.Players
@@ -75,7 +76,7 @@ namespace SyncRADation.Players
                 _boneSync.FindArmature(_facingPivot.gameObject);
             else
                 _boneSync.FindArmature(target);
-            SyncRADation.ModRuntime.Log?.Msg("[DRV] Init: animators=" + (_animators != null ? _animators.Length.ToString() : "null")
+            PlaytestLog.Event("DRV", "init animators=" + (_animators != null ? _animators.Length.ToString() : "null")
                 + " sprites=" + (_spriteRenderers != null ? _spriteRenderers.Length.ToString() : "null")
                 + " facingPivot=" + (_facingPivot != null ? _facingPivot.name : "NULL"));
         }
@@ -102,7 +103,8 @@ namespace SyncRADation.Players
             {
                 if (_boneSync != null && _boneSync.BoneCount > 0 && _boneSync.BoneCount != state.BoneRotations.Length / 3)
                 {
-                    SyncRADation.ModRuntime.Log?.Msg("[DRV] BONE COUNT MISMATCH! proxy=" + _boneSync.BoneCount + " source=" + (state.BoneRotations.Length / 3));
+                    PlaytestLog.Warn("DRV", "bone count mismatch proxy=" + _boneSync.BoneCount
+                        + " source=" + (state.BoneRotations.Length / 3));
                 }
                 CommitBoneSnapshot(state.BoneRotations);
             }
@@ -322,7 +324,7 @@ namespace SyncRADation.Players
             {
                 try
                 {
-                    var sb = new System.Text.StringBuilder("[DRV] root=");
+                    var sb = new System.Text.StringBuilder("root=");
                     sb.Append(_rootTransform.eulerAngles.ToString("F1"));
                     sb.Append(" pivot=");
                     sb.Append(_facingPivot != null ? _facingPivot.localEulerAngles.ToString("F1") : "NULL");
@@ -364,7 +366,7 @@ namespace SyncRADation.Players
                         }
                         catch { }
                     }
-                    SyncRADation.ModRuntime.Log?.Msg(sb.ToString());
+                    PlaytestLog.Verbose("DRV", sb.ToString());
                 }
                 catch { }
                 _lastLog = Time.time;

@@ -12,6 +12,7 @@ namespace SyncRADation.Networking
         {
             _keys.Clear();
             _bagAttempt.Clear();
+            _uiName = null;
         }
 
         public static bool IsKeyOrObject(Items.itemlist item)
@@ -235,8 +236,22 @@ namespace SyncRADation.Networking
             }
             string name = DisplayName(cat ?? item);
             if (string.IsNullOrEmpty(name)) return;
+            _uiName = name;
             try { Dialoguer.SetGlobalString(DialoguerKeyNameId, name); } catch { }
             try { Dialoguer.SetGlobalString(0, name); } catch { }
+        }
+
+        static string _uiName;
+
+        /// <summary>
+        /// Story dumps overwrite Dialoguer s0/s3 with the host's last use (often AirlockKey).
+        /// Re-apply the local inspect/use name after XML apply.
+        /// </summary>
+        public static void RestoreUiNames()
+        {
+            if (string.IsNullOrEmpty(_uiName)) return;
+            try { Dialoguer.SetGlobalString(DialoguerKeyNameId, _uiName); } catch { }
+            try { Dialoguer.SetGlobalString(0, _uiName); } catch { }
         }
 
         public static AnItem FindInBag(AnItem item)
@@ -265,8 +280,45 @@ namespace SyncRADation.Networking
 
         public static bool InLocalBag(AnItem item) => FindInBag(item) != null;
 
+        public static bool InLocalBag(Items.itemlist item)
+        {
+            if (item == Items.itemlist.None) return false;
+            try
+            {
+                var cat = InventoryManager.getItem(item);
+                return cat != null && InLocalBag(cat);
+            }
+            catch { return false; }
+        }
+
         static bool _ensuringBag;
         static readonly HashSet<ushort> _bagAttempt = new HashSet<ushort>();
+
+        /// <summary>
+        /// Native UseItem / Interactor.InteractItem compare AnItem by reference.
+        /// Scene <c>key</c> is the catalog SO; a dropped grant may be a different
+        /// instance with the same <c>_item</c>. Point both at the bag copy.
+        /// </summary>
+        public static AnItem BindSceneKey(AnItem sceneKey)
+        {
+            var cat = CatalogOf(sceneKey) ?? sceneKey;
+            if (cat == null) return sceneKey;
+            EnsureInBag(cat);
+            return FindInBag(cat) ?? cat;
+        }
+
+        public static void BindHeldArg(ref AnItem item)
+        {
+            if (item == null) return;
+            var held = FindInBag(item);
+            if (held != null)
+            {
+                item = held;
+                return;
+            }
+            var cat = CatalogOf(item);
+            if (cat != null) item = cat;
+        }
 
         /// <summary>
         /// Put a party-ring key into the local 6-slot bag so native UseItem / cutscene

@@ -37,6 +37,13 @@ namespace SyncRADation.Networking
                 if (e == null) continue;
 
                 ulong id = kvp.Key;
+                if (e.state != EnemyController.enemystate.dead)
+                {
+                    Transform wakeTarget = FindNearestTarget(e.transform.position, net, pm);
+                    if (wakeTarget != null && !EnemyVisiblyInChunk(e))
+                        WakeForCombat(e);
+                }
+
                 var pos = e.transform.position;
                 var anim = e.animator;
 
@@ -233,11 +240,13 @@ namespace SyncRADation.Networking
             for (int i = 0; i < msg.Enemies.Length; i++)
                 ApplyEnemyState(msg.Enemies[i]);
 
-            if (Time.time - _lastDiag > 5f)
+            if (_mapMisses > 0 && Time.time - _lastDiag > 5f)
             {
-                ModRuntime.Log?.Msg("[EnemySync] map hits=" + _mapHits + " misses=" + _mapMisses
+                PlaytestLog.Event("Enemy", "map hits=" + _mapHits + " misses=" + _mapMisses
                     + " puppets=" + _clientPuppeted.Count);
                 _lastDiag = Time.time;
+                _mapHits = 0;
+                _mapMisses = 0;
             }
         }
 
@@ -257,12 +266,7 @@ namespace SyncRADation.Networking
             // Puppet only after successful map
             if (!_clientPuppeted.Contains(id))
             {
-                try
-                {
-                    enemy.enabled = false;
-                    if (enemy.agent != null) enemy.agent.enabled = false;
-                }
-                catch { }
+                Puppet(enemy);
                 _clientPuppeted.Add(id);
             }
 
@@ -331,18 +335,19 @@ namespace SyncRADation.Networking
         {
             EnemyController enemy;
             if (!WorldRegistry.TryGetEnemy(enemyId, out enemy) || enemy == null)
+            {
+                PlaytestLog.Event("Enemy", "TakeDamage MISS id=" + enemyId.ToString("X16"));
                 return false;
+            }
 
             try
             {
-                // Re-enable briefly if we had puppeted (host should never puppet its own AI).
-                if (!enemy.enabled) enemy.enabled = true;
-                if (enemy.agent != null && !enemy.agent.enabled) enemy.agent.enabled = true;
+                WakeForCombat(enemy);
 
                 enemy.TakeDamage(fire, crit, hurt, noSneak);
                 _forceSend = true;
 
-                ModRuntime.Log?.Msg("[EnemySync] Native TakeDamage id=" + enemyId.ToString("X16")
+                PlaytestLog.Event("Enemy", "TakeDamage id=" + enemyId.ToString("X16")
                     + " fire=" + fire.ToString("F2")
                     + " crit=" + crit.ToString("F2")
                     + " hurt=" + hurt.ToString("F2")
@@ -362,9 +367,13 @@ namespace SyncRADation.Networking
         {
             EnemyController enemy;
             if (!WorldRegistry.TryGetEnemy(enemyId, out enemy) || enemy == null)
+            {
+                PlaytestLog.Event("Enemy", "legacy dmg MISS id=" + enemyId.ToString("X16"));
                 return false;
+            }
             try
             {
+                WakeForCombat(enemy);
                 if (enemy.hitbox != null)
                 {
                     enemy.hitbox.HP -= (int)damage;
@@ -410,6 +419,37 @@ namespace SyncRADation.Networking
             return best;
         }
 
+        static void Puppet(EnemyController enemy)
+        {
+            if (enemy == null) return;
+            try { enemy.enabled = false; } catch { }
+            try { if (enemy.agent != null) enemy.agent.enabled = false; } catch { }
+        }
+
+        /// <summary>
+        /// Host: sleeping-chunk enemies have no AI and TakeDamage no-ops.
+        /// Wake the parent Room chain when a peer is in that room or a hit arrives.
+        /// </summary>
+        public static void WakeForCombat(EnemyController enemy)
+        {
+            if (enemy == null || enemy.gameObject == null) return;
+            try
+            {
+                Transform t = enemy.transform;
+                while (t != null)
+                {
+                    if (!t.gameObject.activeSelf)
+                        t.gameObject.SetActive(true);
+                    if (t.GetComponent<Room>() != null) break;
+                    t = t.parent;
+                }
+                enemy.enabled = true;
+                if (enemy.agent != null) enemy.agent.enabled = true;
+                enemy.WakeUp();
+            }
+            catch { }
+        }
+
         public void PuppetAllNow()
         {
             foreach (var kvp in WorldRegistry.AllEnemies())
@@ -418,12 +458,7 @@ namespace SyncRADation.Networking
                 if (e == null) continue;
                 ulong id = kvp.Key;
                 if (_clientPuppeted.Contains(id)) continue;
-                try
-                {
-                    e.enabled = false;
-                    if (e.agent != null) e.agent.enabled = false;
-                }
-                catch { }
+                Puppet(e);
                 _clientPuppeted.Add(id);
             }
         }

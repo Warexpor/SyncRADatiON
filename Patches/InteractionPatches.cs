@@ -18,6 +18,7 @@ namespace SyncRADation.Patches
             _lastRequest.Clear();
             ClientKeypad.OnSceneChanged();
             UseItemInteractionPatch.OnSceneChanged();
+            InteractionSyncService.OnSceneChanged();
             AirlockCinematic.Reset();
         }
 
@@ -38,7 +39,10 @@ namespace SyncRADation.Patches
         {
             if (NetGate.IsApplying || !NetGate.Live) return true;
             if (__instance == null || __instance.triggered) return true;
-            if (LocalInspect.AirlockCinematic(__instance.gameObject)) return false;
+            // Host still runs native (keycard slot EventZones). Client skips so
+            // airlock titles stay local and are not remoted as a party EventZone.
+            if (LocalInspect.AirlockCinematic(__instance.gameObject))
+                return NetGate.Host;
             if (LocalInspect.LockWorld(__instance.gameObject)) return true;
             try
             {
@@ -71,6 +75,7 @@ namespace SyncRADation.Patches
         {
             if (!NetGate.Host || NetGate.IsApplying || !NetGate.Live) return;
             if (__instance == null || !__instance.triggered) return;
+            if (LocalInspect.AirlockCinematic(__instance.gameObject)) return;
             if (LocalInspect.LockWorld(__instance.gameObject)) return;
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             if (!_fired.Add(id)) return;
@@ -243,8 +248,15 @@ namespace SyncRADation.Patches
                     bool match = false;
                     try
                     {
-                        if (t.ViewPoint == inter) match = true;
-                        else if (t.keyCardEvent != null && t.keyCardEvent.inter == inter) match = true;
+                        if (t.keyCardEvent != null && t.keyCardEvent.inter == inter)
+                            match = true;
+                        else if (t.ViewPoint == inter)
+                        {
+                            bool unlocked = false;
+                            try { unlocked = t.keyCardEvent != null && t.keyCardEvent.unlocked; }
+                            catch { }
+                            match = unlocked;
+                        }
                     }
                     catch { }
                     if (!match) continue;
@@ -289,29 +301,32 @@ namespace SyncRADation.Patches
                 || string.Equals(scene, "PEN_Hole", System.StringComparison.Ordinal);
         }
 
+        public static bool IsWreckHoleSplit(string a, string b)
+        {
+            if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return false;
+            bool aWreck = string.Equals(a, "PEN_Wreck", System.StringComparison.Ordinal);
+            bool bWreck = string.Equals(b, "PEN_Wreck", System.StringComparison.Ordinal);
+            bool aHole = string.Equals(a, "PEN_Hole", System.StringComparison.Ordinal);
+            bool bHole = string.Equals(b, "PEN_Hole", System.StringComparison.Ordinal);
+            return (aWreck && bHole) || (aHole && bWreck);
+        }
+
         public static bool ShouldIgnoreHostFollow(string hostScene)
         {
             if (string.IsNullOrEmpty(hostScene)) return false;
             string local = "";
             try { local = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name ?? ""; }
             catch { }
-            // Host left Penrose — follow. Stale _personalScene=PEN_Hole used to trap the client
-            // in the hole after LOV_Reeducation loaded (pause-only freeze).
+            // Host left Penrose — follow (LOV etc.). Stale _personalScene=PEN_Hole used to
+            // trap the client in the hole after LOV_Reeducation loaded (pause-only freeze).
             if (!IsWreckOrHole(hostScene))
             {
                 _personalScene = null;
                 return false;
             }
-            bool titles = DeferFollowWhileAirlockPresent();
-            bool localWreck = string.Equals(local, "PEN_Wreck", System.StringComparison.Ordinal);
-            bool hostHole = string.Equals(hostScene, "PEN_Hole", System.StringComparison.Ordinal);
-            bool localHole = string.Equals(local, "PEN_Hole", System.StringComparison.Ordinal);
-            bool hostWreck = string.Equals(hostScene, "PEN_Wreck", System.StringComparison.Ordinal);
-            if (titles && localWreck && hostHole) return true;
-            if (titles && localHole && hostWreck) return true;
-            if (!string.IsNullOrEmpty(_personalScene)
-                && string.Equals(_personalScene, "PEN_Hole", System.StringComparison.Ordinal)
-                && localHole && hostWreck)
+            // Wreck↔hole is per-Elster. Requiring local PEN_Titles meant the observer
+            // still on the wreck got SceneFollow when the host skipped the airlock.
+            if (IsWreckHoleSplit(local, hostScene))
                 return true;
             return false;
         }
@@ -380,7 +395,23 @@ namespace SyncRADation.Patches
             try
             {
                 if (__instance.inter != null && __instance.inter.inRange)
-                    PartyKeyRing.EnsureInBag(__instance.key);
+                {
+                    __instance.key = PartyKeyRing.BindSceneKey(__instance.key);
+                    if (InteractorDropUpdatePatch.InteractPressed())
+                    {
+                        string cur = "";
+                        try
+                        {
+                            var c = InventoryManager.CurrentItem;
+                            cur = c != null ? c._item.ToString() : "none";
+                        }
+                        catch { cur = "?"; }
+                        PlaytestLog.Event("Interact", "UseItem press " + __instance.gameObject.name
+                            + " key=" + (__instance.key != null ? __instance.key._item.ToString() : "null")
+                            + " current=" + cur
+                            + " unlocked=" + __instance.unlocked);
+                    }
+                }
             }
             catch { }
             return true;
@@ -388,6 +419,119 @@ namespace SyncRADation.Patches
 
         [HarmonyPostfix]
         public static void Postfix(UseItemInteraction __instance) => OnLocalUnlocked(__instance, true);
+    }
+
+    [HarmonyPatch(typeof(Interactor), nameof(Interactor.Interact))]
+    public static class InteractorHeldUsePatch
+    {
+        [HarmonyPrefix]
+        public static void Prefix(Interactor __instance)
+        {
+            if (__instance == null || !NetGate.Live) return;
+            AnItem held = null;
+            try { held = InventoryManager.CurrentItem; } catch { }
+            if (held == null) return;
+            Items.itemlist want;
+            try { want = held._item; } catch { return; }
+            if (want == Items.itemlist.None) return;
+
+            Interaction pick = FromList(__instance, want);
+            if (pick == null) pick = FromWorld(want);
+            if (pick == null) return;
+            try { __instance.currentInter = pick; } catch { }
+        }
+
+        static Interaction FromList(Interactor inst, Items.itemlist want)
+        {
+            try
+            {
+                var list = inst.interactions;
+                if (list == null) return null;
+                for (int i = 0; i < list.Count; i++)
+                {
+                    var inter = MatchUse(list[i], want);
+                    if (inter != null) return inter;
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        static Interaction FromWorld(Items.itemlist want)
+        {
+            try
+            {
+                var all = Object.FindObjectsOfType<UseItemInteraction>();
+                if (all == null) return null;
+                for (int i = 0; i < all.Length; i++)
+                {
+                    var u = all[i];
+                    if (u == null) continue;
+                    bool inRange = false;
+                    try { inRange = u.inter != null && u.inter.inRange; } catch { }
+                    if (!inRange) continue;
+                    if (KeyIs(u, want)) return u.inter;
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        static Interaction MatchUse(Interaction inter, Items.itemlist want)
+        {
+            if (inter == null) return null;
+            UseItemInteraction u = null;
+            try { u = inter.GetComponent<UseItemInteraction>(); } catch { }
+            if (u == null)
+            {
+                try { u = inter.GetComponentInParent<UseItemInteraction>(); } catch { }
+            }
+            if (u == null || !KeyIs(u, want)) return null;
+            return inter;
+        }
+
+        static bool KeyIs(UseItemInteraction u, Items.itemlist want)
+        {
+            if (u == null) return false;
+            try { if (u.unlocked && !u.repeatable) return false; } catch { }
+            AnItem key = null;
+            try { key = u.key; } catch { }
+            if (key == null) return false;
+            try { return key._item == want; } catch { return false; }
+        }
+    }
+
+    [HarmonyPatch(typeof(Interactor), nameof(Interactor.InteractItem))]
+    public static class InteractorInteractItemPatch
+    {
+        [HarmonyPrefix]
+        public static void Prefix(ref AnItem item)
+        {
+            if (!NetGate.Live) return;
+            PartyKeyRing.BindHeldArg(ref item);
+        }
+    }
+
+    [HarmonyPatch(typeof(EventScreen3DCam), nameof(EventScreen3DCam.InteractItem))]
+    public static class EventScreenInteractItemPatch
+    {
+        [HarmonyPrefix]
+        public static void Prefix(ref AnItem item)
+        {
+            if (!NetGate.Live) return;
+            PartyKeyRing.BindHeldArg(ref item);
+        }
+    }
+
+    [HarmonyPatch(typeof(InventoryBase), "useItem")]
+    public static class InventoryUseItemPatch
+    {
+        [HarmonyPrefix]
+        public static void Prefix(ref AnItem Item)
+        {
+            if (!NetGate.Live) return;
+            PartyKeyRing.BindHeldArg(ref Item);
+        }
     }
 
     [HarmonyPatch(typeof(UseItemInteraction), nameof(UseItemInteraction.StartDialogue))]
@@ -650,17 +794,26 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static bool Prefix(CutsceneManager __instance)
         {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
             if (__instance == null) return true;
+            if (NetGate.IsApplying)
+            {
+                try { if (__instance.completed) return false; } catch { }
+                try { if (__instance.cutscene == null) return false; } catch { }
+                return true;
+            }
+            if (!NetGate.Live) return true;
             if (LocalInspect.AirlockCinematic(__instance.gameObject)) return true;
             ulong id = WorldId.FromGameObject(__instance.gameObject);
+            InteractionSyncService.RememberSkip(id);
+            bool running = true;
+            try { running = __instance.cutscene != null && !__instance.completed; } catch { }
             if (NetGate.Host)
             {
                 LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.CutsceneSkip, id, 0, "");
-                return true;
+                return running;
             }
             LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.CutsceneSkip);
-            return true;
+            return running;
         }
     }
 
@@ -673,7 +826,10 @@ namespace SyncRADation.Patches
             if (NetGate.IsApplying || !NetGate.Live) return true;
             if (__instance == null) return true;
             if (LocalInspect.AirlockCinematic(__instance.gameObject)) return true;
+            try { if (__instance.completed) return false; } catch { }
             ulong id = WorldId.FromGameObject(__instance.gameObject);
+            if (InteractionSyncService.WasSkipped(id)) return false;
+            InteractionSyncService.RememberStart(id);
             if (NetGate.Host)
             {
                 LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.CutsceneStart, id, 0, "");

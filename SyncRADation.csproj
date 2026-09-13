@@ -7,18 +7,25 @@
     <OutputType>Library</OutputType>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <OutputPath>bin/$(Configuration)/</OutputPath>
     <DebugType>portable</DebugType>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
     <Deterministic>true</Deterministic>
     <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
   </PropertyGroup>
 
-  <PropertyGroup>
+  <!-- SignalisDir = second-box copy (client). ClientSignalisDir = Steam (host). Override with -p: if needed. -->
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
     <SignalisDir Condition="'$(SignalisDir)' == ''">C:\MyProjects\SIGNALIS</SignalisDir>
     <ClientSignalisDir Condition="'$(ClientSignalisDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\SIGNALIS</ClientSignalisDir>
-    <MelonLoaderDir>$(SignalisDir)\MelonLoader</MelonLoaderDir>
-    <ManagedDir>$(MelonLoaderDir)\Managed</ManagedDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="!$([MSBuild]::IsOSPlatform('Windows'))">
+    <SignalisDir Condition="'$(SignalisDir)' == ''">$(HOME)/Work/MyProjects/SIGNALIS</SignalisDir>
+    <ClientSignalisDir Condition="'$(ClientSignalisDir)' == ''">$(HOME)/.local/share/Steam/steamapps/common/SIGNALIS</ClientSignalisDir>
+  </PropertyGroup>
+  <PropertyGroup>
+    <MelonLoaderDir>$(SignalisDir)/MelonLoader</MelonLoaderDir>
+    <ManagedDir>$(MelonLoaderDir)/Managed</ManagedDir>
   </PropertyGroup>
 
   <ItemGroup>
@@ -104,7 +111,7 @@
     </Reference>
     <!-- 1.3.5 net472 (NuGet 1.3.5 is netstandard2.0; MelonLoader 0.5.7 has no netstandard). Rebuild: third_party/LiteNetLib -->
     <Reference Include="LiteNetLib">
-      <HintPath>lib\LiteNetLib.dll</HintPath>
+      <HintPath>lib/LiteNetLib.dll</HintPath>
       <Private>true</Private>
     </Reference>
   </ItemGroup>
@@ -117,11 +124,11 @@
   </ItemGroup>
 
   <Target Name="CopyToMods" AfterTargets="Build">
-    <MakeDir Directories="$(SignalisDir)\Mods" />
-    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(SignalisDir)\Mods" />
-    <Copy SourceFiles="$(TargetDir)LiteNetLib.dll" DestinationFolder="$(SignalisDir)\Mods" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)LiteNetLib.dll')" />
-    <MakeDir Directories="$(ClientSignalisDir)\Mods" Condition="Exists('$(ClientSignalisDir)')" />
-    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ClientSignalisDir)\Mods" Condition="Exists('$(ClientSignalisDir)\Mods') Or Exists('$(ClientSignalisDir)')" ContinueOnError="true" />
-    <Copy SourceFiles="$(TargetDir)LiteNetLib.dll" DestinationFolder="$(ClientSignalisDir)\Mods" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)LiteNetLib.dll') And Exists('$(ClientSignalisDir)')" ContinueOnError="true" />
+    <MakeDir Directories="$(SignalisDir)/Mods" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(SignalisDir)/Mods" />
+    <Copy SourceFiles="$(TargetDir)LiteNetLib.dll" DestinationFolder="$(SignalisDir)/Mods" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)LiteNetLib.dll')" />
+    <MakeDir Directories="$(ClientSignalisDir)/Mods" Condition="Exists('$(ClientSignalisDir)')" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ClientSignalisDir)/Mods" Condition="Exists('$(ClientSignalisDir)/Mods') Or Exists('$(ClientSignalisDir)')" ContinueOnError="true" />
+    <Copy SourceFiles="$(TargetDir)LiteNetLib.dll" DestinationFolder="$(ClientSignalisDir)/Mods" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)LiteNetLib.dll') And Exists('$(ClientSignalisDir)')" ContinueOnError="true" />
   </Target>
 </Project>

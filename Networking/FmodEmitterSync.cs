@@ -41,6 +41,7 @@ namespace SyncRADation.Networking
         {
             var net = LanNetworkManager.Instance;
             if (net != null && net.Role == NetworkRole.Host) return;
+            if (net != null && net.SceneMismatch) return;
             if (SceneFollowService.LocalIsTransient()) return;
 
             NetGate.BeginApply();
@@ -62,7 +63,13 @@ namespace SyncRADation.Networking
                     return;
                 }
                 if (IsDoorEmitter(e)) return;
-                PlaytestLog.Event("FMOD", (msg.Play ? "Play" : "Stop") + " id=" + id.ToString("X16"));
+                string path = "";
+                try { path = e.Event; } catch { }
+                if (IsDoorSfxPath(path)) return;
+                if (IsSceneBed(path)) return;
+                PlaytestLog.Verbose("FMOD", (msg.Play ? "Play" : "Stop")
+                    + (string.IsNullOrEmpty(path) ? "" : " " + path)
+                    + " id=" + id.ToString("X16"));
                 if (msg.Play) e.Play();
                 else e.Stop();
             }
@@ -81,6 +88,9 @@ namespace SyncRADation.Networking
             if (emitter == null || !NetGate.Host || NetGate.IsApplying) return;
             if (IsLocalOnly(emitter.transform)) return;
             if (IsDoorEmitter(emitter)) return;
+            string path = "";
+            try { path = emitter.Event; } catch { }
+            if (IsSceneBed(path)) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
             ulong id = WorldId.FromGameObject(emitter.gameObject);
@@ -88,7 +98,9 @@ namespace SyncRADation.Networking
             if (_sentPlaying.TryGetValue(id, out was) && was == play) return;
             if (!play && !was) return;
             _sentPlaying[id] = play;
-            PlaytestLog.Event("FMOD", (play ? "host Play" : "host Stop") + " id=" + id.ToString("X16"));
+            PlaytestLog.Verbose("FMOD", (play ? "Play" : "Stop")
+                + (string.IsNullOrEmpty(path) ? "" : " " + path)
+                + " id=" + id.ToString("X16"));
             net.SendFmodEmitter(new FmodEmitterMessage
             {
                 WorldId = unchecked((long)id),
@@ -101,10 +113,11 @@ namespace SyncRADation.Networking
         {
             if (string.IsNullOrEmpty(path) || !NetGate.Host || NetGate.IsApplying) return;
             if (IsLocalOneShot(path)) return;
-            if (IsSlidingDoorSfxPath(path)) return;
+            if (IsSceneBed(path)) return;
+            if (IsDoorSfxPath(path)) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
-            PlaytestLog.Event("FMOD", "host OneShot " + path);
+            PlaytestLog.Verbose("FMOD", "OneShot " + path);
             net.SendFmodEmitter(new FmodEmitterMessage
             {
                 Play = true,
@@ -114,6 +127,15 @@ namespace SyncRADation.Networking
                 PosZ = pos.z,
                 Path = path
             });
+        }
+
+        public static bool IsSceneBed(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return false;
+            if (path.StartsWith("event:/Music/")) return true;
+            if (path.StartsWith("event:/Cutscenes/")) return true;
+            if (path.StartsWith("event:/Ambience/")) return true;
+            return false;
         }
 
         public static bool IsLocalOneShot(string path)
@@ -208,6 +230,9 @@ namespace SyncRADation.Networking
                 var e = kvp.Value;
                 if (e == null || kvp.Key == 0) continue;
                 if (IsLocalOnly(e.transform) || IsDoorEmitter(e)) continue;
+                string path = "";
+                try { path = e.Event; } catch { }
+                if (IsSceneBed(path)) continue;
                 bool playing = false;
                 try { playing = e.IsPlaying(); } catch { }
                 if (!playing) continue;
@@ -223,7 +248,14 @@ namespace SyncRADation.Networking
 
         public static bool IsDoorEmitter(StudioEventEmitter emitter)
         {
-            Transform t = emitter != null ? emitter.transform : null;
+            if (emitter == null) return false;
+            try
+            {
+                string path = emitter.Event;
+                if (IsDoorSfxPath(path)) return true;
+            }
+            catch { }
+            Transform t = emitter.transform;
             int hops = 0;
             while (t != null && hops++ < 16)
             {
@@ -236,6 +268,14 @@ namespace SyncRADation.Networking
                 t = t.parent;
             }
             return false;
+        }
+
+        /// <summary>Door open/close one-shots — never world-relay; DoorNative distance-gates them.</summary>
+        public static bool IsDoorSfxPath(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return false;
+            if (path.StartsWith("event:/Environment/Doors/")) return true;
+            return IsSlidingDoorSfxPath(path);
         }
 
         public static bool IsSlidingDoorSfxPath(string path)

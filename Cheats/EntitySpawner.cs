@@ -351,7 +351,7 @@ namespace SyncRADation.Cheats
                     && old.gameObject.name.StartsWith(TemplatePrefix, System.StringComparison.Ordinal))
                     Object.Destroy(old.gameObject);
                 Vault[key] = ec;
-                PlaytestLog.Event("Spawn", "banked " + key + " from '" + src.gameObject.name + "'");
+                PlaytestLog.Verbose("Spawn", "banked " + key + " from '" + src.gameObject.name + "'");
             }
             catch (System.Exception ex)
             {

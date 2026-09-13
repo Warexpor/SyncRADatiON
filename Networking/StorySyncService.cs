@@ -32,6 +32,13 @@ namespace SyncRADation.Networking
             _fullDump = true;
         }
 
+        public void OnSceneChanged()
+        {
+            LastCmd = StoryCmd.None;
+            LastWorldId = 0;
+            RequestFullSend();
+        }
+
         public void NoteBool(string key, bool val) => Note(new StoryFlagEntry { Kind = 0, Key = key, BoolVal = val });
         public void NoteInt(string key, int val) => Note(new StoryFlagEntry { Kind = 1, Key = key, IntVal = val });
         public void NoteFloat(string key, float val) => Note(new StoryFlagEntry { Kind = 2, Key = key, FloatVal = val });
@@ -86,6 +93,7 @@ namespace SyncRADation.Networking
             byte gs = 0;
             try { gs = (byte)PlayerState.gameState; } catch { }
 
+            bool replay = replayPresentation && CanReplayPresentation(LastCmd, LastWorldId);
             net.SendStoryCommit(new StoryCommitMessage
             {
                 FullRefresh = full,
@@ -97,14 +105,41 @@ namespace SyncRADation.Networking
                 EndingId = ending,
                 Flags = arr,
                 ActiveGameState = gs,
-                ActiveWorldId = replayPresentation ? unchecked((long)LastWorldId) : 0,
-                ActiveStoryCmd = replayPresentation ? (byte)LastCmd : (byte)0
+                ActiveWorldId = replay ? unchecked((long)LastWorldId) : 0,
+                ActiveStoryCmd = replay ? (byte)LastCmd : (byte)0
             });
             if (full)
                 PlaytestLog.Event("Story", "commit full flags=" + arr.Length
                     + " xml=" + (xml != null ? xml.Length : 0)
-                    + " cmd=" + (replayPresentation ? LastCmd.ToString() : "-")
+                    + " cmd=" + (replay ? LastCmd.ToString() : "-")
                     + " gs=" + gs);
+        }
+
+        static bool CanReplayPresentation(StoryCmd cmd, ulong id)
+        {
+            switch (cmd)
+            {
+                case StoryCmd.None:
+                case StoryCmd.CutsceneSkip:
+                case StoryCmd.CutsceneProceed:
+                case StoryCmd.EventZoneFire:
+                case StoryCmd.MultiConditionFire:
+                case StoryCmd.DetermineEnding:
+                    return false;
+                case StoryCmd.CutsceneStart:
+                {
+                    var c = WorldLookup.Find<CutsceneManager>(id);
+                    if (c == null) return false;
+                    try
+                    {
+                        if (c.completed) return false;
+                        return c.cutscene != null;
+                    }
+                    catch { return false; }
+                }
+                default:
+                    return cmd != StoryCmd.None;
+            }
         }
 
         private void DumpLiveProgress()
@@ -251,6 +286,7 @@ namespace SyncRADation.Networking
                 if (!string.IsNullOrEmpty(msg.DialoguerXml))
                 {
                     try { Dialoguer.SetGlobalVariablesState(msg.DialoguerXml); } catch { }
+                    try { PartyKeyRing.RestoreUiNames(); } catch { }
                 }
 
                 try
@@ -323,12 +359,12 @@ namespace SyncRADation.Networking
                     {
                         var d = Find<Dialogue>(id);
                         if (d == null || LocalInspect.Dialogue(d))
-                            PlaytestLog.Event("Story", "skip local inspect DialogueStart");
+                            PlaytestLog.Verbose("Story", "skip local inspect DialogueStart");
                         break;
                     }
                     case StoryCmd.DialoguerStartId:
                         if (LocalInspect.DialoguerFlavor(msg.Int0))
-                            PlaytestLog.Event("Story", "skip flavor DialoguerStartId i=" + msg.Int0);
+                            PlaytestLog.Verbose("Story", "skip flavor DialoguerStartId i=" + msg.Int0);
                         else
                         {
                             try { Dialoguer.StartDialogue(msg.Int0); } catch { }
@@ -350,8 +386,16 @@ namespace SyncRADation.Networking
                         var c = Find<CutsceneManager>(id);
                         if (c != null && LocalInspect.AirlockCinematic(c.gameObject))
                             PlaytestLog.Event("Story", "skip local cinematic CutsceneStart");
-                        else if (c != null)
+                        else if (c == null)
+                            break;
+                        else if (!LocalInspect.InLocalRoom(c.gameObject))
+                            PlaytestLog.Event("Story", "skip other-room CutsceneStart id=" + id.ToString("X16"));
+                        else if (InteractionSyncService.WasSkipped(id)
+                            || !InteractionSyncService.RememberStart(id))
+                            PlaytestLog.Event("Story", "CutsceneStart already done id=" + id.ToString("X16"));
+                        else
                         {
+                            try { if (c.completed) break; } catch { }
                             c.StartCutscene();
                             try
                             {
@@ -367,6 +411,8 @@ namespace SyncRADation.Networking
                         var c = Find<CutsceneManager>(id);
                         if (c != null && LocalInspect.AirlockCinematic(c.gameObject))
                             PlaytestLog.Event("Story", "skip local cinematic CutsceneSkip");
+                        else if (!InteractionSyncService.RememberSkip(id))
+                            PlaytestLog.Event("Story", "CutsceneSkip already done id=" + id.ToString("X16"));
                         else
                             InteractionSyncService.NativeSkip(c);
                         break;
@@ -374,14 +420,15 @@ namespace SyncRADation.Networking
                     case StoryCmd.CutsceneProceed:
                     {
                         var cut = Find<CutsceneCut>(id);
-                        if (cut != null) cut.Proceed();
+                        if (cut != null && LocalInspect.InLocalRoom(cut.gameObject))
+                            cut.Proceed();
                         break;
                     }
                     case StoryCmd.EventScreenStart:
                     case StoryCmd.EventScreenExit:
                     case StoryCmd.OpenBookMemory:
                     case StoryCmd.BookOpen:
-                        PlaytestLog.Event("Story", "skip local inspect " + msg.Cmd);
+                        PlaytestLog.Verbose("Story", "skip local inspect " + msg.Cmd);
                         break;
                     case StoryCmd.EventZoneFire:
                     {
@@ -393,14 +440,19 @@ namespace SyncRADation.Networking
                         else if (z != null)
                         {
                             z.triggered = true;
-                            try { if (z.onInRange != null) z.onInRange.Invoke(); } catch { }
+                            if (LocalInspect.InLocalRoom(z.gameObject))
+                            {
+                                try { if (z.onInRange != null) z.onInRange.Invoke(); } catch { }
+                            }
+                            else
+                                PlaytestLog.Event("Story", "skip other-room EventZoneFire id=" + id.ToString("X16"));
                         }
                         break;
                     }
                     case StoryCmd.MultiConditionFire:
                     {
                         var m = Find<MultiConditionEvent>(id);
-                        if (m != null)
+                        if (m != null && LocalInspect.InLocalRoom(m.gameObject))
                         {
                             try
                             {

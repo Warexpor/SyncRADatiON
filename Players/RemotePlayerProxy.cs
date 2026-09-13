@@ -1,5 +1,6 @@
 // SyncRADation � wrapper per remote player: owns AnimDriver, AudioSync, WeaponSync
 using SyncRADation.Networking;
+using SyncRADation.Sync;
 using UnityEngine;
 
 namespace SyncRADation.Players
@@ -37,7 +38,10 @@ namespace SyncRADation.Players
                 if (arms[i] != null && arms[i].rootBone != null && arms[i].rootBone.parent != null)
                     armList.Add(arms[i].rootBone.parent.name);
             }
-            ModRuntime.Log?.Msg("[DRV] Proxy " + playerId + ": " + arms.Length + " SMRs, " + armList.Count + " armatures: " + string.Join(", ", armList) + " | rootY=" + go.transform.eulerAngles.y.ToString("F1"));
+            PlaytestLog.Event("DRV", "proxy p" + playerId + " SMRs=" + arms.Length
+                + " armatures=" + armList.Count
+                + (armList.Count > 0 ? " " + string.Join(",", armList) : "")
+                + " rootY=" + go.transform.eulerAngles.y.ToString("F1"));
 
             var rends = go.GetComponentsInChildren<Renderer>(true);
             int smrCount = 0, smrValidMesh = 0, nullMat = 0;
@@ -55,7 +59,8 @@ namespace SyncRADation.Players
                     if (smr.sharedMaterial == null) nullMat++;
                 }
             }
-            ModRuntime.Log?.Msg("[DRV] Proxy " + playerId + " renderers: " + rends.Length + " total, " + smrCount + " SMRs, " + smrValidMesh + " valid meshes, " + nullMat + " null mats");
+            PlaytestLog.Verbose("DRV", "proxy p" + playerId + " renderers=" + rends.Length
+                + " SMRs=" + smrCount + " mesh=" + smrValidMesh + " nullMat=" + nullMat);
         }
 
         public void Destroy()
@@ -86,7 +91,7 @@ namespace SyncRADation.Players
             // Weapon before FX tick so first-frame Fire after equip still has a clone
             if (state.Weapon != _lastWeapon)
             {
-                ModRuntime.Log?.Msg("[WeaponSync] Proxy " + PlayerId + " weapon: " + _lastWeapon + " -> " + state.Weapon);
+                PlaytestLog.Event("Weapon", "p" + PlayerId + " " + _lastWeapon + " -> " + state.Weapon);
                 WeaponSync.ApplyWeapon(state.Weapon);
                 _lastWeapon = state.Weapon;
             }

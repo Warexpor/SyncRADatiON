@@ -132,6 +132,7 @@ namespace SyncRADation.Networking
             NetGate.Reset();
             SourceAnimReader.Reset();
             HitchTrace.Reset();
+            PlaytestLog.Reset();
             NetworkDamageSystem.Reset();
             DroppedItemManager.ClearAll();
             _handshakeComplete = false;
@@ -236,7 +237,7 @@ namespace SyncRADation.Networking
             if (_localPlayer == null && PlayerState.player != null)
             {
                 _localPlayer = PlayerState.player;
-                ModRuntime.Log?.Msg("[DIAG] Initial player: " + _localPlayer.name);
+                PlaytestLog.Verbose("Net", "local player " + _localPlayer.name);
             }
 
             // Send local player state to ALL connected peers
@@ -740,6 +741,11 @@ namespace SyncRADation.Networking
         public void SendFullWorldSnapshot(int targetPlayerId = -1)
         {
             if (_role != NetworkRole.Host || !_handshakeComplete) return;
+            if (SceneFollowService.LocalIsTransient())
+            {
+                PlaytestLog.Event("Scene", "skip dump (loading)");
+                return;
+            }
             ModRuntime.Log?.Msg("[Network] Sending full world snapshot"
                 + (targetPlayerId >= 0 ? " to player " + targetPlayerId : " to all peers"));
             int prevUnicast = _unicastPlayerId;
@@ -806,7 +812,8 @@ namespace SyncRADation.Networking
 
             if (_role == NetworkRole.Host)
             {
-                _enemySync.ApplyNativeTakeDamageOnHost(enemyWorldId, fire, crit, hurt, noSneak);
+                if (!_enemySync.ApplyNativeTakeDamageOnHost(enemyWorldId, fire, crit, hurt, noSneak))
+                    PlaytestLog.Event("Damage", "host hit miss id=" + enemyWorldId.ToString("X16"));
             }
             else if (_peers.TryGetValue(0, out var peer)
                 && peer.ConnectionState == ConnectionState.Connected)
@@ -1700,11 +1707,10 @@ namespace SyncRADation.Networking
             {
                 if (ack.Kind == InteractionKind.DroppedPickup)
                     ItemPickupPatches.RevertPendingNativeGrant();
-                ModRuntime.Log?.Msg("[Interact] rejected " + ack.Kind
+                PlaytestLog.Warn("Interact", "rejected " + ack.Kind
                     + (string.IsNullOrEmpty(ack.Reason) ? "" : ": " + ack.Reason));
                 return;
             }
-            PlaytestLog.Event("Interact", "ack " + ack.Kind);
 
             if (string.IsNullOrEmpty(ack.Reason)) return;
             try
@@ -1876,16 +1882,17 @@ namespace SyncRADation.Networking
             if (senderId == _localPlayerId) return;
 
             if (_sceneMismatch)
+            {
+                _proxyManager.DestroyAll();
                 return;
+            }
 
             if (!_proxyManager.HasProxy(senderId))
             {
+                if (SceneFollowService.LocalIsTransient()) return;
                 GameObject source = PlayerState.player;
                 if (source == null)
-                {
-                    ModRuntime.Log?.Warning("[Net] Cannot create proxy: no local player");
                     return;
-                }
                 try
                 {
                     if (PlayerState.gameState != PlayerState.gameStates.play
@@ -1999,14 +2006,18 @@ namespace SyncRADation.Networking
 
             if (msg.TargetPlayerId == _localPlayerId)
             {
-                ModRuntime.Log?.Msg("[Enemy] Received damage=" + msg.Damage.ToString("F0")
-                    + " from enemy " + enemyId.ToString("X16"));
+                PlaytestLog.Verbose("Enemy", "dmg=" + msg.Damage.ToString("F0")
+                    + " from " + enemyId.ToString("X16"));
                 NetworkDamageSystem.ApplyDamage(msg.Damage, Vector3.zero, Vector3.zero);
             }
             else if (msg.AttackerPlayerId >= 0 && msg.TargetPlayerId < 0 && _role == NetworkRole.Host)
             {
                 if (msg.NativeTakeDamage)
-                    _enemySync.ApplyNativeTakeDamageOnHost(enemyId, msg.FireChance, msg.CriticalChance, msg.HurtChance, msg.NoSneak);
+                {
+                    if (!_enemySync.ApplyNativeTakeDamageOnHost(enemyId, msg.FireChance, msg.CriticalChance, msg.HurtChance, msg.NoSneak))
+                        PlaytestLog.Event("Damage", "client hit miss id=" + enemyId.ToString("X16")
+                            + " from=" + msg.AttackerPlayerId);
+                }
                 else
                     _enemySync.ApplyDamageOnHost(enemyId, msg.Damage);
             }
@@ -2055,7 +2066,7 @@ namespace SyncRADation.Networking
         {
             if (SceneFollowService.IsTransient(msg.SceneName))
             {
-                PlaytestLog.Event("Scene", "Peer " + msg.SenderPlayerId + " still loading");
+                PlaytestLog.Verbose("Scene", "peer " + msg.SenderPlayerId + " still loading");
                 return;
             }
 
@@ -2080,6 +2091,7 @@ namespace SyncRADation.Networking
             {
                 if (_sceneMismatch && AirlockCinematic.ShouldIgnoreHostFollow(compareTo))
                 {
+                    _proxyManager.DestroyAll();
                     PlaytestLog.Event("Scene", "defer airlock follow host='" + compareTo
                         + "' local='" + _localSceneName + "'");
                     return;
@@ -2118,14 +2130,15 @@ namespace SyncRADation.Networking
             _puzzleSync.RefreshScene();
             _bossSync.OnSceneChanged();
             _pickupSync.RefreshScene();
-            _storySync.RequestFullSend();
+            _storySync.OnSceneChanged();
             Patches.EventZonePatch.OnSceneChanged();
             _sceneMismatch = false;
+            try { SceneFollowService.NoteArrived(SceneManager.GetActiveScene().name ?? ""); } catch { }
             if (_handshakeComplete)
             {
                 if (SceneFollowService.LocalIsTransient())
                 {
-                    PlaytestLog.Event("Scene", "skip hello/dump (loading)");
+                    PlaytestLog.Verbose("Scene", "skip hello/dump (loading)");
                     return;
                 }
                 BroadcastSceneHello();

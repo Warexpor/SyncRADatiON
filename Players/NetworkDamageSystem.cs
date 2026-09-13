@@ -2,6 +2,7 @@
 using FMODUnity;
 using SyncRADation.ItemSystem;
 using SyncRADation.Networking;
+using SyncRADation.Sync;
 using UnityEngine;
 
 namespace SyncRADation.Players
@@ -82,7 +83,7 @@ namespace SyncRADation.Players
 
             int hp = 0;
             try { hp = PlayerState.hp; } catch { }
-            ModRuntime.Log?.Msg("[Damage] -" + damage.ToString("F0") + " HP, remaining: " + hp);
+            PlaytestLog.Event("Damage", "-" + damage.ToString("F0") + " HP remain=" + hp);
 
             bool dead = hp <= 0;
             try { dead = dead || PlayerState.charState == PlayerState.charStates.dead; } catch { }
@@ -111,7 +112,7 @@ namespace SyncRADation.Players
             {
                 if (net.Role == NetworkRole.Host)
                 {
-                    ModRuntime.Log?.Msg("[Damage] Host died — wipe reload");
+                    PlaytestLog.Event("Damage", "host died — wipe reload");
                     TrySendHostWipe();
                     ReloadHostSave();
                     return;
@@ -120,12 +121,12 @@ namespace SyncRADation.Players
                 net.SendDeathPolicy(DeathKind.ClientDowned);
                 try { PlayerState.suspendInput = true; } catch { }
                 _respawnTimer = -1f;
-                ModRuntime.Log?.Msg("[Damage] Client downed — world continues");
+                PlaytestLog.Event("Damage", "client downed — world continues");
                 return;
             }
 
             _respawnTimer = 5f;
-            ModRuntime.Log?.Msg("[Damage] Player died. Respawn in 5s");
+            PlaytestLog.Event("Damage", "died — respawn in 5s");
         }
 
         private static void DropInventoryOnDeath()
@@ -201,13 +202,13 @@ namespace SyncRADation.Players
             if (msg.Kind == DeathKind.HostWipeReload)
             {
                 if (net.Role == NetworkRole.Host) return;
-                ModRuntime.Log?.Msg("[Damage] Host died — reloading last save");
+                PlaytestLog.Event("Damage", "host died — reloading last save");
                 ReloadHostSave();
                 return;
             }
 
             if (msg.Kind == DeathKind.ClientDowned)
-                ModRuntime.Log?.Msg("[Damage] Peer " + msg.SenderPlayerId + " downed");
+                PlaytestLog.Event("Damage", "peer " + msg.SenderPlayerId + " downed");
         }
 
         private static void ReloadHostSave()
@@ -240,7 +241,7 @@ namespace SyncRADation.Players
         {
             _isDead = false;
             try { PlayerState.charState = PlayerState.charStates.idle; } catch { }
-            ModRuntime.Log?.Msg("[Damage] Respawned");
+            PlaytestLog.Event("Damage", "respawned");
         }
 
         public static void Reset()

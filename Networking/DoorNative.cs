@@ -444,11 +444,11 @@ namespace SyncRADation.Networking
             float vol;
             if (!WorldSfx.TryVolume(at.transform.position, out vol))
             {
-                PlaytestLog.Verbose("Door", "sfx skip far " + at.name);
+                PlaytestLog.Event("Door", "sfx skip far " + at.name);
                 return;
             }
             WorldSfx.Play(path, at.transform);
-            PlaytestLog.Event("Door", "sfx " + path + " @ " + at.name + " vol=" + vol.ToString("0.00"));
+            PlaytestLog.Verbose("Door", "sfx " + path + " @ " + at.name + " vol=" + vol.ToString("0.00"));
         }
     }
 }

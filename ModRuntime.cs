@@ -38,7 +38,7 @@ namespace SyncRADation
                 Log.Msg("  F2 menu | F3 quick connect | G/DROP drop | native TAKE pickup");
                 Log.Msg("  FriendlyFire=" + (ModConfig.FriendlyFire?.Value == true)
                     + " VerboseLogging=" + VerboseLogging);
-                Log.Msg("  grep: [Story] [Interact] [FMOD] [KeyRing] [StorageBox] [Scene] [Damage] [Door] [Puzzle] [Pickup] [Harmony] [Hitch] [Spawn]");
+                Log.Msg("  grep: [Story] [Interact] [FMOD] [KeyRing] [StorageBox] [Scene] [Damage] [Door] [Puzzle] [Pickup] [Harmony] [Hitch] [Spawn] [Enemy]");
                 Log.Msg("=============================================");
 
                 Application.runInBackground = true;
@@ -176,7 +176,10 @@ namespace SyncRADation
 
         public static void OnSceneChanged()
         {
-            Log?.Msg("[Runtime] Scene changed");
+            string scene = "";
+            try { scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name; } catch { }
+            PlaytestLog.Reset();
+            PlaytestLog.Event("Scene", "loaded '" + scene + "'");
             _lastLocalShooting = false;
             _ffCooldown = 0f;
             WorldRegistry.Rebuild();

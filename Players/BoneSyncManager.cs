@@ -1,5 +1,6 @@
-// SyncRADation ù bind-pose bones only (skip WeaponMount props). Euler read/apply ~15 Hz.
+// SyncRADation ? bind-pose bones only (skip WeaponMount props). Euler read/apply ~15 Hz.
 using System.Collections.Generic;
+using SyncRADation.Sync;
 using UnityEngine;
 
 namespace SyncRADation.Players
@@ -28,7 +29,7 @@ namespace SyncRADation.Players
             }
             if (_armatureRoot == null)
             {
-                ModRuntime.Log?.Warning("[BoneSync] Armature root not found via SMR. Searching hierarchy...");
+                PlaytestLog.Warn("DRV", "armature root not on SMR, searching hierarchy");
                 var smrParents = root.GetComponentsInChildren<Transform>(true);
                 for (int i = 0; i < smrParents.Length; i++)
                 {
@@ -44,12 +45,11 @@ namespace SyncRADation.Players
             if (_armatureRoot != null)
             {
                 CollectBonesSkipProps(_armatureRoot);
-                ModRuntime.Log?.Msg("[BoneSync] Armature=" + _armatureRoot.name
-                    + " bones=" + _bones.Count);
+                PlaytestLog.Verbose("DRV", "armature=" + _armatureRoot.name + " bones=" + _bones.Count);
             }
             else
             {
-                ModRuntime.Log?.Warning("[BoneSync] No armature found!");
+                PlaytestLog.Warn("DRV", "no armature found");
             }
         }
 

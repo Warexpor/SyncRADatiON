@@ -30,6 +30,41 @@ namespace SyncRADation.Sync
             return false;
         }
 
+        /// <summary>
+        /// True when this object is in the local Elster's live room chunk.
+        /// Other-room cutscenes / EventZones must not Invoke or StartCutscene —
+        /// that yanks the observer through a traverse they never started.
+        /// </summary>
+        public static bool InLocalRoom(GameObject go)
+        {
+            if (go == null) return false;
+            try
+            {
+                if (!go.activeInHierarchy) return false;
+            }
+            catch { return false; }
+            try
+            {
+                var here = PlayerState.currentRoom;
+                if (here == null) return true;
+                Transform t = go.transform;
+                Room room = null;
+                while (t != null)
+                {
+                    if (t == here.transform) return true;
+                    try
+                    {
+                        if (room == null)
+                            room = t.GetComponent<Room>();
+                    }
+                    catch { }
+                    t = t.parent;
+                }
+                return room == null;
+            }
+            catch { return true; }
+        }
+
         public static bool DialoguerFlavor(int id)
         {
             switch (id)

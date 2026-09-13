@@ -201,10 +201,17 @@ namespace SyncRADation.Networking
             {
                 if (msg.Open)
                 {
-                    PlaytestLog.Event("Door", "ignore client open locked " + d.gameObject.name);
-                    return;
+                    if (DoorNative.IsFlavorSeal(d.gameObject))
+                    {
+                        PlaytestLog.Event("Door", "ignore client open locked " + d.gameObject.name);
+                        return;
+                    }
+                    try { d.locked = false; } catch { }
+                    msg.Locked = false;
+                    PlaytestLog.Event("Door", "honor client open " + d.gameObject.name);
                 }
-                msg.Locked = true;
+                else
+                    msg.Locked = true;
             }
 
             DoorNative.ApplyDoubleDoor(d, msg.Open, msg.Locked);

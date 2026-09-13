@@ -1,0 +1,18 @@
+---
+description: Playtest bugs — patch the reported arrow and the reverse initiator
+alwaysApply: true
+---
+
+# Reverse-check (gamedev / multiplayer)
+
+A playtest report is one directed scenario, not the full interaction. The reverse is often a **different code path** (host ignores packets the client applies, claim vs grant, late-join vs in-room).
+
+When the user reports “A did X, B saw Y”:
+
+1. Patch that arrow.
+2. Before calling it fixed, reverse **initiator and observer** and trace that path in code. Patch holes that only exist on the other arrow.
+3. Also reverse presence when it matters: in-room vs other-room / late chunk wake.
+
+Examples: host took the item → also client took it; client opened the puzzle → also host opened it; peer present → also peer joined the room later.
+
+Do not stop at “the same bug with the names swapped.” Check the actual send/apply/authority path. Skip only if that reverse cannot happen in the product.

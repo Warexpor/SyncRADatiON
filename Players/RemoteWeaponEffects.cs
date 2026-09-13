@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using SyncRADation.Networking;
+using SyncRADation.Sync;
 using UnityEngine;
 
 namespace SyncRADation.Players
@@ -144,7 +145,6 @@ namespace SyncRADation.Players
                 _muzzleFlash.SetActive(false);
                 EnsureRendererVisible(_muzzleFlash);
             }
-            ModRuntime.Log?.Msg("[FX] MuzzleFlash " + (_muzzleFlash != null ? "FOUND at " + GetPath(_muzzleFlash.transform) : "NOT FOUND"));
 
             // Origin for laser/ray: Muzzle node / flash / pivot
             _muzzleOrigin = FindTransformByNameContains(allTransforms, "muzzle");
@@ -166,7 +166,6 @@ namespace SyncRADation.Players
             // Smoke is often under Muzzle
             if (_muzzleSmoke == null)
                 _muzzleSmoke = FindParticleSystemNearName(allTransforms, "muzzle");
-            ModRuntime.Log?.Msg("[FX] MuzzleSmoke " + (_muzzleSmoke != null ? "FOUND" : "NOT FOUND"));
             HardenParticle(_muzzleSmoke);
 
             // Laser from AimLaser on source if present
@@ -248,15 +247,12 @@ namespace SyncRADation.Players
                 }
                 catch { }
             }
-            ModRuntime.Log?.Msg("[FX] Laser " + (_laser != null ? "FOUND mat=" + (_laser.sharedMaterial != null ? _laser.sharedMaterial.name : "NULL") : "NOT FOUND"));
             PrepareLaserPoint();
 
             if (_missedShot == null)
                 _missedShot = FindParticleSystemByName(allTransforms, "Miss", allowAnyFallback: false);
             if (_ricochet == null)
                 _ricochet = FindParticleSystemByName(allTransforms, "Ricochet", allowAnyFallback: false);
-            ModRuntime.Log?.Msg("[FX] MissedShot " + (_missedShot != null ? "FOUND" : "NOT FOUND")
-                + " Ricochet " + (_ricochet != null ? "FOUND" : "NOT FOUND"));
             HardenParticle(_missedShot);
             HardenParticle(_ricochet);
 
@@ -274,12 +270,17 @@ namespace SyncRADation.Players
                 _caseEject = FindParticleSystemByName(allTransforms, "Shell", allowAnyFallback: false);
             if (_caseEject == null)
                 _caseEject = FindParticleSystemByName(allTransforms, "Eject", allowAnyFallback: false);
-            ModRuntime.Log?.Msg("[FX] CaseEject " + (_caseEject != null ? "FOUND at " + _caseEject.gameObject.name : "NOT FOUND"));
             HardenParticle(_caseEject);
 
             _slide = FindTransformByName(allTransforms, "Slide");
             if (_slide != null) _slideRestPos = _slide.localPosition.z;
-            ModRuntime.Log?.Msg("[FX] PistolSlide " + (_slide != null ? "FOUND" : "NOT FOUND"));
+            PlaytestLog.Verbose("FX", "muzzle=" + (_muzzleFlash != null ? GetPath(_muzzleFlash.transform) : "no")
+                + " smoke=" + (_muzzleSmoke != null ? "yes" : "no")
+                + " laser=" + (_laser != null ? "yes" : "no")
+                + " miss=" + (_missedShot != null ? "yes" : "no")
+                + " ricochet=" + (_ricochet != null ? "yes" : "no")
+                + " eject=" + (_caseEject != null ? "yes" : "no")
+                + " slide=" + (_slide != null ? "yes" : "no"));
         }
 
         private static void EnsureRendererVisible(GameObject go)

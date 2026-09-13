@@ -124,6 +124,21 @@ namespace SyncRADation.Patches
             return false;
         }
 
+        static void BindPickupName(ItemPickup p)
+        {
+            if (p == null) return;
+            try
+            {
+                var kind = WorldPickupSyncService.ResolveItem(p);
+                if (kind == Items.itemlist.None) return;
+                var cat = InventoryManager.getItem(kind);
+                if (cat == null) return;
+                p._item = cat;
+                PartyKeyRing.BindUseDialogue(cat);
+            }
+            catch { }
+        }
+
         static int _pendingDropKey = -1;
         static Items.itemlist _pendingDropItem;
         static int _pendingDropCount;
@@ -133,6 +148,7 @@ namespace SyncRADation.Patches
         public static bool Prefix(ItemPickup __instance)
         {
             if (__instance == null) return true;
+            BindPickupName(__instance);
 
             if (ItemSystem.DroppedItemManager.IsDropped(__instance))
             {
@@ -170,7 +186,7 @@ namespace SyncRADation.Patches
 
             if (net.PickupSync.IsClaimed(id) || net.PickupSync.IsClaimedPickup(__instance))
             {
-                PlaytestLog.Event("Pickup", "skip claimed " + __instance.gameObject.name
+                PlaytestLog.Verbose("Pickup", "skip claimed " + __instance.gameObject.name
                     + " id=" + id.ToString("X16"));
                 try { net.PickupSync.HidePickup(__instance); } catch { }
                 return false;

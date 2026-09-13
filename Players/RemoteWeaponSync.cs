@@ -25,7 +25,7 @@ namespace SyncRADation.Players
                     if (wt != WeaponType.None && !_weaponDamageCache.ContainsKey(wt))
                         _weaponDamageCache[wt] = w.Damage;
                 }
-                ModRuntime.Log?.Msg("[WeaponSync] Damage cache built: " + _weaponDamageCache.Count + " weapons");
+                PlaytestLog.Verbose("Weapon", "damage cache " + _weaponDamageCache.Count);
             }
             catch { }
         }
@@ -153,20 +153,20 @@ namespace SyncRADation.Players
 
             if (sourceWeaponTransform == null)
             {
-                ModRuntime.Log?.Msg("[WeaponSync] No source weapon found for " + weapon);
+                PlaytestLog.Warn("Weapon", "no source for " + weapon);
                 return null;
             }
 
             Transform proxyParent = FindMatchingBone(sourceWeaponTransform.parent);
             if (proxyParent == null)
             {
-                ModRuntime.Log?.Msg("[WeaponSync] No matching parent on proxy for " + sourceWeaponTransform.parent.name);
+                PlaytestLog.Verbose("Weapon", "no matching parent, using proxy root (" + sourceWeaponTransform.parent.name + ")");
                 proxyParent = _proxy.transform;
             }
 
             GameObject clone;
             try { clone = Object.Instantiate(sourceWeaponTransform.gameObject, proxyParent, false); }
-            catch (System.Exception ex) { ModRuntime.Log?.Msg("[WeaponSync] Instantiate failed: " + ex.Message); return null; }
+            catch (System.Exception ex) { PlaytestLog.Warn("Weapon", "instantiate failed: " + ex.Message); return null; }
             clone.name = weapon.ToString();
 
             var srcSmrs = sourceWeaponTransform.GetComponentsInChildren<SkinnedMeshRenderer>(true);
@@ -236,7 +236,7 @@ namespace SyncRADation.Players
             }
             // Path-matched renderer material pass (index order can diverge after IL2CPP Instantiate)
             CopyMaterialsByPath(sourceWeaponTransform, clone.transform);
-            ModRuntime.Log?.Msg("[WeaponSync] Cloned " + weapon + " (from '" + sourceWeaponTransform.name + "') fixed " + fixedCount + " meshes");
+            PlaytestLog.Verbose("Weapon", "cloned " + weapon + " from '" + sourceWeaponTransform.name + "' meshes=" + fixedCount);
 
             SetLayerRecursive(clone, _targetLayer);
 
@@ -247,7 +247,7 @@ namespace SyncRADation.Players
             // would try to read null serialized fields and interfere with manual effect driving
 #if true
             int mbsKilled = DestroyAllMBs(clone);
-            ModRuntime.Log?.Msg("[WeaponSync] Destroyed " + mbsKilled + " MBs on " + weapon + " clone");
+            PlaytestLog.Verbose("Weapon", "stripped " + mbsKilled + " MBs on " + weapon);
 #endif
             _effects[weapon] = fx;
 
@@ -287,7 +287,7 @@ namespace SyncRADation.Players
             if (best != null)
             {
                 _sourceWeaponCache[weapon] = best;
-                ModRuntime.Log?.Msg("[WeaponSync] source '" + best.name + "' for " + weapon);
+                PlaytestLog.Verbose("Weapon", "source '" + best.name + "' for " + weapon);
             }
             return best;
         }
@@ -360,7 +360,7 @@ namespace SyncRADation.Players
                 catch { }
             }
             if (copied > 0)
-                ModRuntime.Log?.Msg("[WeaponSync] Path-matched materials: " + copied);
+                PlaytestLog.Verbose("Weapon", "path-matched materials " + copied);
         }
 
         private static int DestroyAllMBs(GameObject obj)

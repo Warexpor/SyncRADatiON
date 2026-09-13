@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using FMODUnity;
 using SyncRADation.Networking;
+using SyncRADation.Sync;
 using UnityEngine;
 
 namespace SyncRADation.Players
@@ -82,94 +83,53 @@ namespace SyncRADation.Players
 
             if (player == null)
             {
-                ModRuntime.Log?.Msg("[Audio] Cannot read FMOD paths: no local player");
+                PlaytestLog.Warn("Audio", "no local player for FMOD paths");
                 return;
             }
 
-            var sb = new System.Text.StringBuilder("[Audio] Scanning player '" + player.name + "':");
-
-            // List all components on player
-            sb.Append("\n  Components on root:");
-            foreach (var c in player.GetComponents<Component>())
-            {
-                if (c != null) sb.Append("\n    ").Append(c.GetType().Name);
-            }
-            sb.Append("\n  Components in children:");
-            foreach (var c in player.GetComponentsInChildren<Component>(true))
-            {
-                if (c != null) sb.Append("\n    ").Append(c.GetType().Name);
-            }
-
-            // Find footstep AudioClip from ElsterFootstepSFX
             try
             {
                 var efs = player.GetComponentInChildren<ElsterFootstepSFX>(true);
                 if (efs != null && efs.stepSource != null && efs.stepSource.clip != null)
-                {
                     _footstepClip = efs.stepSource.clip;
-                    sb.Append("\n  ElsterFootstepSFX.stepSource.clip = \"").Append(_footstepClip.name).Append("\"");
-                }
-                else sb.Append("\n  ElsterFootstepSFX: NOT FOUND or no clip");
             }
-            catch (Exception ex) { sb.Append("\n  ElsterFootstepSFX error: ").Append(ex.Message); }
+            catch { }
 
-            // Find specific FMOD sound components
             try
             {
                 var hs = player.GetComponentInChildren<ElsterHurtSound>(true);
-                if (hs != null) { _hurtPath = hs.HurtSound; sb.Append("\n  ElsterHurtSound.HurtSound = \"").Append(_hurtPath).Append("\""); }
-                else sb.Append("\n  ElsterHurtSound: NOT FOUND");
+                if (hs != null) _hurtPath = hs.HurtSound;
             }
-            catch (Exception ex) { sb.Append("\n  ElsterHurtSound error: ").Append(ex.Message); }
+            catch { }
 
             try
             {
                 var pa = player.GetComponentInChildren<PlayerAttack>(true);
                 if (pa != null)
                 {
-                    _drawSound = pa.drawSound; _holsterSound = pa.holsterSound;
-                    sb.Append("\n  PlayerAttack.drawSound = \"").Append(_drawSound).Append("\"");
-                    sb.Append("\n  PlayerAttack.holsterSound = \"").Append(_holsterSound).Append("\"");
+                    _drawSound = pa.drawSound;
+                    _holsterSound = pa.holsterSound;
                 }
-                else sb.Append("\n  PlayerAttack: NOT FOUND");
             }
-            catch (Exception ex) { sb.Append("\n  PlayerAttack error: ").Append(ex.Message); }
+            catch { }
 
             try
             {
                 var sc = player.GetComponentInChildren<StepSoundClass>(true);
-                if (sc != null) { _footstepPath = sc.audioStep; sb.Append("\n  StepSoundClass.audioStep = \"").Append(_footstepPath).Append("\""); }
-                else sb.Append("\n  StepSoundClass: NOT FOUND");
+                if (sc != null) _footstepPath = sc.audioStep;
             }
-            catch (Exception ex) { sb.Append("\n  StepSoundClass error: ").Append(ex.Message); }
+            catch { }
 
             try
             {
                 var inv = player.GetComponentInChildren<InventoryBase>(true);
-                if (inv != null) { _reloadFMODPath = inv.reloadSound; sb.Append("\n  InventoryBase.reloadSound = \"").Append(_reloadFMODPath).Append("\""); }
-                else sb.Append("\n  InventoryBase: NOT FOUND");
+                if (inv != null) _reloadFMODPath = inv.reloadSound;
             }
-            catch (Exception ex) { sb.Append("\n  InventoryBase error: ").Append(ex.Message); }
+            catch { }
 
-            // AudioSources on player
-            sb.Append("\n  --- AudioSources ---");
-            foreach (var src in player.GetComponentsInChildren<AudioSource>(true))
-            {
-                if (src == null) continue;
-                string clipName = src.clip != null ? src.clip.name : "null";
-                sb.Append("\n  ").Append(src.gameObject.name).Append(" clip=").Append(clipName).Append(" isPlaying=").Append(src.isPlaying);
-            }
-
-            sb.Append("\n  --- Cached ---");
-            sb.Append("\n  footstep=").Append(_footstepPath ?? "null");
-            sb.Append("\n  hurt=").Append(_hurtPath ?? "null");
-            sb.Append("\n  draw=").Append(_drawSound ?? "null");
-            sb.Append("\n  holster=").Append(_holsterSound ?? "null");
-            sb.Append("\n  reloadFMOD=").Append(_reloadFMODPath ?? "null");
-
-            ModRuntime.Log?.Msg(sb.ToString());
-
-            // Test sound removed — was playing footstep on every proxy init
+            PlaytestLog.Event("Audio", "cached footstep=" + (_footstepPath ?? "null")
+                + " hurt=" + (_hurtPath ?? "null")
+                + " draw=" + (_drawSound ?? "null"));
         }
 
         private int _tickCount;
@@ -200,8 +160,8 @@ namespace SyncRADation.Players
                 distToLocal = Vector3.Distance(_proxyTransform.position, localPlayer.transform.position);
 
             // Log every ~500 ticks
-            if (ModRuntime.VerboseLogging && _tickCount % 2000 == 0)
-                ModRuntime.Log?.Msg("[Audio] Tick#" + _tickCount + " step=" + state.StepHappened
+            if (_tickCount % 2000 == 0)
+                PlaytestLog.Verbose("Audio", "tick#" + _tickCount + " step=" + state.StepHappened
                     + " dist=" + distToLocal.ToString("F1"));
 
             // Hearing range per sound type
@@ -403,14 +363,15 @@ namespace SyncRADation.Players
                         if (!string.IsNullOrEmpty(w.emptyMod) && !_emptyFMOD.ContainsKey(wt))
                             _emptyFMOD[wt] = w.emptyMod;
 
-                        ModRuntime.Log?.Msg("[Audio] Weapon " + wt + ": shotMod=" + (w.shotMod ?? "null")
-                            + " emptyMod=" + (w.emptyMod ?? "null")
-                            + " reloadMod=" + (w.reloadMod ?? "null"));
+                        PlaytestLog.Verbose("Audio", "weapon " + wt
+                            + " shot=" + (w.shotMod ?? "null")
+                            + " empty=" + (w.emptyMod ?? "null")
+                            + " reload=" + (w.reloadMod ?? "null"));
                     }
                     catch { }
                 }
 
-                ModRuntime.Log?.Msg("[Audio] Cached " + shotCount + " weapon shot FMOD paths, " + reloadCount + " reload FMOD paths");
+                PlaytestLog.Event("Audio", "weapon FMOD shot=" + shotCount + " reload=" + reloadCount);
             }
             catch (Exception ex)
             {
@@ -426,7 +387,7 @@ namespace SyncRADation.Players
                 var all = Resources.FindObjectsOfTypeAll<CombatSfxManager>();
                 if (all == null || all.Length == 0)
                 {
-                    ModRuntime.Log?.Msg("[Audio] CombatSfxManager not found");
+                    PlaytestLog.Verbose("Audio", "CombatSfxManager not found");
                     return;
                 }
                 var mgr = all[0];
@@ -444,8 +405,8 @@ namespace SyncRADation.Players
                 _rifleSnapPath = mgr.RifleSnapClosed;
                 _rifleEjectPath = mgr.RifleEject;
                 _rifleInsertPath = mgr.RifleInsert;
-                ModRuntime.Log?.Msg("[Audio] Cached CombatSfxManager: ShotgunPump=" + (_shotgunPumpPath ?? "null")
-                    + " FGunEject=" + (_fgunEjectPath ?? "null"));
+                PlaytestLog.Verbose("Audio", "CombatSfx shotgunPump=" + (_shotgunPumpPath ?? "null")
+                    + " fgunEject=" + (_fgunEjectPath ?? "null"));
             }
             catch (Exception ex)
             {

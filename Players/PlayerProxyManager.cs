@@ -90,7 +90,7 @@ namespace SyncRADation.Players
             GameObject clone = PlayerProxyBuilder.CreatePlayerClone(source, "RemotePlayer_" + playerId, Vector3.zero, ModRuntime.Log);
             if (clone == null)
             {
-                ModRuntime.Log?.Warning("[ProxyManager] Failed to create proxy for player " + playerId);
+                PlaytestLog.Warn("Proxy", "failed to create p" + playerId);
                 return;
             }
 
@@ -104,7 +104,7 @@ namespace SyncRADation.Players
                 if (_proxyLayer < 0) _proxyLayer = capCol.gameObject.layer;
             }
             _interp[playerId] = new InterpState { isFirst = true };
-            ModRuntime.Log?.Msg("[ProxyManager] Created proxy for player " + playerId);
+            PlaytestLog.Event("Proxy", "created p" + playerId);
         }
 
         public void DestroyProxy(int playerId)
@@ -121,7 +121,7 @@ namespace SyncRADation.Players
                 _proxies.Remove(playerId);
                 _proxyObjects.Remove(playerId);
                 _interp.Remove(playerId);
-                ModRuntime.Log?.Msg("[ProxyManager] Destroyed proxy for player " + playerId);
+                PlaytestLog.Event("Proxy", "destroyed p" + playerId);
             }
         }
 

@@ -1,0 +1,19 @@
+# Enforce LF so Windows/Proton editors don't churn the whole tree.
+* text=auto eol=lf
+
+*.cs text eol=lf
+*.csproj text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.xml text eol=lf
+*.cfg text eol=lf
+*.mdc text eol=lf
+
+*.dll binary
+*.png binary
+*.jpg binary
+*.zip binary

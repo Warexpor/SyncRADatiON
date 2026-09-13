@@ -157,6 +157,29 @@ namespace SyncRADation.Patches
         }
     }
 
+    [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.getCount), new[] { typeof(AnItem) })]
+    public static class InventoryGetCountPatch
+    {
+        static bool _counting;
+
+        [HarmonyPostfix]
+        public static void Postfix(AnItem item, ref int __result)
+        {
+            if (__result > 0 || item == null || !NetGate.Live || _counting) return;
+            var held = PartyKeyRing.FindInBag(item);
+            if (held != null && held != item)
+            {
+                _counting = true;
+                try { __result = InventoryManager.getCount(held); }
+                catch { __result = 1; }
+                finally { _counting = false; }
+                return;
+            }
+            if (PartyKeyRing.Has(item))
+                __result = 1;
+        }
+    }
+
     [HarmonyPatch]
     public static class StorageBoxInventoryPatches
     {
@@ -211,14 +234,18 @@ namespace SyncRADation.Patches
     static class DialoguerGate
     {
         static bool _flavorActive;
+        static int _flavorId;
 
         public static bool Start(int dialogueId)
         {
             if (NetGate.IsApplying || !NetGate.Live) return true;
             if (LocalInspect.DialoguerFlavor(dialogueId) || LocalInspect.InspectScreen())
             {
+                _flavorId = dialogueId;
                 if (dialogueId == (int)DialoguerDialogues.useItemDialogue)
                     BindUseItemName();
+                else
+                    PartyKeyRing.RestoreUiNames();
                 _flavorActive = true;
                 return true;
             }
@@ -239,8 +266,10 @@ namespace SyncRADation.Patches
             if (NetGate.IsApplying || !NetGate.Live) return true;
             if (_flavorActive || LocalInspect.InspectScreen())
             {
-                if (_flavorActive)
+                if (_flavorId == (int)DialoguerDialogues.useItemDialogue)
                     BindUseItemName();
+                else
+                    PartyKeyRing.RestoreUiNames();
                 return true;
             }
             if (NetGate.Host)

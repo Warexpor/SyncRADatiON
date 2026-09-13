@@ -24,6 +24,7 @@ namespace SyncRADation.Patches
 
             if (NetGate.Host)
             {
+                SceneFollowService.NoteGoingTo(scene);
                 PlaytestLog.Event("Scene", "host load '" + scene + "'");
                 LanNetworkManager.Instance.SendSceneFollow(scene, false);
                 return true;
