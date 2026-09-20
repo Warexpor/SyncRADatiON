@@ -1,0 +1,217 @@
+// Main orchestrator: guards, friendly fire (optional), network lifecycle
+using MelonLoader;
+using SyncRADation.Config;
+using SyncRADation.ItemSystem;
+using SyncRADation.Networking;
+using SyncRADation.Players;
+using SyncRADation.Sync;
+using UnityEngine;
+
+namespace SyncRADation
+{
+    public static class ModRuntime
+    {
+        public static MelonLogger.Instance Log;
+        public static LanNetworkManager Network { get; private set; }
+        public static bool VerboseLogging => ModConfig.VerboseLogging?.Value == true;
+
+        private static bool _running;
+        private static HarmonyLib.Harmony _harmony;
+
+        private static bool _lastLocalShooting;
+        private static float _ffCooldown;
+
+        public static void Start(MelonLogger.Instance log, HarmonyLib.Harmony harmony)
+        {
+            Log = log;
+            _harmony = harmony;
+
+            try
+            {
+                ModConfig.Bind();
+                PatchAllSafe();
+
+                Log.Msg("=============================================");
+                Log.Msg("  " + PluginInfo.Name + " v" + PluginInfo.Version);
+                Log.Msg("  " + PluginInfo.Description);
+                Log.Msg("  Protocol v" + PluginInfo.ProtocolVersion + " | Port " + PluginInfo.DefaultPort);
+                Log.Msg("  F2 menu | F3 quick connect | G/DROP drop | native TAKE pickup");
+                Log.Msg("  FriendlyFire=" + (ModConfig.FriendlyFire?.Value == true)
+                    + " VerboseLogging=" + VerboseLogging);
+                Log.Msg("  Host MelonLoader log:");
+                Log.Msg("    ~/.local/share/Steam/steamapps/common/SIGNALIS/MelonLoader/Latest.log");
+                Log.Msg("  Client MelonLoader log:");
+                Log.Msg("    ~/Work/MyProjects/SIGNALIS/MelonLoader/Latest.log");
+                Log.Msg("  Prefs (each install): .../SIGNALIS/UserData/MelonPreferences.cfg");
+                Log.Msg("  grep always-on: [Story] [Interact] [KeyRing] [StorageBox] [Scene] [Damage]");
+                Log.Msg("    [Door] [Puzzle] [Pickup] [Harmony] [Hitch] [Spawn] [Enemy] [Proxy] [Weapon]");
+                Log.Msg("  VerboseLogging also: [FMOD] Play/Stop, [Proxy]/[DRV] clone/FX, puzzle diffs");
+                Log.Msg("  Hitch tags (spike-only): frame | send gap | recv | puzzle | enemy | boss");
+                Log.Msg("    | pickup | weaponClone | 5s sendHz/recvHz/maxSend/maxRecv/maxDt/cost");
+                Log.Msg("=============================================");
+
+                Application.runInBackground = true;
+            }
+            catch (System.Exception ex)
+            {
+                Log.Error("ModRuntime.Start failed: " + ex);
+            }
+
+            EnsureRunning();
+        }
+
+        private static void PatchAllSafe()
+        {
+            var asm = typeof(ModRuntime).Assembly;
+            var types = asm.GetTypes();
+            int ok = 0;
+            int fail = 0;
+            for (int i = 0; i < types.Length; i++)
+            {
+                var t = types[i];
+                try
+                {
+                    var attrs = t.GetCustomAttributes(typeof(HarmonyLib.HarmonyPatch), true);
+                    if (attrs == null || attrs.Length == 0) continue;
+                    _harmony.CreateClassProcessor(t).Patch();
+                    ok++;
+                }
+                catch (System.Exception ex)
+                {
+                    fail++;
+                    Log?.Warning("[Harmony] skip " + t.Name + ": " + ex.Message);
+                }
+            }
+            Log?.Msg("[Harmony] patched " + ok + " classes, skipped " + fail);
+        }
+
+        public static void EnsureRunning()
+        {
+            if (_running) return;
+            _running = true;
+
+            var root = new GameObject("SyncRADation_Runtime");
+            Object.DontDestroyOnLoad(root);
+
+            Network = new LanNetworkManager();
+        }
+
+        public static void OnUpdate()
+        {
+            var pm = Network?.ProxyManager;
+            var net = Network;
+            try { DroppedItemManager.TickDeferred(); } catch { }
+
+            // Guard: PlayerState.player must never point at a remote proxy
+            if (pm != null)
+            {
+                var local = net?.GetLocalPlayer();
+                if (local != null && PlayerState.player != null && PlayerState.player != local)
+                {
+                    foreach (int pid in pm.GetProxyPlayerIds())
+                    {
+                        var p = pm.GetProxy(pid);
+                        if (p != null && p.GameObject == PlayerState.player)
+                        {
+                            PlayerState.player = local;
+                            Log?.Msg("[Guard] Restored PlayerState.player to local");
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Friendly fire only (opt-in). Enemy hits go through Harmony → EnemyController.TakeDamage
+            // (see Patches/EnemyTakeDamagePatches) — not DIY raycasts.
+            if (net != null && net.IsConnected && ModConfig.FriendlyFire?.Value == true)
+            {
+                _ffCooldown -= Mathf.Min(Time.deltaTime, 0.1f);
+                bool curShooting = Input.GetButton("Fire1") || Input.GetMouseButton(0);
+                if (curShooting && !_lastLocalShooting && _ffCooldown <= 0f)
+                {
+                    GameObject pl = PlayerState.player;
+                    if (pl != null)
+                    {
+                        Vector3 origin = pl.transform.position + Vector3.up * 0.8f;
+                        Vector3 dir = SourceAnimReader.ReadFacingWorldRotation(pl) * Vector3.forward;
+                        if (dir.sqrMagnitude < 0.0001f)
+                            dir = Vector3.forward;
+                        else
+                            dir.Normalize();
+                        int wallMask = GetWallMask();
+                        if (pm != null && pm.ProxyLayer >= 0)
+                            wallMask |= (1 << pm.ProxyLayer);
+                        RaycastHit hit;
+                        if (Physics.Raycast(origin, dir, out hit, 50f, wallMask))
+                        {
+                            int hitPid = pm != null ? pm.GetPlayerIdByCollider(hit.collider) : -1;
+                            if (hitPid >= 0)
+                            {
+                                float dmg = RemoteWeaponSync.GetDamage(WeaponUtils.EquippedWeaponType());
+                                net.SendFriendlyFire(hitPid, dmg, hit.point);
+                                _ffCooldown = 0.2f;
+                            }
+                        }
+                    }
+                }
+                _lastLocalShooting = curShooting;
+            }
+            else
+            {
+                _lastLocalShooting = Input.GetButton("Fire1") || Input.GetMouseButton(0);
+            }
+
+            NetworkDamageSystem.TickRespawn();
+            Cheats.EntitySpawner.Tick();
+
+            if (net != null && net.IsConnected)
+                HitchTrace.Frame();
+
+            try { net?.Update(); }
+            catch (System.Exception ex) { Log?.Error("Network.Update crashed: " + ex); }
+
+            if (pm != null)
+            {
+                foreach (int pid in pm.GetProxyPlayerIds())
+                    pm.GetProxy(pid)?.AnimDriver?.PreTick();
+            }
+        }
+
+        public static void OnLateUpdate()
+        {
+            try { Network?.LateUpdate(); }
+            catch (System.Exception ex) { Log?.Error("Network.LateUpdate crashed: " + ex); }
+        }
+
+        public static void OnSceneChanged()
+        {
+            string scene = "";
+            try { scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name; } catch { }
+            PlaytestLog.Reset();
+            PlaytestLog.Event("Scene", "loaded '" + scene + "'");
+            _lastLocalShooting = false;
+            _ffCooldown = 0f;
+            WorldRegistry.Rebuild();
+            Cheats.EntitySpawner.HarvestLoaded();
+            Network?.OnSceneChanged();
+        }
+
+        private static int GetWallMask()
+        {
+            try
+            {
+                var pa = PlayerState.player?.GetComponentInChildren<PlayerAttack>(true);
+                if (pa != null) return pa.WallMask;
+            }
+            catch { }
+            return ~0;
+        }
+
+        public static void Stop()
+        {
+            Network?.StopNetwork();
+            _harmony?.UnpatchSelf();
+            _running = false;
+        }
+    }
+}

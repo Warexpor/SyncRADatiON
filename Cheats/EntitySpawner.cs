@@ -227,6 +227,81 @@ namespace SyncRADation.Cheats
             FinishSpawn(msg.TypeKey, new Vector3(msg.PosX, msg.PosY, msg.PosZ), msg.RotY, msg.Seq, false);
         }
 
+        /// <summary>
+        /// Host: promote a native EnemySpawner._Child into SR_Spawn_* identity and
+        /// broadcast EnemySpawn so the client Instantiates a matching puppet (protocol 8).
+        /// Hierarchy WorldIds diverge when both peers spawn; one host-authored name stays stable.
+        /// </summary>
+        public static void AdoptNativeSpawn(EnemyController ec, bool broadcast)
+        {
+            if (ec == null || ec.gameObject == null) return;
+
+            string n = "";
+            try { n = ec.gameObject.name ?? ""; } catch { }
+            if (n.StartsWith(SpawnPrefix, System.StringComparison.Ordinal))
+            {
+                ulong existingId = WorldId.FromGameObject(ec.gameObject);
+                if (existingId != 0)
+                    WorldRegistry.RegisterEnemy(existingId, ec);
+                return;
+            }
+
+            HarvestLoaded();
+            string typeKey = TypeKeyOf(ec);
+            if (string.IsNullOrEmpty(typeKey))
+            {
+                ulong hierId = WorldId.FromGameObject(ec.gameObject);
+                if (hierId != 0)
+                    WorldRegistry.RegisterEnemy(hierId, ec);
+                PlaytestLog.Event("Spawn", "native adopt: unknown type, hierarchy id="
+                    + hierId.ToString("X16") + " name=" + n);
+                LanNetworkManager.Instance?.EnemySync.RequestFullSend();
+                return;
+            }
+
+            if (!HasTemplate(typeKey))
+            {
+                ulong hierId = WorldId.FromGameObject(ec.gameObject);
+                if (hierId != 0)
+                    WorldRegistry.RegisterEnemy(hierId, ec);
+                PlaytestLog.Event("Spawn", "native adopt: no template " + typeKey
+                    + " id=" + hierId.ToString("X16"));
+                LanNetworkManager.Instance?.EnemySync.RequestFullSend();
+                return;
+            }
+
+            int seq = _nextSeq++;
+            string goName = SpawnPrefix + seq + "_" + typeKey;
+            ulong id = WorldId.Compute("spawn", goName);
+            EnemyController prior;
+            if (WorldRegistry.TryGetEnemy(id, out prior) && prior != null)
+            {
+                PlaytestLog.Event("Spawn", "native adopt skip duplicate id=" + id.ToString("X16"));
+                return;
+            }
+
+            try { ec.gameObject.name = goName; } catch { }
+            WorldRegistry.RegisterEnemy(id, ec);
+
+            var net = LanNetworkManager.Instance;
+            net?.EnemySync.RequestFullSend();
+            PlaytestLog.Event("Spawn", "native adopt " + goName + " id=" + id.ToString("X16"));
+
+            if (broadcast && NetGate.Live && NetGate.Host)
+            {
+                var p = ec.transform.position;
+                net?.BroadcastEnemySpawn(new EnemySpawnMessage
+                {
+                    Seq = seq,
+                    TypeKey = typeKey,
+                    PosX = p.x,
+                    PosY = p.y,
+                    PosZ = p.z,
+                    RotY = ec.transform.eulerAngles.y
+                });
+            }
+        }
+
         public static void DumpLiveSpawns(LanNetworkManager net)
         {
             if (net == null) return;

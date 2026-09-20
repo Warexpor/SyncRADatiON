@@ -69,8 +69,10 @@ namespace SyncRADation.Sync
         {
             switch (id)
             {
+                // Decompile DialoguerDialogues: Airlock=13 stays local with PEN_Titles.
                 case 0:
                 case 6:
+                case 13:
                 case 17:
                 case 20:
                 case 21:

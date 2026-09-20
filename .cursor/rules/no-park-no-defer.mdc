@@ -1,0 +1,24 @@
+---
+description: Never park or defer required work for protocol comfort or safer subsets
+alwaysApply: true
+---
+
+# No park / no defer
+
+This project does **not** park, shelve, or redefine success around a smaller safer subset.
+
+## Hard rules
+
+1. **Finish the requested end state.** If the objective lists gaps, implement them. Do not leave `docs/*PARK*`, "protocol later", "playtest first", or "design TBD" as a substitute for doing the work.
+2. **Protocol bumps are allowed** when wire changes are required. Prefer bumping `ProtocolVersion` over skipping features. Document the bump in CHANGELOG + PluginInfo; do not refuse the feature to keep an old protocol.
+3. **No invented sync.** Still only sync vanilla fields/methods backed by the SIGNALIS decompile. "No park" does not mean invent product behavior.
+4. **Intentional local is not parking.** AGENTS.md / product rules that keep books, EventScreen, airlock titles, wreck↔hole, music beds, ladders, ConnectedDoors traverse, radio tuner local stay local. That is design, not deferred work.
+5. **Reverse-check both arrows** (and late-join when relevant) on every sync path you add or change.
+6. **Do not redefine success** around "structural only", "no wire change", or "build green with gaps remaining" when the user asked for full coverage or maximum perfection.
+
+## Anti-patterns (forbidden)
+
+- Writing a park table instead of implementing
+- "We'll do protocol 9 in a later goal" when this goal needs the wire
+- Skipping FMOD/boss/puzzle types because dual-box soak is out of scope
+- Claiming complete while `DECOMPILE_COVERAGE` (or equivalent) still lists unimplemented gaps

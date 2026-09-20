@@ -1,0 +1,20 @@
+// SyncRADation — constants: version, protocol, port, send rates
+namespace SyncRADation
+{
+    public static class PluginInfo
+    {
+        public const string Name = "SyncRADation";
+        public const string Version = "0.5.1";
+        public const string Author = "Warexpor";
+        public const string Description = "LAN multiplayer mod for SIGNALIS — host-authoritative world/story, native client UX";
+        /// <summary>Protocol v10: v9 + GunCase/AraNest/RifleQuest/Microfiche + Apply unlock fixes.</summary>
+        public const int ProtocolVersion = 10;
+        public const int DefaultPort = 7777;
+        public const int MaxPlayers = 4;
+        public const float SendInterval = 1f / 30f;
+        /// <summary>~1.35 packets behind at 30 Hz. Shared by root pose and bone sampling.</summary>
+        public const float PoseInterpDelay = 0.045f;
+        public const float EntitySendInterval = 1f / 15f;
+        public const string ConnectionKey = "SyncRADation";
+    }
+}

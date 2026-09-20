@@ -1,5 +1,89 @@
 # Changelog
 
+## 0.5.1 — 2026-09-20
+
+Protocol **v10**. Domains architecture + decompile coverage + diagnosis-ready dual-box soak. Dual-instance playtest still required before treating behavior as proven.
+
+### Added
+- **Domains layout** — `Bootstrap/`, `Networking/{Dispatch,Messages}`, `Domains/{Doors,Enemies,Bosses,Story,Scene,Audio,Pickups,Inventory,Players,Combat,Puzzles,Session}/`. Symptom→path map: `Domains/README.md`.
+- Protocol **10** puzzles: GunCase / AraNest / LAB_RifleQuest / LOV_Microfiche; client-emit reverse arrows for SwingDoor / DoorwaySimple / StorageBox / MED_KeyGrid / ArianePhotoCode (+ protocol 9 residency/locks already in tree).
+- Diagnosis: boot banner (host+client MelonLoader log paths, prefs, grep tags, Hitch glossary); AGENTS.md **Diagnosis** section; HitchTrace Cost tags `enemy` / `boss` / `pickup` (plus `puzzle` / `weaponClone`).
+- Hard rule: **no park / no defer** (`.cursor/rules/no-park-no-defer.mdc`). Coverage ledger: `docs/DECOMPILE_COVERAGE.md`.
+
+### Changed
+- Product version **0.5.1** (`PluginInfo` / AssemblyInfo / README / Domains map). Protocol stays **10**.
+- `LanNetworkManager` slimmed: HandlerRegistry + PublicApi + Dispatch; domain Send/Handle on NetHandlers.
+- `PuzzleSyncService` coordinator + family SyncServices; InteractionPatches peeled into Domains patches; DroppedItemManager façade over Registry/Spawner.
+- `VerboseLogging` MelonPreferences: OFF unless diagnosing; set on **both** installs.
+- Hot-path: `WorldLookup` scene caches; recycled tick lists; FMOD HostEmit dedupe; join FullRefresh door/lock flag snaps; remount `HoldIfProgressed`.
+
+### Fixed
+- Join/remount door unlocks; EmitProgressed TryRead (no zeroed Reaktor/Pump Ints); CentralElevator client-emit; Cryo hierarchy-only pattern disable; MultiKeyLock poll without `checkLock`; KeyGrid/Ariane no double-emit. Detail under 0.5.0-dev notes below.
+
+## 0.5.0-dev — 2026-09-20
+
+Protocol **v10**. PuzzleType 73–76 (GunCase / AraNest / LAB_RifleQuest / LOV_Microfiche) + client-emit reverse arrows for SwingDoor / DoorwaySimple / StorageBox / MED_KeyGrid / ArianePhotoCode.
+
+### Added (protocol 10)
+- `GunCase` — Bool0 opened (inter disabled / pickup enabled); Magpie snap: disable inter/openBox, enable pickup, lid localEuler Y=-115 (Open coroutine), RevealPickups.
+- `AraNest` — Bool0 triggered / Bool1 activated / Bool2 dead; Apply `TriggerTrap` once + dead `anim_LoadDead` on Nest/Ara.
+- `LAB_RifleQuest` — Bool0 awake / Bool1 gone / Bool2 rifle; snap Isa/Rifle/FakeRifle/ObsHolder/UseItemHolder + `anim_Done` when awake/gone.
+- `LOV_Microfiche` — Bool0 hasFiche / Bool1 IsaVisited / Bool2 IsaGone; snap Isa/IsaNote/IsaCutscene (+ book/ItemInter PersistentGameObject); **not** BookScreen UI.
+- Client emit: SwingDoor, DoorwaySimple, StorageBox, MED_KeyGrid, ArianePhotoCode (plus the four new types).
+
+### Added (protocol 9 puzzles)
+- `RES_MusicBox` / `RES_LibraryPC` / `RES_Paternoster` — Magpie-style snaps; client emit + host relay.
+- `MED_KeyGrid.solved` + `ArianePhotoCode.code` — WorldId-0 host globals (RadioManager pattern).
+- `DET_ServiceLock_Key` / `SafeDoorSmall` / `MultiKeyLock` (keys→Int0 bits) / `OpenableDrawer`.
+- `CentralElevator.targetFloor` → Int2; EvidenceLocker/FloodControls/RES_Power bool arrays packed into Ints; PEN_Reaktor extras; `ROT_Mural` up to 8 moons in Int0–Int3.
+- `DET_RadioCodeLock` keypad.solved → Bool0 + TryUnlockDoors; `EXC_Elevator` startRide/stopInstant + mover Y; `SaveRoomEvent` disables eventInter; `DialoguePlayedOnce` skips LocalInspect flavor.
+- Boss: `END_Boss` Hp/Corrupt; Kolibri frequency/radioIntensity; Adler progress (`PuzzleStateEntry.Float1`).
+- Story: END_Manager NPC/healedTime/segments/memoryTime/doors on StoryCommit; client `CalculatePlaystyle` gated.
+- FMOD: `PlayOneShot(Guid)`, `PlayOneShotAttached` string/Guid, `fmod.PlayOneShot`.
+- Scene: `SceneManager.LoadScene` string/int gated (AirlockDoorLoadZone); PenroseAirlock already on AsyncLoader(int).
+- Hard rule: **no park / no defer** (`.cursor/rules/no-park-no-defer.mdc` + AGENTS).
+
+### Changed
+- Product version `0.5.0-dev`; `ProtocolVersion` = **10**.
+- Layout: `Bootstrap/`, `Networking/{Dispatch,Messages}`, `Domains/{Doors,Enemies,Bosses,Story,Scene,Audio,Pickups,Inventory,Players,Combat,Puzzles,Session}/`. Namespaces kept stable.
+- `LanNetworkManager` slimmed (~2.1k → ~600 LOC): HandlerRegistry + PublicApi + Dispatch; domain Send/Handle on Door/Avatar/Enemy/Boss/Fmod/Story/Interaction/Dropped/WorldPickup/Puzzle/Combat/Scene/Inventory/Session NetHandlers. Join dump uses `_unicastPlayerId` via BeginUnicast/EndUnicast.
+- `PuzzleSyncService` is a coordinator (scan/tick/held/`_mutateWorld`/relay); ApplyEntry/TryRead are one-line forwards to Cryo/Codepad/Locks/PumpFlood/Pipes/Hatch/Elevator/Machines/Residency/Radio/UseItem/Storage/EventZone/DoorFlags + Story/Boss/Enemy for bleed types. Dead `InteractionTriggered` switch cases removed (enum kept).
+- `InteractionPatches` god split into Domains Story/Scene/Inventory/Puzzles/Combat patches; dead `ShouldHold*` / `Keep*Prompt` / `IsRemoteUnlock` chain removed.
+- `DroppedItemManager` is a thin façade over Registry/Spawner; drop/claim wire in `DroppedItemNetHandlers`.
+- `Domains/README.md` is the symptom→path fix map for bugfixes.
+- `docs/DECOMPILE_COVERAGE.md` lists completed protocol-10 coverage + intentional locals only (no park / verify-later tables).
+
+### Preserved
+- Host-authoritative world/story rules from AGENTS.md (party key ring Key/Object only, native TAKE for drops, wreck↔hole never follows, ClientMayEmit allowlist, join dump `_mutateWorld=false`).
+- Reverse-check both arrows remains required for playtest claims (playtest itself out of scope for this structural release).
+
+### Fixed (code-only solidify — no dual-box)
+- Join FullRefresh now snaps door/lock flags (`DoorwaySimple` / `SwingDoor` / `DoorLockControl` / `InteractiveLockSingle`); `TryUnlockDoors` / `UnlockDoorObject` are flag snaps (flavor still gated by `AllowUnlock` / `IsFlavorSeal`).
+- Remount hold: `IsProgressed` covers unlocked locks (Interactive/Number/DoorLockPuzzle), open Swing/FoldingShutter, CentralElevator cabin, Waage weight, RadioAlignment; ProgressedBool0 gains Dial/Multi/Vent/RadioTutorial/Power/Incinerator/Shrine/Tarot/MultiCondition/Cutscene/FloodSwitch/ElevatorCall.
+- Host/client Tick now `HoldIfProgressed` so poll solves survive room remount (not only Emit/Apply).
+- `EmitProgressed` TryReads live component then forces Bool0 (no longer zeroes Reaktor/Pump Ints); recycled `_emitScratch`.
+- Client emit: `CentralElevator`. KeyGrid/Ariane no longer double-emit instance + WorldId 0.
+- Cryo pattern-lock disable: hierarchy/sibling parent only (no radius heuristic). MultiKeyLock poll derives unlocked from `keys[]` (no `checkLock` on tick).
+- Mural `useRing` mutate-gated; FloodControls `dlc.locked` snaps on join.
+- Hot-path: FMOD HostEmit dedupe before local/door walks; RadioManager + gunshot `ElsterSettings` via WorldLookup; proxy LateUpdate `_staleScratch`; StorageBox recycled read buffer; EnvEmit.ReadOnce for Update-polled Magpie/Shutters/CardWriter/Biodome.
+
+### Fixed (decompile coverage loop)
+- `MultiKeyLock` Apply calls `checkLock` + TryUnlockDoors; dial/number/DoorLockPuzzle unseal doors; MultiLock TryUnlockDoors; Vent Magpie cover snap; EvidenceLocker snaps `EvidenceLockerDoor`.
+- Doorway_simple / DoorLockControl Apply now unseal when unlocked (flavor seals still sealed). Host unlock ↔ client unlock.
+- Dialoguer Airlock (13) treated as local flavor with PEN_Titles.
+- Client CutsceneStart no longer runs native locally (SProgress writes were blocked → flag hole); host-only Start + presentation.
+- Enemy staggerType applied from HurtState; MultiLock element bits in Int0; LAB_Waage no longer writes peer inventory content.
+- Client EnemySpawner blocked; host adopts native spawn into EnemySpawn. Client world-pickup grant Invokes onPickup.
+- `PuzzleStateEntry` change-detect includes `Float1`.
+
+### Changed (structural beauty)
+- PuzzleSyncService table-dispatch (`PuzzleSyncService.Dispatch.cs`); main hub ~650 LOC. Tick lists Clear()+reuse; Send* accept IList (no per-tick ToArray).
+- `Sync/WorldLookup.cs` — scene-scoped All/Find caches; presentation/cutscene/scene-follow/key-ring/FMOD title/crawl paths no longer FoT every call.
+- Enemy/Boss/WorldPickup ticks: recycled snap lists; scene-cached Basic/Cook/boss arrays; enemy one nearest-target per tick; Boss Apply `Play(hash)` (no clip enum alloc).
+- Dropped items: `DroppedItemTemplateCache` (template + scene ItemPickup cache); Registry `_keyScratch`; Anchor LateUpdate early-out then disable.
+- Apply paths: Puzzle ApplyEntry skips missing WorldId components; null/destroyed guards on enemy/boss/pickup/story presentation.
+- SceneFollow / PartyKeyRing / SourceAnimReader / Fmod PEN_Titles use WorldLookup.
+
 ## 0.4.3-dev — 2026-09-13
 
 ### Changed

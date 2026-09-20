@@ -1,7 +1,7 @@
 # SyncRADation
 
 LAN multiplayer MelonLoader mod for **SIGNALIS**.  
-**v0.4.3-dev** — protocol **v8**. Host owns world and story; the client is a real Elster whose interactions go to the host and apply via native game methods (including UnityEvents and world FMOD).
+**v0.5.1** — protocol **v10**. Host owns world and story; the client is a real Elster whose interactions go to the host and apply via native game methods (including UnityEvents and world FMOD).
 
 Formerly labeled `1.2.x-dev`. That was optimistic. This is still early co-op.
 
@@ -10,7 +10,7 @@ Formerly labeled `1.2.x-dev`. That was optimistic. This is still early co-op.
 - SIGNALIS (Steam or a second install)
 - MelonLoader with Managed assemblies (`MelonLoader\Managed`, Unhollower-style)
 - Same chapter/scene on every peer
-- Same mod DLL on every peer (protocol 8)
+- Same mod DLL on every peer (protocol **10**)
 
 ## Install
 
@@ -18,11 +18,11 @@ Formerly labeled `1.2.x-dev`. That was optimistic. This is still early co-op.
 2. Build or copy `SyncRADation.dll` + `LiteNetLib.dll` → `SIGNALIS/Mods/`.
 3. Launch once so assemblies generate if needed.
 
-
-
 ### Build
 
 ```bash
+export DOTNET_ROOT="$HOME/Unity/Hub/Editor/6000.6.0f1/Editor/Data/DotNetSdk"
+export PATH="$DOTNET_ROOT:$PATH"
 cd "$HOME/Work/MyProjects/SyncRADation (SIGNALIS MP REMAKE)"
 dotnet build SyncRADation.csproj -c Debug
 ```
@@ -34,7 +34,7 @@ dotnet build -p:SignalisDir="$HOME/Work/MyProjects/SIGNALIS" \
   -p:ClientSignalisDir="$HOME/.local/share/Steam/steamapps/common/SIGNALIS"
 ```
 
-Debug builds copy into both `$(SignalisDir)/Mods` and `$(ClientSignalisDir)/Mods` when those dirs exist.
+Debug builds copy into both `$(SignalisDir)/Mods` (client copy) and `$(ClientSignalisDir)/Mods` (Steam host) when those dirs exist.
 
 ### Dual-instance (this machine)
 
@@ -51,10 +51,7 @@ Debug builds copy into both `$(SignalisDir)/Mods` and `$(ClientSignalisDir)/Mods
 4. Host dumps world state **to that joiner**. If doors/pickups look wrong → **Resync world**.
 5. **SCENE MISMATCH** means the client is loading the host chapter automatically (SceneFollow). If it sticks, load the same chapter manually.
 
-
-
 ## Controls
-
 
 | Key | Action                                                      |
 | --- | ----------------------------------------------------------- |
@@ -69,7 +66,6 @@ Walk up to a player-dropped prop for the native TAKE prompt (yes/no inspect, amm
 
 ## What is synced
 
-
 | Area                                                               | Authority                 | Notes                                                                                                                          |
 | ------------------------------------------------------------------ | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | Avatar proxy, anim, bones, weapons                                 | Peer                      | State + bones ~30 Hz                                                                                                           |
@@ -77,7 +73,7 @@ Walk up to a player-dropped prop for the native TAKE prompt (yes/no inspect, amm
 | Doors (double / sliding)                                           | Any peer emit, host relay | Visual open/close via native methods                                                                                           |
 | ConnectedDoors (room links)                                        | Lock only                 | **Never** sync traverse / `StartA`/`StartB` — room entry is local                                                              |
 | Story (Dialoguer, cutscenes, SProgress)                            | Host                      | Flags commit; books/notes/EventScreen inspect stay local; story Dialoguer Start/Continue/End from the client plays on the host |
-| Puzzles / locks / elevators / radio module / storage / event zones | Host                      | WorldId-keyed; storage **contents** shared                                                                                     |
+| Puzzles / locks / elevators / radio module / storage / event zones | Host + client emit        | WorldId-keyed; storage **contents** shared; protocol-10 GunCase/AraNest/RifleQuest/Microfiche                                  |
 | World ItemPickups                                                  | Host claim/grant          | Claimer gets the item; unique **Key/Object** go on the **party key ring**                                                      |
 | Player-dropped items                                               | Peer + relay              | G / inventory DROP; sits on the floor; native TAKE inspect (yes/no + count); join dump                                         |
 | Death                                                              | Asymmetric                | Native `HurtElster`; client downed (drops bag); host death reloads last save for both                                          |
@@ -85,17 +81,27 @@ Walk up to a player-dropped prop for the native TAKE prompt (yes/no inspect, amm
 | Friendly fire                                                      | Opt-in                    | Default off                                                                                                                    |
 | Inventories                                                        | Independent               | By design                                                                                                                      |
 
-
-World objects are identified by `hash(scene + hierarchy path)` — never `GetInstanceID()`.
+World objects are identified by `hash(scene + hierarchy path)` — never `GetInstanceID()`. Layout: `Domains/` (see `Domains/README.md`); agent rules in `AGENTS.md`.
 
 ## Still unverified
 
-Code for protocol **7** is in this build. Dual-instance playtest has **not** been run. Do not treat any of this as proven until you play it.
+Dual-instance soak is **your** gate. Code for protocol **10** is in this build. Do not treat any of this as proven until you play it.
 
-GitHub zip: `dist/SyncRADation-0.4.3-dev.zip` (`SyncRADation.dll` + `LiteNetLib.dll` + this README). Nexus is out of scope until that run is enjoyable.
+## Diagnosis (dual-box)
+
+| Role | Install | MelonLoader log |
+|------|---------|-----------------|
+| **Host** | Steam SIGNALIS | `~/.local/share/Steam/steamapps/common/SIGNALIS/MelonLoader/Latest.log` |
+| **Client** | `~/Work/MyProjects/SIGNALIS` | `~/Work/MyProjects/SIGNALIS/MelonLoader/Latest.log` |
+
+Prefs (each): `.../SIGNALIS/UserData/MelonPreferences.cfg` → `[SyncRADation] VerboseLogging`.
+
+- **Always-on:** `[Story]` `[Interact]` `[KeyRing]` `[Scene]` `[Door]` `[Puzzle]` `[Pickup]` `[Hitch]` `[Enemy]` … (boot banner lists all). Lines prefixed `H `/`C ` when connected.
+- **VerboseLogging:** leave **false** for soak; set **true** on **both** installs only when hunting FMOD / proxy clone / puzzle diffs; restart or re-Host after flip.
+- **Hitch** (spike-only): `frame` / `send gap` / `recv` / Cost tags `puzzle` `enemy` `boss` `pickup` `weaponClone` / `5s` summary. Full table in `AGENTS.md` → Diagnosis.
+- Look for `Handshake OK`, `[Harmony] patched`, `WorldRegistry`, `full world snapshot`. Identical lines collapse for 3s.
 
 ## Config (`MelonPreferences`)
-
 
 | Key              | Default   | Meaning                            |
 | ---------------- | --------- | ---------------------------------- |
@@ -105,14 +111,11 @@ GitHub zip: `dist/SyncRADation-0.4.3-dev.zip` (`SyncRADation.dll` + `LiteNetLib.
 | SyncPuzzles      | true      | Puzzles / radio / elevators / etc. |
 | SyncWorldPickups | true      | Scene ItemPickup                   |
 | SyncPlayerVitals | true      | HP / death packets                 |
-| VerboseLogging   | false     | FMOD, clone/FX internals, puzzle diffs |
-
-
-
+| VerboseLogging   | false     | OFF unless diagnosing (FMOD/proxy/puzzle diffs); both installs |
 
 ## Playtest gate (before Nexus)
 
-Dual-instance LAN, same protocol-7 build. Steam host + copy client, same chapter. **This is the remaining work.** Do not treat any of this as proven until you play it.
+Dual-instance LAN, same protocol-10 build. Steam host + copy client, same chapter. **This is the remaining work.** Do not treat any of this as proven until you play it.
 
 After this correctness pass:
 
@@ -128,10 +131,6 @@ After this correctness pass:
 Then Chapter 1 (Reeducation → Mines elevator) notepad: both deal damage; neither yanked through doors; one Dialoguer with VO; one cutscene with audio; storage box host-put / client-take.
 
 GitHub zip is the publish path until that run is enjoyable. Nexus waits on that approval.
-
-## Logs
-
-`SIGNALIS/MelonLoader/Latest.log` — grep `[Story]` `[Interact]` `[Scene]` `[Puzzle]` `[Pickup]` `[Damage]` `[Door]` `[Enemy]` `[Hitch]`. Look for `Handshake OK`, `[Harmony] patched`, `WorldRegistry`, `full world snapshot`. Lines include `H`/`C` when connected. Identical lines collapse for 3s.
 
 ## License
 

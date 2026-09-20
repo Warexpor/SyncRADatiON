@@ -32,7 +32,7 @@ namespace SyncRADation.Config
             SyncPlayerVitals = Category.CreateEntry("SyncPlayerVitals", true,
                 "Share HP / death / game-state for remote Elster display");
             VerboseLogging = Category.CreateEntry("VerboseLogging", false,
-                "FMOD Play/Stop, proxy clone/FX internals, incremental puzzle apply");
+                "OFF unless diagnosing. When true: FMOD Play/Stop, proxy clone/FX internals, incremental puzzle apply. Set in MelonPreferences.cfg under [SyncRADation] on BOTH installs.");
 
             if (!SyncPuzzles.Value && ExperimentalPuzzles.Value)
                 SyncPuzzles.Value = true;

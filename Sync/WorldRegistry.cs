@@ -19,6 +19,7 @@ namespace SyncRADation.Sync
 
         public static void Rebuild()
         {
+            WorldLookup.Invalidate();
             Enemies.Clear();
             DoubleDoors.Clear();
             ConnectedDoorMap.Clear();
@@ -105,6 +106,7 @@ namespace SyncRADation.Sync
 
         public static void Clear()
         {
+            WorldLookup.Invalidate();
             Enemies.Clear();
             DoubleDoors.Clear();
             ConnectedDoorMap.Clear();
