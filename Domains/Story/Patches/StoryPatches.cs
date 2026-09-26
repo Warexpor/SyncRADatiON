@@ -224,20 +224,47 @@ namespace SyncRADation.Patches
         {
             if (NetGate.IsApplying || !NetGate.Live) return true;
             if (item == null) return true;
+            int n = number > 0 ? number : 1;
+            if (PartyKeyRing.IsKeyOrObject(item) && n > 1) n = 1;
             if (NetGate.Host)
             {
+                // Host put of unique already in box: absorb bag copy, do not stack.
+                if (put && PartyKeyRing.IsKeyOrObject(item) && HostBoxStock(item) >= 1)
+                {
+                    try { InventoryManager.RemoveItem(item, n); } catch { }
+                    PlaytestLog.Event("StorageBox", "host put absorb unique item="
+                        + (int)SafeEnum(item));
+                    FlushHostBoxBlob();
+                    return false;
+                }
                 // Prefix only flags; Postfix pushes blob after native mutates host box.
                 LanNetworkManager.Instance.StorageSync.RequestSend();
                 return true;
             }
-            int enumVal = 0;
-            try { enumVal = (int)item._item; } catch { return false; }
+            int enumVal = SafeEnum(item);
+            if (enumVal < 0) return false;
             LanNetworkManager.Instance.SendInteractionRequest(
                 0,
                 put ? InteractionKind.StoragePut : InteractionKind.StorageTake,
                 enumVal,
-                number > 0 ? number : 1);
+                n);
             return false;
+        }
+
+        static int SafeEnum(AnItem item)
+        {
+            try { return (int)item._item; } catch { return -1; }
+        }
+
+        static int HostBoxStock(AnItem item)
+        {
+            int have = 0;
+            try { have = InventoryManager.boxContainsItemCount(item); }
+            catch
+            {
+                try { if (InventoryManager.boxContainsItem(item)) have = 1; } catch { }
+            }
+            return have;
         }
 
         static void FlushHostBoxBlob()
@@ -252,6 +279,31 @@ namespace SyncRADation.Patches
             }
             catch { }
         }
+
+        // No-count overloads — storage UI can call these and would bypass the int gates.
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.storeItem), new[] { typeof(AnItem) })]
+        public static bool PrefixStore1(AnItem item) => GateBox(item, 1, true);
+
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.retrieveItem), new[] { typeof(AnItem) })]
+        public static bool PrefixRetrieve1(AnItem item) => GateBox(item, 1, false);
+
+        [HarmonyPrefix]
+        [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.boxItem), new[] { typeof(AnItem) })]
+        public static bool PrefixBox1(AnItem item) => GateBox(item, 1, true);
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.storeItem), new[] { typeof(AnItem) })]
+        public static void PostStore1(AnItem item) => FlushHostBoxBlob();
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.retrieveItem), new[] { typeof(AnItem) })]
+        public static void PostRetrieve1(AnItem item) => FlushHostBoxBlob();
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.boxItem), new[] { typeof(AnItem) })]
+        public static void PostBox1(AnItem item) => FlushHostBoxBlob();
 
         [HarmonyPostfix]
         [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.storeItem), new[] { typeof(AnItem), typeof(int) })]
@@ -274,6 +326,12 @@ namespace SyncRADation.Patches
     {
         static bool _flavorActive;
         static int _flavorId;
+
+        public static void ClearFlavor()
+        {
+            _flavorActive = false;
+            _flavorId = 0;
+        }
 
         public static bool Start(int dialogueId)
         {
@@ -410,5 +468,9 @@ namespace SyncRADation.Patches
     {
         [HarmonyPrefix]
         public static bool Prefix() => DialoguerGate.End();
+
+        // NetGate.IsApplying End path skips DialoguerGate.End clear — Finalizer always clears sticky.
+        [HarmonyFinalizer]
+        public static void Finalizer() => DialoguerGate.ClearFlavor();
     }
 }

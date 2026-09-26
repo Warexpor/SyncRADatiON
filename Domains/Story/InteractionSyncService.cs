@@ -470,15 +470,15 @@ namespace SyncRADation.Networking
             if (item == null) return false;
             int n = msg.Int1 > 0 ? msg.Int1 : 1;
 
+            int have = BoxStock(item);
+            int enumVal = 0;
+            try { enumVal = (int)item._item; } catch { }
+            bool unique = PartyKeyRing.IsKeyOrObject(item);
+            if (unique && n > 1) n = 1;
+
             // Host-authoritative stock: dual take of the same unique must not both grant.
             if (!put)
             {
-                int have = 0;
-                try { have = InventoryManager.boxContainsItemCount(item); }
-                catch
-                {
-                    try { if (InventoryManager.boxContainsItem(item)) have = 1; } catch { }
-                }
                 if (have < n)
                 {
                     reasonOut = "empty";
@@ -490,6 +490,18 @@ namespace SyncRADation.Networking
                     netFail?.StorageSync.SendNow(netFail);
                     return false;
                 }
+            }
+            else if (unique && have >= 1)
+            {
+                // Unique Key/Object already boxed (often via PartyKeyRing.EnsureInBag
+                // re-seeding a bag copy). Absorb sender bag; do not stack the box.
+                PlaytestLog.Event("StorageBox", "put absorb unique have=" + have
+                    + " item=" + msg.Int0 + " from=" + msg.SenderPlayerId);
+                var netAbs = LanNetworkManager.Instance;
+                netAbs?.StorageSync.RequestSend();
+                netAbs?.StorageSync.SendNow(netAbs);
+                reasonOut = "consume:" + enumVal + ":" + n;
+                return true;
             }
 
             NetGate.BeginApply();
@@ -507,12 +519,22 @@ namespace SyncRADation.Networking
             var net = LanNetworkManager.Instance;
             net?.StorageSync.RequestSend();
             net?.StorageSync.SendNow(net);
-            int enumVal = 0;
-            try { enumVal = (int)item._item; } catch { }
             reasonOut = put
                 ? "consume:" + enumVal + ":" + n
                 : "grant:" + enumVal + ":" + n;
             return true;
+        }
+
+        static int BoxStock(AnItem item)
+        {
+            if (item == null) return 0;
+            int have = 0;
+            try { have = InventoryManager.boxContainsItemCount(item); }
+            catch
+            {
+                try { if (InventoryManager.boxContainsItem(item)) have = 1; } catch { }
+            }
+            return have;
         }
 
         private static void ApplyGunshot(Vector3 pos, LanNetworkManager net)

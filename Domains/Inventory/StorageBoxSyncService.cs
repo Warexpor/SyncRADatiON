@@ -32,12 +32,61 @@ namespace SyncRADation.Networking
 
         public void SendNow(LanNetworkManager net)
         {
+            ClampUniqueKeyStacks();
             var items = ReadBox();
             string sig = Signature(items);
             if (sig == _lastSig) return;
             _lastSig = sig;
             PlaytestLog.Event("StorageBox", "send items=" + (items != null ? items.Length : 0));
             net.SendStorageBoxBlob(items);
+        }
+
+        /// <summary>
+        /// Key/Object must stay count 1 in the shared box. A put-race or EnsureInBag
+        /// re-seed can inflate the dict; clamp before LWW blob so peers never see stacks.
+        /// </summary>
+        public void ClampUniqueKeyStacks()
+        {
+            var net = LanNetworkManager.Instance;
+            if (net == null || net.Role != NetworkRole.Host) return;
+            try
+            {
+                var dict = InventoryManager.boxItems;
+                if (dict == null) return;
+                var en = dict.GetEnumerator();
+                var fix = new System.Collections.Generic.List<AnItem>();
+                while (en.MoveNext())
+                {
+                    var item = en.Current.key;
+                    int count = en.Current.value;
+                    if (item == null || count <= 1) continue;
+                    if (!PartyKeyRing.IsKeyOrObject(item)) continue;
+                    fix.Add(item);
+                }
+                en.Dispose();
+                for (int i = 0; i < fix.Count; i++)
+                {
+                    var item = fix[i];
+                    try
+                    {
+                        // Re-write as single via clear-and-box under apply gate.
+                        int have = 0;
+                        try { have = InventoryManager.boxContainsItemCount(item); } catch { have = 2; }
+                        if (have <= 1) continue;
+                        Sync.NetGate.BeginApply();
+                        try
+                        {
+                            for (int u = 0; u < have; u++)
+                                InventoryManager.unboxItem(item);
+                            InventoryManager.boxItem(item, 1);
+                        }
+                        finally { Sync.NetGate.EndApply(); }
+                        PlaytestLog.Event("StorageBox", "clamp unique " + item._item + " was=" + have);
+                    }
+                    catch { }
+                }
+            }
+            catch { }
         }
 
         public void Apply(StorageBoxBlobMessage msg)

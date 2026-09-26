@@ -15,6 +15,8 @@ namespace SyncRADation.Networking
         private float _timer;
         public StoryCmd LastCmd;
         public ulong LastWorldId;
+        /// <summary>Dialoguer dialogue id for late-join replay (packed into ActiveWorldId).</summary>
+        public int LastInt0;
 
         public void Reset()
         {
@@ -24,6 +26,7 @@ namespace SyncRADation.Networking
             _timer = 0f;
             LastCmd = StoryCmd.None;
             LastWorldId = 0;
+            LastInt0 = 0;
         }
 
         public void RequestFullSend()
@@ -36,6 +39,7 @@ namespace SyncRADation.Networking
         {
             LastCmd = StoryCmd.None;
             LastWorldId = 0;
+            LastInt0 = 0;
             RequestFullSend();
         }
 
@@ -137,7 +141,12 @@ namespace SyncRADation.Networking
                 case StoryCmd.EventZoneFire:
                 case StoryCmd.MultiConditionFire:
                 case StoryCmd.DetermineEnding:
+                case StoryCmd.DialogueContinue:
+                case StoryCmd.DialogueEnd:
                     return false;
+                case StoryCmd.DialoguerStartId:
+                    // Dialogue id is packed into LastWorldId (wire WorldId is always 0 for Dialoguer).
+                    return true;
                 case StoryCmd.CutsceneStart:
                 {
                     var c = WorldLookup.Find<CutsceneManager>(id);
@@ -328,10 +337,25 @@ namespace SyncRADation.Networking
                 + " xml=" + (msg.DialoguerXml != null ? msg.DialoguerXml.Length : 0)
                 + " cmd=" + (StoryCmd)msg.ActiveStoryCmd);
 
-            if (msg.FullRefresh && msg.ActiveStoryCmd != 0 && msg.ActiveWorldId != 0)
+            if (msg.FullRefresh && msg.ActiveStoryCmd != 0)
             {
                 var replay = (StoryCmd)msg.ActiveStoryCmd;
-                if (!IsLocalInspect(replay))
+                if (IsLocalInspect(replay))
+                    return;
+                if (replay == StoryCmd.DialoguerStartId)
+                {
+                    // ActiveWorldId carries packed dialogue id (presentation WorldId is 0).
+                    int dialogueId = (int)msg.ActiveWorldId;
+                    PlaytestLog.Event("Story", "late-join Dialoguer replay id=" + dialogueId);
+                    ApplyPresentation(new StoryPresentationMessage
+                    {
+                        WorldId = 0,
+                        Cmd = StoryCmd.DialoguerStartId,
+                        Int0 = dialogueId,
+                        Text = ""
+                    });
+                }
+                else if (msg.ActiveWorldId != 0)
                 {
                     ApplyPresentation(new StoryPresentationMessage
                     {
@@ -349,8 +373,7 @@ namespace SyncRADation.Networking
             if (IsLocalInspect(cmd)) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
-            LastCmd = cmd;
-            LastWorldId = worldId;
+            NoteActivePresentation(cmd, worldId, int0);
             PlaytestLog.Event("Story", "send " + cmd + " id=" + worldId.ToString("X16") + " i=" + int0
                 + (string.IsNullOrEmpty(text) ? "" : " '" + text + "'"));
             net.SendStoryPresentation(new StoryPresentationMessage
@@ -360,6 +383,38 @@ namespace SyncRADation.Networking
                 Int0 = int0,
                 Text = text ?? ""
             });
+        }
+
+        void NoteActivePresentation(StoryCmd cmd, ulong worldId, int int0)
+        {
+            if (cmd == StoryCmd.DialoguerStartId)
+            {
+                LastCmd = StoryCmd.DialoguerStartId;
+                LastInt0 = int0;
+                // Pack dialogue id into LastWorldId (presentation WorldId is always 0 for Dialoguer).
+                LastWorldId = unchecked((ulong)(uint)int0);
+                return;
+            }
+            if (cmd == StoryCmd.DialogueContinue)
+            {
+                // Keep Start as the late-join replay target (orphan Continue softlocks UI).
+                if (LastCmd != StoryCmd.DialoguerStartId && LastInt0 != 0)
+                {
+                    LastCmd = StoryCmd.DialoguerStartId;
+                    LastWorldId = unchecked((ulong)(uint)LastInt0);
+                }
+                return;
+            }
+            if (cmd == StoryCmd.DialogueEnd)
+            {
+                LastCmd = StoryCmd.None;
+                LastWorldId = 0;
+                LastInt0 = 0;
+                return;
+            }
+            LastCmd = cmd;
+            LastWorldId = worldId;
+            LastInt0 = int0;
         }
 
         public void ApplyPresentation(StoryPresentationMessage msg)

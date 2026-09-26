@@ -1,4 +1,4 @@
-# Domains — where to fix what (0.5.2)
+# Domains — where to fix what (0.5.3)
 
 Composed `*SyncService` / `*NetHandlers` / `Patches/`. Namespaces stay `SyncRADation.Networking` / `.Patches` / `.Players` / `.ItemSystem`.
 
