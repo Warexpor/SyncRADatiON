@@ -335,6 +335,91 @@ namespace SyncRADation.Networking
                 }
                 catch { }
             }
+
+            // Client AI is disabled — Start/Stabbed/Update no longer drive arena doors,
+            // invuln shields, or corrupt mesh. Mirror host presentation from synced stage/corrupt
+            // (GameAssembly END_Boss.Start + <Stabbed>d__129.MoveNext + Update).
+            SnapFalkePresentation(b);
+        }
+
+        /// <summary>
+        /// Decompile: Arenas[i] active iff i equals stage; HeadSpears[i] active iff i below stage;
+        /// FloatShields when stage at least 3 (wiki phase 4); FloatShields2 when stage at least 5 (phase 6);
+        /// CorruptedMesh/NormalMesh follow corrupt (Update).
+        /// </summary>
+        private static void SnapFalkePresentation(END_Boss b)
+        {
+            if (b == null) return;
+            int stage = 0;
+            try { stage = b.stage; } catch { return; }
+
+            try
+            {
+                var arenas = b.Arenas;
+                if (arenas != null)
+                {
+                    int n = arenas.Length;
+                    if (n > 6) n = 6;
+                    for (int i = 0; i < n; i++)
+                    {
+                        try
+                        {
+                            if (arenas[i] != null)
+                                arenas[i].SetActive(i == stage);
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
+
+            try
+            {
+                var spears = b.HeadSpears;
+                if (spears != null)
+                {
+                    int n = spears.Length;
+                    if (n > 6) n = 6;
+                    for (int i = 0; i < n; i++)
+                    {
+                        try
+                        {
+                            if (spears[i] != null)
+                                spears[i].SetActive(i < stage);
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
+
+            try
+            {
+                if (b.FloatShields != null)
+                    b.FloatShields.SetActive(stage >= 3);
+            }
+            catch { }
+            try
+            {
+                if (b.FloatShields2 != null)
+                    b.FloatShields2.SetActive(stage >= 5);
+            }
+            catch { }
+
+            bool corrupt = false;
+            try { corrupt = b.corrupt; } catch { }
+            try
+            {
+                if (b.CorruptedMesh != null)
+                    b.CorruptedMesh.SetActive(corrupt);
+            }
+            catch { }
+            try
+            {
+                if (b.NormalMesh != null)
+                    b.NormalMesh.SetActive(!corrupt);
+            }
+            catch { }
         }
 
         private static void ApplyLAB(LAB_ChimeraBoss b, BossSnapshotNet snap)
@@ -454,17 +539,30 @@ namespace SyncRADation.Networking
             int n = 0;
             var ends = _endBosses;
             for (int i = 0; i < ends.Length; i++)
-                if (ends[i] != null) { ends[i].enabled = false; n++; }
+                if (HaltBossController(ends[i])) n++;
 
             var labs = _chimeras;
             for (int i = 0; i < labs.Length; i++)
-                if (labs[i] != null) { labs[i].enabled = false; n++; }
+                if (HaltBossController(labs[i])) n++;
 
             var meds = _mynahs;
             for (int i = 0; i < meds.Length; i++)
-                if (meds[i] != null) { meds[i].enabled = false; n++; }
+                if (HaltBossController(meds[i])) n++;
 
             ModRuntime.Log?.Msg("[BossSync] Disabled " + n + " boss controllers");
+        }
+
+        /// <summary>
+        /// enabled=false stops Update/LateUpdate but not running coroutines (Bossfight /
+        /// Stabbed / Airstrike). StopAllCoroutines first so mid-fight clients cannot keep
+        /// advancing phase/nests locally while host snaps.
+        /// </summary>
+        private static bool HaltBossController(MonoBehaviour b)
+        {
+            if (b == null) return false;
+            try { b.StopAllCoroutines(); } catch { }
+            try { b.enabled = false; } catch { return false; }
+            return true;
         }
 
         public static void EnableLocalAI()

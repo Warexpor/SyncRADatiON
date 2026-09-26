@@ -8,7 +8,7 @@ namespace SyncRADation.Patches
     /// KolibriManager / BOS_Adler stay enabled on clients so glitch/SFX presentation runs,
     /// but their Update recomputes intensity/progress (and Kolibri frequency) from local
     /// Elster/radio. Re-apply the last host PuzzleState snap each frame on clients.
-    /// END/Chimera/Mynah are fully disabled instead (BossSyncService.DisableLocalAI).
+    /// END/Chimera/Mynah are HaltBossController-disabled (StopAllCoroutines + enabled=false) instead (BossSyncService.DisableLocalAI).
     /// </summary>
     public static class KolibriAdlerAuthPatches
     {

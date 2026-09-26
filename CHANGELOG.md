@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.10 — 2026-09-26
+
+Protocol **v10**. Continuous Batch 10 dig.
+
+### Fixed
+- **Falke arena / invuln / corrupt mesh** — client `ApplyEND` now snaps `Arenas[i]` (`i == stage`), `HeadSpears[i]` (`i < stage`), `FloatShields` (`stage >= 3`, wiki phase 4), `FloatShields2` (`stage >= 5`, phase 6), and `CorruptedMesh`/`NormalMesh` from synced `corrupt`. Decompile: `END_Boss.Start`, `<Stabbed>d__129.MoveNext` (`stage++` then presentation), `Update` mesh gate. Stage was already on BossState wire since 0.5.x; disabled AI meant arenas/shields never followed.
+- **Boss AI-disable coroutines** — `DisableLocalAI` now `StopAllCoroutines` before `enabled = false` on END/Chimera/Mynah so mid-fight `Bossfight`/`Stabbed`/`Airstrike` cannot keep running on the client (Kolibri/Adler stay enabled + Hold patches).
+
+### Parked (Batch 11)
+- Alarm `GlobalAlertStatus.triggerAlarm` / `EnemyManagerState` client latch-emit — MelonLoader `CallerCount(0)`, no UnityEvent bindings; alert stays host-poll only.
+- Ending-flag peer merge (client `healedTime`/`doors`/`memoryTime` → host) — host-authoritative `END_Manager` by design; no safe merge without new wire.
+- MeatBlocker tarot siblings (Lovers/Moon/Sun/Star/Tower) — assets `required=1/2/6`; only Death seals NG+ `KeyOfSacrifice` (wiki Artifact); no parallel softlock pair proven.
+- Throw-mid-Harmony sticky beyond Dialoguer Finalizers — Cutscene `RememberStart`/`RememberSkip` intentional; Keypad `_sent` clears on scene/StopNetwork via `EventZonePatch`.
+- Net reconnect mid-puzzle/storage/dialogue — ForceFull + sticky Reset chain covered 0.5.1–0.5.9; no new hole proven this dig.
+- Photo/document/eidetic unique story gates — flavor local by design; `ArianePhotoCode` / Microfiche already PuzzleState.
+- Ladder / continuum / nowhere / fake wall co-op — traverse local by design (proxy SFX only).
+- Domains code smell (double Broadcast / WorldId 0 dumps) — PartyKeyRing Broadcast is if/else once; KeyGrid/Ariane/RadioManager WorldId 0 are intentional statics.
+
 ## 0.5.9 — 2026-09-26
 
 Protocol **v10**. Continuous Batch 9 dig.
