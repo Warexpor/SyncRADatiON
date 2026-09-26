@@ -22,6 +22,8 @@ namespace SyncRADation.Networking
         internal void Reset()
         {
             _nextItemIndex = 1;
+            // Player ids + local indices recycle; stale FinishDroppedNative dedupe soft-locks take.
+            try { SyncRADation.Patches.ItemPickupPatches.ResetDropClaims(); } catch { }
         }
 
         internal void SendDropItem(DropItemSpawnMessage msg)

@@ -123,7 +123,11 @@ namespace SyncRADation.Networking
                     + " from=" + msg.SenderPlayerId
                     + " id=" + unchecked((ulong)msg.WorldId).ToString("X16")
                     + (string.IsNullOrEmpty(reason) ? "" : " " + reason));
-            net.SendInteractionAck(msg.SenderPlayerId, msg.WorldId, msg.Kind, ok, reason);
+            // DroppedPickup: echo drop key in WorldId (request Int0) so client FAIL revert matches.
+            long ackId = msg.WorldId;
+            if (msg.Kind == InteractionKind.DroppedPickup && ackId == 0 && msg.Int0 != 0)
+                ackId = msg.Int0;
+            net.SendInteractionAck(msg.SenderPlayerId, ackId, msg.Kind, ok, reason);
         }
 
         private static bool ApplyEventZone(ulong id)

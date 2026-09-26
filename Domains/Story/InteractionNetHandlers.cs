@@ -74,10 +74,11 @@ namespace SyncRADation.Networking
         {
             if (ack.TargetPlayerId != _net.LocalPlayerId) return;
 
+            if (ack.Kind == InteractionKind.DroppedPickup)
+                ItemPickupPatches.NoteDropClaimAck(ack.Ok, ack.WorldId);
+
             if (!ack.Ok)
             {
-                if (ack.Kind == InteractionKind.DroppedPickup)
-                    ItemPickupPatches.RevertPendingNativeGrant();
                 PlaytestLog.Warn("Interact", "rejected " + ack.Kind
                     + (string.IsNullOrEmpty(ack.Reason) ? "" : ": " + ack.Reason));
                 return;

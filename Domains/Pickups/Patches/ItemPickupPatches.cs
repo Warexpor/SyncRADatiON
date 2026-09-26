@@ -343,6 +343,27 @@ namespace SyncRADation.Patches
         static readonly System.Collections.Generic.HashSet<int> _claimedDrops
             = new System.Collections.Generic.HashSet<int>();
 
+        // Host ack for client DroppedPickup — must survive a second ArmDropped before ack arrives.
+        static int _awaitingDropKey = -1;
+        static Items.itemlist _awaitingDropItem;
+        static int _awaitingDropCount;
+
+        /// <summary>
+        /// Clear local claim dedupe + awaiting ack. Required on StopNetwork because
+        /// DroppedItemNetHandlers resets _nextItemIndex to 1 and player ids recycle —
+        /// stale _claimedDrops entries then no-op FinishDroppedNative (floor vanishes, no wire).
+        /// </summary>
+        internal static void ResetDropClaims()
+        {
+            _claimedDrops.Clear();
+            _awaitingDropKey = -1;
+            _awaitingDropItem = Items.itemlist.None;
+            _awaitingDropCount = 0;
+            _pendingDropKey = -1;
+            _pendingDropItem = Items.itemlist.None;
+            _pendingDropCount = 0;
+        }
+
         static void FinishDroppedNative(ItemPickup p, bool confirmed, bool ignoreCount = false)
         {
             if (!confirmed) return;
@@ -372,26 +393,85 @@ namespace SyncRADation.Patches
             if (net != null && net.IsConnected)
             {
                 if (net.Role == NetworkRole.Host)
+                {
                     net.TryClaimDropped(key, net.LocalPlayerId, out _, skipLocalGrant: true);
+                    ClearAwaitingDrop();
+                }
                 else
-                    net.SendInteractionRequest(0, InteractionKind.DroppedPickup, key);
+                {
+                    // WorldId carries drop key so FAIL ack can match (Int0 is also key).
+                    _awaitingDropKey = key;
+                    _awaitingDropItem = _pendingDropItem;
+                    _awaitingDropCount = _pendingDropCount > 0 ? _pendingDropCount : 1;
+                    net.SendInteractionRequest(unchecked((ulong)(uint)key), InteractionKind.DroppedPickup, key);
+                }
             }
+            else
+                ClearAwaitingDrop();
             ItemSystem.DroppedItemManager.DespawnWhenIdle(key);
             _pendingDropKey = -1;
         }
 
-        internal static void RevertPendingNativeGrant()
+        internal static void NoteDropClaimAck(bool ok, long ackWorldId)
         {
-            if (_pendingDropItem == Items.itemlist.None) return;
+            if (ok)
+            {
+                if (_awaitingDropKey >= 0)
+                {
+                    int ackKey = ackWorldId != 0 ? (int)ackWorldId : _awaitingDropKey;
+                    if (ackKey == _awaitingDropKey || ackWorldId == 0)
+                        ClearAwaitingDrop();
+                }
+                return;
+            }
+            RevertPendingNativeGrant(ackWorldId);
+        }
+
+        internal static void RevertPendingNativeGrant(long ackWorldId = 0)
+        {
+            int ackKey = ackWorldId != 0 ? (int)ackWorldId : -1;
+            Items.itemlist itemEnum;
+            int count;
+            if (_awaitingDropKey >= 0)
+            {
+                // Matched awaiting claim (prefer WorldId=key from request).
+                if (ackKey >= 0 && ackKey != _awaitingDropKey)
+                    return;
+                itemEnum = _awaitingDropItem;
+                count = _awaitingDropCount > 0 ? _awaitingDropCount : 1;
+            }
+            else if (_pendingDropItem != Items.itemlist.None)
+            {
+                // Legacy / host-local path fallback.
+                itemEnum = _pendingDropItem;
+                count = _pendingDropCount > 0 ? _pendingDropCount : 1;
+            }
+            else
+                return;
+
             try
             {
-                var item = InventoryManager.getItem(_pendingDropItem);
+                var item = InventoryManager.getItem(itemEnum);
                 if (item != null)
-                    InventoryManager.RemoveItem(item, _pendingDropCount > 0 ? _pendingDropCount : 1);
+                    InventoryManager.RemoveItem(item, count);
             }
             catch { }
+            // Allow a later respawn/dump of the same key to be claimed again.
+            if (_awaitingDropKey >= 0)
+                _claimedDrops.Remove(_awaitingDropKey);
+            else if (ackKey >= 0)
+                _claimedDrops.Remove(ackKey);
+            ClearAwaitingDrop();
             _pendingDropKey = -1;
             _pendingDropItem = Items.itemlist.None;
+            _pendingDropCount = 0;
+        }
+
+        static void ClearAwaitingDrop()
+        {
+            _awaitingDropKey = -1;
+            _awaitingDropItem = Items.itemlist.None;
+            _awaitingDropCount = 0;
         }
     }
 
