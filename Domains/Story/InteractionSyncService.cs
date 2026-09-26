@@ -17,6 +17,27 @@ namespace SyncRADation.Networking
             bool ok = false;
             string reason = "";
 
+            // Peer-gone mid-flight: DroppedPickup / StorageTake must not mutate shared
+            // stock when the claimer can no longer receive grant/ack (floor/box item loss).
+            // StoragePut still applies — boxing preserves the item for the party.
+            // Mirrors WorldPickupNetHandlers HasPeer guard (0.5.11).
+            if (msg.SenderPlayerId != net.LocalPlayerId
+                && (msg.Kind == InteractionKind.DroppedPickup
+                    || msg.Kind == InteractionKind.StorageTake)
+                && !net.HasPeer(msg.SenderPlayerId))
+            {
+                reason = "peer gone";
+                PlaytestLog.Event("Interact", "FAIL " + msg.Kind
+                    + " from=" + msg.SenderPlayerId
+                    + " id=" + id.ToString("X16")
+                    + " peer gone");
+                long earlyAck = msg.WorldId;
+                if (msg.Kind == InteractionKind.DroppedPickup && earlyAck == 0 && msg.Int0 != 0)
+                    earlyAck = msg.Int0;
+                net.SendInteractionAck(msg.SenderPlayerId, earlyAck, msg.Kind, false, reason);
+                return;
+            }
+
             try
             {
                 switch (msg.Kind)

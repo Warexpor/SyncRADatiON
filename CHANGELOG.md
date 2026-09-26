@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.5.12 — 2026-09-26
+
+Protocol **v10**. Continuous Batch 12 dig (scenario-first).
+
+### Fixed
+- **DroppedPickup peer-gone** — host rejects `InteractionKind.DroppedPickup` when claimer `!HasPeer` (mirrors WorldPickup 0.5.11). Prevents `TryClaimDropped` despawn when grant/ack cannot land → floor prop stays for remaining peers.
+- **StorageTake peer-gone** — host rejects `StorageTake` when taker `!HasPeer` before `unboxItem`. Prevents shared-box stock loss with nobody receiving `grant:` ack. **StoragePut still applies** when putter is gone (boxing preserves the item for the party).
+
+### Dig report (scenarios → verdict) — parked Batch 13 unless proven CAN-fix
+
+| Rank | Scenario | Prove path | Verdict |
+|------|----------|------------|---------|
+| CRITICAL→FIXED | Peer claims dropped floor item then disconnects before host `TryClaimDropped` | `InteractionSyncService.HandleRequest` DroppedPickup + `DroppedItemNetHandlers.TryClaimDropped` despawn w/o remote AddItem | Was item loss; now reject |
+| CRITICAL→FIXED | Peer `StorageTake` then disconnect before `grant:` ack | `ApplyStorage` unbox + `InteractionNetHandlers.ApplyBagAck` | Was box loss; now reject |
+| — | Peer `StoragePut` then disconnect before `consume:` ack | same ApplyStorage put | **OK by design** — box keeps item; putter bag leaves session |
+| — | Peer UseItem/door unlock then gone | `ApplyUseItem` unlocks + PuzzleState snap | OK — party benefits; consume ack irrelevant |
+| MED | Host SceneFollow while client in `inventory`/`menu`/`paused` | `SceneFollowService.Apply` → `AsyncLoader.LoadLevel`; `DroppedItemRegistry` ClearInspectLocks skips `inventory` | Likely scene-unload clears UI; no proven sticky. Defer until dual-box freeze repro |
+| MED | Enemy puppet mid-death / mid-hurt | `EnemySyncService.ApplyEnemyState` snaps state+AnimHash+HP; no native `Die`/`deadFire` | Anim snap usually enough; no clear zombie without soak |
+| — | One peer triggers cutscene; other mid-walk other-room | `LocalInspect.InLocalRoom` skip Start/Invoke; `CutsceneCompleted` PuzzleState | Intentional; flags via Story dump |
+| — | One peer triggers EventZone; other other-room | `triggered=true` w/o Invoke; doors/puzzles via poll | Intentional (AGENTS) |
+| — | Peer opens book/note (local UI) while other needs that read for a gate | `SProgressPatches.IsInspectOrigin` → `InspectFlag` syncs SetBool/Int/… during book/eventScreen | Flags sync; UI stays local (AGENTS). Not softlock |
+| — | Books/notes as softlock vs PartyKeyRing | wiki Key Items (80) are Key/Object → `PartyKeyRing.IsKeyOrObject`; Death/Sacrifice already 0.5.8 | No new unique softlock proven |
+| — | Penrose wreck↔hole / cryo / airlock personal | `AirlockCinematic` + CryoSyncService | Covered; intentional personal loads |
+| — | Mid-dialogue + mid-cutscene + mid-pickup race | Dialoguer Finalizers; RememberStart/Skip; keyed `_awaitingDrops` | Covered 0.5.x |
+| — | Early cutscene flag breaks later co-op door | StoryCommit dump + PuzzleState; other-room skips presentation only | No clear hole without named flag |
+| — | N-peer (3–4) drop/storage double-claim | keyed `_awaitingDrops`; host serial HandleRequest | Covered |
+| — | Alarm / ending-flag merge / MeatBlocker tarot siblings / Harmony sticky / photo flavor / ladder-continuum-nowhere | prior parked | unchanged |
+| — | Weak Domains: camera/aim/prompts local; heal=personal Injector; SaveRoomEvent synced; elevators synced; FakeWall/Continuum/Gestalt not typed | DECOMPILE_COVERAGE intentional locals | no invent sync |
+
+### Parked (Batch 13)
+- Alarm `GlobalAlertStatus.triggerAlarm` / `EnemyManagerState` client latch-emit — MelonLoader `CallerCount(0)`.
+- Ending-flag peer merge — host-authoritative `END_Manager` by design.
+- MeatBlocker tarot siblings — only Death seals NG+ `KeyOfSacrifice`.
+- Throw-mid-Harmony sticky beyond Dialoguer Finalizers — Cutscene Remember* intentional; Keypad `_sent` clears on scene/StopNetwork.
+- Photo/document/eidetic unique story gates — flavor local; ArianePhotoCode / Microfiche PuzzleState.
+- Ladder / continuum / nowhere / fake wall co-op — traverse local (proxy SFX only).
+- SceneFollow mid-inventory/menu sticky — needs dual-box freeze repro before CloseInventory yank.
+- Enemy mid-death native Die/deadFire beyond AnimHash snap — needs soak zombie repro.
+
 ## 0.5.11 — 2026-09-26
 
 Protocol **v10**. Continuous Batch 11 dig.
