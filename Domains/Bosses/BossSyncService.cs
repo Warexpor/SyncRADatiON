@@ -233,6 +233,10 @@ namespace SyncRADation.Networking
             var net = LanNetworkManager.Instance;
             if (net != null && net.Role == NetworkRole.Host) return;
             if (msg.Bosses == null) return;
+            // Join dump / SceneFollow mid-load: applying now empties EnsureBossCache and
+            // sticks _clientDisabled — later scene bosses keep local AI + miss phase snaps.
+            if (SceneFollowService.LocalIsTransient()) return;
+            if (net != null && net.SceneMismatch) return;
 
             if (!_clientDisabled)
             {
@@ -377,6 +381,27 @@ namespace SyncRADation.Networking
         private MonoBehaviour FindLocalBossByWorldId(long worldIdLong, out BossType type)
         {
             ulong want = unchecked((ulong)worldIdLong);
+            var hit = FindInBossCache(want, out type);
+            if (hit != null) return hit;
+
+            // Premature Ensure during transient/partial load sticks an empty cache —
+            // only refresh when empty so other-scene WorldId misses do not FindObjects spam.
+            if (_bossCacheReady && BossCacheEmpty())
+            {
+                _bossCacheReady = false;
+                EnsureBossCache();
+                if (_clientDisabled)
+                    DisableLocalAI();
+                hit = FindInBossCache(want, out type);
+                if (hit != null) return hit;
+            }
+
+            type = BossType.END_Boss;
+            return null;
+        }
+
+        private MonoBehaviour FindInBossCache(ulong want, out BossType type)
+        {
             EnsureBossCache();
 
             var ends = _endBosses;
@@ -414,6 +439,13 @@ namespace SyncRADation.Networking
 
             type = BossType.END_Boss;
             return null;
+        }
+
+        bool BossCacheEmpty()
+        {
+            return (_endBosses == null || _endBosses.Length == 0)
+                && (_chimeras == null || _chimeras.Length == 0)
+                && (_mynahs == null || _mynahs.Length == 0);
         }
 
         private void DisableLocalAI()

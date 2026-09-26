@@ -62,7 +62,9 @@ namespace SyncRADation.Networking
 
         public static void ApplyManager(PuzzleStateEntry e)
         {
-            RadioManager.moduleInstalled = (e.Int0 & 1) != 0;
+            // Latch true only — host false must not wipe a peer who just acquired the module.
+            if ((e.Int0 & 1) != 0)
+                RadioManager.moduleInstalled = true;
         }
 
         public static void ApplyAlignment(ROT_RadioAlignment x, PuzzleStateEntry e)

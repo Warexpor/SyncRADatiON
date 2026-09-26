@@ -250,15 +250,21 @@ namespace SyncRADation.Networking
                 }
             }
 
-            // Globals (WorldId = 0). Alarm/radio stay host-only (client poll would clobber).
+            // Globals (WorldId = 0). Alarm stays host-only (client poll would clobber).
+            // RadioManagerState: client may emit moduleInstalled=true (latch on apply).
             // KeyGrid / ArianePhotoCode are client-emittable (static solved/code reverse arrow).
             if (!clientFilter)
             {
                 var alarm = EnemySyncService.ReadGlobalAlert();
                 if (ChangedOrFirst(alarm, full)) entries.Add(alarm);
-
+            }
+            if (!clientFilter || ClientMayEmit(PuzzleType.RadioManagerState))
+            {
                 var radio = RadioPuzzleSyncService.ReadManagerState();
-                if (ChangedOrFirst(radio, full)) entries.Add(radio);
+                // Client must not emit false — would race host latch before acquire.
+                if (!(clientFilter && (radio.Int0 & 1) == 0)
+                    && ChangedOrFirst(radio, full))
+                    entries.Add(radio);
             }
             if (!clientFilter || ClientMayEmit(PuzzleType.MED_KeyGrid))
             {

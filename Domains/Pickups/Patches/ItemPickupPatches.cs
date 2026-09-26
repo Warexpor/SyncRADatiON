@@ -343,10 +343,16 @@ namespace SyncRADation.Patches
         static readonly System.Collections.Generic.HashSet<int> _claimedDrops
             = new System.Collections.Generic.HashSet<int>();
 
-        // Host ack for client DroppedPickup — must survive a second ArmDropped before ack arrives.
-        static int _awaitingDropKey = -1;
-        static Items.itemlist _awaitingDropItem;
-        static int _awaitingDropCount;
+        struct AwaitingDrop
+        {
+            public Items.itemlist Item;
+            public int Count;
+        }
+
+        // Host ack for client DroppedPickup — keyed so a second claim before the first
+        // ack cannot overwrite / mis-revert under storage+drop soak (3–4 peers).
+        static readonly System.Collections.Generic.Dictionary<int, AwaitingDrop> _awaitingDrops
+            = new System.Collections.Generic.Dictionary<int, AwaitingDrop>();
 
         /// <summary>
         /// Clear local claim dedupe + awaiting ack. Required on StopNetwork because
@@ -356,9 +362,7 @@ namespace SyncRADation.Patches
         internal static void ResetDropClaims()
         {
             _claimedDrops.Clear();
-            _awaitingDropKey = -1;
-            _awaitingDropItem = Items.itemlist.None;
-            _awaitingDropCount = 0;
+            _awaitingDrops.Clear();
             _pendingDropKey = -1;
             _pendingDropItem = Items.itemlist.None;
             _pendingDropCount = 0;
@@ -395,32 +399,36 @@ namespace SyncRADation.Patches
                 if (net.Role == NetworkRole.Host)
                 {
                     net.TryClaimDropped(key, net.LocalPlayerId, out _, skipLocalGrant: true);
-                    ClearAwaitingDrop();
+                    _awaitingDrops.Clear();
                 }
                 else
                 {
                     // WorldId carries drop key so FAIL ack can match (Int0 is also key).
-                    _awaitingDropKey = key;
-                    _awaitingDropItem = _pendingDropItem;
-                    _awaitingDropCount = _pendingDropCount > 0 ? _pendingDropCount : 1;
+                    _awaitingDrops[key] = new AwaitingDrop
+                    {
+                        Item = _pendingDropItem,
+                        Count = _pendingDropCount > 0 ? _pendingDropCount : 1
+                    };
                     net.SendInteractionRequest(unchecked((ulong)(uint)key), InteractionKind.DroppedPickup, key);
                 }
             }
             else
-                ClearAwaitingDrop();
+                _awaitingDrops.Remove(key);
             ItemSystem.DroppedItemManager.DespawnWhenIdle(key);
             _pendingDropKey = -1;
         }
 
         internal static void NoteDropClaimAck(bool ok, long ackWorldId)
         {
+            int ackKey = ackWorldId != 0 ? (int)ackWorldId : -1;
             if (ok)
             {
-                if (_awaitingDropKey >= 0)
+                if (ackKey >= 0)
+                    _awaitingDrops.Remove(ackKey);
+                else if (_awaitingDrops.Count == 1)
                 {
-                    int ackKey = ackWorldId != 0 ? (int)ackWorldId : _awaitingDropKey;
-                    if (ackKey == _awaitingDropKey || ackWorldId == 0)
-                        ClearAwaitingDrop();
+                    // Legacy ack without WorldId — only safe when a single claim is in flight.
+                    _awaitingDrops.Clear();
                 }
                 return;
             }
@@ -430,21 +438,32 @@ namespace SyncRADation.Patches
         internal static void RevertPendingNativeGrant(long ackWorldId = 0)
         {
             int ackKey = ackWorldId != 0 ? (int)ackWorldId : -1;
-            Items.itemlist itemEnum;
-            int count;
-            if (_awaitingDropKey >= 0)
+            Items.itemlist itemEnum = Items.itemlist.None;
+            int count = 1;
+            int clearKey = -1;
+
+            if (ackKey >= 0 && _awaitingDrops.TryGetValue(ackKey, out var pending))
             {
-                // Matched awaiting claim (prefer WorldId=key from request).
-                if (ackKey >= 0 && ackKey != _awaitingDropKey)
-                    return;
-                itemEnum = _awaitingDropItem;
-                count = _awaitingDropCount > 0 ? _awaitingDropCount : 1;
+                itemEnum = pending.Item;
+                count = pending.Count > 0 ? pending.Count : 1;
+                clearKey = ackKey;
+            }
+            else if (ackKey < 0 && _awaitingDrops.Count == 1)
+            {
+                foreach (var kvp in _awaitingDrops)
+                {
+                    clearKey = kvp.Key;
+                    itemEnum = kvp.Value.Item;
+                    count = kvp.Value.Count > 0 ? kvp.Value.Count : 1;
+                    break;
+                }
             }
             else if (_pendingDropItem != Items.itemlist.None)
             {
                 // Legacy / host-local path fallback.
                 itemEnum = _pendingDropItem;
                 count = _pendingDropCount > 0 ? _pendingDropCount : 1;
+                clearKey = _pendingDropKey;
             }
             else
                 return;
@@ -457,21 +476,14 @@ namespace SyncRADation.Patches
             }
             catch { }
             // Allow a later respawn/dump of the same key to be claimed again.
-            if (_awaitingDropKey >= 0)
-                _claimedDrops.Remove(_awaitingDropKey);
-            else if (ackKey >= 0)
-                _claimedDrops.Remove(ackKey);
-            ClearAwaitingDrop();
+            if (clearKey >= 0)
+            {
+                _claimedDrops.Remove(clearKey);
+                _awaitingDrops.Remove(clearKey);
+            }
             _pendingDropKey = -1;
             _pendingDropItem = Items.itemlist.None;
             _pendingDropCount = 0;
-        }
-
-        static void ClearAwaitingDrop()
-        {
-            _awaitingDropKey = -1;
-            _awaitingDropItem = Items.itemlist.None;
-            _awaitingDropCount = 0;
         }
     }
 

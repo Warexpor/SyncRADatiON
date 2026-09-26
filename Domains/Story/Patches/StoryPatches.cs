@@ -1,4 +1,5 @@
 // Host writes SProgress; clients only apply via StoryCommit.
+using System;
 using HarmonyLib;
 using SyncRADation.Networking;
 using SyncRADation.Sync;
@@ -426,6 +427,13 @@ namespace SyncRADation.Patches
     {
         [HarmonyPrefix]
         public static bool Prefix(int dialogueId) => DialoguerGate.Start(dialogueId);
+
+        // Flavor sticky set in Start — clear if native throws after Prefix returned true.
+        [HarmonyFinalizer]
+        public static void Finalizer(Exception __exception)
+        {
+            if (__exception != null) DialoguerGate.ClearFlavor();
+        }
     }
 
     [HarmonyPatch(typeof(Dialoguer), nameof(Dialoguer.StartDialogue), new[] { typeof(DialoguerDialogues) })]
@@ -433,6 +441,12 @@ namespace SyncRADation.Patches
     {
         [HarmonyPrefix]
         public static bool Prefix(DialoguerDialogues dialogue) => DialoguerGate.Start((int)dialogue);
+
+        [HarmonyFinalizer]
+        public static void Finalizer(Exception __exception)
+        {
+            if (__exception != null) DialoguerGate.ClearFlavor();
+        }
     }
 
     [HarmonyPatch(typeof(Dialoguer), nameof(Dialoguer.StartDialogue), new[] { typeof(int), typeof(DialoguerCallback) })]
@@ -440,6 +454,12 @@ namespace SyncRADation.Patches
     {
         [HarmonyPrefix]
         public static bool Prefix(int dialogueId) => DialoguerGate.Start(dialogueId);
+
+        [HarmonyFinalizer]
+        public static void Finalizer(Exception __exception)
+        {
+            if (__exception != null) DialoguerGate.ClearFlavor();
+        }
     }
 
     [HarmonyPatch(typeof(Dialoguer), nameof(Dialoguer.StartDialogue), new[] { typeof(DialoguerDialogues), typeof(DialoguerCallback) })]
@@ -447,6 +467,12 @@ namespace SyncRADation.Patches
     {
         [HarmonyPrefix]
         public static bool Prefix(DialoguerDialogues dialogue) => DialoguerGate.Start((int)dialogue);
+
+        [HarmonyFinalizer]
+        public static void Finalizer(Exception __exception)
+        {
+            if (__exception != null) DialoguerGate.ClearFlavor();
+        }
     }
 
     [HarmonyPatch(typeof(Dialoguer), nameof(Dialoguer.ContinueDialogue), new[] { typeof(int) })]
@@ -454,6 +480,12 @@ namespace SyncRADation.Patches
     {
         [HarmonyPrefix]
         public static bool Prefix(int choice) => DialoguerGate.Continue(choice);
+
+        [HarmonyFinalizer]
+        public static void Finalizer(Exception __exception)
+        {
+            if (__exception != null) DialoguerGate.ClearFlavor();
+        }
     }
 
     [HarmonyPatch(typeof(Dialoguer), nameof(Dialoguer.ContinueDialogue), new System.Type[0])]
@@ -461,6 +493,12 @@ namespace SyncRADation.Patches
     {
         [HarmonyPrefix]
         public static bool Prefix() => DialoguerGate.Continue(0);
+
+        [HarmonyFinalizer]
+        public static void Finalizer(Exception __exception)
+        {
+            if (__exception != null) DialoguerGate.ClearFlavor();
+        }
     }
 
     [HarmonyPatch(typeof(Dialoguer), nameof(Dialoguer.EndDialogue))]

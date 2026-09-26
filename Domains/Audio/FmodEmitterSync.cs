@@ -70,7 +70,23 @@ namespace SyncRADation.Networking
                 PlaytestLog.Verbose("FMOD", (msg.Play ? "Play" : "Stop")
                     + (string.IsNullOrEmpty(path) ? "" : " " + path)
                     + " id=" + id.ToString("X16"));
-                if (msg.Play) e.Play();
+                // DoorNative already distance-gates; non-door emitter Play() can still
+                // leak far one-shots / 2D-ish events — skip far Play, always allow Stop.
+                if (msg.Play)
+                {
+                    try
+                    {
+                        float vol;
+                        if (e.transform != null
+                            && !WorldSfx.TryVolume(e.transform.position, out vol))
+                        {
+                            PlaytestLog.Verbose("FMOD", "skip far Play id=" + id.ToString("X16"));
+                            return;
+                        }
+                    }
+                    catch { }
+                    e.Play();
+                }
                 else e.Stop();
             }
             catch (System.Exception ex)

@@ -318,6 +318,7 @@ namespace SyncRADation.Networking
                 PuzzleType.RES_Shrine,
                 PuzzleType.ROT_RadioAlignment,
                 PuzzleType.DET_RadioCodeLock,
+                PuzzleType.RadioManagerState,
                 PuzzleType.EXC_Elevator,
                 PuzzleType.RES_MusicBox,
                 PuzzleType.RES_LibraryPC,
