@@ -39,6 +39,57 @@ Protocol **v10**. Continuous Batch 12 dig (scenario-first).
 - SceneFollow mid-inventory/menu sticky — needs dual-box freeze repro before CloseInventory yank.
 - Enemy mid-death native Die/deadFire beyond AnimHash snap — needs soak zombie repro.
 
+### Batch 16 dig (no-ship) — 2026-09-26 — parked Batch 17
+
+Protocol **v10** / `e5d5754` / 0.5.12. PathID dig on AssetStudio `DelayedCutsceneEvent*` + `CutsceneCut*` UnityEvent `SetActive`/`set_enabled` vs AssetRipper scene YAML (same-file `!u!1 &PathID` names). Tool: `04_AssetRipper_UnityProject/AuxiliaryFiles/path_id_map.json` has **no GameObjects** (Mesh/MonoScript/Texture only) — resolve PathIDs via scene YAML fileIDs (AssetStudio `m_PathID` == ripper `&fid`).
+
+#### Primary — cutscene SetActive gates
+
+| Target | PathID / scene | Owner event | Co-op scenario | Verdict |
+|--------|----------------|-------------|----------------|---------|
+| `Door Connection (31)` (`ConnectedDoors`, unlocked) | 32250 / `MED_Medical` | `CutsceneCut@Enter` onCutStart `SetActive(false)`; `CutsceneManager@MED Intro` onCutsceneEnd `SetActive(true)` (`unskippable:1`, scenes=[Enter]) | Host plays MED intro; client other-room or late-join | **harmless** — cinematic temp disable then restore; default `m_IsActive=1`; skip cannot leave disabled; PuzzleState tracks `locked` not GO active (not needed here) |
+| `ButterflyBoxEvent` (`Interaction` + `EventScreenInteraction`) | 1226 / `DET_Detention` | `CutsceneCut@DET_Radio_1 Meat` + RadioStation* UnityEvents `SetActive(false)` | Peer misses meat cutscene; still sees butterfly EventScreen | **intentional / harmless** — EventScreen flavor local (`DECOMPILE_COVERAGE`); not a story collider gate |
+| Presentation-only (Ambience_*, LocalSpace, Photo, Type, Muzzle, BloodSpray, Chunk/Cell stream, Ellie_Repair, Crippled/Armored, IsaRemains, CombatMusic, ImposterFog `set_enabled`, …) | 40/47 named cutscene calls | DelayedCutsceneEvent / CutsceneCut | Visual/audio/fog | **harmless** |
+
+#### Primary — similar UnityEvent SetActive (non-cutscene) gate-like
+
+| Target | Owner | Sync today | Verdict |
+|--------|-------|------------|---------|
+| `Blocker Entry` (BoxCollider L22) | `MuralLogic` / `ROT_Mural.onSolved` → `SetActive(false)` | `ApplyMural` sets `finished` + `useRing()` only when `MutateWorld`; FullRefresh skips `useRing` | **soak** — live peers get blocker off via `useRing`; late-join may keep collider until soak proves softlock. Do **not** invent GO-active PuzzleState without repro |
+| `E Door Spot Blocked` / `E Door Spot` | `PEN_Reaktor` / Reaktor Logic | `SnapReaktor` unlocks `doorLock` ConnectedDoors + plates; spots are presentation SetActive | **harmless / covered** — real gate is `doorLock` |
+| `DET_DoorS`, `DoorLockEvent`, `Event`/`EventInter` (TreeLock/Elemental/Keypad) | Memo / Interaction / puzzle logics | PuzzleType snaps + door flags | **intentional** — already PuzzleState |
+
+No cutscene SetActive → MeatBlocker / ladder / elevator / story seal **without** existing PuzzleState path proven. No CAN-FIX softlock this dig.
+
+#### Secondary (document only)
+
+**Craft `PartyKeyRing.Remove` gap**
+- `NoteCraftedKey` (`ItemPickupPatches`) notes craft **result** on `InventoryManager.AddItem` / overload Postfix (`OfferToHost` if Key/Object).
+- `CombineRecipes.combine` has **no** Harmony patch; ingredients (e.g. Tape + BrokenKey → AirlockKey) leave the bag via native `RemoveItem` but **never** `PartyKeyRing.Remove`.
+- `PartyKeyRing.Remove` call sites only: `InteractionSyncService.ConsumeKey` (UseItem consume), `NetworkDamageSystem` (death-bag), `DroppedItemNetHandlers.DetachDroppedKey` / `ConsumeDropped`.
+- Phantom ring entries for consumed ingredients are stale `hasItem` OR-true — soak before Remove-on-combine.
+
+**Wiki missable unique vs ring**
+- Ring rule: `AnItemType.Key` / `Object` only (`IsKeyOrObject`).
+- Wiki: Gold Key (cassette cutscene AddItem → NoteCraftedKey), elemental keys, Blank Key, ending Love/Eternity/Sacrifice, KeyOfSacrifice (0.5.8 hold). Docs/photos/eidetic remain flavor local (prior parked).
+- No new missable unique **not** Key/Object proven as softlock.
+
+**HasPeer-class InteractionKind orphans**
+- Already gated (0.5.11–0.5.12): WorldPickup claim, `DroppedPickup`, `StorageTake`.
+- `StoragePut` — apply when gone by design (box keeps item).
+- `UseItem` / `UseItemMulti` — apply when gone unlocks world for party; reject would softlock door. Not orphan-loss class.
+- Presentation kinds (Cutscene*/Dialogue*/Book*/EventScreen*/Gunshot/InspectFlag) + puzzle emits (Keypad/MultiCondition/EventZone) — no shared-stock orphan pattern.
+- **No new HasPeer-class CAN-FIX** → no 0.5.13 ship.
+
+#### Parked (Batch 17)
+- Adler EV / SceneFollow RestorePlay / KillSilent — prior soak gates (mission).
+- Craft `PartyKeyRing.Remove` on `CombineRecipes.combine` ingredients — document-only until soak.
+- `ROT_Mural` FullRefresh `Blocker Entry` GO active (useRing skipped) — soak late-join wall.
+- SceneFollow mid-inventory / Alarm / MeatBlocker tarot siblings / photo flavor / ladder-continuum — unchanged prior park.
+- Cutscene GO-active inventory (Door Connection pattern) only if dual-box leaves a link permanently disabled.
+
+Sources: `03_AssetStudio_export/MonoBehaviour/DelayedCutsceneEvent*.json`, `CutsceneCut*.json`; `04_AssetRipper_UnityProject/ExportedProject/Assets/Scenes/Levels/*.unity`; `path_id_map.json`; `Domains/Puzzles/Machines/ChapterMachineSyncService.cs` ApplyMural/SnapReaktor; `Domains/Story/InteractionSyncService.cs`; `Domains/Inventory/PartyKeyRing.cs`; `Domains/Pickups/Patches/ItemPickupPatches.cs` NoteCraftedKey; signalis.fandom / wiki.gg Gold Key / Key Items.
+
 ## 0.5.11 — 2026-09-26
 
 Protocol **v10**. Continuous Batch 11 dig.
