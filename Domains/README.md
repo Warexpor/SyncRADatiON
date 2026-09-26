@@ -1,4 +1,4 @@
-# Domains — where to fix what (0.5.5)
+# Domains — where to fix what (0.5.6)
 
 Composed `*SyncService` / `*NetHandlers` / `Patches/`. Namespaces stay `SyncRADation.Networking` / `.Patches` / `.Players` / `.ItemSystem`.
 
@@ -37,7 +37,7 @@ Authority + reverse-check: repo root `AGENTS.md`. Protocol **10** wire in `Netwo
 | FMOD world emitters | `Audio/` | Skip Music/Cutscenes/Ambience beds |
 | Gunshot wake | `Combat/Patches/GunshotWakePatch` | Host wakes near shot |
 | Handshake / roster | `Networking/LanNetworkManager` + `Dispatch/` | Peer map |
-| Join / resync dump | `Session/SessionNetHandlers` | `_unicastPlayerId` via BeginUnicast/EndUnicast |
+| Join / resync dump | `Session/SessionNetHandlers` | `_unicastPlayerId` via BeginUnicast/EndUnicast; **Puzzle ForceFullSend** + **Boss RequestFullSend** so mid-join unicast is complete |
 | SceneHello / SceneFollow | `Scene/SceneNetHandlers` + `SceneFollowService` | |
 | PartyKeyRing / Storage blob wire | `Inventory/InventoryNetHandlers` | |
 | PuzzleState send/apply | `Puzzles/PuzzleNetHandlers` + coordinator | |

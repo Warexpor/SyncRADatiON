@@ -10,9 +10,13 @@ namespace SyncRADation.Networking
     public sealed class BossSyncService
     {
         private float _sendTimer;
+        private bool _forceSend;
         private bool _clientDisabled;
 
         private const float SendInterval = 1f / 15f;
+
+        /// <summary>Join/resync dump: bypass send timer so mid-phase state is in the unicast snapshot.</summary>
+        public void RequestFullSend() => _forceSend = true;
 
         private readonly Dictionary<long, (MonoBehaviour comp, BossType type)> _hostToLocal
             = new Dictionary<long, (MonoBehaviour comp, BossType type)>();
@@ -102,8 +106,9 @@ namespace SyncRADation.Networking
             if (!net.IsConnected) return;
 
             _sendTimer += Mathf.Min(Time.deltaTime, 0.1f);
-            if (_sendTimer < SendInterval) return;
+            if (_sendTimer < SendInterval && !_forceSend) return;
             _sendTimer = 0f;
+            _forceSend = false;
 
             float t0 = Time.realtimeSinceStartup;
             try
@@ -465,6 +470,7 @@ namespace SyncRADation.Networking
             try { EnableLocalAI(); } catch { }
             OnSceneChanged();
             _sendTimer = 0f;
+            _forceSend = false;
         }
 
         // PuzzleStateMessage ownership for Kolibri/Adler intensity (wire stays PuzzleType).

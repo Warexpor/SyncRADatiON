@@ -122,13 +122,14 @@ namespace SyncRADation.Networking
             {
                 WorldRegistry.Rebuild();
                 DoorSyncService.ForceFullSend();
-                _net.PuzzleSync.RequestFullSend();
+                _net.PuzzleSync.ForceFullSend();
                 _net.PuzzleSync.Tick(_net);
                 _net.PickupSync.RequestFullSend();
                 _net.PickupSync.TickHost(_net);
                 EntitySpawner.DumpLiveSpawns(_net);
                 _net.EnemySync.RequestFullSend();
                 _net.EnemySync.TickHost(_net);
+                _net.BossSync.RequestFullSend();
                 _net.BossSync.TickHost(_net);
                 _net.StorySync.RequestFullSend();
                 _net.StorySync.Send(_net, true, replayPresentation: true);

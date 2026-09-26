@@ -228,6 +228,12 @@ namespace SyncRADation.Networking
         public static void ApplyConnectedDoors(ConnectedDoors cd, bool locked)
         {
             if (cd == null) return;
+            // Scene unload can destroy the door between registry lookup and apply.
+            try
+            {
+                if (cd.gameObject == null) return;
+            }
+            catch { return; }
             try
             {
                 if (!locked)
@@ -236,6 +242,8 @@ namespace SyncRADation.Networking
                         return;
                     cd.locked = false;
                     try { cd.Unlock(); } catch { }
+                    // Re-check after Unlock — mid-unload can tear the GO during native call.
+                    try { if (cd.gameObject == null) return; } catch { return; }
                     ReleaseTraverse(cd);
                     try { cd.UpdateProperties(); } catch { }
                     EnsurePlates(cd, false);

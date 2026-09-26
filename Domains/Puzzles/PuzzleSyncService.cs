@@ -86,6 +86,17 @@ namespace SyncRADation.Networking
 
         public void RequestFullSend() => _needFullSend = true;
 
+        /// <summary>
+        /// Join/resync dump: bypass MinFullSendInterval so the unicast snapshot is a true
+        /// full puzzle dump. Rate-limit still applies to RefreshScene / ambient RequestFullSend.
+        /// </summary>
+        public void ForceFullSend()
+        {
+            _needFullSend = true;
+            _lastFullSend = -999f;
+            _sendTimer = SendInterval;
+        }
+
         public void Reset()
         {
             RefreshScene();
@@ -199,7 +210,10 @@ namespace SyncRADation.Networking
             _tickEntries.Clear();
             bool full = fullNow;
             ReadAll(_tickEntries, full, clientFilter: false, activeOnly: !full);
-            _needFullSend = false;
+            // Only clear after an actual full dump. Clearing on a rate-limited diff tick
+            // dropped join/resync full state when MinFullSendInterval still blocked.
+            if (full)
+                _needFullSend = false;
             for (int i = 0; i < _tickEntries.Count; i++)
                 HoldIfProgressed(_tickEntries[i]);
             if (_tickEntries.Count == 0) return;

@@ -86,9 +86,21 @@ namespace SyncRADation.Networking
             catch { }
             if (!PuzzleSyncService.MutateWorld)
             {
-                PlaytestLog.Verbose("Puzzle", "snap UseItem flags only " + x.gameObject.name);
+                try
+                {
+                    string n = "?";
+                    try { if (x.gameObject != null) n = x.gameObject.name; } catch { }
+                    PlaytestLog.Verbose("Puzzle", "snap UseItem flags only " + n);
+                }
+                catch { }
                 return;
             }
+            // Mid-unload: flags snapped above; skip door unlock on a torn-down GO.
+            try
+            {
+                if (x.gameObject == null) return;
+            }
+            catch { return; }
             try
             {
                 if (x.slaveInteraction != null)
@@ -104,6 +116,11 @@ namespace SyncRADation.Networking
                 if (lockComp != null) lockComp.locked = false;
             }
             catch { }
+            try
+            {
+                if (x.gameObject == null) return;
+            }
+            catch { return; }
             PuzzleDoorFlagsSyncService.TryUnlockDoors(x.gameObject);
             UnlockMatchingKeyLocks(x);
         }
