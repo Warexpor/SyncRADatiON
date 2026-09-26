@@ -226,6 +226,7 @@ namespace SyncRADation.Patches
             if (item == null) return true;
             if (NetGate.Host)
             {
+                // Prefix only flags; Postfix pushes blob after native mutates host box.
                 LanNetworkManager.Instance.StorageSync.RequestSend();
                 return true;
             }
@@ -238,6 +239,35 @@ namespace SyncRADation.Patches
                 number > 0 ? number : 1);
             return false;
         }
+
+        static void FlushHostBoxBlob()
+        {
+            if (NetGate.IsApplying || !NetGate.Live || !NetGate.Host) return;
+            var net = LanNetworkManager.Instance;
+            if (net == null) return;
+            try
+            {
+                net.StorageSync.RequestSend();
+                net.StorageSync.SendNow(net);
+            }
+            catch { }
+        }
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.storeItem), new[] { typeof(AnItem), typeof(int) })]
+        public static void PostStore(AnItem item, int number) => FlushHostBoxBlob();
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.retrieveItem), new[] { typeof(AnItem), typeof(int) })]
+        public static void PostRetrieve(AnItem item, int number) => FlushHostBoxBlob();
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.boxItem), new[] { typeof(AnItem), typeof(int) })]
+        public static void PostBox(AnItem item, int number) => FlushHostBoxBlob();
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.unboxItem), new[] { typeof(AnItem) })]
+        public static void PostUnbox(AnItem item) => FlushHostBoxBlob();
     }
 
     static class DialoguerGate

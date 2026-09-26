@@ -469,6 +469,29 @@ namespace SyncRADation.Networking
             var item = InventoryManager.getItem((Items.itemlist)msg.Int0);
             if (item == null) return false;
             int n = msg.Int1 > 0 ? msg.Int1 : 1;
+
+            // Host-authoritative stock: dual take of the same unique must not both grant.
+            if (!put)
+            {
+                int have = 0;
+                try { have = InventoryManager.boxContainsItemCount(item); }
+                catch
+                {
+                    try { if (InventoryManager.boxContainsItem(item)) have = 1; } catch { }
+                }
+                if (have < n)
+                {
+                    reasonOut = "empty";
+                    PlaytestLog.Event("StorageBox", "take FAIL have=" + have + " need=" + n
+                        + " item=" + msg.Int0 + " from=" + msg.SenderPlayerId);
+                    // Refresh loser's LWW view so UI does not keep a ghost stack.
+                    var netFail = LanNetworkManager.Instance;
+                    netFail?.StorageSync.RequestSend();
+                    netFail?.StorageSync.SendNow(netFail);
+                    return false;
+                }
+            }
+
             NetGate.BeginApply();
             try
             {

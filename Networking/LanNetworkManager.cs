@@ -179,6 +179,7 @@ namespace SyncRADation.Networking
             DroppedItemManager.ClearAll();
             AvatarHandlers.ResetSendState();
             DroppedItemHandlers.Reset();
+            SessionHandlers.Reset();
             _handshakeComplete = false;
             _vitalTimer = 0f;
             _peers.Clear();
@@ -244,6 +245,7 @@ namespace SyncRADation.Networking
             if (!IsConnected || !_handshakeComplete)
                 return;
 
+            SessionHandlers.TickPendingDumps();
             DoorSyncService.Tick();
             _enemySync.TickHost(this);
             if (ModConfig.PuzzlesEnabled)
@@ -426,6 +428,7 @@ namespace SyncRADation.Networking
                 _peerScenes.Remove(playerId);
                 if (_role == NetworkRole.Host)
                 {
+                    SessionHandlers.NotePeerGone(playerId);
                     RebuildHostSession();
                     BroadcastPlayerRoster();
                 }
@@ -592,6 +595,8 @@ namespace SyncRADation.Networking
                 if (SceneFollowService.LocalIsTransient())
                 {
                     PlaytestLog.Verbose("Scene", "skip hello/dump (loading)");
+                    if (_role == NetworkRole.Host)
+                        SessionHandlers.DeferDump(-1);
                     return;
                 }
                 BroadcastSceneHello();

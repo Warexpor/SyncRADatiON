@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using LiteNetLib;
 using LiteNetLib.Utils;
 using SyncRADation.Cheats;
@@ -10,10 +11,90 @@ namespace SyncRADation.Networking
     internal sealed class SessionNetHandlers
     {
         private readonly LanNetworkManager _net;
+        /// <summary>Per-joiner dump targets deferred while host is on LoadingScreen.</summary>
+        private readonly HashSet<int> _pendingDumpTargets = new HashSet<int>();
+        /// <summary>Broadcast dump deferred (OnSceneChanged / resync-all while transient).</summary>
+        private bool _pendingDumpAll;
 
         internal SessionNetHandlers(LanNetworkManager net)
         {
             _net = net ?? throw new System.ArgumentNullException(nameof(net));
+        }
+
+        internal void Reset()
+        {
+            _pendingDumpTargets.Clear();
+            _pendingDumpAll = false;
+        }
+
+        internal void NotePeerGone(int playerId)
+        {
+            if (playerId >= 1)
+                _pendingDumpTargets.Remove(playerId);
+        }
+
+        /// <summary>
+        /// Remember a dump that could not send while host was transient.
+        /// targetPlayerId &gt;= 0 unicasts; -1 = all peers when load finishes.
+        /// </summary>
+        internal void DeferDump(int targetPlayerId)
+        {
+            if (_net.Role != NetworkRole.Host) return;
+            if (targetPlayerId >= 0)
+            {
+                _pendingDumpTargets.Add(targetPlayerId);
+                PlaytestLog.Event("Scene", "defer dump p" + targetPlayerId);
+            }
+            else
+            {
+                _pendingDumpAll = true;
+                PlaytestLog.Event("Scene", "defer dump all");
+            }
+        }
+
+        /// <summary>Host tick: flush deferred dumps once active scene is non-transient.</summary>
+        internal void TickPendingDumps()
+        {
+            if (_net.Role != NetworkRole.Host || !_net.HandshakeComplete) return;
+            if (!_pendingDumpAll && _pendingDumpTargets.Count == 0) return;
+            if (SceneFollowService.LocalIsTransient()) return;
+
+            bool all = _pendingDumpAll;
+            int[] targets = null;
+            if (!all && _pendingDumpTargets.Count > 0)
+            {
+                targets = new int[_pendingDumpTargets.Count];
+                _pendingDumpTargets.CopyTo(targets);
+            }
+            // Clear before send so a nested Tick cannot double-flush; re-Defer on failure.
+            _pendingDumpAll = false;
+            _pendingDumpTargets.Clear();
+
+            if (all)
+            {
+                PlaytestLog.Event("Scene", "flush deferred dump all");
+                try { SendFullWorldSnapshot(-1); }
+                catch (System.Exception ex)
+                {
+                    ModRuntime.Log?.Warning("[Scene] deferred dump all failed: " + ex.Message);
+                    DeferDump(-1);
+                }
+                return;
+            }
+
+            if (targets == null) return;
+            for (int i = 0; i < targets.Length; i++)
+            {
+                int pid = targets[i];
+                if (!_net.HasPeer(pid)) continue;
+                PlaytestLog.Event("Scene", "flush deferred dump p" + pid);
+                try { SendFullWorldSnapshot(pid); }
+                catch (System.Exception ex)
+                {
+                    ModRuntime.Log?.Warning("[Scene] deferred dump p" + pid + " failed: " + ex.Message);
+                    DeferDump(pid);
+                }
+            }
         }
 
         /// <summary>Host: dump full world. targetPlayerId &gt;= 0 unicasts (join / client resync); -1 = all peers.</summary>
@@ -22,9 +103,18 @@ namespace SyncRADation.Networking
             if (_net.Role != NetworkRole.Host || !_net.HandshakeComplete) return;
             if (SceneFollowService.LocalIsTransient())
             {
-                PlaytestLog.Event("Scene", "skip dump (loading)");
+                DeferDump(targetPlayerId);
                 return;
             }
+            // Successful send clears matching pending entries for this scope.
+            if (targetPlayerId < 0)
+            {
+                _pendingDumpAll = false;
+                _pendingDumpTargets.Clear();
+            }
+            else
+                _pendingDumpTargets.Remove(targetPlayerId);
+
             ModRuntime.Log?.Msg("[Network] Sending full world snapshot"
                 + (targetPlayerId >= 0 ? " to player " + targetPlayerId : " to all peers"));
             int prevUnicast = _net.BeginUnicast(targetPlayerId);
