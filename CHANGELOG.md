@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.11 — 2026-09-26
+
+Protocol **v10**. Continuous Batch 11 dig.
+
+### Fixed
+- **Kolibri / ADLR Hold Postfix** — client `Update` recomputes intensity/progress/frequency from local radio after Prefix; Postfix re-applies the last host PuzzleState snap so phase cannot drift (0.5.9 Prefix alone lost the race).
+- **Falke presentation mid-apply** — `SnapFalkePresentation` takes stage/corrupt from the BossState snap (not re-read fields), reclamps stage, rewrites field mirror, and calls `SetBodySpearStates` so stage regress / corrupt toggle cannot leave arenas/shields/meshes/BodySpears on a stale combo.
+- **World pickup peer-gone mid-claim** — host ignores claims from disconnected peers; non-Key/Object orphan claims release + restore prop + broadcast untriggered on `NotePeerGone` (grant softlock when claimer drops after TryClaimOnHost). Client `ApplyHide` now restores on `Triggered=false` (was hide-only).
+
+### Parked (Batch 12)
+- Alarm `GlobalAlertStatus.triggerAlarm` / `EnemyManagerState` client latch-emit — MelonLoader `CallerCount(0)`, no UnityEvent bindings; alert stays host-poll only.
+- Ending-flag peer merge (client `healedTime`/`doors`/`memoryTime` → host) — host-authoritative `END_Manager` by design; no safe merge without new wire.
+- MeatBlocker tarot siblings (Lovers/Moon/Sun/Star/Tower) — assets `required=1/2/6`; only Death seals NG+ `KeyOfSacrifice` (wiki Artifact); no parallel softlock pair proven.
+- Throw-mid-Harmony sticky beyond Dialoguer Finalizers — Cutscene `RememberStart`/`RememberSkip` intentional; Keypad `_sent` clears on scene/StopNetwork via `EventZonePatch`.
+- Photo/document/eidetic unique story gates — flavor local by design; `ArianePhotoCode` / Microfiche already PuzzleState.
+- Ladder / continuum / nowhere / fake wall co-op — traverse local by design (proxy SFX only).
+- Domains code smell (double Broadcast / WorldId 0 dumps) — PartyKeyRing Broadcast is if/else once; KeyGrid/Ariane/RadioManager WorldId 0 are intentional statics.
+
 ## 0.5.10 — 2026-09-26
 
 Protocol **v10**. Continuous Batch 10 dig.

@@ -7,7 +7,8 @@ namespace SyncRADation.Patches
     /// <summary>
     /// KolibriManager / BOS_Adler stay enabled on clients so glitch/SFX presentation runs,
     /// but their Update recomputes intensity/progress (and Kolibri frequency) from local
-    /// Elster/radio. Re-apply the last host PuzzleState snap each frame on clients.
+    /// Elster/radio. Re-apply the last host PuzzleState snap each frame on clients —
+    /// Prefix feeds inputs Update may read; Postfix wins after Update writes back.
     /// END/Chimera/Mynah are HaltBossController-disabled (StopAllCoroutines + enabled=false) instead (BossSyncService.DisableLocalAI).
     /// </summary>
     public static class KolibriAdlerAuthPatches
@@ -46,30 +47,40 @@ namespace SyncRADation.Patches
             _adlerProgress = progress;
         }
 
+        static void ApplyKolibriHold(KolibriManager inst)
+        {
+            if (inst == null || !_kolibriHeld || !NetGate.Live || NetGate.Host) return;
+            try { inst.dead = _kolibriDead; } catch { }
+            try { inst.frequency = _kolibriFreq; } catch { }
+            try { inst.intensity = _kolibriIntensity; } catch { }
+            try { inst.radioIntensity = _kolibriRadio; } catch { }
+        }
+
+        static void ApplyAdlerHold(BOS_Adler inst)
+        {
+            if (inst == null || !_adlerHeld || !NetGate.Live || NetGate.Host) return;
+            try { inst.intensity = _adlerIntensity; } catch { }
+            try { inst.progress = _adlerProgress; } catch { }
+        }
+
         [HarmonyPatch(typeof(KolibriManager), "Update")]
         public static class KolibriUpdateAuthPatch
         {
             [HarmonyPrefix]
-            public static void Prefix(KolibriManager __instance)
-            {
-                if (__instance == null || !_kolibriHeld || !NetGate.Live || NetGate.Host) return;
-                try { __instance.dead = _kolibriDead; } catch { }
-                try { __instance.frequency = _kolibriFreq; } catch { }
-                try { __instance.intensity = _kolibriIntensity; } catch { }
-                try { __instance.radioIntensity = _kolibriRadio; } catch { }
-            }
+            public static void Prefix(KolibriManager __instance) => ApplyKolibriHold(__instance);
+
+            [HarmonyPostfix]
+            public static void Postfix(KolibriManager __instance) => ApplyKolibriHold(__instance);
         }
 
         [HarmonyPatch(typeof(BOS_Adler), "Update")]
         public static class AdlerUpdateAuthPatch
         {
             [HarmonyPrefix]
-            public static void Prefix(BOS_Adler __instance)
-            {
-                if (__instance == null || !_adlerHeld || !NetGate.Live || NetGate.Host) return;
-                try { __instance.intensity = _adlerIntensity; } catch { }
-                try { __instance.progress = _adlerProgress; } catch { }
-            }
+            public static void Prefix(BOS_Adler __instance) => ApplyAdlerHold(__instance);
+
+            [HarmonyPostfix]
+            public static void Postfix(BOS_Adler __instance) => ApplyAdlerHold(__instance);
         }
     }
 }

@@ -337,21 +337,29 @@ namespace SyncRADation.Networking
             }
 
             // Client AI is disabled — Start/Stabbed/Update no longer drive arena doors,
-            // invuln shields, or corrupt mesh. Mirror host presentation from synced stage/corrupt
+            // invuln shields, or corrupt mesh. Mirror host presentation from the snap
+            // values (not re-read fields) so a failed stage/corrupt write or mid-apply
+            // corrupt toggle cannot leave arenas/shields/meshes on a stale combo.
             // (GameAssembly END_Boss.Start + <Stabbed>d__129.MoveNext + Update).
-            SnapFalkePresentation(b);
+            SnapFalkePresentation(b, snap.Int0, snap.Corrupt);
         }
 
         /// <summary>
         /// Decompile: Arenas[i] active iff i equals stage; HeadSpears[i] active iff i below stage;
         /// FloatShields when stage at least 3 (wiki phase 4); FloatShields2 when stage at least 5 (phase 6);
-        /// CorruptedMesh/NormalMesh follow corrupt (Update).
+        /// CorruptedMesh/NormalMesh follow corrupt (Update). BodySpears follow ammo/deployed via
+        /// native SetBodySpearStates after those fields were snapped.
         /// </summary>
-        private static void SnapFalkePresentation(END_Boss b)
+        private static void SnapFalkePresentation(END_Boss b, int stage, bool corrupt)
         {
             if (b == null) return;
-            int stage = 0;
-            try { stage = b.stage; } catch { return; }
+            if (stage < 0) stage = 0;
+            if (stage > 6) stage = 6;
+
+            // Keep field mirror aligned with the presentation we just chose (stage regress /
+            // corrupt toggle from a partial field write cannot desync GO active flags).
+            try { b.stage = stage; } catch { }
+            try { b.corrupt = corrupt; } catch { }
 
             try
             {
@@ -406,8 +414,6 @@ namespace SyncRADation.Networking
             }
             catch { }
 
-            bool corrupt = false;
-            try { corrupt = b.corrupt; } catch { }
             try
             {
                 if (b.CorruptedMesh != null)
@@ -420,6 +426,9 @@ namespace SyncRADation.Networking
                     b.NormalMesh.SetActive(!corrupt);
             }
             catch { }
+
+            // Stabbed / DeploySpears also refresh BodySpears from ammo/deployed (already snapped).
+            try { b.SetBodySpearStates(); } catch { }
         }
 
         private static void ApplyLAB(LAB_ChimeraBoss b, BossSnapshotNet snap)

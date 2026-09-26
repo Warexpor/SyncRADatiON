@@ -1,4 +1,4 @@
-# Domains — where to fix what (0.5.10)
+# Domains — where to fix what (0.5.11)
 
 Composed `*SyncService` / `*NetHandlers` / `Patches/`. Namespaces stay `SyncRADation.Networking` / `.Patches` / `.Players` / `.ItemSystem`.
 
@@ -31,7 +31,7 @@ Authority + reverse-check: repo root `AGENTS.md`. Protocol **10** wire in `Netwo
 | Player-dropped prop (G / TAKE) | `Pickups/DroppedItem*` (Registry, Spawner, NetHandlers; Manager = call-site façade) | Peer spawn + host claim |
 | Party key ring names / hasItem | `Inventory/PartyKeyRing` + `Inventory/Patches/PartyKeyRingPatches` | Key/Object only |
 | Enemies / alert bits | `Enemies/` (+ `Patches/EnemySpawnerPatches`) | WorldId; wake sleeping chunks; **client never EnemySpawner.FixedUpdate**; host adopts `_Child` → `SR_Spawn_*` + `EnemySpawn` |
-| Bosses (END/Chimera/Mynah/Kolibri/Adler) | `Bosses/` (+ `Patches/KolibriAdlerAuthPatches`) | Kolibri/Adler PuzzleState Hold; Falke Arenas/shields/corrupt snap; HaltBossController StopAllCoroutines |
+| Bosses (END/Chimera/Mynah/Kolibri/Adler) | `Bosses/` (+ `Patches/KolibriAdlerAuthPatches`) | Kolibri/Adler Prefix+Postfix Hold; Falke snap stage/corrupt + SetBodySpearStates; HaltBossController StopAllCoroutines |
 | Avatar / bones / weapons | `Players/` + `AvatarNetHandlers` | Peer-authored |
 | Friendly fire / death bag | `Combat/CombatNetHandlers` + `Combat/Patches` | Opt-in FF |
 | FMOD world emitters | `Audio/` | Skip Music/Cutscenes/Ambience beds |

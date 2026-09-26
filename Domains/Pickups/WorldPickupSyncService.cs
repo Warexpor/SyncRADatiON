@@ -192,6 +192,30 @@ namespace SyncRADation.Networking
             catch { }
         }
 
+        /// <summary>Undo HideOnePickup after an orphan claim release (peer gone mid-grant).</summary>
+        static void RestorePickup(ItemPickup p)
+        {
+            if (p == null) return;
+            try
+            {
+                if (p.gameObject == null) return;
+            }
+            catch { return; }
+            try { p.triggered = false; } catch { }
+            try { p.enabled = true; } catch { }
+            try
+            {
+                var it = p.GetComponent<Interaction>();
+                if (it != null)
+                {
+                    it.triggered = false;
+                    it.enabled = true;
+                }
+            }
+            catch { }
+            try { p.gameObject.SetActive(true); } catch { }
+        }
+
         /// <summary>
         /// Re-hide claimed props after a parent chunk/content wakes (SetActive re-enables children).
         /// </summary>
@@ -446,6 +470,56 @@ namespace SyncRADation.Networking
             return true;
         }
 
+        /// <summary>
+        /// Host: peer disconnect mid WorldPickupClaim/grant. Key/Object already Noted onto
+        /// the party ring — keep claimed+hidden. Ammo/docs/etc. never reached the claimer's
+        /// bag if grant could not deliver → release + restore prop + broadcast untriggered.
+        /// </summary>
+        public int ReleaseOrphanClaimsForPlayer(int claimerPlayerId)
+        {
+            if (claimerPlayerId < 1) return 0;
+            EnsureScanned();
+            var release = new System.Collections.Generic.List<ulong>(4);
+            foreach (var kvp in _claimerOf)
+            {
+                if (kvp.Value != claimerPlayerId) continue;
+                Items.itemlist noted = Items.itemlist.None;
+                _claimedItemOf.TryGetValue(kvp.Key, out noted);
+                // Party-ring uniques stay claimed (ring already has them).
+                if (noted != Items.itemlist.None && PartyKeyRing.IsKeyOrObject(noted))
+                    continue;
+                release.Add(kvp.Key);
+            }
+            if (release.Count == 0) return 0;
+
+            var net = LanNetworkManager.Instance;
+            int n = 0;
+            for (int i = 0; i < release.Count; i++)
+            {
+                ulong id = release[i];
+                if (!ReleaseClaimIf(id, claimerPlayerId)) continue;
+                n++;
+                ItemPickup p;
+                if (_byId.TryGetValue(id, out p) && p != null)
+                    RestorePickup(p);
+                if (net != null)
+                {
+                    net.SendWorldPickupState(new[]
+                    {
+                        new WorldPickupEntry
+                        {
+                            WorldId = unchecked((long)id),
+                            Triggered = false,
+                            Active = true
+                        }
+                    }, false);
+                }
+                PlaytestLog.Event("Pickup", "orphan release id=" + id.ToString("X16")
+                    + " peer=" + claimerPlayerId);
+            }
+            return n;
+        }
+
         public void BroadcastTriggered(ulong worldId, bool triggered)
         {
             var net = LanNetworkManager.Instance;
@@ -490,10 +564,9 @@ namespace SyncRADation.Networking
             for (int i = 0; i < msg.Entries.Length; i++)
             {
                 var e = msg.Entries[i];
-                if (!e.Triggered) continue;
-
                 ulong id = unchecked((ulong)e.WorldId);
-                _claimed.Add(id);
+                if (id == 0) continue;
+
                 ItemPickup p;
                 if (!_byId.TryGetValue(id, out p) || p == null)
                 {
@@ -510,6 +583,32 @@ namespace SyncRADation.Networking
                     }
                     catch { p = null; }
                 }
+
+                // Host orphan-release / rollback broadcasts Triggered=false — restore prop.
+                if (!e.Triggered)
+                {
+                    Items.itemlist noted = Items.itemlist.None;
+                    _claimedItemOf.TryGetValue(id, out noted);
+                    _claimed.Remove(id);
+                    _claimerOf.Remove(id);
+                    _claimedItemOf.Remove(id);
+                    if (noted != Items.itemlist.None)
+                    {
+                        bool still = false;
+                        foreach (var kvp in _claimedItemOf)
+                        {
+                            if (kvp.Value == noted) { still = true; break; }
+                        }
+                        if (!still)
+                            _claimedItems.Remove((ushort)noted);
+                    }
+                    if (p != null)
+                        RestorePickup(p);
+                    PlaytestLog.Verbose("Pickup", "unhide id=" + id.ToString("X16"));
+                    continue;
+                }
+
+                _claimed.Add(id);
                 if (p != null)
                 {
                     HidePickup(p);

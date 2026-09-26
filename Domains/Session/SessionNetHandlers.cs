@@ -31,6 +31,17 @@ namespace SyncRADation.Networking
         {
             if (playerId >= 1)
                 _pendingDumpTargets.Remove(playerId);
+            // Mid-claim WorldPickupGrant softlock: ammo/docs claimed then peer gone.
+            try
+            {
+                int n = _net.PickupSync.ReleaseOrphanClaimsForPlayer(playerId);
+                if (n > 0)
+                    PlaytestLog.Event("Pickup", "peer gone orphan releases=" + n + " p" + playerId);
+            }
+            catch (System.Exception ex)
+            {
+                ModRuntime.Log?.Warning("[Pickup] orphan release: " + ex.Message);
+            }
         }
 
         /// <summary>

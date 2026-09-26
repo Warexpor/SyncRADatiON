@@ -77,6 +77,15 @@ namespace SyncRADation.Networking
             if (_net.Role != NetworkRole.Host)
                 return;
 
+            // Peer disconnected before host handled the claim — do not hide the prop.
+            if (claim.ClaimerPlayerId != _net.LocalPlayerId && !_net.HasPeer(claim.ClaimerPlayerId))
+            {
+                ModRuntime.Log?.Msg("[WorldPickup] Claim ignored — peer gone id="
+                    + unchecked((ulong)claim.WorldId).ToString("X16")
+                    + " by " + claim.ClaimerPlayerId);
+                return;
+            }
+
             ulong id = unchecked((ulong)claim.WorldId);
             Items.itemlist item;
             int count;
@@ -105,7 +114,20 @@ namespace SyncRADation.Networking
             }
             else if (item != Items.itemlist.None)
             {
-                SendWorldPickupGrant(claim.ClaimerPlayerId, id, item, count > 0 ? count : 1);
+                if (!_net.HasPeer(claim.ClaimerPlayerId))
+                {
+                    // Claim reserved then peer dropped before grant — Key/Object stay on ring;
+                    // ammo/docs must not stay hidden with nobody holding them.
+                    if (!PartyKeyRing.IsKeyOrObject(item))
+                    {
+                        int rolled = _net.PickupSync.ReleaseOrphanClaimsForPlayer(claim.ClaimerPlayerId);
+                        ModRuntime.Log?.Msg("[WorldPickup] Claim rolled back — peer gone mid-grant id="
+                            + id.ToString("X16") + " released=" + rolled);
+                        return;
+                    }
+                }
+                else
+                    SendWorldPickupGrant(claim.ClaimerPlayerId, id, item, count > 0 ? count : 1);
             }
             else
                 ModRuntime.Log?.Warning("[WorldPickup] Claim OK but item None id=" + id.ToString("X16"));
