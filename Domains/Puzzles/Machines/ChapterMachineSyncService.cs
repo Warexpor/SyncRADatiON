@@ -1,4 +1,5 @@
 using SyncRADation.Patches;
+using SyncRADation.Sync;
 using UnityEngine;
 
 namespace SyncRADation.Networking
@@ -265,8 +266,38 @@ namespace SyncRADation.Networking
 
         public static void ApplyMeatBlocker(ROT_MeatBlocker x, PuzzleStateEntry e)
         {
-            if (x != null)
-                SnapMeatBlocker(x, e.Bool0, e.Int0);
+            if (x == null) return;
+            // MeatBlocker ID "Death" seals the bookstore wing that holds NG+ KeyOfSacrifice.
+            // Hold party seal apply while that key is still obtainable (picker is gated too).
+            if (!e.Bool0 && IsDeathMeatBlocker(x) && SacrificeKeyStillAvailable())
+            {
+                try { x.pickups = e.Int0; } catch { }
+                PlaytestLog.Event("Puzzle", "hold Death MeatBlocker seal until KeyOfSacrifice");
+                return;
+            }
+            SnapMeatBlocker(x, e.Bool0, e.Int0);
+        }
+
+        static bool IsDeathMeatBlocker(ROT_MeatBlocker x)
+        {
+            if (x == null) return false;
+            try
+            {
+                var id = x.ID;
+                return id != null && string.Equals(id, "Death", System.StringComparison.Ordinal);
+            }
+            catch { return false; }
+        }
+
+        static bool SacrificeKeyStillAvailable()
+        {
+            try
+            {
+                var net = LanNetworkManager.Instance;
+                if (net == null || !net.IsConnected) return false;
+                return net.PickupSync.KeyOfSacrificeAvailableUnclaimed();
+            }
+            catch { return false; }
         }
 
         public static void SnapCardWriter(MED_CardWriter x, bool solved, bool hasCard)
@@ -361,7 +392,6 @@ namespace SyncRADation.Networking
             if (x == null) return;
             try { x.pickups = pickups; } catch { }
             try { x.blocked = !unblocked; } catch { }
-            if (!unblocked) return;
             try
             {
                 var blockers = x.Blockers;
@@ -369,7 +399,12 @@ namespace SyncRADation.Networking
                 {
                     for (int i = 0; i < blockers.Length; i++)
                     {
-                        try { if (blockers[i] != null) blockers[i].SetActive(false); } catch { }
+                        try
+                        {
+                            if (blockers[i] != null)
+                                blockers[i].SetActive(!unblocked);
+                        }
+                        catch { }
                     }
                 }
             }
@@ -381,7 +416,12 @@ namespace SyncRADation.Networking
                 {
                     for (int i = 0; i < open.Length; i++)
                     {
-                        try { if (open[i] != null) open[i].SetActive(true); } catch { }
+                        try
+                        {
+                            if (open[i] != null)
+                                open[i].SetActive(unblocked);
+                        }
+                        catch { }
                     }
                 }
             }
@@ -396,7 +436,7 @@ namespace SyncRADation.Networking
                         try
                         {
                             if (locks[i] != null)
-                                DoorNative.ApplyConnectedDoors(locks[i], false);
+                                DoorNative.ApplyConnectedDoors(locks[i], locked: !unblocked);
                         }
                         catch { }
                     }

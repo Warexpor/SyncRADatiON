@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.8 — 2026-09-26
+
+Protocol **v10**. Continuous Batch 8 dig.
+
+### Fixed
+- **Death tarot / Key of Sacrifice softlock (NG+ Artifact)** — scene `ROT_MeatBlocker` ID `Death` seals the bookstore wing that holds `KeyOfSacrifice` (under `NGP_only`). Hold TarotDeath world take/claim + Death MeatBlocker emit/apply while a live unclaimed KeyOfSacrifice still exists; first playthrough (NGP off) unchanged. Wiki: get Sacrifice before Death.
+- **MeatBlocker snap** — seal direction now activates Blockers / deactivates UnBlockers / locks ConnectedDoors (was unblock-only).
+- **Host drop claim** — removed `_awaitingDrops.Clear()` on host-local FinishDroppedNative (host never stages awaiting-ack; Clear was a latent wipe).
+
+### Parked (Batch 9)
+- Alarm `GlobalAlertStatus` / `EnemyManagerState` client latch-emit — still host-only; no proven client raise path (unlike radio moduleInstalled).
+- Broader adversarial soak: chapter load / Penrose / Falke / Kolibri / ADLR / inventory overflow / ammo-heal / corpse / elevator-airlock / ending-flag merge / N-peer late-join boss — no new clear CAN-fix beyond 0.5.7 transient cache.
+
+
 ## 0.5.1 — 2026-09-20
 
 Protocol **v10**. Domains architecture + decompile coverage + diagnosis-ready dual-box soak. Dual-instance playtest still required before treating behavior as proven.

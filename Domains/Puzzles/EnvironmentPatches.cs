@@ -155,6 +155,26 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(ROT_MeatBlocker __instance)
         {
+            // Hold Death-seal emit while NG+ KeyOfSacrifice is still obtainable —
+            // mirrors ApplyMeatBlocker hold (wiki Artifact softlock).
+            try
+            {
+                if (__instance != null && __instance.blocked)
+                {
+                    var id = __instance.ID;
+                    if (id != null && string.Equals(id, "Death", System.StringComparison.Ordinal))
+                    {
+                        var net = LanNetworkManager.Instance;
+                        if (net != null && net.IsConnected
+                            && net.PickupSync.KeyOfSacrificeAvailableUnclaimed())
+                        {
+                            PlaytestLog.Event("Puzzle", "hold Death MeatBlocker emit until KeyOfSacrifice");
+                            return;
+                        }
+                    }
+                }
+            }
+            catch { }
             EnvEmit.Read(PuzzleType.ROT_MeatBlocker, __instance);
         }
     }

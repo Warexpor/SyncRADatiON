@@ -158,6 +158,21 @@ namespace SyncRADation.Patches
 
             if (NetGate.IsApplying) return true;
 
+            // Death tarot MeatBlocker seals the NG+ KeyOfSacrifice wing (wiki softlock).
+            // Hold take while that key is still a live unclaimed world unique.
+            try
+            {
+                var deathItem = WorldPickupSyncService.ResolveItem(__instance);
+                var netHold = LanNetworkManager.Instance;
+                if (netHold != null && netHold.IsConnected
+                    && netHold.PickupSync.HoldTarotDeathForSacrifice(deathItem))
+                {
+                    PlaytestLog.Event("Pickup", "hold TarotDeath until KeyOfSacrifice");
+                    return false;
+                }
+            }
+            catch { }
+
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected)
                 return true;
@@ -398,8 +413,10 @@ namespace SyncRADation.Patches
             {
                 if (net.Role == NetworkRole.Host)
                 {
+                    // Host never stages awaiting-ack entries (client-only). Do not
+                    // Clear() here — a mistaken wipe would drop FAIL-revert keys if
+                    // any ever landed on this process (role recycle / StopNetwork race).
                     net.TryClaimDropped(key, net.LocalPlayerId, out _, skipLocalGrant: true);
-                    _awaitingDrops.Clear();
                 }
                 else
                 {

@@ -78,6 +78,38 @@ namespace SyncRADation.Networking
 
         public bool IsClaimed(ulong worldId) => worldId != 0 && _claimed.Contains(worldId);
 
+        /// <summary>
+        /// NG+ Artifact softlock guard: KeyOfSacrifice lives under NGP_only in the
+        /// bookstore. Death tarot MeatBlocker ID "Death" seals that wing (wiki).
+        /// True while a live unclaimed KeyOfSacrifice world pickup still exists.
+        /// </summary>
+        public bool KeyOfSacrificeAvailableUnclaimed()
+        {
+            if (PartyKeyRing.Has(Items.itemlist.KeyOfSacrifice)) return false;
+            if (_claimedItems.Contains((ushort)Items.itemlist.KeyOfSacrifice)) return false;
+            EnsureScanned();
+            foreach (var kvp in _byId)
+            {
+                var p = kvp.Value;
+                if (p == null) continue;
+                try
+                {
+                    if (ResolveItem(p) != Items.itemlist.KeyOfSacrifice) continue;
+                    if (p.gameObject != null && p.gameObject.activeInHierarchy)
+                        return true;
+                }
+                catch { }
+            }
+            return false;
+        }
+
+        public bool HoldTarotDeathForSacrifice(Items.itemlist item)
+        {
+            if (item != Items.itemlist.TarotDeath) return false;
+            return KeyOfSacrificeAvailableUnclaimed();
+        }
+
+
         public bool IsClaimedPickup(ItemPickup p)
         {
             if (p == null) return false;
@@ -348,6 +380,12 @@ namespace SyncRADation.Networking
                 // Other room: still reserve the WorldId so the prop hides when the chunk wakes.
                 PlaytestLog.Event("Pickup", "claim without local prop id=" + worldId.ToString("X16")
                     + " hint=" + hintItem);
+            }
+
+            if (HoldTarotDeathForSacrifice(itemEnum))
+            {
+                PlaytestLog.Event("Pickup", "deny TarotDeath — KeyOfSacrifice still available");
+                return false;
             }
 
             _claimed.Add(worldId);

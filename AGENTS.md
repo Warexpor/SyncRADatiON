@@ -1,6 +1,6 @@
 # SyncRADation — SIGNALIS Multiplayer Mod
 
-**Status:** v0.5.7 — protocol **v10**. Host-authoritative world/story + native presentation/FMOD. Dual-instance playtest required. Decompile: `~/Archive/Windows-Desktop/Dev/SIGNALIS DECOMPILED` (`~/Omarchy_Backup/Desktop/Dev/...` is gone on this machine).
+**Status:** v0.5.8 — protocol **v10**. Host-authoritative world/story + native presentation/FMOD. Dual-instance playtest required. Decompile: `~/Archive/Windows-Desktop/Dev/SIGNALIS DECOMPILED` (`~/Omarchy_Backup/Desktop/Dev/...` is gone on this machine).
 
 ## Product
 
@@ -17,7 +17,7 @@ LAN multiplayer MelonLoader mod for SIGNALIS (Unity IL2CPP / Unhollower-style Ma
 
 Walk up to a dropped prop for the native TAKE prompt (yes/no inspect, ammo count). There is no extra pickup key.
 
-## What is synced (0.5.7)
+## What is synced (0.5.8)
 
 | Area | Authority | Notes |
 |------|-----------|--------|
@@ -31,14 +31,14 @@ Walk up to a dropped prop for the native TAKE prompt (yes/no inspect, ammo count
 | World FMOD | Host Play/Stop | StudioEventEmitter by WorldId; skip Elster + radio UI + **Music/Cutscenes/Ambience beds**; **far non-door Play** distance-gated like doors; tuner freq local |
 | Puzzles / locks / elevators / radio module / storage / event zones / alert | Host + client emit | **WorldId-keyed**; client emits puzzle/lock types only (not `Interaction.trigger` / EventZone / combat); apply **snaps flags + doors**, never EventScreen / `trigger()`; cryo/codepad/pump/pipes/hatch live-apply native Open/Drain/TurnValve; unlocked location doors stay open for the party; **GunCase / AraNest / LAB_RifleQuest / LOV_Microfiche** (protocol 10) |
 | Host disconnect | Client goes offline | Restores play + input; clears enemy/boss puppets, EventZone/cutscene/airlock/SceneFollow/Dialoguer sticky |
-| World ItemPickups | Host claim/grant | Claimer gets item; unique **Key/Object** go on the **party key ring**; ammo/docs do not. Client bag keys still unlock UseItem (hatch card) |
+| World ItemPickups | Host claim/grant | Claimer gets item; unique **Key/Object** go on the **party key ring**; ammo/docs do not. Client bag keys still unlock UseItem (hatch card). **TarotDeath** held while live unclaimed **KeyOfSacrifice** (NG+ Artifact softlock) |
 | Player-dropped items | Peer + relay | G or inventory **DROP**; floor snap; native TAKE inspect (yes/no + count) then grant; join dump; bag-full reject |
 | Death | Asymmetric | Client downed (ammo/docs floor bag; **party-ring Key/Object stay on ring**, no ghost unique); native `HurtElster` HP; host death `SaveManager.Load` for both |
 | Bosses (END / Chimera / Mynah / Kolibri / Adler) | Host | `END_Boss.Elster` / `BOS_Adler.Elster`; Kolibri dead/intensity; **join dump ForceFull**; client skips apply while transient + refreshes empty boss cache |
 | Friendly fire | Opt-in | Default OFF |
 | Inventories | Independent | 6-slot bags stay personal; box + key ring are shared |
 
-## Architecture (0.5.7 Domains)
+## Architecture (0.5.8 Domains)
 
 Composition over endless partials. Domain folders hold `*SyncService` / `*NetHandlers` / `Patches/`; namespaces stay stable (`SyncRADation.Networking`, `.Patches`, `.Players`, `.ItemSystem`) so call sites do not churn.
 
