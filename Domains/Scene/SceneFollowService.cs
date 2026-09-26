@@ -58,7 +58,15 @@ namespace SyncRADation.Networking
             catch { }
             if (AlreadyGoingTo(sceneName))
             {
+                // Still emit follow so a late peer request during host load is not silent.
                 PlaytestLog.Event("Scene", "coalesce load '" + sceneName + "'");
+                try
+                {
+                    var net = LanNetworkManager.Instance;
+                    if (net != null && net.IsConnected)
+                        net.SendSceneFollow(sceneName, false);
+                }
+                catch { }
                 return true;
             }
             try
@@ -228,16 +236,11 @@ namespace SyncRADation.Networking
         public static bool AlreadyGoingTo(string sceneName)
         {
             if (string.IsNullOrEmpty(sceneName) || IsTransient(sceneName)) return false;
-            if (string.Equals(_pending, sceneName, System.StringComparison.Ordinal)
-                && Time.unscaledTime - _pendingAt < InflightWindow)
-                return true;
-            try
-            {
-                if (string.Equals(AsyncLoader.targetLevelString, sceneName, System.StringComparison.Ordinal))
-                    return true;
-            }
-            catch { }
-            return false;
+            // Only trust our NoteGoingTo window. AsyncLoader.targetLevelString alone is
+            // stale after StopNetwork.Reset while native still holds the last target —
+            // that used to coalesce peer requests and skip SendSceneFollow forever.
+            return string.Equals(_pending, sceneName, System.StringComparison.Ordinal)
+                && Time.unscaledTime - _pendingAt < InflightWindow;
         }
 
         static bool AlreadyRequested(string sceneName)

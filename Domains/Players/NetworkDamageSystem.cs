@@ -161,6 +161,18 @@ namespace SyncRADation.Players
                 int n = 0;
                 foreach (var entry in itemsToDrop)
                 {
+                    // Party-ring Key/Object in bag are EnsureInBag / grant mirrors, not
+                    // sole ownership. Floor-dropping them DetachDroppedKey-clears the ring
+                    // for every peer (HandleDropItemSpawn) while the shared box / claimed
+                    // WorldId may still hold the real unique → ghost floor + UseItem softlock.
+                    // Clear the bag mirror only; ring stays party-shared (G-drop still transfers).
+                    if (PartyKeyRing.IsKeyOrObject(entry.enumVal) && PartyKeyRing.Has(entry.enumVal))
+                    {
+                        try { InventoryManager.RemoveItem(entry.item, entry.count); } catch { }
+                        PlaytestLog.Event("Damage", "death skip floor unique " + entry.enumVal);
+                        continue;
+                    }
+
                     ushort idx = net.AllocateItemIndex();
                     int key = (net.LocalPlayerId << 16) | idx;
                     Vector3 dropPos = pos + new Vector3(

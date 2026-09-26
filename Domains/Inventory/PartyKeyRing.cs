@@ -12,6 +12,7 @@ namespace SyncRADation.Networking
         {
             _keys.Clear();
             _bagAttempt.Clear();
+            _bagEnsureAt.Clear();
             _uiName = null;
         }
 
@@ -292,7 +293,10 @@ namespace SyncRADation.Networking
         }
 
         static bool _ensuringBag;
+        /// <summary>Full-bag refuse set; cleared when BagLikelyHasRoom becomes true.</summary>
         static readonly HashSet<ushort> _bagAttempt = new HashSet<ushort>();
+        static readonly Dictionary<ushort, float> _bagEnsureAt = new Dictionary<ushort, float>();
+        const float EnsureCooldown = 0.35f;
 
         /// <summary>
         /// Native UseItem / Interactor.InteractItem compare AnItem by reference.
@@ -322,8 +326,8 @@ namespace SyncRADation.Networking
 
         /// <summary>
         /// Put a party-ring key into the local 6-slot bag so native UseItem / cutscene
-        /// run as if Elster was carrying it. No-op if already held, not on the ring,
-        /// or the bag already refused once this session.
+        /// run as if Elster was carrying it. No-op if already held or not on the ring.
+        /// Full-bag fails are retried once a slot frees (BindSceneKey runs every Update).
         /// </summary>
         public static bool EnsureInBag(AnItem item)
         {
@@ -333,8 +337,19 @@ namespace SyncRADation.Networking
             if (InLocalBag(cat)) return true;
             if (!Has(cat)) return false;
             ushort id = (ushort)cat._item;
-            if (!_bagAttempt.Add(id))
+            if (_bagAttempt.Contains(id))
+            {
+                // Prior full-bag refuse — retry only when a slot may have freed.
+                if (!BagLikelyHasRoom())
+                    return false;
+                _bagAttempt.Remove(id);
+            }
+            // BindSceneKey runs every UseItem Update — cooldown avoids AddItem spam.
+            float now = UnityEngine.Time.unscaledTime;
+            float last;
+            if (_bagEnsureAt.TryGetValue(id, out last) && now - last < EnsureCooldown)
                 return false;
+            _bagEnsureAt[id] = now;
             _ensuringBag = true;
             try
             {
@@ -345,7 +360,30 @@ namespace SyncRADation.Networking
             bool ok = InLocalBag(cat);
             if (ok)
                 PlaytestLog.Event("KeyRing", "ensure bag " + cat._item);
+            else if (!BagLikelyHasRoom())
+                _bagAttempt.Add(id);
             return ok;
+        }
+
+        static bool BagLikelyHasRoom()
+        {
+            try
+            {
+                int used = 0;
+                var dict = InventoryManager.elsterItems;
+                if (dict == null) return true;
+                var en = dict.GetEnumerator();
+                while (en.MoveNext())
+                {
+                    if (en.Current.key != null && en.Current.value > 0)
+                        used++;
+                }
+                en.Dispose();
+                int max = InventoryManager.maxSlots;
+                if (max <= 0) max = 6;
+                return used < max;
+            }
+            catch { return true; }
         }
 
         public static bool LocalOrRingHas(AnItem item)
