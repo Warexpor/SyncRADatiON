@@ -461,6 +461,8 @@ namespace SyncRADation.Networking
 
         public void Reset()
         {
+            // StopNetwork may leave client-disabled bosses offline with AI off.
+            try { EnableLocalAI(); } catch { }
             OnSceneChanged();
             _sendTimer = 0f;
         }

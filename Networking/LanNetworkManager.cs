@@ -180,6 +180,14 @@ namespace SyncRADation.Networking
             AvatarHandlers.ResetSendState();
             DroppedItemHandlers.Reset();
             SessionHandlers.Reset();
+            // Sticky beyond drop-claims + dump queue: client puppets/boss AI, EventZone
+            // once-fired, cutscene skip/start sets, airlock unlocks + personal scene,
+            // SceneFollow inflight coalesce, Dialoguer flavor gate.
+            try { _enemySync.Reset(); } catch { }
+            try { _bossSync.Reset(); } catch { }
+            try { Patches.EventZonePatch.OnSceneChanged(); } catch { }
+            try { SceneFollowService.Reset(); } catch { }
+            try { Patches.DialoguerGate.ClearFlavor(); } catch { }
             _handshakeComplete = false;
             _vitalTimer = 0f;
             _peers.Clear();

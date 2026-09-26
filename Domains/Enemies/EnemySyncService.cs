@@ -516,6 +516,19 @@ namespace SyncRADation.Networking
             }
         }
 
+        /// <summary>Offline / StopNetwork: re-enable AI that PuppetAllNow disabled.</summary>
+        public void UnpuppetAllNow()
+        {
+            foreach (var kvp in WorldRegistry.AllEnemies())
+            {
+                var e = kvp.Value;
+                if (e == null) continue;
+                try { e.enabled = true; } catch { }
+                try { if (e.agent != null) e.agent.enabled = true; } catch { }
+            }
+            _clientPuppeted.Clear();
+        }
+
         public void OnSceneChanged()
         {
             _clientPuppeted.Clear();
@@ -531,6 +544,7 @@ namespace SyncRADation.Networking
 
         public void Reset()
         {
+            UnpuppetAllNow();
             OnSceneChanged();
         }
 

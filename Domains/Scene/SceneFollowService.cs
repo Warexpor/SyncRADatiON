@@ -211,6 +211,14 @@ namespace SyncRADation.Networking
         static float _requestedAt;
         const float InflightWindow = 12f;
 
+        public static void Reset()
+        {
+            _pending = null;
+            _pendingAt = 0f;
+            _requested = null;
+            _requestedAt = 0f;
+        }
+
         public static bool IsTransient(string sceneName)
         {
             if (string.IsNullOrEmpty(sceneName)) return true;

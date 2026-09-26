@@ -20,6 +20,7 @@ namespace SyncRADation.Patches
         {
             _localUnlock.Clear();
             _remoteUnlock.Clear();
+            _personalScene = null;
             _localCinematic = false;
             _cinematicAt = 0f;
         }
