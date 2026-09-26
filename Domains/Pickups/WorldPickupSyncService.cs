@@ -17,6 +17,7 @@ namespace SyncRADation.Networking
         private readonly HashSet<ushort> _claimedItems = new HashSet<ushort>();
         private readonly HashSet<ushort> _keepItemsScratch = new HashSet<ushort>();
         private readonly Dictionary<ulong, int> _claimerOf = new Dictionary<ulong, int>();
+        private readonly Dictionary<ulong, Items.itemlist> _claimedItemOf = new Dictionary<ulong, Items.itemlist>();
         private readonly Dictionary<ulong, ItemPickup> _byId = new Dictionary<ulong, ItemPickup>();
         private bool _scanned;
         private readonly List<WorldPickupEntry> _tickList = new List<WorldPickupEntry>(32);
@@ -33,6 +34,7 @@ namespace SyncRADation.Networking
             _claimed.Clear();
             _claimedItems.Clear();
             _claimerOf.Clear();
+            _claimedItemOf.Clear();
             _byId.Clear();
             _timer = 0f;
             foreach (var item in _keepItemsScratch)
@@ -48,6 +50,7 @@ namespace SyncRADation.Networking
             _claimed.Clear();
             _claimedItems.Clear();
             _claimerOf.Clear();
+            _claimedItemOf.Clear();
             _byId.Clear();
             _timer = 0f;
         }
@@ -390,6 +393,7 @@ namespace SyncRADation.Networking
 
             _claimed.Add(worldId);
             _claimerOf[worldId] = claimerPlayerId;
+            _claimedItemOf[worldId] = itemEnum;
             NoteClaimedItem(itemEnum);
 
             if (hideNow)
@@ -408,6 +412,37 @@ namespace SyncRADation.Networking
                 HideClaimed(null);
             }
 
+            return true;
+        }
+
+        /// <summary>
+        /// Undo a host Prefix reservation when native pickUp refused (nospace / cancel).
+        /// Only the same claimer may release — peer claims stay.
+        /// </summary>
+        public bool ReleaseClaimIf(ulong worldId, int claimerPlayerId)
+        {
+            if (!_claimed.Contains(worldId)) return false;
+            int who;
+            if (!_claimerOf.TryGetValue(worldId, out who) || who != claimerPlayerId)
+                return false;
+            Items.itemlist noted = Items.itemlist.None;
+            _claimedItemOf.TryGetValue(worldId, out noted);
+            _claimed.Remove(worldId);
+            _claimerOf.Remove(worldId);
+            _claimedItemOf.Remove(worldId);
+            // Only drop the item-enum mark when no other WorldId still claims that unique.
+            if (noted != Items.itemlist.None)
+            {
+                bool still = false;
+                foreach (var kvp in _claimedItemOf)
+                {
+                    if (kvp.Value == noted) { still = true; break; }
+                }
+                if (!still)
+                    _claimedItems.Remove((ushort)noted);
+            }
+            PlaytestLog.Event("Pickup", "release claim id=" + worldId.ToString("X16")
+                + " by=" + claimerPlayerId + " item=" + noted);
             return true;
         }
 

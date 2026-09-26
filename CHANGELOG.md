@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.9 — 2026-09-26
+
+Protocol **v10**. Continuous Batch 9 dig.
+
+### Fixed
+- **Kolibri / ADLR host-auth** — client `KolibriManager`/`BOS_Adler` Update no longer clobbers host PuzzleState intensity/progress/frequency/dead (glitch presentation still runs). END/Chimera/Mynah remain fully AI-disabled.
+- **World pickup bag-full softlock** — no Prefix reservation / claim wire when the 6-slot bag has no room for non-Key/Object; host Prefix reservation released if native nospace/cancel; Postfix/NoteTaken gate Broadcast on successful claim. Key/Object still claim onto the party ring when full.
+
+### Parked (Batch 10)
+- Alarm `GlobalAlertStatus.triggerAlarm` / `EnemyManagerState` client latch-emit — MelonLoader `CallerCount(0)`, no UnityEvent `m_MethodName: triggerAlarm` in exported scenes/prefabs; alert stays host-poll only (unlike radio `moduleInstalled`).
+- Ending-flag peer merge (client `healedTime`/`doors`/`memoryTime` → host) — host-authoritative END_Manager by design; no safe merge without new wire.
+- MeatBlocker tarot siblings (Lovers/Moon/Sun/Star/Tower) — only Death seals NG+ KeyOfSacrifice (wiki); others required=1/2/6 with no parallel Artifact softlock proven.
+- Falke arena-door / invuln beyond 0.5.7 join-transient BossState cache; ammo/heal/plate/thermite remain personal inventory; corpse loot no vanilla drop path; elevator/airlock/continuum no new hole beyond current snaps.
+
 ## 0.5.8 — 2026-09-26
 
 Protocol **v10**. Continuous Batch 8 dig.

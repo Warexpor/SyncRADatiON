@@ -1,6 +1,6 @@
 # SyncRADation — SIGNALIS Multiplayer Mod
 
-**Status:** v0.5.8 — protocol **v10**. Host-authoritative world/story + native presentation/FMOD. Dual-instance playtest required. Decompile: `~/Archive/Windows-Desktop/Dev/SIGNALIS DECOMPILED` (`~/Omarchy_Backup/Desktop/Dev/...` is gone on this machine).
+**Status:** v0.5.9 — protocol **v10**. Host-authoritative world/story + native presentation/FMOD. Dual-instance playtest required. Decompile: `~/Archive/Windows-Desktop/Dev/SIGNALIS DECOMPILED` (`~/Omarchy_Backup/Desktop/Dev/...` is gone on this machine).
 
 ## Product
 
@@ -17,7 +17,7 @@ LAN multiplayer MelonLoader mod for SIGNALIS (Unity IL2CPP / Unhollower-style Ma
 
 Walk up to a dropped prop for the native TAKE prompt (yes/no inspect, ammo count). There is no extra pickup key.
 
-## What is synced (0.5.8)
+## What is synced (0.5.9)
 
 | Area | Authority | Notes |
 |------|-----------|--------|
@@ -34,11 +34,11 @@ Walk up to a dropped prop for the native TAKE prompt (yes/no inspect, ammo count
 | World ItemPickups | Host claim/grant | Claimer gets item; unique **Key/Object** go on the **party key ring**; ammo/docs do not. Client bag keys still unlock UseItem (hatch card). **TarotDeath** held while live unclaimed **KeyOfSacrifice** (NG+ Artifact softlock) |
 | Player-dropped items | Peer + relay | G or inventory **DROP**; floor snap; native TAKE inspect (yes/no + count) then grant; join dump; bag-full reject |
 | Death | Asymmetric | Client downed (ammo/docs floor bag; **party-ring Key/Object stay on ring**, no ghost unique); native `HurtElster` HP; host death `SaveManager.Load` for both |
-| Bosses (END / Chimera / Mynah / Kolibri / Adler) | Host | `END_Boss.Elster` / `BOS_Adler.Elster`; Kolibri dead/intensity; **join dump ForceFull**; client skips apply while transient + refreshes empty boss cache |
+| Bosses (END / Chimera / Mynah / Kolibri / Adler) | Host | `END_Boss.Elster` / `BOS_Adler.Elster`; Kolibri dead/intensity; **join dump ForceFull**; client skips apply while transient + refreshes empty boss cache; Kolibri/Adler Update holds host snaps |
 | Friendly fire | Opt-in | Default OFF |
 | Inventories | Independent | 6-slot bags stay personal; box + key ring are shared |
 
-## Architecture (0.5.8 Domains)
+## Architecture (0.5.9 Domains)
 
 Composition over endless partials. Domain folders hold `*SyncService` / `*NetHandlers` / `Patches/`; namespaces stay stable (`SyncRADation.Networking`, `.Patches`, `.Players`, `.ItemSystem`) so call sites do not churn.
 

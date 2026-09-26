@@ -494,6 +494,7 @@ namespace SyncRADation.Networking
             _adlers = Array.Empty<BOS_Adler>();
             _chimeras = Array.Empty<LAB_ChimeraBoss>();
             _mynahs = Array.Empty<MED_MynahBoss>();
+            SyncRADation.Patches.KolibriAdlerAuthPatches.Clear();
         }
 
         public void Reset()
@@ -537,6 +538,8 @@ namespace SyncRADation.Networking
             x.frequency = e.Int0;
             x.intensity = e.Float0;
             x.radioIntensity = e.Float1;
+            // Client Update recomputes glitch from local Elster/radio — hold host snaps.
+            SyncRADation.Patches.KolibriAdlerAuthPatches.HoldKolibri(e.Bool0, e.Int0, e.Float0, e.Float1);
         }
 
         internal static void ApplyAdler(BOS_Adler x, PuzzleStateEntry e)
@@ -544,6 +547,7 @@ namespace SyncRADation.Networking
             if (x == null) return;
             x.intensity = e.Float0;
             x.progress = e.Float1;
+            SyncRADation.Patches.KolibriAdlerAuthPatches.HoldAdler(e.Float0, e.Float1);
         }
     }
 }

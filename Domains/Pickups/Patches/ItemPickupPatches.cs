@@ -211,6 +211,15 @@ namespace SyncRADation.Patches
             if (IsInspect(__instance))
                 return true;
 
+            if (WorldClaimNeedsBagRoom(_pendingItem) && !BagHasRoomForWorld(_pendingItem))
+            {
+                // Host: let native pickUp show _nospaceDialogue (no reservation).
+                // Client: block native (would dual-grant) and skip claim wire.
+                PlaytestLog.Event("Pickup", "deny bag full " + __instance.gameObject.name
+                    + " item=" + _pendingItem);
+                return net.Role == NetworkRole.Host;
+            }
+
             if (net.Role == NetworkRole.Host)
             {
                 if (!net.PickupSync.TryClaimOnHost(id, net.LocalPlayerId, out _, out _,
@@ -268,12 +277,24 @@ namespace SyncRADation.Patches
 
             bool triggered = false;
             try { triggered = __instance != null && __instance.triggered; } catch { }
-            if (!triggered && !inBag && __instance != null) return;
+            // Host may have Prefix-reserved; fall through so ReleaseClaimIf can run.
+            if (!triggered && !inBag && __instance != null && net.Role != NetworkRole.Host)
+                return;
 
             if (net.Role == NetworkRole.Host)
             {
-                net.PickupSync.TryClaimOnHost(id, net.LocalPlayerId, out _, out _, hideNow: true,
-                    hintItem: _pendingItem);
+                // Native refused (nospace / cancel) after Prefix reserved — free the WorldId.
+                if (!triggered && !inBag)
+                {
+                    net.PickupSync.ReleaseClaimIf(id, net.LocalPlayerId);
+                    return;
+                }
+                if (!net.PickupSync.TryClaimOnHost(id, net.LocalPlayerId, out _, out _, hideNow: true,
+                    hintItem: _pendingItem))
+                {
+                    PlaytestLog.Event("Pickup", "host post deny id=" + id.ToString("X16"));
+                    return;
+                }
                 net.PickupSync.BroadcastTriggered(id, true);
                 try
                 {
@@ -294,6 +315,11 @@ namespace SyncRADation.Patches
 
             if (!inBag && __instance != null) return;
             if (net.PickupSync.IsClaimed(id)) return;
+            if (WorldClaimNeedsBagRoom(_pendingItem) && !BagHasRoomForWorld(_pendingItem))
+            {
+                PlaytestLog.Event("Pickup", "deny bag full after inspect item=" + _pendingItem);
+                return;
+            }
             PlaytestLog.Event("Pickup", "claim after inspect " + (__instance != null ? __instance.gameObject.name : "gone")
                 + " id=" + id.ToString("X16"));
             net.SendWorldPickupClaim(id, _pendingItem, CountOf(__instance));
@@ -324,7 +350,11 @@ namespace SyncRADation.Patches
 
             if (net.Role == NetworkRole.Host)
             {
-                net.PickupSync.TryClaimOnHost(id, net.LocalPlayerId, out _, out _, hideNow: true, hintItem: item);
+                if (!net.PickupSync.TryClaimOnHost(id, net.LocalPlayerId, out _, out _, hideNow: true, hintItem: item))
+                {
+                    PlaytestLog.Event("Pickup", "host note deny id=" + id.ToString("X16"));
+                    return;
+                }
                 net.PickupSync.BroadcastTriggered(id, true);
                 try
                 {
@@ -339,6 +369,11 @@ namespace SyncRADation.Patches
             }
 
             if (net.PickupSync.IsClaimed(id)) return;
+            if (WorldClaimNeedsBagRoom(item) && !BagHasRoomForWorld(item))
+            {
+                PlaytestLog.Event("Pickup", "deny bag full confirm item=" + item);
+                return;
+            }
             PlaytestLog.Event("Pickup", "claim confirm id=" + id.ToString("X16") + " item=" + item);
             net.SendWorldPickupClaim(id, item, CountOf(p));
         }
@@ -347,6 +382,41 @@ namespace SyncRADation.Patches
         {
             if (p == null) return 1;
             try { return p.count > 0 ? p.count : 1; } catch { return 1; }
+        }
+
+        /// <summary>
+        /// Key/Object land on the party ring even when the 6-slot bag is full.
+        /// Ammo/docs/tools need a free slot (or an existing stack) — same rule as drops.
+        /// </summary>
+        static bool WorldClaimNeedsBagRoom(Items.itemlist kind)
+        {
+            // Unresolved enum: do not gate (may still be Key/Object after host resolve).
+            if (kind == Items.itemlist.None) return false;
+            if (PartyKeyRing.IsKeyOrObject(kind)) return false;
+            return true;
+        }
+
+        static bool BagHasRoomForWorld(Items.itemlist kind)
+        {
+            try
+            {
+                var item = InventoryManager.getItem(kind);
+                if (item != null && PartyKeyRing.InLocalBag(item)) return true;
+                int used = 0;
+                var dict = InventoryManager.elsterItems;
+                if (dict == null) return true;
+                var en = dict.GetEnumerator();
+                while (en.MoveNext())
+                {
+                    if (en.Current.key != null && en.Current.value > 0)
+                        used++;
+                }
+                en.Dispose();
+                int max = InventoryManager.maxSlots;
+                if (max <= 0) max = 6;
+                return used < max;
+            }
+            catch { return true; }
         }
 
         internal static void NoteDroppedGrant(AnItem item)
