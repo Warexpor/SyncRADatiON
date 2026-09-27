@@ -72,6 +72,15 @@ namespace SyncRADation.Patches
                 else Read(PuzzleType.MultiLock, x);
             }
 
+            public static void Pump(MED_Pump x)
+            {
+                if (x == null) return;
+                bool ok = false;
+                try { ok = x.solved; } catch { }
+                if (ok) Progressed(PuzzleType.MED_Pump, x);
+                else Read(PuzzleType.MED_Pump, x);
+            }
+
             static void Send(PuzzleType type, Component c, bool progressed)
             {
                 if (c == null || NetGate.IsApplying) return;
@@ -98,6 +107,54 @@ namespace SyncRADation.Patches
             }
             catch { }
         }
+    }
+
+
+    // MED_Pump: emit mid-water a/b/c on AB/AC/BA/BC/CA/CB transfers (Int0–Int2),
+    // Progressed on solve. Native transfer buttons mutate a/b/c then checkSolved —
+    // patch transfers so peers see mid-water without waiting for Tick (Dig Y).
+    // Initial a=12,b=0,c=0; IsProgressed holds any departure. Existing checkSolved
+    // Progressed + ApplyPump/SnapMedPump retained (0.5.28 onSolved).
+    [HarmonyPatch(typeof(MED_Pump), nameof(MED_Pump.AB))]
+    public static class MedPumpABPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(MED_Pump __instance) => EnvEmit.Pump(__instance);
+    }
+
+    [HarmonyPatch(typeof(MED_Pump), nameof(MED_Pump.AC))]
+    public static class MedPumpACPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(MED_Pump __instance) => EnvEmit.Pump(__instance);
+    }
+
+    [HarmonyPatch(typeof(MED_Pump), nameof(MED_Pump.BA))]
+    public static class MedPumpBAPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(MED_Pump __instance) => EnvEmit.Pump(__instance);
+    }
+
+    [HarmonyPatch(typeof(MED_Pump), nameof(MED_Pump.BC))]
+    public static class MedPumpBCPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(MED_Pump __instance) => EnvEmit.Pump(__instance);
+    }
+
+    [HarmonyPatch(typeof(MED_Pump), nameof(MED_Pump.CA))]
+    public static class MedPumpCAPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(MED_Pump __instance) => EnvEmit.Pump(__instance);
+    }
+
+    [HarmonyPatch(typeof(MED_Pump), nameof(MED_Pump.CB))]
+    public static class MedPumpCBPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(MED_Pump __instance) => EnvEmit.Pump(__instance);
     }
 
     [HarmonyPatch(typeof(MED_FloodedBathroom), nameof(MED_FloodedBathroom.Drain))]

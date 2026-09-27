@@ -1,3 +1,22 @@
+## 0.5.44 — 2026-09-27
+
+Protocol **v10**. Batch 49 ship (Dig Y): MED_Pump hold mid-water a/b/c via IsProgressed so N-peer remount / late-join keep unsolved water state, not only final Bool0 solved.
+
+### Fixed
+- **MED_Pump IsProgressed Bool0-only — remount / late-join drop mid-water** — TryRead serializes `solved` + `a`/`b`/`c` (Bool0, Int0–Int2); ApplyPump already writes Int0–2 even unsolved (onSolved rising-edge from 0.5.28); IsProgressed fell through ProgressedBool0 (Bool0 only) so unsolved water transfers were sent live but never held across remount. Native durable state: `a`/`b`/`c` ints (AssetStudio / Melon initial **12/0/0**), mutated by six transfers `AB`/`AC`/`BA`/`BC`/`CA`/`CB` then `checkSolved`. Softlock: host moves water mid-solve → remount / late-join snap back to 12/0/0 until Bool0 solve. Fix (Dig Y, mirror Incinerator 0.5.42 / MultiLock 0.5.43 mid-hold): IsProgressed = Bool0 || Int0!=12 || Int1!=0 || Int2!=0; EnvEmit on AB/AC/BA/BC/CA/CB (Read mid / Progressed solved). Existing ApplyPump / SnapMedPump / checkSolved Progressed stay. Protocol 10 unchanged (reuse MED_Pump Bool0 solved + Int0–Int2 a/b/c; no new ushort).
+
+### Before → After (player)
+- **Before:** Host transfers water mid-solve on MED pump. Peers may see live Int0–Int2 briefly, but remount / late-join FullRefresh re-snap to initial a=12,b=0,c=0 — mid-water state is not held until final Bool0 solve snap.
+- **After:** IsProgressed holds mid-water (any a/b/c ≠ 12/0/0) across remount; transfer emit so Progressed/Read latch immediately. Bool0 solved still onSolved / SnapMedPump / flood drain as before.
+
+### Dig Y residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| IsProgressed Bool0-only; no transfer emit → remount / late-join drop mid-water a/b/c | Dig Y: TryRead/Apply already Bool0+Int0–2; Melon AB/AC/BA/BC/CA/CB + checkSolved; AssetStudio a=12 b=0 c=0; ProgressedBool0 fallthrough | **SHIPPED** (IsProgressed Bool0\|\|Int!=12/0/0; AB–CB EnvEmit; ApplyPump/SnapMedPump retained; protocol 10) |
+
+Protocol stays **10** (reuse MED_Pump Bool0 solved + Int0–Int2 a/b/c; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
 ## 0.5.43 — 2026-09-27
 
 Protocol **v10**. Batch 48 ship (Dig X): MultiLock hold mid-key element bits via IsProgressed so N-peer remount / late-join keep inserted keys, not only final Bool0 unlocked.

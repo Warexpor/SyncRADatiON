@@ -411,6 +411,10 @@ namespace SyncRADation.Networking
             // so remount / late-join re-snaps mid-key inserts, not only final Bool0 unlocked.
             if (e.Type == PuzzleType.MultiLock)
                 return e.Bool0 || e.Int0 != 0;
+            // MED_Pump: hold mid-water a/b/c (initial 12/0/0) so remount / late-join
+            // re-snaps unsolved transfers, not only final Bool0 solved.
+            if (e.Type == PuzzleType.MED_Pump)
+                return e.Bool0 || e.Int0 != 12 || e.Int1 != 0 || e.Int2 != 0;
             return ProgressedBool0.Contains(e.Type) && e.Bool0;
         }
 
