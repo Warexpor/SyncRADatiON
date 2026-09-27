@@ -68,6 +68,12 @@ namespace SyncRADation.Networking
                 PlaytestLog.Event("KeyRing", "drop " + item + " count=" + _keys.Count);
         }
 
+        /// <summary>
+        /// Client→host craft revoke prefix. Not a real itemlist (AirlockKey=0; None=113).
+        /// Old hosts skip non-Key/Object and no-op-add remaining enums.
+        /// </summary>
+        public const ushort CraftRevokeSentinel = 0xFFFF;
+
         public static void ApplyMessage(PartyKeyRingMessage msg)
         {
             var net = LanNetworkManager.Instance;
@@ -75,6 +81,18 @@ namespace SyncRADation.Networking
 
             if (net != null && net.Role == NetworkRole.Host)
             {
+                if (msg.ItemEnums.Length > 0 && msg.ItemEnums[0] == CraftRevokeSentinel)
+                {
+                    for (int i = 1; i < msg.ItemEnums.Length; i++)
+                    {
+                        var item = (Items.itemlist)msg.ItemEnums[i];
+                        if (!IsKeyOrObject(item)) continue;
+                        Remove(item);
+                    }
+                    PlaytestLog.Event("KeyRing", "host craft-revoke count=" + _keys.Count);
+                    Broadcast();
+                    return;
+                }
                 bool added = false;
                 for (int i = 0; i < msg.ItemEnums.Length; i++)
                 {
@@ -123,6 +141,49 @@ namespace SyncRADation.Networking
             {
                 if (!IsKeyOrObject(item)) return;
                 net.SendPartyKeyRing(new[] { (ushort)item._item });
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// After a successful <c>CombineRecipes.combine</c>, drop Key/Object ingredients
+        /// from the party ring (native bag RemoveItem already ran / will run). Host
+        /// Broadcasts; client sends CraftRevokeSentinel + enums so host drops too.
+        /// </summary>
+        public static void ConsumeCraftIngredients(AnItem itemA, AnItem itemB)
+        {
+            if (NetGate.IsApplying || !NetGate.Live) return;
+            var revoke = new List<ushort>(2);
+            CollectCraftRevoke(revoke, itemA);
+            CollectCraftRevoke(revoke, itemB);
+            if (revoke.Count == 0) return;
+
+            for (int i = 0; i < revoke.Count; i++)
+                Remove((Items.itemlist)revoke[i]);
+
+            var net = LanNetworkManager.Instance;
+            if (net == null || !net.IsConnected) return;
+            if (net.Role == NetworkRole.Host)
+            {
+                Broadcast();
+                return;
+            }
+            var arr = new ushort[revoke.Count + 1];
+            arr[0] = CraftRevokeSentinel;
+            for (int i = 0; i < revoke.Count; i++)
+                arr[i + 1] = revoke[i];
+            try { net.SendPartyKeyRing(arr); }
+            catch { }
+        }
+
+        static void CollectCraftRevoke(List<ushort> dst, AnItem item)
+        {
+            if (item == null || !IsKeyOrObject(item)) return;
+            try
+            {
+                ushort id = (ushort)item._item;
+                if (!dst.Contains(id))
+                    dst.Add(id);
             }
             catch { }
         }

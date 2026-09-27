@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.5.13 — 2026-09-27
+
+Protocol **v10**. Continuous Batch 17 dig → ship (craft Remove-on-combine).
+
+### Fixed
+- **Craft PartyKeyRing Remove-on-combine** — successful `CombineRecipes.combine` now drops Key/Object **ingredients** from the party ring (host Broadcast; client sends `CraftRevokeSentinel`/`0xFFFF` + enums on existing `PartyKeyRing` message so host drops + Broadcast). `NoteCraftedKey` still Offers the **result** only. Example: Tape + BrokenKey → AirlockKey no longer leaves Tape/BrokenKey as phantom `hasItem` OR-true for peers.
+
+### Before → After (player)
+- **Before:** Host (or peer) combines Tape + BrokenKey into AirlockKey. Result appears on the party ring, but Tape and BrokenKey stay on the ring. Peers still `hasItem` those ghosts → EnsureInBag can re-materialize consumed uniques → softlock / dual-claim risk.
+- **After:** Successful combine removes Key/Object ingredients from the ring for everyone (host-authoritative Broadcast). Result still shared via Offer as before.
+
+### Dig notes (Batch 17)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| Craft Remove-on-combine | `NoteCraftedKey` Offers result only; `PartyKeyRing.Remove` only ConsumeKey / death-bag / drop; no Harmony on `combine`; Tape/BrokenKey are Object (type 6), AirlockKey Key (5) — all `IsKeyOrObject` | **SHIPPED** |
+| SceneFollow RestorePlay | `SceneFollowService.Apply` → `AsyncLoader.LoadLevel` only; no `RestorePlay` / inventory close | **park** — soak mid-inventory freeze |
+| Adler EV doors | UnityEvent Open/CloseDoors only; not PuzzleState | **park** — no durable field for snap-on-join |
+| Enemy KillSilent / Mural Blocker late-join / Alarm / ending merge / MeatBlocker / Falke empty-slot | prior soak list | **park** — no new hard proof |
+
+Protocol stays **10** (reuse `PartyKeyRing` ushort[] with leading `0xFFFF` revoke; not a new message type).
+
+
 ## 0.5.12 — 2026-09-26
 
 Protocol **v10**. Continuous Batch 12 dig (scenario-first).
