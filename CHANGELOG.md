@@ -1,3 +1,21 @@
+## 0.5.21 — 2026-09-27
+
+Protocol **v10**. Batch 26 ship (Dig B+F): UseItemInteraction Apply rising-edge `onSuccessful`.
+
+### Fixed
+- **UseItemInteraction.onSuccessful never fired on remote Apply** — `InteractionSyncService.ApplyUseItem` / `UseItemWorldSyncService.SnapUseItemWorld` latched `unlocked` + doors/flags only and Emit'd PuzzleState. Peer-side Disk / Tarot assets bind `InsertDiskRed|Blue` and `PlaceCardHeimat|Buyan|Kitezh|Vineta|Leng|Rotfront` on Melon `onSuccessful` (UnityEvent) — that Invoke ran natively only on the peer who used the item. Host + other peers kept `ROT_DiskManager.red/blue` false, `Disk*Content` / MultiInter inactive, `ROT_Tarot.cards[]` empty → story softlock / desync. Magpie `opened` already synced (untouched; Disk≠Magpie). No new `PuzzleType.ROT_DiskManager`. Now `SnapUseItemWorld` (single host-auth path: InteractionSync Apply + PuzzleState Apply / remount) captures `wasUnlocked` before latch; when `MutateWorld` and false→true and not PerPlayerUse, `BeginApply` + `onSuccessful.Invoke()`. Host-local Dialoguer already Invoked natively and Emitting with unlocked latched → rising-edge skip (no double-fire). Acting client re-Apply same. Protocol 10 unchanged.
+
+### Before → After (player)
+- **Before:** Peer inserts the Red/Blue Disk or places a tarot card. That peer sees Disk content / board cards; host and other peers keep empty Disk / empty tarot board — story gates stay closed.
+- **After:** Every peer applying the UseItem unlock (host Apply + PuzzleState Snap, including remount when first unlocked) runs the same `onSuccessful` bindings — Disk inserts and tarot cards appear for the whole party.
+
+### Dig notes (Batch 26)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| UseItem onSuccessful skipped on Apply | Dig B+F: ApplyUseItem ~172–220 unlocked+Snap+Emit no Invoke; SnapUseItemWorld ~58–120 flags/doors only; ApplyTarot darkmode+FlipSwitchPos only; assets bind InsertDisk*/PlaceCard* on onSuccessful; Magpie opened already synced | **SHIPPED** |
+
+Protocol stays **10** (reuse UseItemInteraction Bool0; no new ushort / PuzzleType).
+
 ## 0.5.20 — 2026-09-27
 
 Protocol **v10**. Batch 25 ship (Dig D): ElevatorCallButton Apply rising-edge CallElevator.

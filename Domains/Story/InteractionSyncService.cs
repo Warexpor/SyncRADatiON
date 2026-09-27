@@ -197,8 +197,9 @@ namespace SyncRADation.Networking
                 PlaytestLog.Event("KeyRing", "trust UseItem from=" + senderId + " " + key._item);
             }
 
-            if (!PuzzleSyncService.PerPlayerUse(u))
-                u.unlocked = true;
+            // Do not latch unlocked here — SnapUseItemWorld rising-edge needs
+            // wasUnlocked=false so host Apply (client UseItem) Invokes onSuccessful
+            // (Disk InsertDisk* / Tarot PlaceCard*). Snap sets unlocked + doors.
             PuzzleSyncService.TryUnlockDoors(u.gameObject);
             try { PuzzleSyncService.SnapUseItemWorld(u); } catch { }
             try

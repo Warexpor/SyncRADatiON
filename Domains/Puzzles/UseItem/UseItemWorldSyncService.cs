@@ -58,6 +58,10 @@ namespace SyncRADation.Networking
         public static void SnapUseItemWorld(UseItemInteraction x)
         {
             if (x == null) return;
+            // Rising-edge before latch: Disk InsertDisk* / Tarot PlaceCard* bind
+            // onSuccessful; Apply used to set unlocked + doors only → peers softlock.
+            bool wasUnlocked = false;
+            try { wasUnlocked = x.unlocked; } catch { }
             bool localUse = PerPlayerUse(x);
             if (!localUse)
             {
@@ -123,6 +127,21 @@ namespace SyncRADation.Networking
             catch { return; }
             PuzzleDoorFlagsSyncService.TryUnlockDoors(x.gameObject);
             UnlockMatchingKeyLocks(x);
+            // Host-auth Apply path (InteractionSync Snap + PuzzleState Apply / remount).
+            // Gate false→true so host-local Dialoguer (already Invoked) and re-Emit
+            // already-unlocked snaps do not double-fire non-idempotent cinematics.
+            // PerPlayerUse (airlock / PEN_Titles) stays local — no party onSuccessful.
+            if (!wasUnlocked && !localUse)
+            {
+                NetGate.BeginApply();
+                try
+                {
+                    if (x.onSuccessful != null)
+                        x.onSuccessful.Invoke();
+                }
+                catch { }
+                finally { NetGate.EndApply(); }
+            }
         }
 
         static bool SameKey(AnItem a, AnItem b)
