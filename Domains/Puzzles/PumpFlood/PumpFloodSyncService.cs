@@ -35,8 +35,13 @@ namespace SyncRADation.Networking
                 }
                 case PuzzleType.FloodControls:
                 {
+                    // Dig U: native durable state is code[] + input[] (Melon input@field,
+                    // done, locked, code; checkSolution compares input vs code). Prior
+                    // TryRead packed code→Int0 only (Int1=0) so peers/late-join kept
+                    // stale input while switch poses looked correct → gate unsolved.
                     var x = (FloodControls)c;
                     int codeBits = 0;
+                    int inputBits = 0;
                     try
                     {
                         var code = x.code;
@@ -44,7 +49,14 @@ namespace SyncRADation.Networking
                             codeBits = ResidencyPuzzleSyncService.PackBoolArray(code);
                     }
                     catch { }
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.done, x.locked, false, codeBits, 0, 0, 0, 0);
+                    try
+                    {
+                        var input = x.input;
+                        if (input != null && input.Length <= 32)
+                            inputBits = ResidencyPuzzleSyncService.PackBoolArray(input);
+                    }
+                    catch { }
+                    entry = PuzzleDomainUtil.Mk(type, wid, x.done, x.locked, false, codeBits, inputBits, 0, 0, 0);
                     return true;
                 }
                 default:
@@ -103,6 +115,21 @@ namespace SyncRADation.Networking
         {
             if (x == null) return;
             x.state = e.Bool0;
+            // Dig U: native FloodControlSwitch.Update writes fc.input[index] from state.
+            // Pose-only Apply left authoritative FloodControls.input stale → checkSolution
+            // fails on peer/late-join even when switch sprites match. Mirror native write.
+            try
+            {
+                var fc = x.fc;
+                if (fc != null)
+                {
+                    var input = fc.input;
+                    int idx = x.index;
+                    if (input != null && idx >= 0 && idx < input.Length)
+                        input[idx] = e.Bool0;
+                }
+            }
+            catch { }
             if (e.Bool0) PuzzleSyncService.TryUnlockDoors(x.gameObject);
         }
 
@@ -116,6 +143,15 @@ namespace SyncRADation.Networking
                 var code = x.code;
                 if (code != null && code.Length <= 32)
                     ResidencyPuzzleSyncService.UnpackBoolArray(code, e.Int0);
+            }
+            catch { }
+            // Dig U: unpack Int1→input[] (≤32) so partial switch progress survives
+            // remount / late-join FullRefresh without requiring Bool0 done.
+            try
+            {
+                var input = x.input;
+                if (input != null && input.Length <= 32)
+                    ResidencyPuzzleSyncService.UnpackBoolArray(input, e.Int1);
             }
             catch { }
             if (!e.Bool0) return;

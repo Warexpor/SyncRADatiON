@@ -1,3 +1,22 @@
+## 0.5.40 — 2026-09-27
+
+Protocol **v10**. Batch 45 ship (Dig U): FloodControls sync `input[]` via Int1 so N-peer switch flips and late-join FullRefresh keep authoritative input for `checkSolution`, not only switch poses / final done.
+
+### Fixed
+- **FloodControls TryRead/Apply omit input[]; ApplyFloodSwitch pose-only — peers miss switch input** — TryRead packed `code`→Int0 but left Int1=0; ApplyFloodControls restored `done`/`locked`/`code` never `input`; ApplyFloodSwitch set only `state` and never wrote `fc.input[index]`. Native durable state: `FloodControls.input` + `code` (Melon `input`/`code`/`done`/`locked`/`dlc`; `checkSolution(input,code)`); `FloodControlSwitch.Update` writes `fc.input[index]` from `state` (Melon `fc`/`index`/`state`). Softlock: host flips flood switches → peers/late-join show correct switch poses while authoritative `input[]` stays stale → native `checkSolution` fails → flood-door gate unsolved; partial state not retained unless `done`. Fix (Dig U): TryRead packs `x.input`→Int1 (≤32 via PackBoolArray); Apply unpacks Int1→`x.input`; ApplyFloodSwitch also writes `x.fc.input[x.index]` with bounds checks; IsProgressed = Bool0 || Int1!=0. Keep Int0=`code`; protocol 10 unchanged (reuse FloodControls Bool0 done + Bool1 locked + Int0 code + Int1 input; no new ushort).
+
+### Before → After (player)
+- **Before:** Host flips flood-control switches. Peers / late-join FullRefresh see matching switch poses, but `FloodControls.input[]` stays stale — `checkSolution` fails and the flood-door gate stays unsolved until a final Bool0 done snap (partial progress not held).
+- **After:** Live MutateWorld peer **and** late-join FullRefresh apply Int1 `input[]` (and ApplyFloodSwitch mirrors native `fc.input[index]`). IsProgressed holds mid-switch Int1 across remount; Bool0 done still unlocks dlc/doors as before.
+
+### Dig U residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| TryRead Int1=0; Apply omits input; ApplyFloodSwitch state-only → peers + late-join stale input / unsolved gate | Dig U: Melon FloodControls input/code/done/locked; FloodControlSwitch fc/index/state; Update→fc.input[index]; checkSolution(input,code); IsProgressed was Bool0-only | **SHIPPED** (Int1 input pack/unpack; ApplyFloodSwitch fc.input write; IsProgressed Bool0\|\|Int1; Int0 code retained; protocol 10) |
+
+Protocol stays **10** (reuse FloodControls Bool0 done + Bool1 locked + Int0 code + Int1 input pack; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
 ## 0.5.39 — 2026-09-27
 
 Protocol **v10**. Batch 44 ship (Dig T): DET_ServiceLock sync partial pinning via Int0 (4×3-bit) so N-peer pin changes and late-join FullRefresh see in-progress lock pins, not only final solve.

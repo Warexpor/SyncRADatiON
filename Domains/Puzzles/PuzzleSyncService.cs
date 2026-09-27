@@ -395,6 +395,10 @@ namespace SyncRADation.Networking
             // re-snaps mid-pin state, not only final Bool0 solved.
             if (e.Type == PuzzleType.DET_ServiceLock)
                 return e.Bool0 || e.Int0 != 0;
+            // FloodControls: hold partial input pack (Int1) so remount / late-join
+            // re-snaps mid-switch input[], not only final Bool0 done.
+            if (e.Type == PuzzleType.FloodControls)
+                return e.Bool0 || e.Int1 != 0;
             return ProgressedBool0.Contains(e.Type) && e.Bool0;
         }
 
