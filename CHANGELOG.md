@@ -1,3 +1,21 @@
+## 0.5.27 — 2026-09-27
+
+Protocol **v10**. Batch 32 ship (Dig J #2): RES_Power ApplyPower rising-edge `OnSuccess` so residency setPower + Paternoster SetSpeed fire for live peers.
+
+### Fixed
+- **RES_Power ApplyPower flags-only — never Invokes OnSuccess** — ApplyPower (~119–125) only snapped `solved`/`powered`/fuse `states`. Native `TryMasterFlip` (RVA 0x4B5FB0) Invokes `OnSuccess` @ ~0x4B60D4 when TopVolt==800 && BotVolt==230, then latches `solved=1` @ +0x91. AssetStudio `RES_Power.OnSuccess` → `SetSpeed` (Paternoster) + `setPower`×3 + SetActive + dimPOI + Play. Peer Apply skipped the UnityEvent → residency power softlock / paternoster not driven. Fix (mirror ApplyMural / ApplyRotKeypad live path): capture `was=solved`; latch solved/powered/states; if `!e.Bool0` return; if `MutateWorld && !was` → BeginApply + `OnSuccess.Invoke()`; keep flag snaps. Melon field `OnSuccess` (PascalCase) verified — no `onLoad`. FullRefresh (`!MutateWorld`): rising-edge only for MutateWorld (thin; Dig J #2 — no onLoad soak; setPower/SetSpeed remount unwanted unless soak asks). Do **not** ship MED_Pump (0.5.28). Protocol 10 unchanged (no new ushort).
+
+### Before → After (player)
+- **Before:** Host solves the residency fuse puzzle (master flip). Live peer sees solved/powered/fuse flags latch, but setPower targets stay unpowered and the Paternoster never gets SetSpeed — softlock at residency power / elevator.
+- **After:** Live MutateWorld peer on false→true `solved` edge BeginApply-Invokes `OnSuccess` (setPower×3 + Paternoster SetSpeed + SetActive/dimPOI/Play). Late-join FullRefresh still skips OnSuccess (no remount) until soak asks for an onLoad-equivalent.
+
+### Dig notes (Batch 32)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| ApplyPower flags-only; peer skips OnSuccess → setPower/SetSpeed softlock | Dig J #2: ApplyPower ~119–125; TryMasterFlip RVA 0x4B5FB0 Invoke @ 0x4B60D4 then solved=1 @ +0x91; AssetStudio OnSuccess = SetSpeed+setPower×3+SetActive+dimPOI+Play; Melon OnSuccess Pascal; no onLoad | **SHIPPED** (MutateWorld&&!was OnSuccess; FullRefresh skip retained) |
+
+Protocol stays **10** (reuse RES_Power Bool0 solved; no new ushort). Host-authoritative; N-peer live cinematic Apply path. MED_Pump deferred.
+
 ## 0.5.26 — 2026-09-27
 
 Protocol **v10**. Batch 31 ship (Dig J #1): ApplyMural rising-edge `onSolved` so Blocker Entry + cutscene fire for live peers.

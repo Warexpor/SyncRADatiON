@@ -119,9 +119,30 @@ namespace SyncRADation.Networking
         public static void ApplyPower(RES_Power x, PuzzleStateEntry e)
         {
             if (x == null) return;
+            // Rising-edge OnSuccess: native TryMasterFlip (RVA 0x4B5FB0) Invokes
+            // OnSuccess @ ~0x4B60D4 when TopVolt==0x320 && BotVolt==0xE6, then
+            // latches solved=1 @ +0x91. Asset OnSuccess → SetSpeed (Paternoster)
+            // + setPower×3 + SetActive + dimPOI + Play. Prior Apply flags-only
+            // → peer residency power softlock / paternoster not driven. Melon
+            // field OnSuccess (PascalCase). No onLoad UnityEvent — FullRefresh
+            // (!MutateWorld) keeps skip (thin; Dig J #2 — late-join remount
+            // of setPower/SetSpeed unwanted unless soak asks).
+            bool was = x.solved;
             x.solved = e.Bool0;
             x.powered = e.Bool1;
             UnpackBoolBits(x.states, e.Int0);
+            if (!e.Bool0) return;
+            if (PuzzleSyncService.MutateWorld && !was)
+            {
+                NetGate.BeginApply();
+                try
+                {
+                    if (x.OnSuccess != null)
+                        x.OnSuccess.Invoke();
+                }
+                catch { }
+                finally { NetGate.EndApply(); }
+            }
         }
 
         public static void ApplyVent(MED_VentPuzzle x, PuzzleStateEntry e)
