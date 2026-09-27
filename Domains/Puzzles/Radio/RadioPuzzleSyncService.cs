@@ -1,3 +1,5 @@
+using FMODUnity;
+using SyncRADation.Sync;
 using UnityEngine;
 
 namespace SyncRADation.Networking
@@ -57,7 +59,84 @@ namespace SyncRADation.Networking
 
         public static void ApplyTutorial(RadioStationTutorialPuzzle x, PuzzleStateEntry e)
         {
-            if (x != null) x.solved = e.Bool0;
+            if (x == null) return;
+            // Rising-edge final-pose (Dig N): Melon solved / Door / returnStations /
+            // TutorialStation / EndCutscene / unlockedSFX. Native Update (~0x4C3D70)
+            // when completionTimer >= completionTime → EndCutscene.trigger + latch
+            // solved + StartCoroutine(OpenDoor). OpenDoor.MoveNext (~0x6EB910):
+            // PlayOneShot(unlockedSFX), lerp Door localRotation Z 180→20 via
+            // Quaternion.Euler(0,0,angle), SetActive(returnStations,true) /
+            // SetActive(TutorialStation,false). Door pathId is NOT Doorway_* — no
+            // DoorSync cover. OnEnable always returnStations=false,
+            // TutorialStation=true (unsolved pose) — no solved snap. Prior Apply
+            // only latched solved → peer softlock (Door closed, TutorialStation
+            // still active). Mirror GunCase/Magpie final-pose class (NOT
+            // UnityEvent.Invoke): on !was && e.Bool0 BeginApply; LIVE MutateWorld →
+            // EndCutscene.trigger + pose snap (+ unlockedSFX); FullRefresh → pose
+            // snap ONLY (skip cutscene remount / skip EndCutscene.trigger). Always
+            // set solved when Bool0. Protocol 10 unchanged (reuse Bool0).
+            bool was = false;
+            try { was = x.solved; } catch { }
+            x.solved = e.Bool0;
+            if (!e.Bool0) return;
+            if (!was)
+            {
+                NetGate.BeginApply();
+                try
+                {
+                    if (PuzzleSyncService.MutateWorld)
+                    {
+                        try
+                        {
+                            if (x.EndCutscene != null)
+                                x.EndCutscene.trigger();
+                        }
+                        catch { }
+                        try
+                        {
+                            if (!string.IsNullOrEmpty(x.unlockedSFX))
+                                RuntimeManager.PlayOneShot(x.unlockedSFX, x.transform.position);
+                        }
+                        catch { }
+                    }
+                    SnapTutorialFinalPose(x);
+                }
+                catch { }
+                finally { NetGate.EndApply(); }
+            }
+        }
+
+        /// <summary>
+        /// OpenDoor final pose: Door Z euler 20 (lerp end), returnStations on,
+        /// TutorialStation off. Does not start the OpenDoor coroutine.
+        /// </summary>
+        static void SnapTutorialFinalPose(RadioStationTutorialPuzzle x)
+        {
+            if (x == null) return;
+            try
+            {
+                if (x.Door != null)
+                {
+                    var e = x.Door.localEulerAngles;
+                    e.x = 0f;
+                    e.y = 0f;
+                    e.z = 20f;
+                    x.Door.localEulerAngles = e;
+                }
+            }
+            catch { }
+            try
+            {
+                if (x.returnStations != null)
+                    x.returnStations.SetActive(true);
+            }
+            catch { }
+            try
+            {
+                if (x.TutorialStation != null)
+                    x.TutorialStation.SetActive(false);
+            }
+            catch { }
         }
 
         public static void ApplyManager(PuzzleStateEntry e)

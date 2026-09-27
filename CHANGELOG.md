@@ -1,3 +1,22 @@
+## 0.5.33 — 2026-09-27
+
+Protocol **v10**. Batch 38 ship (Dig N): RadioStationTutorial ApplyTutorial final-pose snap (Door Z=20 / returnStations / TutorialStation) + live EndCutscene.trigger so DET radio bunker tutorial peers exit softlock.
+
+### Fixed
+- **ApplyTutorial latch-only — peer skips OpenDoor final pose + EndCutscene** — ApplyTutorial only did `x.solved = e.Bool0`. Native Update (~0x4C3D70) when `completionTimer >= completionTime` → `EndCutscene.trigger` + latch `solved` + `StartCoroutine(OpenDoor)`. OpenDoor.MoveNext (~0x6EB910): `PlayOneShot(unlockedSFX)`, lerp Door localRotation Z **180→20** via `Quaternion.Euler(0,0,angle)`, `SetActive(returnStations,true)` / `SetActive(TutorialStation,false)`. Door pathId is NOT a Doorway_* — no DoorSync cover. OnEnable always `returnStations=false`, `TutorialStation=true` (unsolved pose) — no solved snap. Softlock: Host solves → peers Apply set `solved=true` only; local `completionTimer` stays 0 → Update never re-enters solve block; Door Transform stays closed; TutorialStation stays active. Late-join FullRefresh same. Melon fields `solved` / `Door` / `returnStations` / `TutorialStation` / `EndCutscene` / `unlockedSFX` verified. Fix (Dig N, mirror GunCase/Magpie final-pose class — NOT UnityEvent.Invoke): capture `was=solved`; latch solved; if `!e.Bool0` return; if `!was` → BeginApply; LIVE `MutateWorld` → `EndCutscene.trigger()` + optional `unlockedSFX` PlayOneShot + pose snap; FullRefresh → pose snap ONLY (skip cutscene remount / skip EndCutscene.trigger). Protocol 10 unchanged (reuse RadioStationTutorial Bool0 solved; no new ushort).
+
+### Before → After (player)
+- **Before:** Host completes the DET radio bunker tutorial (holds freq → timer done). Peers latch `solved=true` but Door stays closed and TutorialStation stays active — softlock stuck in the bunker tutorial pose. Late joiner FullRefresh same.
+- **After:** Live MutateWorld peer on false→true `solved` edge BeginApply-triggers EndCutscene + plays unlockedSFX + snaps Door open (Z=20) / returnStations on / TutorialStation off. Late-join FullRefresh snaps the same final pose without remounting EndCutscene.
+
+### Dig N residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| ApplyTutorial latch-only; peer skips OpenDoor final pose + EndCutscene → bunker Door closed / TutorialStation stuck | Dig N: ApplyTutorial solved-only; Melon Door/returnStations/TutorialStation/EndCutscene/unlockedSFX; OpenDoor.MoveNext Z 180→20 + SetActives; Update EndCutscene.trigger; OnEnable unsolved pose; Door not Doorway_* | **SHIPPED** (MutateWorld&&!was EndCutscene+SFX+pose; FullRefresh pose-only; protocol 10 Bool0 reuse) |
+
+Protocol stays **10** (reuse RadioStationTutorial Bool0 solved; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
 ## 0.5.32 — 2026-09-27
 
 Protocol **v10**. Batch 37 ship (Dig M): MultiConditionEvent ApplyMultiConditionEvent rising-edge `OnTryDone` so Proceed / ProceedDelayed / delayedEvent / SetTrigger fire for late-join FullRefresh (and live MutateWorld if StoryCmd missed); live StoryCmd path stays sole fire via rising-edge.
