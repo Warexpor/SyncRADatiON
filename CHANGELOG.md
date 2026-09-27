@@ -1,3 +1,22 @@
+## 0.5.49 — 2026-09-27
+
+Protocol **v10**. Batch 54 ship (Dig AD): EvidenceLocker IsProgressed holds mid-button `states` pack (Int0/Int1) so N-peer remount / late-join keep unsolved button presses, not only final Bool0 solved.
+
+### Fixed
+- **EvidenceLocker IsProgressed Bool0-only — remount / late-join drop mid-states** — TryRead already packs `states` → Int0/Int1 + Bool0=solved; ApplyEvidenceLocker already UnpackBoolBits64 mid and door-snaps only on Bool0; IsProgressed fell through ProgressedBool0 (Bool0 only) so unsolved button presses were sent live but never held across remount. EnvironmentPatches had no `logic(int)` EnvEmit. Native durable state: `states` bool[8] (AssetStudio), mutated by private `logic(int)` from Update button poll (RVA Update 0xB2F7D0 / logic 0xB2F9A0); lights follow states when !solved. Softlock: host presses evidence-locker buttons mid-solve → remount / late-join snap back to all-off until Bool0 solve — mid-light pattern resets. Fix (Dig AD, mirror RES_Power 0.5.45 / FloodControls / DialLock 0.5.46 mid-hold): IsProgressed = Bool0 || Int0!=0 || Int1!=0 (remove EvidenceLocker from ProgressedBool0); EnvEmit Postfix `EvidenceLockerLogicPuzzle.logic(int)` (Read mid / Progressed solved); ApplyEvidenceLocker after unpack snaps `lights[i].SetActive(states[i])` under NetGate (null-safe); door snap on Bool0 retained. Protocol 10 unchanged (reuse EvidenceLocker Bool0 solved + Int0/Int1 states pack; no new ushort).
+
+### Before → After (player)
+- **Before:** Host presses evidence-locker buttons mid-solve. Live peers may see Int0 leave the host, but remount / late-join FullRefresh never re-holds unsolved mid-button packs — lights snap back to all-off until Bool0 solve unlocks doors.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh keep the Int0/Int1 states pack. IsProgressed holds mid-states (Bool0 || Int0!=0 || Int1!=0) across remount; logic(int) EnvEmit pushes mid-press; Apply snaps lights to unpacked states; Bool0 solved still door-snaps as before.
+
+### Dig AD residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| IsProgressed Bool0-only; no logic(int) EnvEmit; Apply unpack without lights snap → remount / late-join drop mid-button states | Dig AD: Melon EvidenceLockerLogicPuzzle states/lights/solved; logic Private→Public Melon Int32; Update RVA 0xB2F7D0; logic RVA 0xB2F9A0; 8 states bits; ProgressedBool0 fallthrough | **SHIPPED** (IsProgressed Bool0\|\|Int0!=0\|\|Int1!=0; remove ProgressedBool0; logic EnvEmit; Apply lights snap under NetGate; door snap Bool0 retained; protocol 10) |
+
+Protocol stays **10** (reuse EvidenceLocker Bool0 solved + Int0/Int1 states pack; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
 ## 0.5.48 — 2026-09-27
 
 Protocol **v10**. Batch 53 ship (Dig AC): RES_Shutters ApplyShutters dims minimap POI via `poi.dimPOI()` so N-peer live unlock and late-join FullRefresh clear the shutter marker, not only shutter/handle pose.

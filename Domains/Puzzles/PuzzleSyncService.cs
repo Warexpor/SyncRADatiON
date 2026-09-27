@@ -420,6 +420,10 @@ namespace SyncRADation.Networking
             // all-zero Int0 packs (Dig AB).
             if (e.Type == PuzzleType.MED_CardWriter)
                 return e.Bool0 || e.Bool1 || e.Int3 != 0;
+            // EvidenceLocker: hold mid-button states pack (Int0/Int1) so remount /
+            // late-join re-snaps unsolved button presses, not only final Bool0 solved.
+            if (e.Type == PuzzleType.EvidenceLockerPuzzle)
+                return e.Bool0 || e.Int0 != 0 || e.Int1 != 0;
             // RES_Power: hold mid-fuse states pack (Int0) so remount / late-join
             // re-snaps unsolved fuse flips, not only final Bool0 solved.
             if (e.Type == PuzzleType.RES_Power)

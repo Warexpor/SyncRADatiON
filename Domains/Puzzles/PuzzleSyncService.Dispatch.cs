@@ -352,7 +352,6 @@ namespace SyncRADation.Networking
                 PuzzleType.PEN_Cryo,
                 PuzzleType.CryoDoorController,
                 PuzzleType.PatternLock,
-                PuzzleType.EvidenceLockerPuzzle,
                 PuzzleType.MED_Pump,
                 PuzzleType.MED_FloodedBathroom,
                 PuzzleType.MED_CardWriter,

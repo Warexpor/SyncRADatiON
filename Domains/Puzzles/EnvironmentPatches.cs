@@ -99,6 +99,15 @@ namespace SyncRADation.Patches
                 else Read(PuzzleType.DialLock, x);
             }
 
+            public static void EvidenceLocker(EvidenceLockerLogicPuzzle x)
+            {
+                if (x == null) return;
+                bool ok = false;
+                try { ok = x.solved; } catch { }
+                if (ok) Progressed(PuzzleType.EvidenceLockerPuzzle, x);
+                else Read(PuzzleType.EvidenceLockerPuzzle, x);
+            }
+
             public static void CardWriter(MED_CardWriter x)
             {
                 if (x == null) return;
@@ -446,6 +455,18 @@ namespace SyncRADation.Patches
     {
         [HarmonyPostfix]
         public static void Postfix(RES_Power __instance) => EnvEmit.Power(__instance);
+    }
+
+    // EvidenceLocker: emit mid-button states pack on logic(int) (Int0/Int1), Progressed
+    // on solve. Native Update polls buttons → logic(i) toggles states[i] + lights;
+    // patch so peers see mid-press without waiting for Tick (Dig AD). IsProgressed
+    // holds Bool0 || Int0!=0 || Int1!=0 across remount. Existing ApplyEvidenceLocker
+    // door snap on Bool0 stays; Apply also snaps lights after unpack.
+    [HarmonyPatch(typeof(EvidenceLockerLogicPuzzle), nameof(EvidenceLockerLogicPuzzle.logic), new System.Type[] { typeof(int) })]
+    public static class EvidenceLockerLogicPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(EvidenceLockerLogicPuzzle __instance) => EnvEmit.EvidenceLocker(__instance);
     }
 
     [HarmonyPatch(typeof(ROT_MeatBlocker), nameof(ROT_MeatBlocker.pickup))]

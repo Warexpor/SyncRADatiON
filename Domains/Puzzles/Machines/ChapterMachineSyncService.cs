@@ -196,6 +196,31 @@ namespace SyncRADation.Networking
             if (x == null) return;
             x.solved = e.Bool0;
             UnpackBoolBits64(x.states, e.Int0, e.Int1);
+            // Dig AD: snap lights to unpacked states so remount / late-join mid-hold
+            // shows button lights without waiting for native Update (!solved path).
+            // Native Update follows states→lights when !solved; remote Apply skips Update.
+            NetGate.BeginApply();
+            try
+            {
+                var lights = x.lights;
+                var states = x.states;
+                if (lights != null && states != null)
+                {
+                    int n = lights.Length;
+                    if (states.Length < n) n = states.Length;
+                    for (int i = 0; i < n; i++)
+                    {
+                        try
+                        {
+                            if (lights[i] != null)
+                                lights[i].SetActive(states[i]);
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
+            finally { NetGate.EndApply(); }
             if (!e.Bool0) return;
             SnapEvidenceLockerDoors(x.gameObject);
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
