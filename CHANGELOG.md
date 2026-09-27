@@ -1,3 +1,21 @@
+## 0.5.19 — 2026-09-27
+
+Protocol **v10**. Batch 24 ship (Dig E): host KeypadSubmit self-Applies door consequences.
+
+### Fixed
+- **Host KeypadSubmit sealed doors** — `InteractionSyncService.ApplyKeypad` only set `solved`/`opening` on `Keypad3D` / `ROT_Keypad`. Host poll then Emit → peers ran `LockSyncService.ApplyKeypad3D` / `ApplyRotKeypad` (`openDoor` + `TryUnlockDoors`). Host never self-Applied Emit path → host `ConnectedDoors` / door mesh stayed sealed. Now mirrors puzzle Apply inside `ApplyKeypad`: BeginApply/`openDoor`+`TryUnlockDoors` for newly solved Keypad3D; BeginApply/`onSuccess.Invoke` (peel: `ConnectedDoors.Unlock` + exitEvent/SetActive/dimPOI) + `TryUnlockDoors` for newly solved ROT_Keypad; Emit Keypad PuzzleState after for late joiners. `PEN_Codepad` → `ApplyCodepadConsequences` unchanged. Protocol 10 unchanged.
+
+### Before → After (player)
+- **Before:** Client solves a Keypad3D / ROT_Keypad. Peers see the door unlock; host still sees a sealed ConnectedDoors / door mesh and cannot pass.
+- **After:** Host ApplyKeypad runs the same openDoor / onSuccess / TryUnlockDoors consequences peers already got from PuzzleState — host door opens with the party.
+
+### Dig notes (Batch 24)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| ApplyKeypad thinner than ApplyKeypad3D | Dig E: ApplyKeypad flags-only (~455–477); Puzzle Apply openDoor+TryUnlockDoors (~157–171); host Emit/poll no self-Apply; ROT onSuccess peel → ConnectedDoors.Unlock | **SHIPPED** |
+
+Protocol stays **10** (no new ushort).
+
 ## 0.5.18 — 2026-09-27
 
 Protocol **v10**. Batch 23 ship (Dig C): dead puppet hurtbox stays active on peers.
