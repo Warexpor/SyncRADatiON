@@ -125,7 +125,7 @@ namespace SyncRADation.Networking
             d[PuzzleType.Keypad3D] = (s, e, _) =>
                 LockSyncService.ApplyKeypad3D(s.Get<Keypad3D>(e.Type, e.WorldId), e, _mutateWorld);
             d[PuzzleType.ROT_Keypad] = (s, e, _) =>
-                LockSyncService.ApplyRotKeypad(s.Get<ROT_Keypad>(e.Type, e.WorldId), e);
+                LockSyncService.ApplyRotKeypad(s.Get<ROT_Keypad>(e.Type, e.WorldId), e, _mutateWorld);
             d[PuzzleType.PEN_Codepad] = (s, e, cin) =>
                 CodepadSyncService.ApplyCodepad(s.Get<PEN_Codepad>(e.Type, e.WorldId), e, cin);
             d[PuzzleType.PatternLock] = (s, e, _) =>

@@ -1,4 +1,5 @@
 using SyncRADation.Patches;
+using SyncRADation.Sync;
 using UnityEngine;
 
 namespace SyncRADation.Networking
@@ -164,11 +165,28 @@ namespace SyncRADation.Networking
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
         }
 
-        public static void ApplyRotKeypad(ROT_Keypad x, PuzzleStateEntry e)
+        public static void ApplyRotKeypad(ROT_Keypad x, PuzzleStateEntry e, bool mutateWorld)
         {
             if (x == null) return;
+            bool was = x.solved;
             x.solved = e.Bool0; x.opening = e.Bool1; x.blocked = e.Bool2;
-            if (e.Bool0) PuzzleSyncService.TryUnlockDoors(x.gameObject);
+            if (!e.Bool0) return;
+            // Mirror Keypad3D openDoor rising-edge + host ApplyKeypad: onSuccess peels
+            // to ConnectedDoors.Unlock on Door Connection (35) under DoorConnections
+            // (separate tree from KeypadLogic) + Event.SetActive + exitEvent + dimPOI.
+            // TryUnlockDoors = FindInParents ConnectedDoors only — misses that peel.
+            if (mutateWorld && !was)
+            {
+                NetGate.BeginApply();
+                try
+                {
+                    if (x.onSuccess != null)
+                        x.onSuccess.Invoke();
+                }
+                catch { }
+                finally { NetGate.EndApply(); }
+            }
+            PuzzleSyncService.TryUnlockDoors(x.gameObject);
         }
 
         public static void ApplyDial(ROT_DialLock x, PuzzleStateEntry e)

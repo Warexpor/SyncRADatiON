@@ -1,3 +1,21 @@
+## 0.5.22 — 2026-09-27
+
+Protocol **v10**. Batch 27 ship (Dig G #1): ROT_Keypad Apply rising-edge `onSuccess`.
+
+### Fixed
+- **ApplyRotKeypad never Invokes onSuccess — peer door softlock** — Host Interaction `ApplyKeypad` (0.5.19) Invokes `onSuccess` for the host when a ROT_Keypad solves. Live peers + late-join remount take PuzzleState `ApplyRotKeypad`, which only latched `solved`/`opening`/`blocked` + `TryUnlockDoors(keypad.GO)`. `TryUnlockDoors` = FindInParents `ConnectedDoors` only — but ROT_Keypad `onSuccess` peels to `ConnectedDoors.Unlock` on Door Connection (35) under DoorConnections (separate tree from KeypadLogic) + Event.SetActive + exitEvent + dimPOI. Peers kept ConnectedDoors locked. Contrast: `ApplyKeypad3D` already rising-edge `openDoor` when `mutateWorld && !was`; Dispatch dropped `_mutateWorld` for the ROT path. Now pass `_mutateWorld` into `ApplyRotKeypad`; on `e.Bool0 && mutateWorld && !was` → BeginApply + `onSuccess.Invoke()`; keep `TryUnlockDoors` as backup. Protocol 10 unchanged (no new ushort).
+
+### Before → After (player)
+- **Before:** Peer or host solves a ROT_Keypad. Host door unlocks (ApplyKeypad onSuccess). Live peers see solved flags but ConnectedDoors stay locked — softlock at the door.
+- **After:** Every peer applying the ROT_Keypad PuzzleState (cinematic / remount mutateWorld) runs the same `onSuccess` peel — ConnectedDoors unlock and exitEvent/SetActive/dimPOI fire for the whole party.
+
+### Dig notes (Batch 27)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| ApplyRotKeypad flags+TryUnlockDoors only; misses onSuccess peel | Dig G #1: ApplyRotKeypad ~167–171; ApplyKeypad3D rising-edge openDoor; Dispatch ~128–129 drops _mutateWorld; host ApplyKeypad Invokes onSuccess; TryUnlockDoors ≠ DoorConnections peel | **SHIPPED** |
+
+Protocol stays **10** (reuse ROT_Keypad Bool0; no new ushort). Late-join UseItem FullRefresh is 0.5.23 — not in this batch.
+
 ## 0.5.21 — 2026-09-27
 
 Protocol **v10**. Batch 26 ship (Dig B+F): UseItemInteraction Apply rising-edge `onSuccessful`.
