@@ -1,3 +1,28 @@
+## 0.5.14 — 2026-09-27
+
+Protocol **v10**. Continuous Batch 18 dig → ship (craft/UseItem EnsureInBag mirror strip).
+
+### Fixed
+- **Craft / UseItem PartyKeyRing bag-mirror strip** — `CraftRevokeSentinel` now applies on **every** peer (not only host): `Remove` + `StripBagMirrors` clears `EnsureInBag` bag ghosts. Host fans the sentinel out to clients, then Broadcasts the ring snapshot. `ConsumeCraftIngredients` strips locally before send; `ConsumeKey` (UseItem ConsumesKey) uses new `RevokeConsumed` so the same fan-out covers non-sender peers who mirrored the unique into their bag.
+
+### Before → After (player)
+- **Before:** Host (or peer) combines Tape + BrokenKey → AirlockKey. Ring ingredients drop (0.5.13), but a peer who `EnsureInBag`-mirrored Tape/BrokenKey still holds them in inventory → `InLocalBag` ghosts → can still UseItem / softlock with consumed uniques. Same hole when UseItem ConsumesKey while another peer holds an EnsureInBag mirror.
+- **After:** Craft revoke and UseItem consume strip those bag mirrors on all peers via host-fanned `CraftRevokeSentinel` (protocol 10, same ushort[] prefix).
+
+### Dig notes (Batch 18)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| Host craft while peer holds ingredient in hand | `EnsureInBag` AddItem mirrors; 0.5.13 only `PartyKeyRing.Remove` + snapshot Broadcast; client `ApplyMessage` never `RemoveItem`; `InLocalBag` stays true | **SHIPPED** |
+| UseItem ConsumesKey + peer EnsureInBag mirror | `ConsumeKey` stripped host bag only; `consume:` ack only to sender; other peers kept mirrors | **SHIPPED** (same sentinel fan-out) |
+| Non-Key/Object craft ingredients | `CollectCraftRevoke` / `IsKeyOrObject` skip; ammo/tools never on ring | **OK** — not a ring hole |
+| Multi-step recipes | each `combine` Postfix fires revoke per step | **OK** |
+| Client craft race / Offer before Revoke | AddItem Postfix during combine Notes result before combine Postfix revoke; ReliableOrdered; host offer-then-revoke | **OK** |
+| Interaction orphans beyond DroppedPickup/StorageTake | UseItem/door unlock when peer-gone still party-benefit; StoragePut keeps item | **OK** — prior design |
+| Dialoguer late-join / Elevator / EventZone other-room / Boss ForceFull / death-bag vs ring / wiki missables / PathID | prior coverage or parked soak | **park** — no new hard proof |
+| SceneFollow RestorePlay / Adler EV / KillSilent / Mural Blocker late-join / Alarm / ending merge / MeatBlocker / Falke empty-slot | parked list | **park** — no new durable field |
+
+Protocol stays **10** (reuse `PartyKeyRing` `0xFFFF` revoke; host fan-out is the same message type).
+
 # Changelog
 
 ## 0.5.13 — 2026-09-27

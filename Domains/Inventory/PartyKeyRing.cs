@@ -79,20 +79,30 @@ namespace SyncRADation.Networking
             var net = LanNetworkManager.Instance;
             if (msg.ItemEnums == null) return;
 
+            // Craft/consume revoke: strip ring + EnsureInBag bag mirrors on every peer.
+            // Snapshot Broadcast alone leaves peer bag ghosts (InLocalBag still true).
+            if (msg.ItemEnums.Length > 0 && msg.ItemEnums[0] == CraftRevokeSentinel)
+            {
+                for (int i = 1; i < msg.ItemEnums.Length; i++)
+                {
+                    var item = (Items.itemlist)msg.ItemEnums[i];
+                    if (!IsKeyOrObject(item)) continue;
+                    Remove(item);
+                    StripBagMirrors(item);
+                }
+                PlaytestLog.Event("KeyRing", "craft-revoke count=" + _keys.Count
+                    + (net != null && net.Role == NetworkRole.Host ? " host" : " peer"));
+                if (net != null && net.Role == NetworkRole.Host && net.IsConnected)
+                {
+                    // Fan-out sentinel so non-crafter clients strip mirrors too.
+                    try { net.SendPartyKeyRing(msg.ItemEnums); } catch { }
+                    Broadcast();
+                }
+                return;
+            }
+
             if (net != null && net.Role == NetworkRole.Host)
             {
-                if (msg.ItemEnums.Length > 0 && msg.ItemEnums[0] == CraftRevokeSentinel)
-                {
-                    for (int i = 1; i < msg.ItemEnums.Length; i++)
-                    {
-                        var item = (Items.itemlist)msg.ItemEnums[i];
-                        if (!IsKeyOrObject(item)) continue;
-                        Remove(item);
-                    }
-                    PlaytestLog.Event("KeyRing", "host craft-revoke count=" + _keys.Count);
-                    Broadcast();
-                    return;
-                }
                 bool added = false;
                 for (int i = 0; i < msg.ItemEnums.Length; i++)
                 {
@@ -147,8 +157,8 @@ namespace SyncRADation.Networking
 
         /// <summary>
         /// After a successful <c>CombineRecipes.combine</c>, drop Key/Object ingredients
-        /// from the party ring (native bag RemoveItem already ran / will run). Host
-        /// Broadcasts; client sends CraftRevokeSentinel + enums so host drops too.
+        /// from the party ring and strip EnsureInBag bag mirrors. Host fans out
+        /// CraftRevokeSentinel then Broadcasts; client sends sentinel so host fans out.
         /// </summary>
         public static void ConsumeCraftIngredients(AnItem itemA, AnItem itemB)
         {
@@ -159,20 +169,84 @@ namespace SyncRADation.Networking
             if (revoke.Count == 0) return;
 
             for (int i = 0; i < revoke.Count; i++)
-                Remove((Items.itemlist)revoke[i]);
-
-            var net = LanNetworkManager.Instance;
-            if (net == null || !net.IsConnected) return;
-            if (net.Role == NetworkRole.Host)
             {
-                Broadcast();
-                return;
+                var item = (Items.itemlist)revoke[i];
+                Remove(item);
+                StripBagMirrors(item);
             }
+
+            SendCraftRevoke(revoke);
+        }
+
+        /// <summary>
+        /// Ring + bag mirror drop for a consumed unique (UseItem ConsumesKey). Host fans
+        /// out CraftRevokeSentinel so peers who EnsureInBag-mirrored the key also strip.
+        /// </summary>
+        public static void RevokeConsumed(Items.itemlist item)
+        {
+            if (!IsKeyOrObject(item)) return;
+            Remove(item);
+            StripBagMirrors(item);
+            if (NetGate.IsApplying || !NetGate.Live) return;
+            var revoke = new List<ushort>(1);
+            revoke.Add((ushort)item);
+            SendCraftRevoke(revoke);
+        }
+
+        static void SendCraftRevoke(List<ushort> revoke)
+        {
+            var net = LanNetworkManager.Instance;
+            if (net == null || !net.IsConnected || revoke == null || revoke.Count == 0) return;
             var arr = new ushort[revoke.Count + 1];
             arr[0] = CraftRevokeSentinel;
             for (int i = 0; i < revoke.Count; i++)
                 arr[i + 1] = revoke[i];
             try { net.SendPartyKeyRing(arr); }
+            catch { }
+            if (net.Role == NetworkRole.Host)
+                Broadcast();
+        }
+
+        /// <summary>
+        /// Drop EnsureInBag / grant mirrors of a unique from the local bag when the
+        /// party ring revokes it (craft combine, UseItem consume). Mirrors ConsumeDropped.
+        /// </summary>
+        public static void StripBagMirrors(Items.itemlist item)
+        {
+            if (!IsKeyOrObject(item)) return;
+            ushort id = (ushort)item;
+            _bagAttempt.Remove(id);
+            _bagEnsureAt.Remove(id);
+            try
+            {
+                var dict = InventoryManager.elsterItems;
+                if (dict != null)
+                {
+                    var extra = new List<AnItem>();
+                    var counts = new List<int>();
+                    var en = dict.GetEnumerator();
+                    while (en.MoveNext())
+                    {
+                        var key = en.Current.key;
+                        if (key != null && key._item == item && en.Current.value > 0)
+                        {
+                            extra.Add(key);
+                            counts.Add(en.Current.value);
+                        }
+                    }
+                    en.Dispose();
+                    for (int i = 0; i < extra.Count; i++)
+                    {
+                        try { InventoryManager.RemoveItem(extra[i], counts[i]); } catch { }
+                    }
+                }
+            }
+            catch { }
+            try
+            {
+                if (InventoryManager.CurrentItem != null && InventoryManager.CurrentItem._item == item)
+                    InventoryManager.CurrentItem = null;
+            }
             catch { }
         }
 

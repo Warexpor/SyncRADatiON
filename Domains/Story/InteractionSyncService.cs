@@ -305,14 +305,8 @@ namespace SyncRADation.Networking
 
         private static void ConsumeKey(AnItem key)
         {
-            try
-            {
-                var held = PartyKeyRing.FindInBag(key);
-                if (held != null)
-                    InventoryManager.RemoveItem(held, 1);
-            }
-            catch { }
-            try { PartyKeyRing.Remove(key._item); } catch { }
+            // Ring drop + EnsureInBag mirror strip on all peers via CraftRevokeSentinel fan-out.
+            try { PartyKeyRing.RevokeConsumed(key._item); } catch { }
         }
 
         static bool UnlockInteractiveLocks(UseItemInteraction u, AnItem key)
