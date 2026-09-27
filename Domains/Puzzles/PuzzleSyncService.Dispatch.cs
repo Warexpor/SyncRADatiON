@@ -380,7 +380,6 @@ namespace SyncRADation.Networking
                 PuzzleType.DET_RadioCodeLock,
                 PuzzleType.SaveRoomEvent,
                 PuzzleType.DialoguePlayedOnce,
-                PuzzleType.ROT_Mural,
                 PuzzleType.GunCase,
                 PuzzleType.AraNest,
                 PuzzleType.LAB_RifleQuest,

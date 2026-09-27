@@ -1,3 +1,22 @@
+## 0.5.51 — 2026-09-27
+
+Protocol **v10**. Batch 56 ship (Dig AF): ROT_Mural IsProgressed holds mid-moon Pos pack (Int0–Int3) so N-peer remount / late-join keep unsolved moon turns, not only final Bool0 finished.
+
+### Fixed
+- **ROT_Mural IsProgressed Bool0-only — remount / late-join drop mid-moon Pos** — TryRead already packs up to 8 moons → Int0–Int3 (Pos8|State4|Desired4 ×2) + Bool0=finished + Bool1=busy; ApplyMural already UnpackMuralMoons then early-returns if !Bool0 for Dig J onSolved; IsProgressed fell through ProgressedBool0 (Bool0 only) so unsolved moon turns were sent live but never held across remount. EnvironmentPatches had no Next/Last EnvEmit. Native durable state: 6 moons (AssetStudio / Melon), mutated by `Next(string)` / `Last(string)` (RVA 0x4BB540 / 0x4BB3B0) then Update (0x4BBB70) lerps Rot; Dig J (0.5.26) onSolved rising-edge only on Bool0. Softlock: host turns mural moons mid-solve → remount / late-join snap back to spawn Pos until Bool0 finished — mid-moon pose resets. Note: DesiredPos bits make Int≠0 from load — IsProgressed with Int0–3!=0 holds moon pack from spawn (intentional so FullRefresh always carries pack). Fix (Dig AF, mirror DialLock 0.5.46 / EvidenceLocker 0.5.49 / Shrine 0.5.50 mid-hold): IsProgressed = Bool0 || Bool1 || Int0!=0 || Int1!=0 || Int2!=0 || Int3!=0 (remove ROT_Mural from ProgressedBool0); EnvEmit Postfix `ROT_Mural.Next(string)` / `Last(string)` (Read mid / Progressed finished); Apply Unpack + Dig J Bool0 onSolved path retained (no Apply change). Protocol 10 unchanged (reuse ROT_Mural Bool0/Bool1/Int0–3; no new ushort).
+
+### Before → After (player)
+- **Before:** Host turns mural moons mid-solve. Live peers may see Int0–3 leave the host, but remount / late-join FullRefresh never re-holds unsolved mid-moon Pos — moons snap back to spawn until Bool0 finished fires Dig J onSolved.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh keep the Int0–3 moon pack. IsProgressed holds mid-moon Pos (Bool0 || Bool1 || Int0–3!=0) across remount; Next/Last EnvEmit pushes mid-turns; Apply Unpack + Dig J Bool0 onSolved/doors retained as before.
+
+### Dig AF residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| IsProgressed Bool0-only; no Next/Last EnvEmit → remount / late-join drop mid-moon Pos | Dig AF: Melon ROT_Mural moons/finished/busy/MoonTurnSpeed; Next RVA 0x4BB540; Last RVA 0x4BB3B0; Update RVA 0x4BBB70; 6 moons; Dig J Bool0 onSolved; DesiredPos → Int≠0 from load; ProgressedBool0 fallthrough | **SHIPPED** (IsProgressed Bool0\|\|Bool1\|\|Int0–3!=0; remove ProgressedBool0; Next/Last EnvEmit; Apply Unpack + Dig J Bool0 retained; protocol 10) |
+
+Protocol stays **10** (reuse ROT_Mural Bool0 finished + Bool1 busy + Int0–3 moon pack; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
 ## 0.5.50 — 2026-09-27
 
 Protocol **v10**. Batch 55 ship (Dig AE): RES_Shrine IsProgressed holds mid-dial big/mid/small (Int0–Int2) so N-peer remount / late-join keep unsolved plate turns, not only final Bool0 solved.

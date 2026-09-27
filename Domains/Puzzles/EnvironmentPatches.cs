@@ -117,6 +117,15 @@ namespace SyncRADation.Patches
                 else Read(PuzzleType.RES_Shrine, x);
             }
 
+            public static void Mural(ROT_Mural x)
+            {
+                if (x == null) return;
+                bool ok = false;
+                try { ok = x.finished; } catch { }
+                if (ok) Progressed(PuzzleType.ROT_Mural, x);
+                else Read(PuzzleType.ROT_Mural, x);
+            }
+
             public static void CardWriter(MED_CardWriter x)
             {
                 if (x == null) return;
@@ -495,6 +504,26 @@ namespace SyncRADation.Patches
     {
         [HarmonyPostfix]
         public static void Postfix(RES_Shrine __instance) => EnvEmit.Shrine(__instance);
+    }
+
+    // ROT_Mural: emit mid-moon Pos pack on Next/Last (Int0–Int3), Progressed on
+    // finished. Native Next(string)/Last(string) mutate moon Pos then may finish
+    // — patch so peers see mid-moon without waiting for Tick (Dig AF). IsProgressed
+    // holds Bool0 || Bool1 || Int0–3!=0 across remount (DesiredPos makes Int≠0 from
+    // load — intentional FullRefresh carry). Existing ApplyMural Dig J Bool0
+    // onSolved rising-edge stays.
+    [HarmonyPatch(typeof(ROT_Mural), nameof(ROT_Mural.Next), new System.Type[] { typeof(string) })]
+    public static class RotMuralNextPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(ROT_Mural __instance) => EnvEmit.Mural(__instance);
+    }
+
+    [HarmonyPatch(typeof(ROT_Mural), nameof(ROT_Mural.Last), new System.Type[] { typeof(string) })]
+    public static class RotMuralLastPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(ROT_Mural __instance) => EnvEmit.Mural(__instance);
     }
 
     [HarmonyPatch(typeof(ROT_MeatBlocker), nameof(ROT_MeatBlocker.pickup))]

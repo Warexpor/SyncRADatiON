@@ -436,6 +436,12 @@ namespace SyncRADation.Networking
             // late-join re-snaps unsolved plate turns, not only final Bool0 solved.
             if (e.Type == PuzzleType.RES_Shrine)
                 return e.Bool0 || e.Int0 != 0 || e.Int1 != 0 || e.Int2 != 0;
+            // ROT_Mural: hold mid-moon Pos pack (Int0–Int3) + busy so remount /
+            // late-join re-snaps unsolved moon turns, not only final Bool0 finished.
+            // DesiredPos bits make Int≠0 from load — intentional so FullRefresh
+            // always carries the moon pack (Dig AF).
+            if (e.Type == PuzzleType.ROT_Mural)
+                return e.Bool0 || e.Bool1 || e.Int0 != 0 || e.Int1 != 0 || e.Int2 != 0 || e.Int3 != 0;
             return ProgressedBool0.Contains(e.Type) && e.Bool0;
         }
 
