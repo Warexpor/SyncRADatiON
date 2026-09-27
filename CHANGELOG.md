@@ -1,3 +1,22 @@
+## 0.5.30 — 2026-09-27
+
+Protocol **v10**. Batch 35 ship (Dig K #2 / Dig J #5): LAB_PatternLock ApplyPatternLock rising-edge `onSolved` so exitEvent + Play/SetActive fire for live peers (EventScreen dismiss).
+
+### Fixed
+- **LAB_PatternLock ApplyPatternLock Disable+doors only — never Invokes onSolved** — ApplyPatternLock (~159–166) only latched `solved` + `DisablePatternLock` + `TryUnlockDoors`. Native `delayed.MoveNext` (after `checkSolution` latches `solved` @ +0xA0, RVA 0x59CF80) loads `onSolved` @ +0xB0 and calls `UnityEvent$$Invoke` (RVA 0xDD7BF0). AssetStudio `LAB_PatternLock.onSolved` → `exitEvent` (EventScreen / DoorLockEvent) + `Play` + `SetActive` (PEN_CryoOverride / LAB ponds). Peer Apply disabled the pad + unlocked doors but EventScreen never exitEvents — softlock class Dig flagged. Melon fields `solved` / `onSolved` verified (camelCase); **no** `onLoad` UnityEvent. Fix (mirror ApplyMulti 0.5.29 live path / ApplyMural 0.5.26): capture `was=solved`; latch solved; if `!e.Bool0` return; keep `DisablePatternLock`; if `MutateWorld && !was` → BeginApply + `onSolved.Invoke()`; keep `TryUnlockDoors`. FullRefresh (`!MutateWorld`): keep skip (no onLoad soak; exitEvent remount unwanted unless soak asks). Do **not** ship DoorLockEvent yet (0.5.31 Dig L candidate). Protocol 10 unchanged (no new ushort).
+
+### Before → After (player)
+- **Before:** Host solves a LAB PatternLock (PEN cryo override / LAB pond). Live peer sees pad disabled + doors unlocked, but EventScreen never exitEvents — softlock stuck on the pattern UI / overlay.
+- **After:** Live MutateWorld peer on false→true `solved` edge BeginApply-Invokes `onSolved` (exitEvent + Play/SetActive) after DisablePatternLock. Late-join FullRefresh still skips onSolved (no exitEvent remount) until soak asks for an onLoad-equivalent.
+
+### Dig K #2 residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| ApplyPatternLock latch+Disable+doors only; peer skips onSolved → EventScreen exitEvent softlock | Dig K #2 / Dig J #5: ApplyPatternLock ~159–166; Melon solved/onSolved (no onLoad); AssetStudio onSolved = exitEvent+Play+SetActive; native delayed.MoveNext Invoke @ UnityEvent$$Invoke after checkSolution; MultiLock/Mural rising-edge pattern | **SHIPPED** (MutateWorld&&!was onSolved; FullRefresh skip retained; DoorLockEvent deferred) |
+
+Protocol stays **10** (reuse PatternLock Bool0 solved; no new ushort). Host-authoritative; N-peer live cinematic Apply path. DoorLockEvent deferred.
+
 ## 0.5.29 — 2026-09-27
 
 Protocol **v10**. Batch 34 ship (Dig K #1): MED/LAB MultiLock ApplyMulti rising-edge `onUnlocked` (+ `onUnlockedLate`) so exitEvent + Inter SetActive fire for live peers; late-join uses `onLoadUnlocked`.

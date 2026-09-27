@@ -159,9 +159,32 @@ namespace SyncRADation.Networking
         public static void ApplyPatternLock(LAB_PatternLock x, PuzzleStateEntry e)
         {
             if (x == null) return;
+            // Rising-edge onSolved: native delayed.MoveNext (after checkSolution latches
+            // solved @ +0xA0) loads onSolved @ +0xB0 and calls UnityEvent$$Invoke
+            // (RVA 0xDD7BF0). AssetStudio LAB_PatternLock.onSolved → exitEvent (EventScreen
+            // DoorLockEvent) + Play + SetActive (PEN_CryoOverride / LAB ponds). Prior
+            // ApplyPatternLock (~159–166) only latched solved + DisablePatternLock +
+            // TryUnlockDoors — never Invoked onSolved → peer EventScreen softlock
+            // (Dig K #2 / Dig J #5). Melon fields solved / onSolved verified (camelCase);
+            // no onLoad UnityEvent — FullRefresh keep skip (mirror ApplyMural 0.5.26 /
+            // ApplyPower 0.5.27). Mirror ApplyMulti 0.5.29 live path: MutateWorld&&!was
+            // → BeginApply + onSolved.Invoke(); keep DisablePatternLock + TryUnlockDoors.
+            bool was = false;
+            try { was = x.solved; } catch { }
             x.solved = e.Bool0;
             if (!e.Bool0) return;
             DisablePatternLock(x);
+            if (PuzzleSyncService.MutateWorld && !was)
+            {
+                NetGate.BeginApply();
+                try
+                {
+                    if (x.onSolved != null)
+                        x.onSolved.Invoke();
+                }
+                catch { }
+                finally { NetGate.EndApply(); }
+            }
             PuzzleDoorFlagsSyncService.TryUnlockDoors(x.gameObject);
         }
 
