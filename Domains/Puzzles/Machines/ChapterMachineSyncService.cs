@@ -355,8 +355,34 @@ namespace SyncRADation.Networking
 
         public static void ApplyShutters(RES_Shutters x, PuzzleStateEntry e)
         {
-            if (x != null && e.Bool0)
-                SnapShutters(x);
+            if (x == null) return;
+            // Dig AC: Melon unlocked / poi / _lock / Handle / Shutter.
+            // Native Update (~0x4B73C0) dims poi once when _lock.locked becomes false
+            // while unlocked still false, then latches unlocked. Prior SnapShutters set
+            // unlocked + shutter/handle + ConnectedDoors — never called poi.dimPOI.
+            // Remote Apply sets unlocked=true first → native edge skipped forever.
+            // Call dimPOI idempotently under NetGate on BOTH live MutateWorld AND
+            // FullRefresh (MusicBox / Shrine dimPOI ships; no separate onLoad).
+            // Protocol 10 unchanged (reuse RES_Shutters Bool0 unlocked).
+            bool was = false;
+            try { was = x.unlocked; } catch { }
+            if (!e.Bool0) return;
+            SnapShutters(x);
+            if (!was)
+            {
+                NetGate.BeginApply();
+                try
+                {
+                    try
+                    {
+                        if (x.poi != null)
+                            x.poi.dimPOI();
+                    }
+                    catch { }
+                }
+                catch { }
+                finally { NetGate.EndApply(); }
+            }
         }
 
         public static void ApplyMagpie(ROT_Magpie x, PuzzleStateEntry e)

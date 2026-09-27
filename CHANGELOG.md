@@ -1,3 +1,22 @@
+## 0.5.48 — 2026-09-27
+
+Protocol **v10**. Batch 53 ship (Dig AC): RES_Shutters ApplyShutters dims minimap POI via `poi.dimPOI()` so N-peer live unlock and late-join FullRefresh clear the shutter marker, not only shutter/handle pose.
+
+### Fixed
+- **RES_Shutters Apply/Snap unlocked pose — peers miss minimap POI dim** — SnapShutters latched `unlocked`, hid Shutter/Handle, and unlocked ConnectedDoors, but never called `RES_Shutters.poi.dimPOI()`. Native `Update` (~0x4B73C0) dims POI exactly once when `_lock.locked` becomes false while `unlocked` is still false, then latches `unlocked`. Remote Apply sets `unlocked=true` first so that edge never fires; peers / late-join keep a lit minimap shutter marker after the physical shutters open. Melon fields `unlocked` / `poi` / `_lock` / `Handle` / `Shutter` verified; scene RES_Residential wires shutter `poi`. Fix (Dig AC, mirror MusicBox / Shrine dimPOI ships): when Bool0=true, SnapShutters then rising-edge `poi.dimPOI()` under NetGate (null-safe, idempotent; live + FullRefresh). Protocol 10 unchanged (reuse RES_Shutters Bool0 unlocked; no new ushort).
+
+### Before → After (player)
+- **Before:** Host unlocks residential shutters. Peers / late-join FullRefresh see open shutters and unlocked doors, but the minimap shutter POI stays lit — native dim never runs after remote Apply latches `unlocked` first.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh ApplyShutters dims the shutter minimap POI when Bool0 unlocked; remount converges; host local Unlock path unchanged.
+
+### Dig AC residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| Apply/SnapShutters no poi.dimPOI; native Update edge skipped after remote unlocked=true | Dig AC: Melon RES_Shutters unlocked/poi; Update RVA 0x4B73C0; dimPOI 0x640E70; AssetStudio poi wired; SnapShutters pose-only | **SHIPPED** (rising-edge poi.dimPOI under NetGate on Bool0; SnapShutters retained; protocol 10) |
+
+Protocol stays **10** (reuse RES_Shutters Bool0 unlocked; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
 ## 0.5.47 — 2026-09-27
 
 Protocol **v10**. Batch 52 ship (Dig AB): MED_CardWriter sync partial `nodes[i].connected` + `remainingSteps` via Int0/Int1 so N-peer mid-trace / inserted card and late-join FullRefresh keep graph state, not only final Bool0 solved.
