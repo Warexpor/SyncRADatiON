@@ -381,8 +381,10 @@ namespace SyncRADation.Networking
             // Cabin floor/state must survive room remount.
             if (e.Type == PuzzleType.CentralElevator)
                 return true;
+            // Dig S: hold gate-active Bool0 even when solved weight is 0 so remount
+            // / late-join re-snaps MultiInteraction.SetActive(true).
             if (e.Type == PuzzleType.LAB_Waage)
-                return !Mathf.Approximately(e.Float0, 0f);
+                return e.Bool0 || !Mathf.Approximately(e.Float0, 0f);
             if (e.Type == PuzzleType.ROT_RadioAlignment)
                 return e.Bool0 || e.Int0 != 0 || e.Int1 != 0;
             // LAB_Rings: hold partial finger pack (Int0) so remount / late-join

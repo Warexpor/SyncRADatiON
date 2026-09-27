@@ -104,8 +104,16 @@ namespace SyncRADation.Networking
                 case PuzzleType.LAB_Waage:
                 {
                     var x = (LAB_Waage)c;
-                    // Weight only — content stays personal bag (Apply ignores Int0).
-                    entry = PuzzleDomainUtil.Mk(type, wid, false, false, false, 0, 0, 0, 0, x.weight);
+                    // Dig S: gate-active Bool0 + weight Float0. content stays personal
+                    // (independent inventories — never wire AnItem). Melon MultiInteraction
+                    // (GameObject @0x100) / weight (@0xD0) / content (@0x108).
+                    bool gate = false;
+                    try
+                    {
+                        gate = x.MultiInteraction != null && x.MultiInteraction.activeSelf;
+                    }
+                    catch { }
+                    entry = PuzzleDomainUtil.Mk(type, wid, gate, false, false, 0, 0, 0, 0, x.weight);
                     return true;
                 }
                 case PuzzleType.RES_Shrine:
@@ -729,10 +737,21 @@ namespace SyncRADation.Networking
 
         public static void ApplyWaage(LAB_Waage x, PuzzleStateEntry e)
         {
-            // Decompile LAB_Waage.weight/content — sync weight only.
-            // Writing InventoryManager.getItem onto the peer stomps independent bags (AGENTS).
+            // Dig S: weight pose + MultiInteraction gate. Native placeItem → delayedMulti
+            // → MultiInteraction.SetActive(true). Scene starts MultiInteraction inactive.
+            // Prior Apply weight-only → peers/late-join get scale pose but gameplay gate
+            // stays inactive (softlock). content (AnItem @0x108) stays unsynced —
+            // independent inventories (AGENTS). Protocol 10 reuse Bool0 gate + Float0 weight.
             if (x == null) return;
             x.weight = e.Float0;
+            if (!e.Bool0) return;
+            try
+            {
+                var gate = x.MultiInteraction;
+                if (gate != null && !gate.activeSelf)
+                    gate.SetActive(true);
+            }
+            catch { }
         }
 
         public static void ApplyShrine(RES_Shrine x, PuzzleStateEntry e)

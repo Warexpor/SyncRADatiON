@@ -242,6 +242,19 @@ namespace SyncRADation.Patches
         }
     }
 
+    // LAB_Waage: placeItem starts delayedMulti which SetActive(true) on MultiInteraction
+    // after a yield — native gate flag is still false at postfix time. EmitProgressed
+    // forces Bool0 so peers/late-join ApplyWaage activate the gate now (Dig S).
+    [HarmonyPatch(typeof(LAB_Waage), nameof(LAB_Waage.placeItem))]
+    public static class LabWaagePlacePatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(LAB_Waage __instance)
+        {
+            EnvEmit.Progressed(PuzzleType.LAB_Waage, __instance);
+        }
+    }
+
     [HarmonyPatch(typeof(LAB_PatternLock), nameof(LAB_PatternLock.toggleButton))]
     public static class PatternLockTogglePatch
     {

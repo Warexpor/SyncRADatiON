@@ -1,3 +1,22 @@
+## 0.5.38 — 2026-09-27
+
+Protocol **v10**. Batch 43 ship (Dig S): LAB_Waage sync MultiInteraction gate via Bool0 so peers + late-join FullRefresh get the gameplay gate, not only weight pose.
+
+### Fixed
+- **LAB_Waage TryRead/Apply weight-only — peers miss MultiInteraction gate** — TryRead always emitted Bool0=false and ApplyWaage only wrote `weight`. Native `placeItem` → `delayedMulti` → `MultiInteraction.SetActive(true)` (Melon `MultiInteraction` GameObject @0x100; scene starts inactive). Softlock: host places item → scale weight pose syncs, but peer/late-join MultiInteraction stays inactive → gameplay gate stuck. `content` (AnItem @0x108) correctly stays unsynced (independent inventories). Fix (Dig S): TryRead Bool0 = `MultiInteraction != null && activeSelf`; Apply sets weight then idempotently `SetActive(true)` when Bool0; IsProgressed = Bool0 || weight!=0 (latch survives remount even if solved weight is 0); `placeItem` postfix `EnvEmit.Progressed` forces Bool0 (delayedMulti coroutine still pending locally). Protocol 10 unchanged (reuse LAB_Waage Bool0 gate + Float0 weight; no new ushort).
+
+### Before → After (player)
+- **Before:** Host places an item on the LAB scale (`placeItem` → delayedMulti activates MultiInteraction). Peers / late-join FullRefresh get the weight pose only — MultiInteraction stays inactive, so the next gameplay gate never opens.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh apply weight and, when Bool0, idempotently `MultiInteraction.SetActive(true)`. Host `placeItem` emits Progressed (Bool0 forced) so peers unlock the gate without waiting for the host coroutine.
+
+### Dig S residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| TryRead Bool0 always false; Apply weight-only; no placeItem emit → peers miss MultiInteraction gate | Dig S: Melon weight@0xD0 / MultiInteraction@0x100 / content@0x108; placeItem→delayedMulti→SetActive(true); scene starts inactive; IsProgressed was weight-only | **SHIPPED** (Bool0 gate read/apply; IsProgressed Bool0\|\|weight; placeItem Progressed; content unsynced; protocol 10 Bool0/Float0 reuse) |
+
+Protocol stays **10** (reuse LAB_Waage Bool0 gate-active + Float0 weight; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
 ## 0.5.37 — 2026-09-27
 
 Protocol **v10**. Batch 42 ship (Dig R): RES_MusicBox ApplyMusicBox rising-edge `onSuccess` so peers + late-join FullRefresh get minimap `dimPOI`, not only SnapMusicBox opened pose.
