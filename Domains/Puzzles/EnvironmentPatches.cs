@@ -126,6 +126,15 @@ namespace SyncRADation.Patches
                 else Read(PuzzleType.ROT_Mural, x);
             }
 
+            public static void Reaktor(PEN_Reaktor x)
+            {
+                if (x == null) return;
+                bool ok = false;
+                try { ok = x.solved; } catch { }
+                if (ok) Progressed(PuzzleType.PEN_Reaktor, x);
+                else Read(PuzzleType.PEN_Reaktor, x);
+            }
+
             public static void CardWriter(MED_CardWriter x)
             {
                 if (x == null) return;
@@ -294,6 +303,19 @@ namespace SyncRADation.Patches
             }
             catch { }
         }
+    }
+
+    // PEN_Reaktor: emit mid-rod positions pack on Update (Int0 + Int1 current),
+    // Progressed on solve. Native Update (RVA 0x537C80) mutates positions[current]
+    // Clamp 0..4 then derives values/Dvalue/Dtemp/total — patch so peers see mid
+    // rods without waiting for Tick (Dig AG). IsProgressed holds Bool0||Bool1||
+    // Int0!=0||Int1!=0 across remount (initial pack 736≠0 from load). Existing
+    // Dig Q Bool0 onSuccess+SnapReaktor rising-edge stays; win Progressed retained.
+    [HarmonyPatch(typeof(PEN_Reaktor), "Update")]
+    public static class PenReaktorUpdatePatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(PEN_Reaktor __instance) => EnvEmit.Reaktor(__instance);
     }
 
     [HarmonyPatch(typeof(PEN_Reaktor), "win")]

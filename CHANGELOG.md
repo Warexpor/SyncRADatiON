@@ -1,3 +1,22 @@
+## 0.5.52 — 2026-09-27
+
+Protocol **v10**. Batch 57 ship (Dig AG): PEN_Reaktor sync mid-rod positions via Int0 4×3-bit pack so N-peer remount / late-join keep unsolved rod moves, not only final Bool0 solved.
+
+### Fixed
+- **PEN_Reaktor TryRead/Apply mid-fidelity is derived-only — durable state is positions[4]** — Prior TryRead packed current/Dvalue/Dtemp/total → Int0–3 + Bool0=solved + Bool1=valid; ApplyReaktor wrote those ints then early-returned if !Bool0 (Dig Q onSuccess only on Bool0); IsProgressed ProgressedBool0 only; EnvEmit only on win. Native Update RVA 0x537C80 mutates `positions[current]` Clamp 0..4 then derives `values`/`Dvalue`/`Dtemp`/`total` from positions every frame — Apply of derived ints alone cannot stick. AssetStudio positions initial **[0,4,3,1]**. Softlock: host moves reactor rods mid-solve → peers / remount / late-join snap rods back to spawn (or ignore mid) until Bool0 solved fires Dig Q. Dig Q (0.5.36) Bool0 onSuccess+SnapReaktor rising-edge BOTH-PATH must stay intact. Fix (Dig AG, mirror DET_ServiceLock / FloodControls bitpack + DialLock 0.5.46 / Mural 0.5.51 mid-hold): Pack `positions[0..3]` → Int0 as 4×3-bit (0..4); Int1=`current`; Bool0/Bool1 retained; Int2/Int3 unused/0; Apply when !Bool0 unpack positions + current (+valid), Dig Q Bool0 path unchanged; IsProgressed = Bool0 || Bool1 || Int0!=0 || Int1!=0 (remove PEN_Reaktor from ProgressedBool0; initial pack 736≠0 holds from load); EnvEmit Postfix `PEN_Reaktor.Update` (Read mid / Progressed solved; keep win Progressed). Prefer letting Update lerp Rods from positions (no Rods snap). Protocol 10 unchanged (reuse PEN_Reaktor Bool0/Bool1/Int0–1 wire meaning of Ints changes — both boxes dual-deploy together; no new ushort).
+
+### Before → After (player)
+- **Before:** Host moves reactor rods mid-solve. Peers receive derived current/Dvalue/Dtemp/total that native Update overwrites from local positions every frame — remount / late-join mid rods do not stick; only Bool0 solved fires Dig Q onSuccess / door markers.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh keep the Int0 positions pack + Int1 current. IsProgressed holds mid rods (Bool0 || Bool1 || Int0!=0 || Int1!=0) across remount; Update EnvEmit pushes mid moves; Apply unpacks positions and lets native Update derive/lerp Rods; Dig Q Bool0 onSuccess+SnapReaktor rising-edge BOTH-PATH retained as before.
+
+### Dig AG residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| TryRead/Apply packed derived Dvalue/Dtemp/total; IsProgressed Bool0-only; EnvEmit win-only → mid rods cannot stick | Dig AG: Melon PEN_Reaktor positions/current/values/Dvalue/Dtemp/total/Rods/valid/solved; Update RVA 0x537C80 Clamp positions[current] 0..4 then derive; AssetStudio [0,4,3,1]→Int0=736; Dig Q Bool0 onSuccess+SnapReaktor; ProgressedBool0 fallthrough | **SHIPPED** (Int0 4×3-bit positions + Int1 current; IsProgressed Bool0\|\|Bool1\|\|Int0!=0\|\|Int1!=0; remove ProgressedBool0; Update EnvEmit; Apply unpack + Dig Q Bool0 retained; protocol 10) |
+
+Protocol stays **10** (reuse PEN_Reaktor Bool0 solved + Bool1 valid + Int0 positions pack + Int1 current; wire meaning of Ints changes — dual-deploy together; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
 ## 0.5.51 — 2026-09-27
 
 Protocol **v10**. Batch 56 ship (Dig AF): ROT_Mural IsProgressed holds mid-moon Pos pack (Int0–Int3) so N-peer remount / late-join keep unsolved moon turns, not only final Bool0 finished.

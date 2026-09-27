@@ -302,7 +302,7 @@ namespace SyncRADation.Networking
                 PuzzleType.RES_Shutters,
                 PuzzleType.ROT_Pipes,
                 PuzzleType.ROT_Magpie,
-                PuzzleType.PEN_Reaktor,
+                // PEN_Reaktor: Dig AG — IsProgressed Bool0||Bool1||Int0!=0||Int1!=0
                 PuzzleType.DET_ServiceLock,
                 PuzzleType.EXC_Seilbahn,
                 PuzzleType.EXC_Hatch,

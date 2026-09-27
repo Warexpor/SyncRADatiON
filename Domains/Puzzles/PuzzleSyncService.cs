@@ -442,6 +442,12 @@ namespace SyncRADation.Networking
             // always carries the moon pack (Dig AF).
             if (e.Type == PuzzleType.ROT_Mural)
                 return e.Bool0 || e.Bool1 || e.Int0 != 0 || e.Int1 != 0 || e.Int2 != 0 || e.Int3 != 0;
+            // PEN_Reaktor: hold mid-rod positions pack (Int0) + current (Int1) so
+            // remount / late-join re-snaps unsolved rod moves, not only final Bool0
+            // solved. Initial AssetStudio positions [0,4,3,1] → Int0=736≠0 from load
+            // — intentional FullRefresh carry (Dig AG).
+            if (e.Type == PuzzleType.PEN_Reaktor)
+                return e.Bool0 || e.Bool1 || e.Int0 != 0 || e.Int1 != 0;
             return ProgressedBool0.Contains(e.Type) && e.Bool0;
         }
 

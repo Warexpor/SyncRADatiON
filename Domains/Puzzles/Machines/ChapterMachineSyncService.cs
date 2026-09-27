@@ -43,8 +43,16 @@ namespace SyncRADation.Networking
                 case PuzzleType.PEN_Reaktor:
                 {
                     var x = (PEN_Reaktor)c;
-                    // Mid-fidelity: current / Dvalue / Dtemp / total fit existing Int slots.
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.solved, x.valid, false, x.current, x.Dvalue, x.Dtemp, x.total, 0);
+                    // Dig AG: durable mid-state is positions[4] (0..4) + current.
+                    // Pack positions[0..3] → Int0 as 4×3-bit (mirror DET_ServiceLock);
+                    // Int1=current; Bool0=solved; Bool1=valid. Int2/Int3 unused.
+                    // Derived Dvalue/Dtemp/total/values recomputed by native Update from
+                    // positions — packing them alone cannot stick. Initial AssetStudio
+                    // positions [0,4,3,1] → Int0=736≠0 so IsProgressed holds from load.
+                    int pack = 0, cur = 0;
+                    try { pack = PackReaktorPositions(x); } catch { }
+                    try { cur = x.current; } catch { }
+                    entry = PuzzleDomainUtil.Mk(type, wid, x.solved, x.valid, false, pack, cur, 0, 0, 0);
                     return true;
                 }
                 case PuzzleType.LAB_Rings:
@@ -429,13 +437,15 @@ namespace SyncRADation.Networking
             // Mirror RES_Shrine / DoorLockEvent rising-edge: Invoke on BOTH live
             // MutateWorld AND FullRefresh (idempotent SetActive final-pose; no separate
             // onLoad). Protocol 10 unchanged (reuse PEN_Reaktor Bool0 solved).
+            // Dig AG: wire Int0 = positions[0..3] 4×3-bit pack; Int1 = current.
+            // Derived Dvalue/Dtemp/total are NOT written — native Update recomputes
+            // them from positions every frame. Prefer letting Update lerp Rods.
             bool was = false;
             try { was = x.solved; } catch { }
             try { x.valid = e.Bool1; } catch { }
-            try { x.current = e.Int0; } catch { }
-            try { x.Dvalue = e.Int1; } catch { }
-            try { x.Dtemp = e.Int2; } catch { }
-            try { x.total = e.Int3; } catch { }
+            int pack = SanitizeReaktorPack(e.Int0);
+            ApplyReaktorPositions(x, pack);
+            try { x.current = e.Int1; } catch { }
             if (!e.Bool0) return;
             if (!was)
             {
@@ -453,6 +463,66 @@ namespace SyncRADation.Networking
                 catch { }
                 finally { NetGate.EndApply(); }
             }
+        }
+
+        /// <summary>Pos0 bits0-2, Pos1 3-5, Pos2 6-8, Pos3 9-11 (values 0..4).</summary>
+        static int PackReaktorPositions(PEN_Reaktor x)
+        {
+            int pack = 0;
+            try
+            {
+                var positions = x.positions;
+                if (positions == null) return 0;
+                int n = positions.Length;
+                if (n > 4) n = 4;
+                for (int i = 0; i < n; i++)
+                {
+                    int v = positions[i];
+                    if (v < 0) v = 0;
+                    if (v > 4) v = 4;
+                    pack |= (v & 7) << (i * 3);
+                }
+            }
+            catch { }
+            return pack;
+        }
+
+        static int SanitizeReaktorPack(int packed)
+        {
+            // 3-bit mask per rod — clamp to 0..4 (native Update Clamp).
+            int p0 = packed & 7;
+            int p1 = (packed >> 3) & 7;
+            int p2 = (packed >> 6) & 7;
+            int p3 = (packed >> 9) & 7;
+            if (p0 > 4) p0 = 4;
+            if (p1 > 4) p1 = 4;
+            if (p2 > 4) p2 = 4;
+            if (p3 > 4) p3 = 4;
+            return p0 | (p1 << 3) | (p2 << 6) | (p3 << 9);
+        }
+
+        static void ApplyReaktorPositions(PEN_Reaktor x, int pack)
+        {
+            if (x == null) return;
+            try
+            {
+                var positions = x.positions;
+                if (positions == null) return;
+                int n = positions.Length;
+                if (n > 4) n = 4;
+                for (int i = 0; i < n; i++)
+                {
+                    int v = (pack >> (i * 3)) & 7;
+                    if (v > 4) v = 4;
+                    int cur = 0;
+                    try { cur = positions[i]; } catch { }
+                    if (cur == v && PuzzleSyncService.MutateWorld) continue;
+                    try { positions[i] = v; } catch { }
+                }
+                // Prefer native Update lerp of Rods from positions (Dig AG) —
+                // no Rods pose snap under NetGate.
+            }
+            catch { }
         }
 
         public static void ApplyLabRings(LAB_Rings x, PuzzleStateEntry e)
