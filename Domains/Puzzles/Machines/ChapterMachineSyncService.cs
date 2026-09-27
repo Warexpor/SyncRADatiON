@@ -273,13 +273,40 @@ namespace SyncRADation.Networking
         public static void ApplyReaktor(PEN_Reaktor x, PuzzleStateEntry e)
         {
             if (x == null) return;
+            // Rising-edge onSuccess (Dig Q): Melon solved / doorLock / onSuccess / _event.
+            // Native Update sets solved then starts win; win.MoveNext Invokes onSuccess
+            // then unlocks. Prior ApplyReaktor applied mid fields + SnapReaktor (solved,
+            // unlock doorLock/plates, disable _event) — never Invoked onSuccess. Asset
+            // onSuccess → Popup.SetActive(true); E Door Spot Blocked.SetActive(false);
+            // E Door Spot.SetActive(true). Peers/late-join: red blocked marker stays,
+            // green success marker/popup missing (door unlock already covered by Snap).
+            // Mirror RES_Shrine / DoorLockEvent rising-edge: Invoke on BOTH live
+            // MutateWorld AND FullRefresh (idempotent SetActive final-pose; no separate
+            // onLoad). Protocol 10 unchanged (reuse PEN_Reaktor Bool0 solved).
+            bool was = false;
+            try { was = x.solved; } catch { }
             try { x.valid = e.Bool1; } catch { }
             try { x.current = e.Int0; } catch { }
             try { x.Dvalue = e.Int1; } catch { }
             try { x.Dtemp = e.Int2; } catch { }
             try { x.total = e.Int3; } catch { }
-            if (e.Bool0)
-                SnapReaktor(x);
+            if (!e.Bool0) return;
+            if (!was)
+            {
+                NetGate.BeginApply();
+                try
+                {
+                    try
+                    {
+                        if (x.onSuccess != null)
+                            x.onSuccess.Invoke();
+                    }
+                    catch { }
+                    SnapReaktor(x);
+                }
+                catch { }
+                finally { NetGate.EndApply(); }
+            }
         }
 
         public static void ApplyLabRings(LAB_Rings x, PuzzleStateEntry e)

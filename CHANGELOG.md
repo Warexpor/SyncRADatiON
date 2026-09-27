@@ -1,3 +1,22 @@
+## 0.5.36 — 2026-09-27
+
+Protocol **v10**. Batch 41 ship (Dig Q): PEN_Reaktor ApplyReaktor rising-edge `onSuccess` so peers + late-join FullRefresh get Popup / door-spot markers (red blocked → green success), not only SnapReaktor door unlock.
+
+### Fixed
+- **ApplyReaktor SnapReaktor-only — peers miss onSuccess Popup / door-spot markers** — ApplyReaktor applied mid fields (`valid`/`current`/`Dvalue`/`Dtemp`/`total`) then `SnapReaktor` (latch `solved`, unlock `doorLock` / InteractiveLockSingle plates, disable `_event`). Never Invoked `onSuccess`. Native Update sets `solved` then starts `win`; `win.MoveNext` Invokes `onSuccess` then unlocks. Asset `onSuccess` → `Popup.SetActive(true)`; `E Door Spot Blocked.SetActive(false)`; `E Door Spot.SetActive(true)`. Softlock: host solves → peers latch solved + unlock doors but red blocked marker stays, green success marker / popup missing. Late-join FullRefresh same. Melon fields `solved` / `doorLock` / `onSuccess` / `_event` verified (`onSuccess` camelCase). Fix (Dig Q, mirror RES_Shrine 0.5.35 / DoorLockEvent 0.5.31 rising-edge both-path): capture `was=solved`; apply mid fields; if `!e.Bool0` return; if `!was` → BeginApply + `onSuccess.Invoke()` once + `SnapReaktor` for both MutateWorld and FullRefresh (idempotent SetActive final-pose; no separate onLoad). Existing SnapReaktor lock/plates/`_event` unlock logic retained. Protocol 10 unchanged (reuse PEN_Reaktor Bool0 solved + Bool1 valid + Int0..3; no new ushort).
+
+### Before → After (player)
+- **Before:** Host solves the PEN reactor (`win` → onSuccess popup + green door spot, unlock). Peers / late-join FullRefresh SnapReaktor unlock doors and disable `_event`, but never Invoke `onSuccess` — red blocked marker stays, green success marker / Popup missing.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh on false→true `solved` edge BeginApply-Invokes `onSuccess` (Popup on, blocked spot off, success spot on) then SnapReaktor (door unlock / plates / `_event` disable) as before.
+
+### Dig Q residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| ApplyReaktor fields+SnapReaktor only; never Invokes onSuccess → peers miss Popup / E Door Spot markers | Dig Q: ApplyReaktor Snap-only; Melon solved/doorLock/onSuccess/_event; native Update→win.MoveNext onSuccess then unlock; Asset onSuccess=Popup+door spots; RES_Shrine/DoorLockEvent rising-edge | **SHIPPED** (!was onSuccess+SnapReaktor both paths; Snap unlock retained; protocol 10 Bool0 reuse) |
+
+Protocol stays **10** (reuse PEN_Reaktor Bool0 solved + Bool1 valid + Int0..3 mid-fidelity; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
 ## 0.5.35 — 2026-09-27
 
 Protocol **v10**. Batch 40 ship (Dig P): RES_Shrine ApplyShrine final-pose (doors / content / onSuccess) so peers + late-join FullRefresh latch the released shrine pose instead of sticky-solved softlock.
