@@ -1,3 +1,22 @@
+## 0.5.42 — 2026-09-27
+
+Protocol **v10**. Batch 47 ship (Dig W): MED_Incinerator hold mid-dial A/B/C via IsProgressed so N-peer remount / late-join keep unsolved dial state, not only final Bool0 solved.
+
+### Fixed
+- **MED_Incinerator IsProgressed Bool0-only — remount / late-join drop mid-dial** — TryRead/Apply already sync `solved` + `A`/`B`/`C` (Bool0, Int0–Int2); IsProgressed fell through ProgressedBool0 (Bool0 only) so unsolved dial changes were sent live but never held across remount. Native durable dial state: `A`/`B`/`C` ints (AssetStudio / Melon initial **10/10/10**), mutated by `plusA`/`plusB`/`plusC`/`minusA`/`minusB`/`minusC` then `SetGuide`; solve via `StartShutdown`. Softlock: host turns incinerator dials mid-solve → remount / late-join snap back to 10/10/10 until Bool0 solve. Fix (Dig W, mirror ServiceLock 0.5.39 / FloodControls 0.5.40 / KeyGrid 0.5.41 mid-hold): IsProgressed = Bool0 || Int0!=10 || Int1!=10 || Int2!=10; EnvEmit on plus/minus/StartShutdown (Read mid / Progressed solved). Existing ApplyIncinerator paths stay. Protocol 10 unchanged (reuse MED_Incinerator Bool0 solved + Int0–Int2 dials; no new ushort).
+
+### Before → After (player)
+- **Before:** Host turns incinerator dials mid-solve. Peers may see live Int0–Int2 briefly, but remount / late-join FullRefresh re-snap to initial A=B=C=10 — mid-dial state is not held until final Bool0 solve snap.
+- **After:** IsProgressed holds mid-dial (any A/B/C ≠ 10) across remount; plus/minus emit so Progressed/Read latch immediately. Bool0 solved still StartShutdown / unlock doors as before.
+
+### Dig W residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| IsProgressed Bool0-only; no dial emit → remount / late-join drop mid-dial A/B/C | Dig W: TryRead/Apply already Bool0+Int0–2; Melon plus/minus/StartShutdown; AssetStudio A=B=C=10; ProgressedBool0 fallthrough | **SHIPPED** (IsProgressed Bool0\|\|Int!=10; plus/minus/StartShutdown EnvEmit; Apply retained; protocol 10) |
+
+Protocol stays **10** (reuse MED_Incinerator Bool0 solved + Int0–Int2 A/B/C; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
 ## 0.5.41 — 2026-09-27
 
 Protocol **v10**. Batch 46 ship (Dig V): MED_KeyGrid sync partial `nodes[i].connected` via Int0 so N-peer mid-node draws and late-join FullRefresh see GridSprite line state, not only final static solved.

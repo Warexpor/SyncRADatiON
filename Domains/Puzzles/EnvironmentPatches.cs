@@ -44,6 +44,15 @@ namespace SyncRADation.Patches
                 else Read(PuzzleType.DET_ServiceLock, x);
             }
 
+            public static void Incinerator(MED_Incinerator x)
+            {
+                if (x == null) return;
+                bool ok = false;
+                try { ok = x.solved; } catch { }
+                if (ok) Progressed(PuzzleType.MED_Incinerator, x);
+                else Read(PuzzleType.MED_Incinerator, x);
+            }
+
             static void Send(PuzzleType type, Component c, bool progressed)
             {
                 if (c == null || NetGate.IsApplying) return;
@@ -201,6 +210,59 @@ namespace SyncRADation.Patches
         {
             EnvEmit.ServiceLock(__instance);
         }
+    }
+
+    // MED_Incinerator: emit mid-dial A/B/C on plus/minus (Int0–Int2), Progressed on solve.
+    // Native dial buttons mutate A/B/C then SetGuide — patch plus/minus so peers see
+    // mid-dial without waiting for Tick (Dig W). Initial A=B=C=10; IsProgressed holds
+    // any departure. StartShutdown still Progressed when native latches solved.
+    [HarmonyPatch(typeof(MED_Incinerator), nameof(MED_Incinerator.plusA))]
+    public static class MedIncineratorPlusAPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(MED_Incinerator __instance) => EnvEmit.Incinerator(__instance);
+    }
+
+    [HarmonyPatch(typeof(MED_Incinerator), nameof(MED_Incinerator.plusB))]
+    public static class MedIncineratorPlusBPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(MED_Incinerator __instance) => EnvEmit.Incinerator(__instance);
+    }
+
+    [HarmonyPatch(typeof(MED_Incinerator), nameof(MED_Incinerator.plusC))]
+    public static class MedIncineratorPlusCPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(MED_Incinerator __instance) => EnvEmit.Incinerator(__instance);
+    }
+
+    [HarmonyPatch(typeof(MED_Incinerator), nameof(MED_Incinerator.minusA))]
+    public static class MedIncineratorMinusAPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(MED_Incinerator __instance) => EnvEmit.Incinerator(__instance);
+    }
+
+    [HarmonyPatch(typeof(MED_Incinerator), nameof(MED_Incinerator.minusB))]
+    public static class MedIncineratorMinusBPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(MED_Incinerator __instance) => EnvEmit.Incinerator(__instance);
+    }
+
+    [HarmonyPatch(typeof(MED_Incinerator), nameof(MED_Incinerator.minusC))]
+    public static class MedIncineratorMinusCPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(MED_Incinerator __instance) => EnvEmit.Incinerator(__instance);
+    }
+
+    [HarmonyPatch(typeof(MED_Incinerator), nameof(MED_Incinerator.StartShutdown))]
+    public static class MedIncineratorStartShutdownPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(MED_Incinerator __instance) => EnvEmit.Incinerator(__instance);
     }
 
     [HarmonyPatch(typeof(ROT_MeatBlocker), nameof(ROT_MeatBlocker.pickup))]

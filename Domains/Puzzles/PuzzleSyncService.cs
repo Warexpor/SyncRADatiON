@@ -403,6 +403,10 @@ namespace SyncRADation.Networking
             // late-join re-snaps mid-node state, including all-zero Int0 packs.
             if (e.Type == PuzzleType.MED_KeyGrid)
                 return e.Bool0 || e.Int1 != 0;
+            // MED_Incinerator: hold mid-dial A/B/C (initial 10/10/10) so remount /
+            // late-join re-snaps unsolved dial changes, not only final Bool0 solved.
+            if (e.Type == PuzzleType.MED_Incinerator)
+                return e.Bool0 || e.Int0 != 10 || e.Int1 != 10 || e.Int2 != 10;
             return ProgressedBool0.Contains(e.Type) && e.Bool0;
         }
 
