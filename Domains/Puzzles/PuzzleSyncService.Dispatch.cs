@@ -394,7 +394,6 @@ namespace SyncRADation.Networking
                 PuzzleType.RadioStationTutorial,
                 PuzzleType.RES_Power,
                 PuzzleType.MED_Incinerator,
-                PuzzleType.RES_Shrine,
                 PuzzleType.ROT_Tarot,
                 PuzzleType.MultiConditionEvent,
                 PuzzleType.CutsceneCompleted,

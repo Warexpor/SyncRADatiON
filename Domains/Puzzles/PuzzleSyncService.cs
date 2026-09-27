@@ -432,6 +432,10 @@ namespace SyncRADation.Networking
             // re-snaps unsolved transfers, not only final Bool0 solved.
             if (e.Type == PuzzleType.MED_Pump)
                 return e.Bool0 || e.Int0 != 12 || e.Int1 != 0 || e.Int2 != 0;
+            // RES_Shrine: hold mid-dial big/mid/small (initial 0/0/0) so remount /
+            // late-join re-snaps unsolved plate turns, not only final Bool0 solved.
+            if (e.Type == PuzzleType.RES_Shrine)
+                return e.Bool0 || e.Int0 != 0 || e.Int1 != 0 || e.Int2 != 0;
             return ProgressedBool0.Contains(e.Type) && e.Bool0;
         }
 

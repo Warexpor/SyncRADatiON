@@ -912,7 +912,17 @@ namespace SyncRADation.Networking
             try { was = x.solved; } catch { }
             x.solved = e.Bool0; x.busy = e.Bool1;
             x.big = e.Int0; x.mid = e.Int1; x.small = e.Int2;
-            if (!e.Bool0) return;
+            // Dig AE: mid plate visual snap when !Bool0 so remount / late-join show
+            // unsolved big/mid/small without waiting for Update setWheel lerp
+            // (pos*60°; Melon setWheel Private→Public). Bool0 final-pose path unchanged.
+            if (!e.Bool0)
+            {
+                NetGate.BeginApply();
+                try { SnapShrineMidWheels(x, e.Int0, e.Int1, e.Int2); }
+                catch { }
+                finally { NetGate.EndApply(); }
+                return;
+            }
             if (!was)
             {
                 NetGate.BeginApply();
@@ -930,6 +940,40 @@ namespace SyncRADation.Networking
                 finally { NetGate.EndApply(); }
             }
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
+        }
+
+        /// <summary>
+        /// Dig AE mid-hold visual: force bigX/midX/smallX = pos*60 and setWheel so
+        /// remount shows plate pose immediately (Update also lerps the same formula).
+        /// </summary>
+        static void SnapShrineMidWheels(RES_Shrine x, int big, int mid, int small)
+        {
+            if (x == null) return;
+            const float step = 60f;
+            try
+            {
+                float t = big * step;
+                x.bigX = t;
+                if (x.outside != null)
+                    x.setWheel(x.outside, big, t);
+            }
+            catch { }
+            try
+            {
+                float t = mid * step;
+                x.midX = t;
+                if (x.middle != null)
+                    x.setWheel(x.middle, mid, t);
+            }
+            catch { }
+            try
+            {
+                float t = small * step;
+                x.smallX = t;
+                if (x.inside != null)
+                    x.setWheel(x.inside, small, t);
+            }
+            catch { }
         }
 
         /// <summary>

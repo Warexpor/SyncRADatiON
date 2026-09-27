@@ -1,3 +1,22 @@
+## 0.5.50 — 2026-09-27
+
+Protocol **v10**. Batch 55 ship (Dig AE): RES_Shrine IsProgressed holds mid-dial big/mid/small (Int0–Int2) so N-peer remount / late-join keep unsolved plate turns, not only final Bool0 solved.
+
+### Fixed
+- **RES_Shrine IsProgressed Bool0-only — remount / late-join drop mid-dials** — TryRead already packs `big`/`mid`/`small` → Int0/Int1/Int2 + Bool0=solved; ApplyShrine already writes Ints then early-returns if !Bool0 for Dig P final-pose; IsProgressed fell through ProgressedBool0 (Bool0 only) so unsolved plate turns were sent live but never held across remount. EnvironmentPatches had no TurnLeft/TurnRight EnvEmit. Native durable state: `big`/`mid`/`small` ints (AssetStudio / Melon initial **0/0/0**, answers **4/5/2**), mutated by `TurnLeft(int)` / `TurnRight(int)` (RVA 0x4B6DB0 / 0x4B6E80) then CheckSolve; Update (0x4B6F50) lerps via setWheel(pos×60°). Softlock: host turns shrine plates mid-solve → remount / late-join snap back to 0/0/0 until Bool0 solve — mid plate pose resets. Fix (Dig AE, mirror DialLock 0.5.46 / Incinerator 0.5.42 / EvidenceLocker 0.5.49 mid-hold): IsProgressed = Bool0 || Int0!=0 || Int1!=0 || Int2!=0 (remove RES_Shrine from ProgressedBool0); EnvEmit Postfix `RES_Shrine.TurnLeft(int)` / `TurnRight(int)` (Read mid / Progressed solved); ApplyShrine when !Bool0 snaps setWheel under NetGate (bigX/midX/smallX = pos×60); Dig P Bool0 onSuccess / SnapShrineFinalPose / doors retained. Protocol 10 unchanged (reuse RES_Shrine Bool0/Bool1/Int0–2; no new ushort).
+
+### Before → After (player)
+- **Before:** Host turns shrine plates mid-solve. Live peers may see Int0–2 leave the host, but remount / late-join FullRefresh never re-holds unsolved mid-dials — plates snap back to 0/0/0 until Bool0 solve opens doors/content.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh keep the Int0–2 plate pack. IsProgressed holds mid-dials (Bool0 || Int0!=0 || Int1!=0 || Int2!=0) across remount; TurnLeft/TurnRight EnvEmit pushes mid-turns; Apply snaps setWheel visuals; Bool0 solved still final-poses onSuccess/doors/content as before (Dig P).
+
+### Dig AE residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| IsProgressed Bool0-only; no TurnLeft/TurnRight EnvEmit; Apply mid ints without setWheel snap → remount / late-join drop mid-dials | Dig AE: Melon RES_Shrine big/mid/small/bigX/midX/smallX/outside/middle/inside/setWheel; TurnLeft RVA 0x4B6DB0; TurnRight RVA 0x4B6E80; Update RVA 0x4B6F50 → setWheel pos×60; answers 4/5/2; initial 0/0/0; ProgressedBool0 fallthrough; Dig P Bool0 final-pose intact | **SHIPPED** (IsProgressed Bool0\|\|Int0!=0\|\|Int1!=0\|\|Int2!=0; remove ProgressedBool0; TurnLeft/TurnRight EnvEmit; Apply mid setWheel snap under NetGate; Dig P Bool0 path retained; protocol 10) |
+
+Protocol stays **10** (reuse RES_Shrine Bool0 solved + Bool1 busy + Int0–2 plates; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
 ## 0.5.49 — 2026-09-27
 
 Protocol **v10**. Batch 54 ship (Dig AD): EvidenceLocker IsProgressed holds mid-button `states` pack (Int0/Int1) so N-peer remount / late-join keep unsolved button presses, not only final Bool0 solved.

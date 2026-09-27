@@ -108,6 +108,15 @@ namespace SyncRADation.Patches
                 else Read(PuzzleType.EvidenceLockerPuzzle, x);
             }
 
+            public static void Shrine(RES_Shrine x)
+            {
+                if (x == null) return;
+                bool ok = false;
+                try { ok = x.solved; } catch { }
+                if (ok) Progressed(PuzzleType.RES_Shrine, x);
+                else Read(PuzzleType.RES_Shrine, x);
+            }
+
             public static void CardWriter(MED_CardWriter x)
             {
                 if (x == null) return;
@@ -467,6 +476,25 @@ namespace SyncRADation.Patches
     {
         [HarmonyPostfix]
         public static void Postfix(EvidenceLockerLogicPuzzle __instance) => EnvEmit.EvidenceLocker(__instance);
+    }
+
+    // RES_Shrine: emit mid-dial big/mid/small on TurnLeft/TurnRight (Int0–Int2),
+    // Progressed on solve. Native TurnLeft/TurnRight mutate plate ints then CheckSolve
+    // — patch so peers see mid-dial without waiting for Tick (Dig AE). IsProgressed
+    // holds Bool0 || Int0!=0 || Int1!=0 || Int2!=0 across remount (initial 0/0/0).
+    // Existing ApplyShrine Dig P Bool0 final-pose / onSuccess / doors stay.
+    [HarmonyPatch(typeof(RES_Shrine), nameof(RES_Shrine.TurnLeft), new System.Type[] { typeof(int) })]
+    public static class ResShrineTurnLeftPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(RES_Shrine __instance) => EnvEmit.Shrine(__instance);
+    }
+
+    [HarmonyPatch(typeof(RES_Shrine), nameof(RES_Shrine.TurnRight), new System.Type[] { typeof(int) })]
+    public static class ResShrineTurnRightPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(RES_Shrine __instance) => EnvEmit.Shrine(__instance);
     }
 
     [HarmonyPatch(typeof(ROT_MeatBlocker), nameof(ROT_MeatBlocker.pickup))]
