@@ -1,3 +1,22 @@
+## 0.5.31 — 2026-09-27
+
+Protocol **v10**. Batch 36 ship (Dig L): DoorLockEventInteraction ApplyDoorLockEvent rising-edge `onSolved` so DoorLockEvent GO SetActive(false) fires for live peers **and** late-join FullRefresh (LoadState ≡ onSolved; no onLoad).
+
+### Fixed
+- **ApplyDoorLockEvent only latches done — never Invokes onSolved** — ApplyDoorLockEvent (~406–409) only latched `done`. Melon fields `done` / `onSolved` verified (camelCase); **no** `onLoad` UnityEvent. Native LoadState and solved path both Invoke `onSolved`. Asset DET: `onSolved` → `SetActive(false)` on DoorLockEvent GO. Softlock: Host solves → peer `done=true` but DoorLockEvent GO stays active. Fix (Dig L): capture `was=done`; latch done; if `!e.Bool0` return; if `!was` → BeginApply + `onSolved.Invoke()`. Both live MutateWorld and FullRefresh use `onSolved` (LoadState ≡ onSolved). Optional `Door.SetActive(true)` deferred (Dig L optional soak). Protocol 10 unchanged (no new ushort).
+
+### Before → After (player)
+- **Before:** Host solves a DoorLockEvent. Live peer latches `done=true`, but the DoorLockEvent GO stays active (onSolved never Invoked) — softlock stuck on the lock UI / interaction.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh on false→true `done` edge BeginApply-Invokes `onSolved` (DoorLockEvent GO SetActive(false)).
+
+### Dig L residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| ApplyDoorLockEvent latch-only; peer skips onSolved → DoorLockEvent GO stays active | Dig L: ApplyDoorLockEvent ~406–409; Melon done/onSolved (no onLoad); native LoadState + solved both Invoke onSolved; Asset DET onSolved = SetActive(false); LoadState ≡ onSolved so FullRefresh also Invokes | **SHIPPED** (!was onSolved for both MutateWorld and FullRefresh; Door.SetActive optional soak deferred) |
+
+Protocol stays **10** (reuse DoorLockEvent Bool0 done; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
 ## 0.5.30 — 2026-09-27
 
 Protocol **v10**. Batch 35 ship (Dig K #2 / Dig J #5): LAB_PatternLock ApplyPatternLock rising-edge `onSolved` so exitEvent + Play/SetActive fire for live peers (EventScreen dismiss).

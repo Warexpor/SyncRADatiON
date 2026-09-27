@@ -405,7 +405,32 @@ namespace SyncRADation.Networking
 
         public static void ApplyDoorLockEvent(DoorLockEventInteraction x, PuzzleStateEntry e)
         {
-            if (x != null) x.done = e.Bool0;
+            if (x == null) return;
+            // Rising-edge onSolved: Melon done + onSolved (no onLoad). Native LoadState
+            // and solved path both Invoke onSolved. Asset DET: onSolved → SetActive(false)
+            // on DoorLockEvent GO. Prior ApplyDoorLockEvent (~406–409) only latched done
+            // — never Invoked onSolved → host solves, peer done=true but DoorLockEvent GO
+            // stays active (softlock). Dig L: LoadState ≡ onSolved — both live MutateWorld
+            // and FullRefresh use onSolved (no separate onLoad soak). Optional
+            // Door.SetActive(true) deferred (Dig L optional soak). Mirror ApplyPatternLock
+            // 0.5.30 / ApplyMural 0.5.26 rising-edge, but Invoke on BOTH paths:
+            // capture was=done; latch done; if !e.Bool0 return; if !was → BeginApply +
+            // onSolved.Invoke(). Protocol 10 unchanged (reuse DoorLockEvent Bool0 done).
+            bool was = false;
+            try { was = x.done; } catch { }
+            x.done = e.Bool0;
+            if (!e.Bool0) return;
+            if (!was)
+            {
+                NetGate.BeginApply();
+                try
+                {
+                    if (x.onSolved != null)
+                        x.onSolved.Invoke();
+                }
+                catch { }
+                finally { NetGate.EndApply(); }
+            }
         }
 
         public static void ApplyBiodome(BiodomeDoorLock x, PuzzleStateEntry e)
