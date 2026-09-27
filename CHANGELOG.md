@@ -1,3 +1,22 @@
+## 0.5.37 — 2026-09-27
+
+Protocol **v10**. Batch 42 ship (Dig R): RES_MusicBox ApplyMusicBox rising-edge `onSuccess` so peers + late-join FullRefresh get minimap `dimPOI`, not only SnapMusicBox opened pose.
+
+### Fixed
+- **ApplyMusicBox SnapMusicBox-only — peers miss onSuccess dimPOI** — ApplyMusicBox set `hasCassette` from Bool1 then `SnapMusicBox` (latch `opened`, force `hasCassette=true`, pose lid/CardPickup/BoxObs/tapeInteraction). Never Invoked `onSuccess`. Native Update (~0x4B4ED0) only fires `onSuccess` on `opened` false→true; after Apply latches, native retry permanently skipped. Asset `onSuccess` → `MinimapPOIObject.dimPOI`. Softlock: host opens music box → peers latch opened + pose but minimap POI stays bright. Late-join FullRefresh same. `LoadState` does not invoke. Melon fields `opened` / `hasCassette` / `onSuccess` verified (`onSuccess` camelCase). Fix (Dig R, mirror PEN_Reaktor 0.5.36 / RES_Shrine 0.5.35 rising-edge both-path): capture `was=opened`; preserve Bool1 `hasCassette`; if `!e.Bool0` return; if `!was` → BeginApply + `onSuccess.Invoke()` once + SnapMusicBox pose for both MutateWorld and FullRefresh (idempotent dimPOI; no separate onLoad). SnapMusicBox no longer overwrites wire cassette. Protocol 10 unchanged (reuse RES_MusicBox Bool0=opened + Bool1=hasCassette; no new ushort).
+
+### Before → After (player)
+- **Before:** Host opens the RES music box (`Update` → onSuccess dimPOI + opened pose). Peers / late-join FullRefresh SnapMusicBox pose the opened box, but never Invoke `onSuccess` — minimap POI stays bright.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh on false→true `opened` edge BeginApply-Invokes `onSuccess` (dimPOI) then SnapMusicBox (opened pose / pickups / interactions) as before; Bool1 hasCassette preserved from wire.
+
+### Dig R residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| ApplyMusicBox SnapMusicBox-only; never Invokes onSuccess → peers miss dimPOI; Snap forced hasCassette=true | Dig R: ApplyMusicBox Snap-only; Melon opened/hasCassette/onSuccess; Update ~0x4B4ED0 rising-edge only; Asset onSuccess=dimPOI; LoadState no invoke; PEN_Reaktor/RES_Shrine rising-edge | **SHIPPED** (!was onSuccess+SnapMusicBox both paths; Snap no longer overwrites Bool1; protocol 10 Bool0/Bool1 reuse) |
+
+Protocol stays **10** (reuse RES_MusicBox Bool0 opened + Bool1 hasCassette; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
 ## 0.5.36 — 2026-09-27
 
 Protocol **v10**. Batch 41 ship (Dig Q): PEN_Reaktor ApplyReaktor rising-edge `onSuccess` so peers + late-join FullRefresh get Popup / door-spot markers (red blocked → green success), not only SnapReaktor door unlock.

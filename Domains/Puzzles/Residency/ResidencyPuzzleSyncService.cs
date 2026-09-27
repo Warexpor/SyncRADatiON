@@ -1,3 +1,4 @@
+using SyncRADation.Sync;
 using UnhollowerBaseLib;
 using UnityEngine;
 
@@ -107,9 +108,37 @@ namespace SyncRADation.Networking
         public static void ApplyMusicBox(RES_MusicBox x, PuzzleStateEntry e)
         {
             if (x == null) return;
+            // Rising-edge onSuccess (Dig R): Melon opened / hasCassette / onSuccess.
+            // Native Update (~0x4B4ED0) only fires onSuccess on opened false→true;
+            // after Apply latches opened, native retry permanently skipped. Asset
+            // onSuccess → MinimapPOIObject.dimPOI. Prior ApplyMusicBox set hasCassette
+            // then SnapMusicBox (latch opened + force hasCassette=true + pose) — never
+            // Invoked onSuccess. Late-join FullRefresh same gap; LoadState does not
+            // invoke. Mirror PEN_Reaktor / RES_Shrine rising-edge: Invoke on BOTH live
+            // MutateWorld AND FullRefresh (idempotent dimPOI; no separate onLoad).
+            // Protocol 10 unchanged (reuse RES_MusicBox Bool0=opened, Bool1=hasCassette).
+            bool was = false;
+            try { was = x.opened; } catch { }
             try { x.hasCassette = e.Bool1; } catch { }
-            if (e.Bool0)
-                SnapMusicBox(x);
+            if (!e.Bool0) return;
+            if (!was)
+            {
+                NetGate.BeginApply();
+                try
+                {
+                    try
+                    {
+                        if (x.onSuccess != null)
+                            x.onSuccess.Invoke();
+                    }
+                    catch { }
+                    SnapMusicBox(x);
+                    // Reassert wire cassette — Snap must not own hasCassette.
+                    try { x.hasCassette = e.Bool1; } catch { }
+                }
+                catch { }
+                finally { NetGate.EndApply(); }
+            }
         }
 
         public static void ApplyLibraryPc(RES_LibraryPC x, PuzzleStateEntry e)
@@ -175,7 +204,7 @@ namespace SyncRADation.Networking
         {
             if (x == null) return;
             try { x.opened = true; } catch { }
-            try { x.hasCassette = true; } catch { }
+            // hasCassette owned by ApplyMusicBox from wire Bool1 — do not force true.
             try { if (x.CardPickup != null) x.CardPickup.SetActive(true); } catch { }
             try { if (x.BoxObs != null) x.BoxObs.SetActive(false); } catch { }
             try
