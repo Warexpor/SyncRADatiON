@@ -175,6 +175,11 @@ namespace SyncRADation.Networking
             // to ConnectedDoors.Unlock on Door Connection (35) under DoorConnections
             // (separate tree from KeypadLogic) + Event.SetActive + exitEvent + dimPOI.
             // TryUnlockDoors = FindInParents ConnectedDoors only — misses that peel.
+            // FullRefresh sets _mutateWorld=false; live 0.5.22 only Invoked onSuccess
+            // when mutateWorld && !was, then latched solved so ReapplyHeld rising-edge
+            // skipped → late joiner kept Door Connection locked. Native LoadState
+            // fires onLoad (Unlock + SetActive + dimPOI; omits exitEvent) — mirror that
+            // for !mutateWorld && !was. Keep latching solved (do not UseItem-style delay).
             if (mutateWorld && !was)
             {
                 NetGate.BeginApply();
@@ -182,6 +187,17 @@ namespace SyncRADation.Networking
                 {
                     if (x.onSuccess != null)
                         x.onSuccess.Invoke();
+                }
+                catch { }
+                finally { NetGate.EndApply(); }
+            }
+            else if (!mutateWorld && !was)
+            {
+                NetGate.BeginApply();
+                try
+                {
+                    if (x.onLoad != null)
+                        x.onLoad.Invoke();
                 }
                 catch { }
                 finally { NetGate.EndApply(); }

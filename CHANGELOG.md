@@ -1,3 +1,21 @@
+## 0.5.25 — 2026-09-27
+
+Protocol **v10**. Batch 30 ship (Dig I): ApplyRotKeypad late-join FullRefresh `onLoad` mirror.
+
+### Fixed
+- **ApplyRotKeypad late-join FullRefresh skips onSuccess/onLoad** — 0.5.22 only Invokes `onSuccess` when `mutateWorld && !was`. FullRefresh sets `_mutateWorld=false`, latches `solved=true`, skips Invoke. Later `ReapplyHeld` has `was` already true → rising-edge skip. `TryUnlockDoors` FindInParents misses ConnectedDoors Unlock peel under DoorConnections. AssetStudio ROT_Keypad: `onSuccess` AND `onLoad` → Unlock (`onLoad` omits exitEvent — native LoadState path). Softlock: late joiner sees keypad solved but Door Connection locked. Fix (Dig I preferred — LoadState mirror): latch solved/opening/blocked; if `!e.Bool0` return; if `mutateWorld && !was` → BeginApply + `onSuccess.Invoke()` (live 0.5.22); else if `!mutateWorld && !was` → BeginApply + `onLoad.Invoke()` (FullRefresh / late-join); keep `TryUnlockDoors` backup. Do **not** UseItem-style don't-latch solved (worse UX). Melon field `onLoad` verified. Protocol 10 unchanged (no new ushort).
+
+### Before → After (player)
+- **Before:** Peer solves a ROT_Keypad while another player is mid-chapter. Late joiner FullRefresh shows keypad solved but Door Connection under DoorConnections stays locked — softlock at the door (ReapplyHeld rising-edge already skipped).
+- **After:** Late-join FullRefresh Invokes Melon `onLoad` (Unlock + SetActive + dimPOI; no exitEvent) on the false→true edge before latch sticks for ReapplyHeld, so Door Connection unlocks for every joiner. Live cinematic peers still get `onSuccess` (with exitEvent) unchanged.
+
+### Dig notes (Batch 30)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| FullRefresh ApplyRotKeypad latches solved + skips onSuccess; ReapplyHeld rising-edge skip; TryUnlockDoors misses DoorConnections peel | Dig I: ApplyRotKeypad mutateWorld&&!was onSuccess only (0.5.22); ApplyPuzzleState FullRefresh ⇒ `_mutateWorld=false`; ReapplyHeld was already true; Melon `onLoad` + native LoadState; AssetStudio onSuccess/onLoad → Unlock | **SHIPPED** (LoadState mirror: onLoad on !mutateWorld&&!was; keep latch) |
+
+Protocol stays **10** (reuse ROT_Keypad Bool0; no new ushort). Live rising-edge onSuccess preserved.
+
 ## 0.5.24 — 2026-09-27
 
 Protocol **v10**. Batch 29 ship (Dig H): ItemPickup.onPickup party Ensure for non-claimers.
