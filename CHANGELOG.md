@@ -1,3 +1,22 @@
+## 0.5.45 — 2026-09-27
+
+Protocol **v10**. Batch 50 ship (Dig Z): RES_Power hold mid-fuse states via IsProgressed so N-peer remount / late-join keep unsolved fuse config, not only final Bool0 solved.
+
+### Fixed
+- **RES_Power IsProgressed Bool0-only — remount / late-join drop mid-fuse** — TryRead serializes `solved`/`powered` + fuse `states` (Bool0/Bool1, Int0 PackBoolBits); ApplyPower already UnpackBoolBits even unsolved (OnSuccess rising-edge from 0.5.27); IsProgressed fell through ProgressedBool0 (Bool0 only) so unsolved fuse flips were sent live but never held across remount. Native durable state: `states` bool[7] (AssetStudio all **false** → Int0=0), mutated by `Flip(int)` then `TryMasterFlip`. Softlock: host flips fuses mid-solve → remount / late-join snap back to all-off until Bool0 solve — final power gate can reset. Fix (Dig Z, mirror MultiLock 0.5.43 / MED_Pump 0.5.44 mid-hold): IsProgressed = Bool0 || Int0!=0; EnvEmit on Flip(int) (Read mid / Progressed solved). Existing ApplyPower OnSuccess path stays. Protocol 10 unchanged (reuse RES_Power Bool0 solved + Bool1 powered + Int0 states; no new ushort).
+
+### Before → After (player)
+- **Before:** Host flips RES power fuses mid-solve. Peers may see live Int0 briefly, but remount / late-join FullRefresh re-snap to all-off states — mid-fuse config is not held until final Bool0 solve snap; final power gate can reset.
+- **After:** IsProgressed holds mid-fuse (Int0!=0) across remount; Flip emit so Progressed/Read latch immediately. Bool0 solved still OnSuccess / setPower / Paternoster as before.
+
+### Dig Z residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| IsProgressed Bool0-only; no Flip emit → remount / late-join drop mid-fuse Int0 | Dig Z: TryRead/Apply already Bool0+Bool1+Int0; Melon Flip(int)+TryMasterFlip; AssetStudio states all false; ProgressedBool0 fallthrough | **SHIPPED** (IsProgressed Bool0\|\|Int0!=0; Flip EnvEmit; ApplyPower OnSuccess retained; protocol 10) |
+
+Protocol stays **10** (reuse RES_Power Bool0 solved + Bool1 powered + Int0 states; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
 ## 0.5.44 — 2026-09-27
 
 Protocol **v10**. Batch 49 ship (Dig Y): MED_Pump hold mid-water a/b/c via IsProgressed so N-peer remount / late-join keep unsolved water state, not only final Bool0 solved.

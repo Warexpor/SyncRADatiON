@@ -81,6 +81,15 @@ namespace SyncRADation.Patches
                 else Read(PuzzleType.MED_Pump, x);
             }
 
+            public static void Power(RES_Power x)
+            {
+                if (x == null) return;
+                bool ok = false;
+                try { ok = x.solved; } catch { }
+                if (ok) Progressed(PuzzleType.RES_Power, x);
+                else Read(PuzzleType.RES_Power, x);
+            }
+
             static void Send(PuzzleType type, Component c, bool progressed)
             {
                 if (c == null || NetGate.IsApplying) return;
@@ -357,6 +366,17 @@ namespace SyncRADation.Patches
     {
         [HarmonyPostfix]
         public static void Postfix(LAB_MultiLock __instance) => EnvEmit.MultiLock(__instance);
+    }
+
+    // RES_Power: emit mid-fuse states pack on Flip(int) (Int0), Progressed on solve.
+    // Native Flip toggles states[i] then may TryMasterFlip — patch so peers see
+    // mid-fuse without waiting for Tick (Dig Z). IsProgressed holds Int0!=0 across
+    // remount. Existing ApplyPower OnSuccess rising-edge stays (0.5.27).
+    [HarmonyPatch(typeof(RES_Power), nameof(RES_Power.Flip), new System.Type[] { typeof(int) })]
+    public static class ResPowerFlipPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(RES_Power __instance) => EnvEmit.Power(__instance);
     }
 
     [HarmonyPatch(typeof(ROT_MeatBlocker), nameof(ROT_MeatBlocker.pickup))]
