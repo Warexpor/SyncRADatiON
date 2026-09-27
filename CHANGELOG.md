@@ -1,3 +1,21 @@
+## 0.5.26 — 2026-09-27
+
+Protocol **v10**. Batch 31 ship (Dig J #1): ApplyMural rising-edge `onSolved` so Blocker Entry + cutscene fire for live peers.
+
+### Fixed
+- **ROT_Mural Apply never Invokes onSolved** — ApplyMural latched `finished=true` then called `useRing()` only. Native Update Invokes `onSolved` only when finished was false, then finished=1. Asset `onSolved` → goBack / SetActive(false) Blocker Entry / setUnleavable / StartCutscene / FMOD. `useRing` only toggles RingInter/MissingRing — **no** onSolved. Peer Update rising-edge skipped after latch → no cutscene, Blocker Entry stayed. Fix (mirror ApplyRotKeypad live path): capture `was=finished`; latch finished/busy/moons; if `!e.Bool0` return; if `MutateWorld && !was` → BeginApply + `onSolved.Invoke()` then `useRing()` (ring prop pose); keep `TryUnlockDoors`. FullRefresh (`!MutateWorld`): keep skip for now (Dig J — no mural onLoad soak; cutscene replay unwanted unless soak asks). Prior park claiming useRing covers Blocker was wrong. Protocol 10 unchanged (no new ushort).
+
+### Before → After (player)
+- **Before:** Host solves the mural. Live peer sees moons/finished latch + ring prop via useRing, but Blocker Entry stays active and the mural cutscene never starts (onSolved never Invoked; native rising-edge already skipped).
+- **After:** Live MutateWorld peer on false→true edge BeginApply-Invokes `onSolved` (Blocker Entry SetActive(false) + cutscene/FMOD/goBack) then `useRing` for ring prop. Late-join FullRefresh still skips onSolved (no cutscene replay) until soak asks for an onLoad-equivalent.
+
+### Dig notes (Batch 31)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| ApplyMural latches finished + useRing only; peer Update rising-edge skipped; Blocker Entry + cutscene softlock | Dig J: native Update onSolved only when !finished then finished=1; asset onSolved → Blocker/cutscene; useRing ≠ onSolved; ApplyRotKeypad live MutateWorld&&!was BeginApply+Invoke pattern | **SHIPPED** (MutateWorld&&!was onSolved + useRing; FullRefresh skip retained) |
+
+Protocol stays **10** (reuse ROT_Mural Bool0; no new ushort). Host-authoritative; N-peer live cinematic Apply path.
+
 ## 0.5.25 — 2026-09-27
 
 Protocol **v10**. Batch 30 ship (Dig I): ApplyRotKeypad late-join FullRefresh `onLoad` mirror.

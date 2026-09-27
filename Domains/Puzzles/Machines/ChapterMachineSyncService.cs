@@ -464,13 +464,30 @@ namespace SyncRADation.Networking
         public static void ApplyMural(ROT_Mural x, PuzzleStateEntry e)
         {
             if (x == null) return;
+            // Rising-edge onSolved: native Update only Invokes when finished was false,
+            // then latches finished=1. Asset onSolved → goBack / SetActive(false) Blocker
+            // Entry / setUnleavable / StartCutscene / FMOD. useRing only toggles
+            // RingInter/MissingRing — does NOT fire onSolved. Prior park that latched
+            // finished then useRing() only skipped the peer Update rising-edge → no
+            // cutscene, Blocker Entry stayed. Mirror ApplyRotKeypad live path:
+            // MutateWorld && !was → BeginApply + onSolved, then useRing for ring prop.
+            // FullRefresh (!MutateWorld): keep skip for now (Dig J — no mural onLoad
+            // soak yet; cutscene replay unwanted unless soak asks).
+            bool was = x.finished;
             x.finished = e.Bool0; x.busy = e.Bool1;
             try { x.MoonTurnSpeed = e.Float0; } catch { }
             try { UnpackMuralMoons(x.moons, e.Int0, e.Int1, e.Int2, e.Int3); } catch { }
             if (!e.Bool0) return;
-            // useRing is presentation — skip on FullRefresh (_mutateWorld=false).
-            if (PuzzleSyncService.MutateWorld)
+            if (PuzzleSyncService.MutateWorld && !was)
             {
+                NetGate.BeginApply();
+                try
+                {
+                    if (x.onSolved != null)
+                        x.onSolved.Invoke();
+                }
+                catch { }
+                finally { NetGate.EndApply(); }
                 try { x.useRing(); } catch { }
             }
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
