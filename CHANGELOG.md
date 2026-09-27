@@ -1,3 +1,22 @@
+## 0.5.28 — 2026-09-27
+
+Protocol **v10**. Batch 33 ship (Dig J #3): MED_Pump ApplyPump rising-edge `onSolved` so StartCutscene + dimPOI + RecordSplit fire for live peers; late-join uses `onLoad` (dimPOI only).
+
+### Fixed
+- **MED_Pump SnapMedPump Drain only — never Invokes onSolved** — SnapMedPump (~94–105) only latched `solved` + `SnapFlood` + `TryUnlockDoors`. Native `checkSolved` Invokes `onSolved` + transfers/drain. AssetStudio `MED_Pump.onSolved` → `dimPOI` + `StartCutscene` + `RecordSplit`. Peer Apply drained flood but skipped cutscene/onSolved consequences. Melon fields `solved` / `onSolved` / `onLoad` verified (camelCase). `onLoad` → `dimPOI` only (no StartCutscene). Fix (mirror ApplyMural live path + ApplyRotKeypad late-join onLoad): capture `was=solved`; snap a/b/c; if `!e.Bool0` return; keep `SnapMedPump` drain; if `MutateWorld && !was` → BeginApply + `onSolved.Invoke()`; else if `!MutateWorld && !was` → BeginApply + `onLoad.Invoke()` (dimPOI soak, skip remount StartCutscene). Protocol 10 unchanged (no new ushort).
+
+### Before → After (player)
+- **Before:** Host solves the MED pump. Live peer sees water levels + flood drain, but dimPOI never dims, StartCutscene never runs, RecordSplit never records — story beat softlock after the pump.
+- **After:** Live MutateWorld peer on false→true `solved` edge BeginApply-Invokes `onSolved` (dimPOI + StartCutscene + RecordSplit) after SnapMedPump drain. Late-join FullRefresh Invokes `onLoad` (dimPOI only) — no StartCutscene remount.
+
+### Dig J #3 residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| SnapMedPump drain-only; peer skips onSolved → StartCutscene/dimPOI/RecordSplit softlock | Dig J #3: SnapMedPump ~94–105; Melon solved/onSolved/onLoad; AssetStudio onSolved = dimPOI+StartCutscene+RecordSplit; onLoad = dimPOI only; ApplyMural/ApplyRotKeypad rising-edge pattern | **SHIPPED** (MutateWorld&&!was onSolved; FullRefresh onLoad) |
+
+Protocol stays **10** (reuse MED_Pump Bool0 solved; no new ushort). Host-authoritative; N-peer live cinematic Apply path.
+
 ## 0.5.27 — 2026-09-27
 
 Protocol **v10**. Batch 32 ship (Dig J #2): RES_Power ApplyPower rising-edge `OnSuccess` so residency setPower + Paternoster SetSpeed fire for live peers.

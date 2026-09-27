@@ -1,4 +1,5 @@
 using SyncRADation.Patches;
+using SyncRADation.Sync;
 using UnityEngine;
 
 namespace SyncRADation.Networking
@@ -54,9 +55,42 @@ namespace SyncRADation.Networking
         public static void ApplyPump(MED_Pump x, PuzzleStateEntry e, bool cinematic)
         {
             if (x == null) return;
+            // Rising-edge onSolved: native checkSolved Invokes onSolved + transfers/drain.
+            // AssetStudio MED_Pump.onSolved → dimPOI + StartCutscene + RecordSplit.
+            // Prior SnapMedPump (~94–105) only latched solved + SnapFlood + TryUnlockDoors
+            // — never Invoked onSolved → peer drain worked but cutscene/dimPOI/RecordSplit
+            // skipped. Melon fields solved / onSolved / onLoad verified (camelCase).
+            // onLoad → dimPOI only (no StartCutscene). Mirror ApplyMural live path +
+            // ApplyRotKeypad late-join onLoad: MutateWorld && !was → BeginApply +
+            // onSolved.Invoke(); !MutateWorld && !was → onLoad.Invoke() (dimPOI soak,
+            // skip remount StartCutscene). Keep SnapMedPump drain.
+            bool was = false;
+            try { was = x.solved; } catch { }
             try { x.a = e.Int0; x.b = e.Int1; x.c = e.Int2; } catch { }
-            if (e.Bool0)
-                SnapMedPump(x, cinematic);
+            if (!e.Bool0) return;
+            SnapMedPump(x, cinematic);
+            if (PuzzleSyncService.MutateWorld && !was)
+            {
+                NetGate.BeginApply();
+                try
+                {
+                    if (x.onSolved != null)
+                        x.onSolved.Invoke();
+                }
+                catch { }
+                finally { NetGate.EndApply(); }
+            }
+            else if (!PuzzleSyncService.MutateWorld && !was)
+            {
+                NetGate.BeginApply();
+                try
+                {
+                    if (x.onLoad != null)
+                        x.onLoad.Invoke();
+                }
+                catch { }
+                finally { NetGate.EndApply(); }
+            }
         }
 
         public static void ApplyFlood(MED_FloodedBathroom x, PuzzleStateEntry e, bool cinematic)
