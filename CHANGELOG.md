@@ -1,3 +1,33 @@
+## Dig — Batch 22 (no 0.5.18) — 2026-09-27
+
+Protocol **v10** / tip `7501bc0` / **0.5.17**. Continuous dig for a **non-revoke** CAN-FIX + missing-coverage invent→prove. **No ship** — plateau.
+
+### Goal
+Stretch beyond the ConsumesKey / EnsureInBag strip family (0.5.13–0.5.17). Prefer host-local Apply* skips of a different class, durable story/elevator/join holes, or systems with **zero** Domain/Harmony.
+
+### Dig notes (Batch 22)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| Host-local InteractionRequest twins (Pickup/Storage/Drop/Puzzle/Door/Keypad/EventZone/MultiCondition/Cutscene/Dialoguer) | Keypad Host Prefix `return true` + poll Emit; EventZone/MultiCondition Host Postfix `BroadcastPresentation`; Cutscene Host Broadcast; Dialoguer Host Broadcast + Finalizers on all Start/Continue/End overloads; Storage Host `RequestSend`+Postfix blob; WorldPickup Host TryClaim+BroadcastTriggered+PartyKeyRing.Note | **OK** — no UseItem-class skip of Apply side-effects beyond 0.5.17 |
+| FreeDoorController / ConnectedDoorLockController ConsumesKey residual | OnEnable/Awake copy onto IL/CD only (Batch 21 OK); UnlockInteractiveLocks + CD path 0.5.14–0.5.16 | **OK** — not a new hole |
+| Elevator boarding N-peer (`NewElevator` / `ElevatorController`) | Dump fields `playerIsInElevator` / `going`; **0 scene/prefab hits** outside `path_id_map.json`; CentralElevator/CallButton/EXC already PuzzleType 23/24/46 | **OK** — dead/unused stubs; live elevators covered |
+| `PenroseAirlockNew.unlocked` missing PuzzleType | Only FMOD skip parent-walk in `FmodEmitterSync`; **0 level hits**; airlock remains PEN_Titles personal (wreck↔hole never SceneFollow) | **OK** — unused / intentional local |
+| `InventoryHelper` Add/Remove* — **no Harmony** | Cutscene UnityEvents in LOV/MED/RES/PEN + CutsceneManager JSON; **all 10 bindings** are `ArianePhoto` / `AlinaPhoto` only; AlinaPhoto asset `type=0` (AnItemType.None) — photos/docs stay flavor local (AGENTS + prior park) | **OK** — missing patch, but **no Key/Object softlock**; do not party-sync photos |
+| Wiki Key Items off PartyKeyRing | Ring = Key/Object only; no new missable unique proven not Key/Object | **OK** / prior |
+| HasPeer-without-apply beyond DroppedPickup/StorageTake | UseItem/door/Put party-benefit by design (0.5.12) | **OK** |
+| Dialoguer Finalizer gaps | All 4 Start + 2 Continue + End Finalizers present; End always `ClearFlavor` | **OK** |
+| MorseReceiver / EideticModule / DarknessInteraction / AirlockInside / DET_ServiceHatch | path_id_map or Pregame/UI only; no durable co-op softlock proven | **OK** — not Batch 22 ship |
+| SceneFollow RestorePlay / Adler EV / KillSilent / Mural late-join / Alarm latch / ending-flag merge / MeatBlocker non-Death / Falke empty-slot | parked list; no **new** hard proof | **park** |
+
+### Missing-coverage list for Batch 23+ (not proven softlock)
+- `InventoryHelper` string API — watch if future content passes Key/Object names (today photos only).
+- `NewElevator` / `ElevatorController` / `PenroseAirlockNew` — re-check if a DLC/patch reintroduces scene refs.
+- CutsceneHelper `HoleDrop` / `MoveElsterTo` / `Cheat` — presentation-local; soak if N=3–4 desync mid-cinematic without SceneFollow.
+- Residual ConsumesKey twins exhausted for FreeDoor/CDLC/IL/CD/UseItem host-local.
+
+### Plateau
+Revoke/strip class exhausted for known entry points. No thin non-revoke CAN-FIX with hard code proof this dig. Version stays **0.5.17**; protocol **10**. Dig peers (story/combat/join/Domains) may still surface Batch 23 candidates.
+
 ## 0.5.17 — 2026-09-27
 
 Protocol **v10**. Continuous Batch 21 dig → ship (host-local UseItem ConsumesKey ring revoke).
