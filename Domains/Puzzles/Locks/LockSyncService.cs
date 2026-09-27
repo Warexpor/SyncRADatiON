@@ -100,7 +100,10 @@ namespace SyncRADation.Networking
                 {
                     var x = (DET_ServiceLock)c;
                     bool ok = x.solved != null && x.solved.solved;
-                    entry = PuzzleDomainUtil.Mk(type, wid, ok, false, false, 0, 0, 0, 0, 0);
+                    // Protocol 10: Int0 = 4×3-bit pinning pack (0..precision, live precision=6).
+                    int pack = 0;
+                    try { pack = PackServiceLockPins(x); } catch { }
+                    entry = PuzzleDomainUtil.Mk(type, wid, ok, false, false, pack, 0, 0, 0, 0);
                     return true;
                 }
                 default:
@@ -441,8 +444,82 @@ namespace SyncRADation.Networking
 
         public static void ApplyServiceLock(DET_ServiceLock x, PuzzleStateEntry e)
         {
-            if (x != null && e.Bool0)
+            if (x == null) return;
+            // Protocol 10: Int0 = 4×3-bit pinning; Bool0 = solved.
+            // Apply partial packs even when unsolved so peers / late-join see mid-pin.
+            int pack = SanitizeServiceLockPack(e.Int0);
+            ApplyServiceLockPins(x, pack);
+            if (e.Bool0)
                 SnapServiceLock(x);
+        }
+
+        /// <summary>Pin0 bits0-2, Pin1 3-5, Pin2 6-8, Pin3 9-11 (values 0..precision).</summary>
+        static int PackServiceLockPins(DET_ServiceLock x)
+        {
+            int prec = 6;
+            try { prec = x.precision; } catch { }
+            if (prec < 0) prec = 0;
+            if (prec > 7) prec = 7; // 3-bit field
+            int pack = 0;
+            try
+            {
+                var pins = x.pinning;
+                if (pins == null) return 0;
+                int n = pins.Length;
+                if (n > 4) n = 4;
+                for (int i = 0; i < n; i++)
+                {
+                    int v = pins[i];
+                    if (v < 0) v = 0;
+                    if (v > prec) v = prec;
+                    pack |= (v & 7) << (i * 3);
+                }
+            }
+            catch { }
+            return pack;
+        }
+
+        static int SanitizeServiceLockPack(int packed)
+        {
+            // 3-bit mask per pin — illegal high bits dropped; values always 0..7.
+            int p0 = packed & 7;
+            int p1 = (packed >> 3) & 7;
+            int p2 = (packed >> 6) & 7;
+            int p3 = (packed >> 9) & 7;
+            return p0 | (p1 << 3) | (p2 << 6) | (p3 << 9);
+        }
+
+        static void ApplyServiceLockPins(DET_ServiceLock x, int pack)
+        {
+            if (x == null) return;
+            int prec = 6;
+            try { prec = x.precision; } catch { }
+            if (prec < 0) prec = 0;
+            try
+            {
+                var pins = x.pinning;
+                if (pins == null) return;
+                int n = pins.Length;
+                if (n > 4) n = 4;
+                bool changed = false;
+                for (int i = 0; i < n; i++)
+                {
+                    int v = (pack >> (i * 3)) & 7;
+                    if (v > prec) v = prec;
+                    int cur = 0;
+                    try { cur = pins[i]; } catch { }
+                    if (cur == v && PuzzleSyncService.MutateWorld) continue;
+                    try { pins[i] = v; changed = true; } catch { }
+                }
+                // Native FlipButton ends in SetPins + AdjustCrown for pin/crown visuals.
+                // Call those directly — avoid FlipButton coroutine side effects (SFX/anim).
+                // FullRefresh (!MutateWorld) always refreshes visuals even if values match
+                // (remount / late-join OnEnable may leave wrong transforms).
+                if (!changed && PuzzleSyncService.MutateWorld) return;
+            }
+            catch { return; }
+            try { x.SetPins(); } catch { }
+            try { x.AdjustCrown(); } catch { }
         }
 
         public static void SnapBiodomeLock(BiodomeDoorLock x, bool unlocked, int keyLevel)

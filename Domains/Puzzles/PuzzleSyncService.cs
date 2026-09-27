@@ -391,6 +391,10 @@ namespace SyncRADation.Networking
             // re-snaps mid-puzzle place/take, not only final Bool0 solved.
             if (e.Type == PuzzleType.LAB_Rings)
                 return e.Bool0 || e.Int0 != 0;
+            // DET_ServiceLock: hold partial pinning pack (Int0) so remount / late-join
+            // re-snaps mid-pin state, not only final Bool0 solved.
+            if (e.Type == PuzzleType.DET_ServiceLock)
+                return e.Bool0 || e.Int0 != 0;
             return ProgressedBool0.Contains(e.Type) && e.Bool0;
         }
 

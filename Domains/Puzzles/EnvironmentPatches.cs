@@ -35,6 +35,15 @@ namespace SyncRADation.Patches
                 else Read(PuzzleType.LAB_Rings, x);
             }
 
+            public static void ServiceLock(DET_ServiceLock x)
+            {
+                if (x == null) return;
+                bool ok = false;
+                try { ok = x.solved != null && x.solved.solved; } catch { }
+                if (ok) Progressed(PuzzleType.DET_ServiceLock, x);
+                else Read(PuzzleType.DET_ServiceLock, x);
+            }
+
             static void Send(PuzzleType type, Component c, bool progressed)
             {
                 if (c == null || NetGate.IsApplying) return;
@@ -177,6 +186,20 @@ namespace SyncRADation.Patches
         {
             if (__instance == null || !__instance.solved) return;
             EnvEmit.Progressed(PuzzleType.LAB_Rings, __instance);
+        }
+    }
+
+    // DET_ServiceLock: emit partial pinning pack on SetPins (Int0), Progressed on solve.
+    // Native FlipButton coroutine mutates pinning[] then SetPins/AdjustCrown — patch
+    // SetPins so peers see mid-pin without waiting for Tick (Dig T). Avoid FlipButton
+    // itself (coroutine start; pinning not yet updated; anim/SFX side effects).
+    [HarmonyPatch(typeof(DET_ServiceLock), nameof(DET_ServiceLock.SetPins))]
+    public static class DetServiceLockSetPinsPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(DET_ServiceLock __instance)
+        {
+            EnvEmit.ServiceLock(__instance);
         }
     }
 

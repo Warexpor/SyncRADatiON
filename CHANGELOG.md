@@ -1,3 +1,22 @@
+## 0.5.39 — 2026-09-27
+
+Protocol **v10**. Batch 44 ship (Dig T): DET_ServiceLock sync partial pinning via Int0 (4×3-bit) so N-peer pin changes and late-join FullRefresh see in-progress lock pins, not only final solve.
+
+### Fixed
+- **DET_ServiceLock TryRead/Apply solved-only — peers miss mid-pin** — TryRead emitted only `solved` Bool0 (Int0–Int3=0); ApplyServiceLock ignored every unsolved entry (`if (e.Bool0) SnapServiceLock`). Native durable state is four `pinning[]` ints (0..`precision`, live precision=6) plus `input[]`, updated by `FlipButton` → `SetPins` / `AdjustCrown`, solved by `TestKey` → `PuzzleStatus.solved`. Softlock: host sets pins mid-solve → peers / late-join stay at initial lock until Bool0 snap; in-progress pin changes stay local. Melon fields `pinning`/`precision`/`input`/`Buttons`/`CounterButtons`/`TestButton`/`SetPins`/`AdjustCrown`/`FlipButton`/`TestKey`/`solved` verified (AssetStudio pinning=[0,0,0,0] precision=6). Fix (Dig T, mirror LAB_Rings 0.5.34 Int0 pack): TryRead packs four pinning values into Int0 as 4×3-bit; Apply sanitizes + assigns pinning then native-equivalent `SetPins`/`AdjustCrown` (no FlipButton coroutine); Bool0 still SnapServiceLock; IsProgressed = Bool0 || Int0!=0; SetPins postfix EnvEmit (Read mid / Progressed solved). Protocol 10 unchanged (reuse DET_ServiceLock Bool0 solved + Int0 pin pack; no new ushort).
+
+### Before → After (player)
+- **Before:** Host adjusts DET service-lock pins (`FlipButton` → SetPins). Peers / late-join FullRefresh see only the initial lock — mid-pin state never leaves the host until final Bool0 solve snap.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh apply the Int0 pinning pack (SetPins/AdjustCrown visuals). Host SetPins emits so Progressed holds mid-state across remount; Bool0 solved still SnapServiceLock (disable buttons / unlock doors) as before.
+
+### Dig T residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| TryRead/Apply solved-only; no SetPins emit → peers + late-join miss mid-pin until Bool0 | Dig T: TryRead Int0=0; ApplyServiceLock Bool0-only Snap; Melon pinning/precision/SetPins/AdjustCrown/FlipButton; AssetStudio precision=6 4 pins; LAB_Rings Int0 pack pattern | **SHIPPED** (Int0 4×3-bit pack; SetPins emit; Apply SetPins/AdjustCrown; Bool0 Snap retained; protocol 10) |
+
+Protocol stays **10** (reuse DET_ServiceLock Bool0 solved + Int0 pinning pack; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
 ## 0.5.38 — 2026-09-27
 
 Protocol **v10**. Batch 43 ship (Dig S): LAB_Waage sync MultiInteraction gate via Bool0 so peers + late-join FullRefresh get the gameplay gate, not only weight pose.
