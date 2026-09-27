@@ -273,6 +273,33 @@ namespace SyncRADation.Networking
             }
         }
 
+        /// <summary>
+        /// Match GameAssembly EnemyController.UpdateDataBlock hitbox GO toggles.
+        /// Peer Puppet disables AI so UpdateDataBlock never runs — Apply must mirror:
+        /// hurtbox inactive when dead; downedHitbox only for critical/fire while alive.
+        /// Do not call KillSilent.
+        /// </summary>
+        static void ApplyHurtboxActive(EnemyController enemy, bool dead, EnemyController.hurtState stagger)
+        {
+            try
+            {
+                if (enemy.hurtbox != null)
+                    enemy.hurtbox.SetActive(!dead);
+            }
+            catch { }
+            try
+            {
+                if (enemy.downedHitbox != null)
+                {
+                    bool downed = !dead
+                        && (stagger == EnemyController.hurtState.critical
+                            || stagger == EnemyController.hurtState.fire);
+                    enemy.downedHitbox.SetActive(downed);
+                }
+            }
+            catch { }
+        }
+
         private void ApplyEnemyState(EnemySnapshotNet snap)
         {
             ulong id = unchecked((ulong)snap.WorldId);
@@ -310,6 +337,13 @@ namespace SyncRADation.Networking
                             enemy.hitbox.HP = snap.HP;
                     }
                     catch { }
+                    // Off-chunk still needs dead hurtbox gate (join dump / sleeping chunk).
+                    {
+                        bool dead = !snap.Alive
+                            || snap.State == (byte)EnemyController.enemystate.dead;
+                        var stagger = (EnemyController.hurtState)snap.HurtState;
+                        ApplyHurtboxActive(enemy, dead, stagger);
+                    }
                     return;
                 }
 
@@ -328,6 +362,14 @@ namespace SyncRADation.Networking
                 try { enemy.state = (EnemyController.enemystate)snap.State; } catch { }
                 // Decompile EnemyController.staggerType (hurtState) — was on wire unused.
                 try { enemy.staggerType = (EnemyController.hurtState)snap.HurtState; } catch { }
+
+                // Puppet peers never run UpdateDataBlock — mirror dead/downed hitbox GOs.
+                {
+                    bool dead = !snap.Alive
+                        || snap.State == (byte)EnemyController.enemystate.dead;
+                    var stagger = (EnemyController.hurtState)snap.HurtState;
+                    ApplyHurtboxActive(enemy, dead, stagger);
+                }
 
                 try
                 {

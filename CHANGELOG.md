@@ -1,3 +1,21 @@
+## 0.5.18 — 2026-09-27
+
+Protocol **v10**. Batch 23 ship (Dig C): dead puppet hurtbox stays active on peers.
+
+### Fixed
+- **Dead puppet keeps living hurtbox GO** — Peer `Puppet` disables `EnemyController` so host-side `UpdateDataBlock` never runs locally. `ApplyEnemyState` wrote `state`/`HP`/`anim`/`staggerType` but never toggled `hurtbox` / `downedHitbox`. GameAssembly `UpdateDataBlock`: `state==dead` → `hurtbox.SetActive(false)`; `downedHitbox` only when `staggerType` in `{critical,fire}` and not dead. `Hurtbox.OnTriggerEnter` has **no** dead-state gate → peer walks into corpse and takes damage. Now `ApplyEnemyState` (full + off-chunk early path) mirrors those SetActive toggles gated on `!snap.Alive` / `State==dead` and wired `HurtState`. N-peer join dump (`RequestFullSend` → `Apply`) covered. **No** `KillSilent`. Protocol 10 unchanged (`Alive` already on wire).
+
+### Before → After (player)
+- **Before:** Host kills an enemy the peer is puppeting. Host corpse is inert; peer corpse still has an active hurtbox child → walking over it damages the peer.
+- **After:** Peer apply deactivates the living hurtbox when the snapshot says dead (and only enables `downedHitbox` for critical/fire while alive), matching host UpdateDataBlock — corpse is safe to walk over.
+
+### Dig notes (Batch 23)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| Dead puppet living hurtbox | Dig C: Puppet disables AI; Apply never toggles hurtbox/downedHitbox; UpdateDataBlock + Hurtbox.OnTriggerEnter no dead gate; Alive on wire unread for hitboxes | **SHIPPED** |
+
+Protocol stays **10** (reuse `EnemySnapshotNet.Alive` / `HurtState`; no new ushort).
+
 ## Dig — Batch 22 (no 0.5.18) — 2026-09-27
 
 Protocol **v10** / tip `7501bc0` / **0.5.17**. Continuous dig for a **non-revoke** CAN-FIX + missing-coverage invent→prove. **No ship** — plateau.
