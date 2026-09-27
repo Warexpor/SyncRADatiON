@@ -1,3 +1,22 @@
+## 0.5.41 — 2026-09-27
+
+Protocol **v10**. Batch 46 ship (Dig V): MED_KeyGrid sync partial `nodes[i].connected` via Int0 so N-peer mid-node draws and late-join FullRefresh see GridSprite line state, not only final static solved.
+
+### Fixed
+- **MED_KeyGrid Read/Apply solved-only — peers miss mid-node connected / nodesObjects** — ReadKeyGridGlobal / TryRead emitted only static `MED_KeyGrid.solved` Bool0 (Int0–Int3=0); ApplyKeyGrid only wrote `solved`. Native durable state is 17 `MED_KeyNodeConnection.connected` bits (ScriptableObject list) plus parallel `nodesObjects` GameObject actives (AssetStudio MED_Medical: 17 GridSprite nodes). Softlock: host draws mid-key-grid → peers / late-join stay blank until Bool0 solve snap; in-progress lines stay local. Melon fields `nodes` / `nodesObjects` / `solved` and `MED_KeyNodeConnection.connected` verified. Same missing-coverage class as LAB_Rings / DET_ServiceLock / FloodControls. Fix (Dig V, mirror LAB_Rings 0.5.34 / ServiceLock 0.5.39 / FloodControls 0.5.40 Int pack): pack 17 connected bits → Int0; Bool0=solved; Int1=node count valid marker so all-zero partial preserved; Apply unpacks connected + SetActive nodesObjects under NetGate; IsProgressed = Bool0 || Int1!=0. Keep WorldId 0 global poll / client emission; protocol 10 unchanged (reuse MED_KeyGrid Bool0 solved + Int0 connected pack + Int1 count; no new ushort).
+
+### Before → After (player)
+- **Before:** Host connects MED key-grid nodes mid-solve. Peers / late-join FullRefresh see only a blank / unsolved grid — mid-node `connected` + GridSprite visuals never leave the host until final Bool0 solve snap.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh apply the Int0 connected pack (nodesObjects active). IsProgressed holds mid-node Int1 count (including all-zero Int0) across remount; Bool0 solved still latches static solved as before.
+
+### Dig V residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| Read/Apply Bool0 solved-only → peers + late-join miss mid-node connected / nodesObjects | Dig V: Melon MED_KeyGrid nodes/nodesObjects/solved; MED_KeyNodeConnection.connected; AssetStudio 17 GridSprite nodes in MED_Medical; IsProgressed was Bool0-only | **SHIPPED** (Int0 connected pack; Int1 count marker; Apply nodesObjects under NetGate; IsProgressed Bool0\|\|Int1; WorldId 0 poll retained; protocol 10) |
+
+Protocol stays **10** (reuse MED_KeyGrid Bool0 solved + Int0 connected pack + Int1 count; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
 ## 0.5.40 — 2026-09-27
 
 Protocol **v10**. Batch 45 ship (Dig U): FloodControls sync `input[]` via Int1 so N-peer switch flips and late-join FullRefresh keep authoritative input for `checkSolution`, not only switch poses / final done.

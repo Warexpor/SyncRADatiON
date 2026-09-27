@@ -75,8 +75,13 @@ namespace SyncRADation.Networking
                 }
                 case PuzzleType.MED_KeyGrid:
                 {
-                    // Instance registered for scan; static solved is the authority.
-                    entry = PuzzleDomainUtil.Mk(type, wid, MED_KeyGrid.solved, false, false, 0, 0, 0, 0, 0);
+                    // Dig V: pack nodes[i].connected → Int0; Int1 = node count (valid
+                    // marker so all-zero mid-state is retained). Bool0 = static solved.
+                    // Instance registered for scan; WorldId-0 global poll is authority.
+                    var x = (MED_KeyGrid)c;
+                    int bits = 0, count = 0;
+                    try { PackKeyGridNodes(x, out bits, out count); } catch { }
+                    entry = PuzzleDomainUtil.Mk(type, wid, MED_KeyGrid.solved, false, false, bits, count, 0, 0, 0);
                     return true;
                 }
                 case PuzzleType.ArianePhotoCode:
@@ -92,9 +97,26 @@ namespace SyncRADation.Networking
         /// <summary>Host-only global (WorldId 0) — mirrors RadioManagerState.</summary>
         public static PuzzleStateEntry ReadKeyGridGlobal()
         {
+            // Dig V: extend payload with 17× connected bits (Int0) + count marker (Int1).
+            // Keep WorldId 0 poll / client-emit path; solved stays Bool0.
             bool solved = false;
             try { solved = MED_KeyGrid.solved; } catch { }
-            return PuzzleDomainUtil.Mk(PuzzleType.MED_KeyGrid, 0, solved, false, false, 0, 0, 0, 0, 0f);
+            int bits = 0, count = 0;
+            try
+            {
+                var grids = WorldLookup.All<MED_KeyGrid>();
+                if (grids != null)
+                {
+                    for (int g = 0; g < grids.Length; g++)
+                    {
+                        if (grids[g] == null) continue;
+                        PackKeyGridNodes(grids[g], out bits, out count);
+                        if (count > 0) break;
+                    }
+                }
+            }
+            catch { }
+            return PuzzleDomainUtil.Mk(PuzzleType.MED_KeyGrid, 0, solved, false, false, bits, count, 0, 0, 0f);
         }
 
         /// <summary>Host-only global (WorldId 0) — static ArianePhotoCode.code.</summary>
@@ -159,7 +181,100 @@ namespace SyncRADation.Networking
 
         public static void ApplyKeyGrid(PuzzleStateEntry e)
         {
+            // Dig V: Bool0 → static solved; Int0 → nodes[i].connected; Int1 count
+            // marker gates node apply so all-zero packs still refresh visuals.
+            // nodesObjects SetActive mirrors native Update under NetGate.
             try { MED_KeyGrid.solved = e.Bool0; } catch { }
+            if (e.Int1 <= 0) return;
+            MED_KeyGrid[] grids = null;
+            try { grids = WorldLookup.All<MED_KeyGrid>(); } catch { }
+            if (grids == null) return;
+            for (int g = 0; g < grids.Length; g++)
+            {
+                var x = grids[g];
+                if (x == null) continue;
+                ApplyKeyGridNodes(x, e.Int0, e.Int1);
+            }
+        }
+
+        /// <summary>Pack ≤32 MED_KeyNodeConnection.connected bits; count = valid marker.</summary>
+        static void PackKeyGridNodes(MED_KeyGrid x, out int bits, out int count)
+        {
+            bits = 0;
+            count = 0;
+            if (x == null) return;
+            try
+            {
+                var nodes = x.nodes;
+                if (nodes == null) return;
+                int n = nodes.Count;
+                if (n > 32) n = 32;
+                count = n;
+                for (int i = 0; i < n; i++)
+                {
+                    try
+                    {
+                        var node = nodes[i];
+                        if (node != null && node.connected)
+                            bits |= 1 << i;
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>Unpack Int0 into connected + nodesObjects active (NetGate).</summary>
+        static void ApplyKeyGridNodes(MED_KeyGrid x, int bits, int count)
+        {
+            if (x == null) return;
+            NetGate.BeginApply();
+            try
+            {
+                try
+                {
+                    var nodes = x.nodes;
+                    if (nodes != null)
+                    {
+                        int n = nodes.Count;
+                        if (count > 0 && count < n) n = count;
+                        if (n > 32) n = 32;
+                        for (int i = 0; i < n; i++)
+                        {
+                            try
+                            {
+                                var node = nodes[i];
+                                if (node != null)
+                                    node.connected = (bits & (1 << i)) != 0;
+                            }
+                            catch { }
+                        }
+                    }
+                }
+                catch { }
+                try
+                {
+                    var objs = x.nodesObjects;
+                    if (objs != null)
+                    {
+                        int n = objs.Count;
+                        if (count > 0 && count < n) n = count;
+                        if (n > 32) n = 32;
+                        for (int i = 0; i < n; i++)
+                        {
+                            try
+                            {
+                                var go = objs[i];
+                                if (go != null)
+                                    go.SetActive((bits & (1 << i)) != 0);
+                            }
+                            catch { }
+                        }
+                    }
+                }
+                catch { }
+            }
+            finally { NetGate.EndApply(); }
         }
 
         public static void ApplyArianePhotoCode(PuzzleStateEntry e)

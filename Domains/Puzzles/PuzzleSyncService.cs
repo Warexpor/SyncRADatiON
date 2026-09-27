@@ -399,6 +399,10 @@ namespace SyncRADation.Networking
             // re-snaps mid-switch input[], not only final Bool0 done.
             if (e.Type == PuzzleType.FloodControls)
                 return e.Bool0 || e.Int1 != 0;
+            // MED_KeyGrid: hold partial connected pack (Int1 count marker) so remount /
+            // late-join re-snaps mid-node state, including all-zero Int0 packs.
+            if (e.Type == PuzzleType.MED_KeyGrid)
+                return e.Bool0 || e.Int1 != 0;
             return ProgressedBool0.Contains(e.Type) && e.Bool0;
         }
 
