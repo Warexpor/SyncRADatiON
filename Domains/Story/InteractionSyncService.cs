@@ -351,6 +351,48 @@ namespace SyncRADation.Networking
                 }
             }
             catch { }
+
+            // ConnectedDoors.ConsumesKey: native Unlock() (DoorNative.ApplyConnectedDoors)
+            // only copies the flag + key onto AutoTraverseDoor InteractiveLockSingle
+            // siblings — it never RemoveItem. UseItem is often a CD descendant while
+            // those ILS sit on A/B siblings, so GetComponentInParent/Children from
+            // UseItem never sees them. Same EnsureInBag bag-mirror softlock class as
+            // InteractiveLock.ConsumesKey (0.5.14). Require key enum match so default
+            // ConsumesKey=true templates with null key do not false-revoke.
+            try
+            {
+                var cd = PuzzleDomainUtil.FindInParents<ConnectedDoors>(u.gameObject);
+                if (cd != null && key != null)
+                {
+                    Items.itemlist want = key._item;
+                    try
+                    {
+                        if (cd.ConsumesKey && cd.key != null && cd.key._item == want)
+                            consumes = true;
+                    }
+                    catch { }
+                    try
+                    {
+                        var singles = cd.GetComponentsInChildren<InteractiveLockSingle>(true);
+                        if (singles != null)
+                        {
+                            for (int i = 0; i < singles.Length; i++)
+                            {
+                                var s = singles[i];
+                                if (s == null || !s.ConsumesKey) continue;
+                                try
+                                {
+                                    if (s.key != null && s.key._item == want)
+                                        consumes = true;
+                                }
+                                catch { }
+                            }
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
             return consumes;
         }
 

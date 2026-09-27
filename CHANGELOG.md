@@ -1,3 +1,26 @@
+## 0.5.16 — 2026-09-27
+
+Protocol **v10**. Continuous Batch 20 dig → ship (ConnectedDoors.ConsumesKey ring revoke).
+
+### Fixed
+- **ConnectedDoors.ConsumesKey PartyKeyRing revoke** — `UnlockInteractiveLocks` (host `ApplyUseItem` / `ApplyUseItemMulti`) now also reads parent `ConnectedDoors.ConsumesKey` + matching-key `InteractiveLockSingle` under that door. Native `ConnectedDoors.Unlock` (via `DoorNative.ApplyConnectedDoors`) only copies ConsumesKey onto AutoTraverseDoor ILS siblings and never `RemoveItem`; UseItem's GetComponentInParent/Children cannot see those siblings → door unlocked while ring + EnsureInBag bag ghosts stayed (same class as InteractiveLock.ConsumesKey 0.5.14). Existing `RevokeConsumed` / CraftRevokeSentinel fan-out strips mirrors (protocol 10, no new message).
+
+### Before → After (player)
+- **Before:** Host (or peer) uses a unique on a ConnectedDoors that ConsumesKey. Door unlocks for the party, but ring never drops → N=3–4 peers keep `EnsureInBag` bag ghosts / `InLocalBag` / can still UseItem a consumed unique.
+- **After:** Host ApplyUseItem detects CD/ILS ConsumesKey (key-enum matched), `RevokeConsumed` removes ring + strips bag mirrors on every peer.
+
+### Dig notes (Batch 20)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| ConnectedDoors.ConsumesKey missed by UnlockInteractiveLocks | GameAssembly `Unlock` @ RVA 0x2D24C0: `locked=false` + copy ConsumesKey/key onto ILS; no RemoveItem. Assets: 42 CD with ConsumesKey+key. ApplyUseItem TryUnlockDoors→Unlock then only IL/ILS on UseItem tree | **SHIPPED** |
+| Remaining EnsureInBag strip: death / storage TAKE / Offer-after-floor | Death skip-floor intentional; storage put/take party-share (0.5.15); floor TAKE Offer after Detach strip correct | **OK** |
+| InteractionRequest apply-when-gone beyond DroppedPickup/StorageTake | UseItem/door/Put party-benefit (0.5.12) | **OK** |
+| Sticky Dialoguer/EventZone/airlock beyond SceneFollow | no new durable field | **park** |
+| Boss/PuzzleState / DoorNative unload / elevators / Radio FMOD / join dump N=3–4 / wiki Key Items off ring / Domains HasPeer-without-apply | no new hard proof this dig | **park** |
+| SceneFollow RestorePlay / Adler EV / KillSilent / Mural Blocker / Alarm / ending merge / MeatBlocker / Falke empty-slot | parked list | **park** |
+
+Protocol stays **10** (reuse CraftRevokeSentinel fan-out).
+
 ## 0.5.15 — 2026-09-27
 
 Protocol **v10**. Continuous Batch 19 dig → ship (G-drop EnsureInBag bag-mirror strip).
