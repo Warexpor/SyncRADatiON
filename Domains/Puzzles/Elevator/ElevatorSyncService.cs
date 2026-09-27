@@ -52,7 +52,20 @@ namespace SyncRADation.Networking
 
         public static void ApplyCallButton(ElevatorCallButton x, PuzzleStateEntry e)
         {
-            if (x != null) x.called = e.Bool0;
+            if (x == null) return;
+            // Rising edge must invoke native CallElevator (starts elevatorMove / elevatorBroken).
+            // Bare called=true skips the coroutine → host cabin never moves; later presses early-out.
+            bool wasCalled = false;
+            try { wasCalled = x.called; } catch { }
+            if (e.Bool0 && !wasCalled)
+            {
+                try { x.CallElevator(); }
+                catch { }
+            }
+            else if (!e.Bool0 && wasCalled)
+            {
+                x.called = false;
+            }
         }
 
         public static void ApplyExc(EXC_Elevator x, PuzzleStateEntry e)

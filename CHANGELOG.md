@@ -1,3 +1,21 @@
+## 0.5.20 — 2026-09-27
+
+Protocol **v10**. Batch 25 ship (Dig D): ElevatorCallButton Apply rising-edge CallElevator.
+
+### Fixed
+- **ElevatorCallButton Apply sets `called` without `CallElevator()`** — `ElevatorSyncService.ApplyCallButton` only wrote `called=e.Bool0`. Peer lobby press runs native `CallElevator` locally (sets called + `StartCoroutine(elevatorMove|elevatorBroken)` @ RVA 0x7EDF60) and emits Bool0; host Apply latched `called=true` with **no** coroutine → host cabin never moves; later presses early-out (`if called ret`); late-join dump same dead latch. No Update on type — coroutine is the only mover. Contrast: `ApplyCentral` field snap OK; EXC already `startRide` on rising edge. Now false→true invokes Melon-exposed `CallElevator()` (sets called itself — do **not** pre-set called); true→false clears `called` only. Protocol 10 unchanged.
+
+### Before → After (player)
+- **Before:** Peer presses a lobby elevator call. Peer's cabin moves; host cabin stays put with `called` latched true — further presses do nothing; late joiners inherit the dead latch.
+- **After:** Host ApplyCallButton rising edge runs the same `CallElevator` coroutine peers already started natively — host cabin moves with the party.
+
+### Dig notes (Batch 25)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| ApplyCallButton flag-only skips CallElevator | Dig D: ApplyCallButton ~53–56 flag only; CallElevator @ 0x7EDF60 if called ret else called=1 + StartCoroutine; no Update; EXC/Central contrast | **SHIPPED** |
+
+Protocol stays **10** (reuse ElevatorCallButton Bool0; no new ushort).
+
 ## 0.5.19 — 2026-09-27
 
 Protocol **v10**. Batch 24 ship (Dig E): host KeypadSubmit self-Applies door consequences.
