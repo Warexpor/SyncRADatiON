@@ -270,20 +270,86 @@ namespace SyncRADation.Networking
         public static void ApplyMulti(Component c, PuzzleStateEntry e)
         {
             if (c == null) return;
+            // Rising-edge Melon UnityEvents: prior ApplyMulti only latched unlocked +
+            // element bits + TryUnlockDoors — never Invoked onUnlocked / onLoadUnlocked.
+            // Native UnlockKey (live) Invokes onUnlocked then onUnlockedLate; OnEnable
+            // (load) Invokes onLoadUnlocked when unlocked. AssetStudio MED Elemental:
+            // onUnlocked → dimPOI + exitEvent; onUnlockedLate/onLoadUnlocked → SetActive
+            // Inter/EventInter. LAB TreeLock: onUnlocked → exitEvent + Play; late/load →
+            // SetActive Inter/Event. Inter SetActive is ONLY on Late/Load — live peers
+            // need both onUnlocked (exitEvent) and onUnlockedLate (Inter) or EventScreen
+            // never exitEvents and Inter stays stuck. Mirror ApplyRotKeypad 0.5.25 /
+            // ApplyPower 0.5.27 / ApplyPump 0.5.28: MutateWorld&&!was → onUnlocked +
+            // onUnlockedLate; !MutateWorld&&!was → onLoadUnlocked. Skip onEarthKeyUnlocked
+            // (mid-key dimPOI only; no full-unlock softlock proof).
             var med = c as MED_MultiLock;
             if (med != null)
             {
+                bool was = false;
+                try { was = med.unlocked; } catch { }
                 med.unlocked = e.Bool0;
                 UnpackMedBits(med, e.Int0);
-                if (e.Bool0) PuzzleSyncService.TryUnlockDoors(med.gameObject);
+                if (!e.Bool0) return;
+                if (PuzzleSyncService.MutateWorld && !was)
+                {
+                    NetGate.BeginApply();
+                    try
+                    {
+                        if (med.onUnlocked != null)
+                            med.onUnlocked.Invoke();
+                        if (med.onUnlockedLate != null)
+                            med.onUnlockedLate.Invoke();
+                    }
+                    catch { }
+                    finally { NetGate.EndApply(); }
+                }
+                else if (!PuzzleSyncService.MutateWorld && !was)
+                {
+                    NetGate.BeginApply();
+                    try
+                    {
+                        if (med.onLoadUnlocked != null)
+                            med.onLoadUnlocked.Invoke();
+                    }
+                    catch { }
+                    finally { NetGate.EndApply(); }
+                }
+                PuzzleSyncService.TryUnlockDoors(med.gameObject);
                 return;
             }
             var lab = c as LAB_MultiLock;
             if (lab != null)
             {
+                bool was = false;
+                try { was = lab.unlocked; } catch { }
                 lab.unlocked = e.Bool0;
                 UnpackLabBits(lab, e.Int0);
-                if (e.Bool0) PuzzleSyncService.TryUnlockDoors(lab.gameObject);
+                if (!e.Bool0) return;
+                if (PuzzleSyncService.MutateWorld && !was)
+                {
+                    NetGate.BeginApply();
+                    try
+                    {
+                        if (lab.onUnlocked != null)
+                            lab.onUnlocked.Invoke();
+                        if (lab.onUnlockedLate != null)
+                            lab.onUnlockedLate.Invoke();
+                    }
+                    catch { }
+                    finally { NetGate.EndApply(); }
+                }
+                else if (!PuzzleSyncService.MutateWorld && !was)
+                {
+                    NetGate.BeginApply();
+                    try
+                    {
+                        if (lab.onLoadUnlocked != null)
+                            lab.onLoadUnlocked.Invoke();
+                    }
+                    catch { }
+                    finally { NetGate.EndApply(); }
+                }
+                PuzzleSyncService.TryUnlockDoors(lab.gameObject);
             }
         }
 

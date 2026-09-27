@@ -1,3 +1,22 @@
+## 0.5.29 — 2026-09-27
+
+Protocol **v10**. Batch 34 ship (Dig K #1): MED/LAB MultiLock ApplyMulti rising-edge `onUnlocked` (+ `onUnlockedLate`) so exitEvent + Inter SetActive fire for live peers; late-join uses `onLoadUnlocked`.
+
+### Fixed
+- **MED/LAB MultiLock ApplyMulti latch-only — never Invokes Melon UnityEvents** — ApplyMulti (~270–288) only latched `unlocked` + element bits + `TryUnlockDoors`. Native `UnlockKey` Invokes `onUnlocked` then `onUnlockedLate`; `OnEnable` (load) Invokes `onLoadUnlocked` when already unlocked. AssetStudio MED Elemental: `onUnlocked` → dimPOI + exitEvent (EventInter); `onUnlockedLate`/`onLoadUnlocked` → SetActive Inter/EventInter. LAB TreeLock: `onUnlocked` → exitEvent + Play; late/load → SetActive Inter/Event. Peer Apply unlocked+doors OK but EventScreen never exitEvents and Inter stayed stuck; late joiner same. Melon fields `unlocked` / `onUnlocked` / `onUnlockedLate` / `onLoadUnlocked` verified (camelCase); MED also has `onEarthKeyUnlocked` (mid-key dimPOI only — skipped). Inter SetActive is **only** on Late/Load — live path must Invoke both `onUnlocked` and `onUnlockedLate`. Fix (mirror ApplyRotKeypad 0.5.25 / ApplyPower 0.5.27 / ApplyPump 0.5.28): capture `was=unlocked`; latch unlocked+bits; if `!e.Bool0` return; if `MutateWorld && !was` → BeginApply + `onUnlocked.Invoke()` + `onUnlockedLate.Invoke()`; else if `!MutateWorld && !was` → BeginApply + `onLoadUnlocked.Invoke()`; keep `TryUnlockDoors`. Do **not** ship PatternLock (0.5.30). Protocol 10 unchanged (no new ushort).
+
+### Before → After (player)
+- **Before:** Host finishes MED Elemental / LAB TreeLock. Live peer sees unlocked + element bits + doors, but EventScreen never exitEvents and Inter stays active — softlock at the lock UI. Late joiner FullRefresh same Inter stuck.
+- **After:** Live MutateWorld peer on false→true `unlocked` edge BeginApply-Invokes `onUnlocked` (exitEvent + dimPOI/Play) then `onUnlockedLate` (Inter/EventInter SetActive). Late-join FullRefresh Invokes `onLoadUnlocked` (same SetActive as Late; no exitEvent remount).
+
+### Dig K #1 residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| ApplyMulti latch-only; peer skips onUnlocked/onUnlockedLate → exitEvent + Inter softlock; late-join skips onLoadUnlocked | Dig K #1: ApplyMulti ~270–288; Melon onUnlocked/Late/onLoadUnlocked; AssetStudio MED/LAB wiring; Inter SetActive only on Late/Load; UnlockKey live / OnEnable load; RotKeypad/Power/Pump rising-edge pattern | **SHIPPED** (MutateWorld&&!was onUnlocked+onUnlockedLate; FullRefresh onLoadUnlocked; onEarthKeyUnlocked skipped) |
+
+Protocol stays **10** (reuse MultiLock Bool0 unlocked + Int0 bits; no new ushort). Host-authoritative; N-peer live cinematic Apply path. PatternLock deferred.
+
 ## 0.5.28 — 2026-09-27
 
 Protocol **v10**. Batch 33 ship (Dig J #3): MED_Pump ApplyPump rising-edge `onSolved` so StartCutscene + dimPOI + RecordSplit fire for live peers; late-join uses `onLoad` (dimPOI only).
