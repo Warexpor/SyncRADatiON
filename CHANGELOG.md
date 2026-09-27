@@ -1,3 +1,21 @@
+## 0.5.23 — 2026-09-27
+
+Protocol **v10**. Batch 28 ship (Dig G #2): UseItem late-join / FullRefresh rising-edge preserve.
+
+### Fixed
+- **UseItem FullRefresh latches unlocked before ReapplyHeld can Invoke onSuccessful** — Late joiner FullRefresh PuzzleState Apply sets `_mutateWorld=false`. `SnapUseItemWorld` (0.5.21) latched `unlocked=true` + disabled inter, then early-returned before `onSuccessful.Invoke()`. Held UseItems (Disk/Tarot/Graves/Dissolve/Jam) survived in `_held`; later `ReapplyHeld` set `_mutateWorld=true` but `wasUnlocked` was already true → rising-edge skip. Joiners kept `ROT_DiskManager.red/blue` false, empty tarot board, unfired graves/dissolve/jam UnityEvents — softlock. Live MutateWorld path (host InteractionSync Apply + cinematic peer Apply) was fine. Fix (Dig G thinner): on `!MutateWorld` snap inter disable only — do **not** latch `unlocked=true` (PerPlayerUse still `NoteRemoteUnlock`). ReapplyHeld / cinematic MutateWorld path still latches + rising-edge Invokes. Host who already ran native Dialoguer keeps rising-edge skip (unlocked already true). Protocol 10 unchanged (no new ushort). ItemPickup onPickup is 0.5.24 — not this batch.
+
+### Before → After (player)
+- **Before:** Peer inserts Disk / places Tarot / solves Graves while others are mid-chapter. Late joiner FullRefresh shows UseItem unlocked flags but Disk content / tarot cards / graves consequences never appear — story gates stay closed for the joiner.
+- **After:** Late-join FullRefresh keeps `unlocked=false` (inter disabled only); ReapplyHeld rising-edge fires the same `onSuccessful` bindings (InsertDisk*/PlaceCard*/etc.) so Disk, Tarot, Graves, Dissolve, Jam apply for every joiner.
+
+### Dig notes (Batch 28)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| FullRefresh SnapUseItemWorld latches unlocked then returns; ReapplyHeld rising-edge skipped | Dig G #2: SnapUseItemWorld ~58–145 latch-then-early-return on !MutateWorld; ApplyPuzzleState ~408–411 FullRefresh ⇒ `_mutateWorld=false`; ReapplyHeld ~498–518 `_mutateWorld=true` but wasUnlocked already true | **SHIPPED** (thinner: inter-only on !MutateWorld; no sticky consequencesApplied set) |
+
+Protocol stays **10** (reuse UseItemInteraction Bool0; no new ushort). ItemPickup onPickup deferred to 0.5.24.
+
 ## 0.5.22 — 2026-09-27
 
 Protocol **v10**. Batch 27 ship (Dig G #1): ROT_Keypad Apply rising-edge `onSuccess`.
@@ -14,7 +32,7 @@ Protocol **v10**. Batch 27 ship (Dig G #1): ROT_Keypad Apply rising-edge `onSucc
 |-----------|-------|---------|
 | ApplyRotKeypad flags+TryUnlockDoors only; misses onSuccess peel | Dig G #1: ApplyRotKeypad ~167–171; ApplyKeypad3D rising-edge openDoor; Dispatch ~128–129 drops _mutateWorld; host ApplyKeypad Invokes onSuccess; TryUnlockDoors ≠ DoorConnections peel | **SHIPPED** |
 
-Protocol stays **10** (reuse ROT_Keypad Bool0; no new ushort). Late-join UseItem FullRefresh is 0.5.23 — not in this batch.
+Protocol stays **10** (reuse ROT_Keypad Bool0; no new ushort). Late-join UseItem FullRefresh shipped in 0.5.23.
 
 ## 0.5.21 — 2026-09-27
 

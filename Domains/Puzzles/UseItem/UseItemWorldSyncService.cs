@@ -63,14 +63,10 @@ namespace SyncRADation.Networking
             bool wasUnlocked = false;
             try { wasUnlocked = x.unlocked; } catch { }
             bool localUse = PerPlayerUse(x);
-            if (!localUse)
-            {
-                try { x.unlocked = true; } catch { }
-            }
-            else
-            {
-                try { AirlockCinematic.NoteRemoteUnlock(x); } catch { }
-            }
+            // Inter snap always (FullRefresh + cinematic): keep party-wide UseItems
+            // inert so joiners cannot re-use mid-refresh. Do NOT latch unlocked=true
+            // when !MutateWorld — late-join FullRefresh would burn the false→true
+            // edge before ReapplyHeld can Invoke onSuccessful (Disk/Tarot/Graves).
             try
             {
                 if (x.inter != null)
@@ -90,14 +86,28 @@ namespace SyncRADation.Networking
             catch { }
             if (!PuzzleSyncService.MutateWorld)
             {
+                if (localUse)
+                {
+                    try { AirlockCinematic.NoteRemoteUnlock(x); } catch { }
+                }
                 try
                 {
                     string n = "?";
                     try { if (x.gameObject != null) n = x.gameObject.name; } catch { }
-                    PlaytestLog.Verbose("Puzzle", "snap UseItem flags only " + n);
+                    PlaytestLog.Verbose("Puzzle", "snap UseItem inter only (no unlock latch) " + n);
                 }
                 catch { }
                 return;
+            }
+            // MutateWorld: latch unlocked (or NoteRemoteUnlock for PerPlayerUse) then
+            // doors + rising-edge Invoke below.
+            if (!localUse)
+            {
+                try { x.unlocked = true; } catch { }
+            }
+            else
+            {
+                try { AirlockCinematic.NoteRemoteUnlock(x); } catch { }
             }
             // Mid-unload: flags snapped above; skip door unlock on a torn-down GO.
             try
