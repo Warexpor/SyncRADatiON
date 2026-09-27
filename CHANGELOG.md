@@ -1,3 +1,28 @@
+## 0.5.15 — 2026-09-27
+
+Protocol **v10**. Continuous Batch 19 dig → ship (G-drop EnsureInBag bag-mirror strip).
+
+### Fixed
+- **G-drop PartyKeyRing bag-mirror strip** — `DetachDroppedKey` (local G-drop, remote `DropItemSpawn`, join dump) now `Remove` + `StripBagMirrors` so peers who `EnsureInBag`-mirrored a unique clear their bag ghosts while the unique sits on the floor. Same class as craft/UseItem 0.5.14; fan-out is existing `DropItemSpawn` BroadcastRaw (no new message / protocol stays 10).
+
+### Before → After (player)
+- **Before:** Host (or peer) G-drops AirlockKey. Ring clears, floor prop appears, but Peer2/Peer3 who `EnsureInBag`-mirrored the key still hold bag ghosts → `InLocalBag` / UseItem while the key is claimable on the floor → dual-claim softlock. Claim by Peer2 then leaves Peer3 with a leftover ghost until craft/consume revoke.
+- **After:** Every peer that sees the drop spawn strips those bag mirrors. Floor prop is the sole holder until TAKE Notes the ring again.
+
+### Dig notes (Batch 19)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| G-drop unique while N=3–4 peers hold EnsureInBag mirrors | `DetachDroppedKey` only `PartyKeyRing.Remove` + Broadcast; snapshot `ApplyMessage` never `RemoveItem`; `InLocalBag` stays true on non-droppers (craft 0.5.14 comment: “Snapshot Broadcast alone leaves peer bag ghosts”) | **SHIPPED** |
+| Non-Key craft ingredients / multi-combine / offer-before-revoke | Batch 18 table | **OK** — unchanged |
+| Storage put unique while peers hold mirrors | Put does not `Remove` ring (box + ring both shared); UseItem via ring while boxed is intentional party share | **OK** — not dual floor claim |
+| Death-bag unique on ring | Already skip-floor + clear local mirror only; ring stays (0.5.8+) | **OK** |
+| InteractionRequest apply-when-gone beyond DroppedPickup/StorageTake | UseItem/door/Put party-benefit design (0.5.12) | **OK** |
+| Sticky gameState/dialoguer/SceneFollow new durable field | no new field found beyond parked SceneFollow RestorePlay | **park** |
+| Boss / PuzzleState / DoorNative / elevator / airlock / Radio FMOD / dump mid-handshake / wiki Key Items off ring / Domains HasPeer-without-apply | no new hard proof this dig | **park** |
+| SceneFollow RestorePlay / Adler EV / KillSilent / Mural Blocker late-join / Alarm / ending merge / MeatBlocker / Falke empty-slot | parked list | **park** |
+
+Protocol stays **10** (reuse drop spawn + `StripBagMirrors`; no new ushort sentinel).
+
 ## 0.5.14 — 2026-09-27
 
 Protocol **v10**. Continuous Batch 18 dig → ship (craft/UseItem EnsureInBag mirror strip).

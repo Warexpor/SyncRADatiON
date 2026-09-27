@@ -1,6 +1,6 @@
 # SyncRADation — SIGNALIS Multiplayer Mod
 
-**Status:** v0.5.13 — protocol **v10**. Host-authoritative world/story + native presentation/FMOD. Dual-instance playtest required. Decompile: `~/Archive/Windows-Desktop/Dev/SIGNALIS DECOMPILED` (`~/Omarchy_Backup/Desktop/Dev/...` is gone on this machine).
+**Status:** v0.5.15 — protocol **v10**. Host-authoritative world/story + native presentation/FMOD. Dual-instance playtest required. Decompile: `~/Archive/Windows-Desktop/Dev/SIGNALIS DECOMPILED` (`~/Omarchy_Backup/Desktop/Dev/...` is gone on this machine).
 
 ## Product
 
@@ -17,7 +17,7 @@ LAN multiplayer MelonLoader mod for SIGNALIS (Unity IL2CPP / Unhollower-style Ma
 
 Walk up to a dropped prop for the native TAKE prompt (yes/no inspect, ammo count). There is no extra pickup key.
 
-## What is synced (0.5.13)
+## What is synced (0.5.15)
 
 | Area | Authority | Notes |
 |------|-----------|--------|
@@ -38,7 +38,7 @@ Walk up to a dropped prop for the native TAKE prompt (yes/no inspect, ammo count
 | Friendly fire | Opt-in | Default OFF |
 | Inventories | Independent | 6-slot bags stay personal; box + key ring are shared |
 
-## Architecture (0.5.13 Domains)
+## Architecture (0.5.15 Domains)
 
 Composition over endless partials. Domain folders hold `*SyncService` / `*NetHandlers` / `Patches/`; namespaces stay stable (`SyncRADation.Networking`, `.Patches`, `.Players`, `.ItemSystem`) so call sites do not churn.
 

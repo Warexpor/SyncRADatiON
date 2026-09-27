@@ -290,10 +290,17 @@ namespace SyncRADation.Networking
             }
         }
 
+        /// <summary>
+        /// Unique left the bag for the floor (G-drop / remote DropItemSpawn / death floor).
+        /// Ring Remove alone leaves EnsureInBag bag ghosts on other peers (InLocalBag) —
+        /// same class as craft/UseItem pre-0.5.14. Strip mirrors on every peer that sees
+        /// the spawn; DropItemSpawn BroadcastRaw is the fan-out (protocol 10, no new msg).
+        /// </summary>
         void DetachDroppedKey(Items.itemlist item)
         {
             if (!PartyKeyRing.IsKeyOrObject(item)) return;
             PartyKeyRing.Remove(item);
+            PartyKeyRing.StripBagMirrors(item);
             if (_net.Role == NetworkRole.Host)
                 PartyKeyRing.Broadcast();
         }

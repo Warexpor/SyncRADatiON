@@ -209,7 +209,8 @@ namespace SyncRADation.Networking
 
         /// <summary>
         /// Drop EnsureInBag / grant mirrors of a unique from the local bag when the
-        /// party ring revokes it (craft combine, UseItem consume). Mirrors ConsumeDropped.
+        /// party ring revokes it (craft combine, UseItem consume, G-drop DetachDroppedKey).
+        /// Mirrors ConsumeDropped on the dropper; remotes strip via this helper.
         /// </summary>
         public static void StripBagMirrors(Items.itemlist item)
         {
