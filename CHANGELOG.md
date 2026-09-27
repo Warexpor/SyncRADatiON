@@ -1,3 +1,22 @@
+## 0.5.46 — 2026-09-27
+
+Protocol **v10**. Batch 51 ship (Dig AA): ROT_DialLock hold mid-dial A/B/C/D via IsProgressed so N-peer remount / late-join keep unsolved dial state, not only final Bool0 solved.
+
+### Fixed
+- **DialLock IsProgressed Bool0-only — remount / late-join drop mid-dial** — TryRead serializes `solved` + `A`/`B`/`C`/`D` (Bool0, Int0–Int3); ApplyDial already writes Int0–3 + euler even unsolved; IsProgressed fell through ProgressedBool0 (Bool0 only) so unsolved dial turns were sent live but never held across remount. Native durable state: `A`/`B`/`C`/`D` ints (AssetStudio / Melon initial **0/0/0/5**), mutated by `TurnUp(int)` / `TurnDown(int)` then `Check`. Softlock: host turns ROT dials mid-solve → remount / late-join snap back to 0/0/0/5 until Bool0 solve. Fix (Dig AA, mirror Incinerator 0.5.42 / MED_Pump 0.5.44 / RES_Power 0.5.45 mid-hold): IsProgressed = Bool0 || Int0!=0 || Int1!=0 || Int2!=0 || Int3!=5; EnvEmit on TurnUp/TurnDown (Read mid / Progressed solved). Existing ApplyDial / ProgressedBool0 solved polling stay. Protocol 10 unchanged (reuse DialLock Bool0 solved + Int0–Int3 A/B/C/D; no new ushort).
+
+### Before → After (player)
+- **Before:** Host turns ROT dial lock mid-solve. Peers may see live Int0–Int3 briefly, but remount / late-join FullRefresh re-snap to initial A=B=C=0 D=5 — mid-dial state is not held until final Bool0 solve snap.
+- **After:** IsProgressed holds mid-dial (departure from 0/0/0/5) across remount; TurnUp/TurnDown emit so Progressed/Read latch immediately. Bool0 solved still ApplyDial unlock / door as before.
+
+### Dig AA residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| IsProgressed Bool0-only; no TurnUp/TurnDown emit → remount / late-join drop mid-dial Int0–Int3 | Dig AA: TryRead/Apply already Bool0+Int0–3; Melon TurnUp/TurnDown(int)+Check; AssetStudio A/B/C/D=0/0/0/5; ProgressedBool0 fallthrough | **SHIPPED** (IsProgressed Bool0\|\|A!=0\|\|B!=0\|\|C!=0\|\|D!=5; TurnUp/TurnDown EnvEmit; ApplyDial retained; protocol 10) |
+
+Protocol stays **10** (reuse DialLock Bool0 solved + Int0–Int3 A/B/C/D; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
 ## 0.5.45 — 2026-09-27
 
 Protocol **v10**. Batch 50 ship (Dig Z): RES_Power hold mid-fuse states via IsProgressed so N-peer remount / late-join keep unsolved fuse config, not only final Bool0 solved.

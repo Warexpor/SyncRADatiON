@@ -90,6 +90,15 @@ namespace SyncRADation.Patches
                 else Read(PuzzleType.RES_Power, x);
             }
 
+            public static void Dial(ROT_DialLock x)
+            {
+                if (x == null) return;
+                bool ok = false;
+                try { ok = x.solved; } catch { }
+                if (ok) Progressed(PuzzleType.DialLock, x);
+                else Read(PuzzleType.DialLock, x);
+            }
+
             static void Send(PuzzleType type, Component c, bool progressed)
             {
                 if (c == null || NetGate.IsApplying) return;
@@ -366,6 +375,24 @@ namespace SyncRADation.Patches
     {
         [HarmonyPostfix]
         public static void Postfix(LAB_MultiLock __instance) => EnvEmit.MultiLock(__instance);
+    }
+
+    // DialLock (ROT_DialLock): emit mid-dial A/B/C/D on TurnUp/TurnDown (Int0–Int3),
+    // Progressed on solve. Native TurnUp/TurnDown mutate dial ints — patch so peers
+    // see mid-dial without waiting for Tick (Dig AA). IsProgressed holds departure
+    // from initial 0/0/0/5 across remount. Existing ApplyDial / solved polling stay.
+    [HarmonyPatch(typeof(ROT_DialLock), nameof(ROT_DialLock.TurnUp), new System.Type[] { typeof(int) })]
+    public static class RotDialLockTurnUpPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(ROT_DialLock __instance) => EnvEmit.Dial(__instance);
+    }
+
+    [HarmonyPatch(typeof(ROT_DialLock), nameof(ROT_DialLock.TurnDown), new System.Type[] { typeof(int) })]
+    public static class RotDialLockTurnDownPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(ROT_DialLock __instance) => EnvEmit.Dial(__instance);
     }
 
     // RES_Power: emit mid-fuse states pack on Flip(int) (Int0), Progressed on solve.
