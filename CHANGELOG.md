@@ -1,3 +1,22 @@
+## 0.5.34 — 2026-09-27
+
+Protocol **v10**. Batch 39 ship (Dig O): LAB_Rings sync partial finger states via `PuzzleStateEntry.Int0` (4×2-bit) so N-peer place/take and late-join FullRefresh see in-progress rings, not only final solve.
+
+### Fixed
+- **LAB_Rings TryRead/Apply solved-only — peers diverge on partial finger place/take** — TryRead emitted only `solved` (Int0=0); ApplyLabRings ignored every unsolved entry; LabRingsPatch emitted only on `checkSolution` when solved. Native durable state is four `LAB_Rings_Finger.state` values (`empty/regent/serpent/bride` = 0..3) on Zeige/Mittel/Ring/Klein, with `placeRing` / `takeRing` / `setStates` / `LoadState`→`loadFinger`, plus expected `S_*`. Softlock: P1 places one ring, P2 places another → local fingers diverge; host receives no partial state; late joiner stays empty until final Bool0 solve. Melon fields `Zeige`/`Mittel`/`Ring`/`Klein`/`state`/`S_*`/`setStates`/`solved`/`solvedState`/`PlatePickup`/`FakePlate` verified; AssetStudio `S_Zeige=regent,S_Mittel=empty,S_Ring=bride,S_Klein=serpent`. Fix (Dig O, protocol 10 reuse): pack 4×2-bit into Int0 (Zeige|Mittel|Ring|Klein); TryRead emits pack + Bool0; placeRing/takeRing postfix EnvEmit.Read (Progressed when solved); Apply sanitizes nibbles 0..3, applies finger.state + `setStates` (idempotent / FullRefresh force), snaps plate path when Bool0 **or** pack matches `S_*`. IsProgressed holds Int0!=0 for remount. No new wire/type/protocol bump.
+
+### Before → After (player)
+- **Before:** P1 places a ring; P2 places another. Local finger states diverge; host never sees partial state; late joiner / host stay empty until someone fully solves — P2 cannot reliably continue an in-progress LAB rings puzzle.
+- **After:** Each place/take emits packed Int0 finger states; host validates 0..3 and applies native-equivalent `setStates` visuals; peers + late-join FullRefresh see the same mid-puzzle fingers; Bool0 solved still snaps plate / solvedState as before.
+
+### Dig O residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| TryRead/Apply solved-only; place/take never emit partial fingers → N-peer diverge + late-join empty until solve | Dig O: TryRead Int0=0; ApplyLabRings Bool0-only Snap; LabRingsPatch solved-only; Melon finger.state/S_*/setStates/loadFinger; AssetStudio S_* | **SHIPPED** (Int0 4×2-bit pack; place/take Read; Apply setStates + S_* validate; Bool0 plate snap retained; protocol 10) |
+
+Protocol stays **10** (reuse LAB_Rings Bool0 solved + Int0 finger pack; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
 ## 0.5.33 — 2026-09-27
 
 Protocol **v10**. Batch 38 ship (Dig N): RadioStationTutorial ApplyTutorial final-pose snap (Door Z=20 / returnStations / TutorialStation) + live EndCutscene.trigger so DET radio bunker tutorial peers exit softlock.

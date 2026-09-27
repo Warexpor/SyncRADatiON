@@ -385,6 +385,10 @@ namespace SyncRADation.Networking
                 return !Mathf.Approximately(e.Float0, 0f);
             if (e.Type == PuzzleType.ROT_RadioAlignment)
                 return e.Bool0 || e.Int0 != 0 || e.Int1 != 0;
+            // LAB_Rings: hold partial finger pack (Int0) so remount / late-join
+            // re-snaps mid-puzzle place/take, not only final Bool0 solved.
+            if (e.Type == PuzzleType.LAB_Rings)
+                return e.Bool0 || e.Int0 != 0;
             return ProgressedBool0.Contains(e.Type) && e.Bool0;
         }
 

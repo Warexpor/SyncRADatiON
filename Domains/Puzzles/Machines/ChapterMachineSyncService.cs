@@ -42,7 +42,10 @@ namespace SyncRADation.Networking
                 case PuzzleType.LAB_Rings:
                 {
                     var x = (LAB_Rings)c;
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.solved, false, false, 0, 0, 0, 0, 0);
+                    // 4×2-bit finger pack in Int0 (Zeige|Mittel|Ring|Klein); empty/regent/serpent/bride=0..3.
+                    int pack = 0;
+                    try { pack = PackLabRingFingers(x); } catch { }
+                    entry = PuzzleDomainUtil.Mk(type, wid, x.solved, false, false, pack, 0, 0, 0, 0);
                     return true;
                 }
                 case PuzzleType.ROT_MeatBlocker:
@@ -281,8 +284,76 @@ namespace SyncRADation.Networking
 
         public static void ApplyLabRings(LAB_Rings x, PuzzleStateEntry e)
         {
-            if (x != null && e.Bool0)
+            if (x == null) return;
+            // Protocol 10: Int0 = 4×2-bit finger states; Bool0 = solved (plate snap).
+            // Sanitize each nibble to 0..3 (empty/regent/serpent/bride). Host also
+            // treats pack==S_* as solved so a partial emit that completes the
+            // solution still snaps even if Bool0 raced ahead of checkSolution.
+            int pack = SanitizeLabRingPack(e.Int0);
+            ApplyLabRingFingers(x, pack);
+            bool solved = e.Bool0;
+            if (!solved)
+            {
+                try { solved = LabRingPackMatchesSolution(x, pack); } catch { }
+            }
+            if (solved)
                 SnapLabRings(x);
+        }
+
+        /// <summary>Zeige bits0-1, Mittel 2-3, Ring 4-5, Klein 6-7.</summary>
+        static int PackLabRingFingers(LAB_Rings x)
+        {
+            int z = 0, m = 0, r = 0, k = 0;
+            try { if (x.Zeige != null) z = (int)x.Zeige.state & 3; } catch { }
+            try { if (x.Mittel != null) m = (int)x.Mittel.state & 3; } catch { }
+            try { if (x.Ring != null) r = (int)x.Ring.state & 3; } catch { }
+            try { if (x.Klein != null) k = (int)x.Klein.state & 3; } catch { }
+            return z | (m << 2) | (r << 4) | (k << 6);
+        }
+
+        static int SanitizeLabRingPack(int packed)
+        {
+            // 2-bit mask per finger — illegal high bits dropped; values always 0..3.
+            int z = packed & 3;
+            int m = (packed >> 2) & 3;
+            int r = (packed >> 4) & 3;
+            int k = (packed >> 6) & 3;
+            return z | (m << 2) | (r << 4) | (k << 6);
+        }
+
+        static bool LabRingPackMatchesSolution(LAB_Rings x, int pack)
+        {
+            int z = pack & 3, m = (pack >> 2) & 3, r = (pack >> 4) & 3, k = (pack >> 6) & 3;
+            return z == ((int)x.S_Zeige & 3)
+                && m == ((int)x.S_Mittel & 3)
+                && r == ((int)x.S_Ring & 3)
+                && k == ((int)x.S_Klein & 3);
+        }
+
+        static void ApplyLabRingFingers(LAB_Rings x, int pack)
+        {
+            ApplyOneLabFinger(x, x.Zeige, pack & 3);
+            ApplyOneLabFinger(x, x.Mittel, (pack >> 2) & 3);
+            ApplyOneLabFinger(x, x.Ring, (pack >> 4) & 3);
+            ApplyOneLabFinger(x, x.Klein, (pack >> 6) & 3);
+        }
+
+        static void ApplyOneLabFinger(LAB_Rings mgr, LAB_Rings_Finger finger, int state)
+        {
+            if (finger == null) return;
+            var desired = (LAB_Rings_Finger.rings)(state & 3);
+            // Rising-edge / idempotent: skip setStates when already matching (live
+            // rebroadcast). FullRefresh (!MutateWorld) still forces visuals so a
+            // remount / late-join OnEnable empty pose is corrected even if state
+            // coincidentally matches after LoadState.
+            bool same = false;
+            try { same = finger.state == desired; } catch { }
+            if (same && PuzzleSyncService.MutateWorld) return;
+            try { finger.state = desired; } catch { }
+            // Native LoadState → loadFinger(string) → setStates; place/take also
+            // end in setStates for Pickup*/MultiInter visuals. Prefer setStates
+            // (no inventory side-effects) over placeRing/takeRing.
+            try { if (mgr != null) mgr.setStates(finger); } catch { }
         }
 
         public static void ApplyMeatBlocker(ROT_MeatBlocker x, PuzzleStateEntry e)

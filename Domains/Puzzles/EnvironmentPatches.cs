@@ -28,6 +28,13 @@ namespace SyncRADation.Patches
 
             public static void ClearOnce() => _once.Clear();
 
+            public static void LabRings(LAB_Rings x)
+            {
+                if (x == null) return;
+                if (x.solved) Progressed(PuzzleType.LAB_Rings, x);
+                else Read(PuzzleType.LAB_Rings, x);
+            }
+
             static void Send(PuzzleType type, Component c, bool progressed)
             {
                 if (c == null || NetGate.IsApplying) return;
@@ -135,6 +142,30 @@ namespace SyncRADation.Patches
         public static void Postfix(EXC_Hatch __instance)
         {
             EnvEmit.Progressed(PuzzleType.EXC_Hatch, __instance);
+        }
+    }
+
+    // LAB_Rings: emit partial finger pack on place/take (Int0), Progressed on solve.
+    // checkSolution alone used to gate emit on solved — peers never saw mid-puzzle
+    // finger states (Dig O). placeRing/takeRing cover the durable state edges;
+    // checkSolution still Progressed when native latches solved.
+    [HarmonyPatch(typeof(LAB_Rings), nameof(LAB_Rings.placeRing))]
+    public static class LabRingsPlacePatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(LAB_Rings __instance)
+        {
+            EnvEmit.LabRings(__instance);
+        }
+    }
+
+    [HarmonyPatch(typeof(LAB_Rings), nameof(LAB_Rings.takeRing))]
+    public static class LabRingsTakePatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(LAB_Rings __instance)
+        {
+            EnvEmit.LabRings(__instance);
         }
     }
 
