@@ -19,6 +19,8 @@ namespace SyncRADation.Networking
         private readonly Dictionary<ulong, int> _claimerOf = new Dictionary<ulong, int>();
         private readonly Dictionary<ulong, Items.itemlist> _claimedItemOf = new Dictionary<ulong, Items.itemlist>();
         private readonly Dictionary<ulong, ItemPickup> _byId = new Dictionary<ulong, ItemPickup>();
+        /// <summary>Once-per-WorldId party onPickup Invoke (Dig H). Cleared on scene refresh.</summary>
+        private readonly HashSet<ulong> _partyOnPickupFired = new HashSet<ulong>();
         private bool _scanned;
         private readonly List<WorldPickupEntry> _tickList = new List<WorldPickupEntry>(32);
 
@@ -36,6 +38,7 @@ namespace SyncRADation.Networking
             _claimerOf.Clear();
             _claimedItemOf.Clear();
             _byId.Clear();
+            _partyOnPickupFired.Clear();
             _timer = 0f;
             foreach (var item in _keepItemsScratch)
                 _claimedItems.Add(item);
@@ -52,6 +55,7 @@ namespace SyncRADation.Networking
             _claimerOf.Clear();
             _claimedItemOf.Clear();
             _byId.Clear();
+            _partyOnPickupFired.Clear();
             _timer = 0f;
         }
         public void RequestFullSend() => _needFull = true;
@@ -454,6 +458,7 @@ namespace SyncRADation.Networking
             _claimed.Remove(worldId);
             _claimerOf.Remove(worldId);
             _claimedItemOf.Remove(worldId);
+            _partyOnPickupFired.Remove(worldId);
             // Only drop the item-enum mark when no other WorldId still claims that unique.
             if (noted != Items.itemlist.None)
             {
@@ -544,6 +549,11 @@ namespace SyncRADation.Networking
                 }
                 catch { }
             }
+            // Host does not ApplyHide its own broadcast — party onPickup for host when
+            // a client claimed (native pickUp never ran here). Host-native path Notes
+            // first so this Ensure is a no-op (Dig H).
+            if (triggered)
+                EnsurePartyOnPickup(worldId, p);
             net.SendWorldPickupState(new[]
             {
                 new WorldPickupEntry
@@ -592,6 +602,7 @@ namespace SyncRADation.Networking
                     _claimed.Remove(id);
                     _claimerOf.Remove(id);
                     _claimedItemOf.Remove(id);
+                    _partyOnPickupFired.Remove(id);
                     if (noted != Items.itemlist.None)
                     {
                         bool still = false;
@@ -609,6 +620,10 @@ namespace SyncRADation.Networking
                 }
 
                 _claimed.Add(id);
+                // Triggered rising (or FullRefresh remount): party onPickup for non-claimers
+                // (TakeCard/takeRing/takeSpear/StartOutro/MeatBlocker). Invoke before Hide
+                // so persistent GameObject args stay live. HashSet de-dupes Grant+Hide.
+                EnsurePartyOnPickup(id, p);
                 if (p != null)
                 {
                     HidePickup(p);
@@ -700,9 +715,10 @@ namespace SyncRADation.Networking
                     PartyKeyRing.BindUseDialogue(item);
 
                     // Client Prefix blocks ItemPickup.pickUp, so onPickup never ran.
-                    // Host already Invoked via native pickUp — only needed on grant path.
-                    // Decompile: ItemPickup.onPickup UnityEvent (dump.cs ~484299).
-                    InvokeOnPickup(p);
+                    // Host-claim comment was false when client claims — host+non-claimers
+                    // now Ensure via ApplyHide/BroadcastTriggered. Claimer uses same
+                    // Ensure (HashSet de-dupes if State arrived first). Dig H / 0.5.24.
+                    EnsurePartyOnPickup(id, p);
                 }
                 finally
                 {
@@ -721,6 +737,36 @@ namespace SyncRADation.Networking
             {
                 ModRuntime.Log?.Warning("[WorldPickup] Grant failed: " + ex.Message);
             }
+        }
+
+        /// <summary>
+        /// Host-native pickUp already Invoked onPickup — mark so BroadcastTriggered /
+        /// ApplyHide Ensure do not double-fire (Dig H).
+        /// </summary>
+        public void NoteOnPickupFired(ulong worldId)
+        {
+            if (worldId == 0) return;
+            _partyOnPickupFired.Add(worldId);
+        }
+
+        /// <summary>
+        /// Idempotent party onPickup: once per WorldId until scene refresh / claim release.
+        /// Skips when prop not yet scanned (pending other-room) so a later ApplyHide can fire.
+        /// </summary>
+        public bool EnsurePartyOnPickup(ulong worldId, ItemPickup p)
+        {
+            if (worldId == 0 || p == null) return false;
+            if (!_partyOnPickupFired.Add(worldId)) return false;
+            NetGate.BeginApply();
+            try
+            {
+                InvokeOnPickup(p);
+            }
+            finally
+            {
+                NetGate.EndApply();
+            }
+            return true;
         }
 
         /// <summary>

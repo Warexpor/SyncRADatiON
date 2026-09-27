@@ -304,6 +304,9 @@ namespace SyncRADation.Patches
                     PlaytestLog.Event("Pickup", "host post deny id=" + id.ToString("X16"));
                     return;
                 }
+                // Native pickUp already Invoked onPickup — Note before Broadcast so
+                // host EnsurePartyOnPickup does not double-fire (Dig H).
+                net.PickupSync.NoteOnPickupFired(id);
                 net.PickupSync.BroadcastTriggered(id, true);
                 try
                 {
@@ -364,6 +367,8 @@ namespace SyncRADation.Patches
                     PlaytestLog.Event("Pickup", "host note deny id=" + id.ToString("X16"));
                     return;
                 }
+                // Inspect/confirm path: native already Invoked — Note before Broadcast (Dig H).
+                net.PickupSync.NoteOnPickupFired(id);
                 net.PickupSync.BroadcastTriggered(id, true);
                 try
                 {

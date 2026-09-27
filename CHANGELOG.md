@@ -1,3 +1,21 @@
+## 0.5.24 — 2026-09-27
+
+Protocol **v10**. Batch 29 ship (Dig H): ItemPickup.onPickup party Ensure for non-claimers.
+
+### Fixed
+- **ItemPickup.onPickup never fires for non-claimer peers (and not for host on client-claim)** — `ApplyGrant` Invoked claimer-only (~702–705). `ApplyHide` hide-only; `BroadcastTriggered` state-only. Comment “Host already Invoked” was false when a client claimed: Peer2 grant Invokes; Host+Peer3/4 hide-only → `ROT_Tarot.TakeCard` / `LAB_Rings.takeRing` / `END_Boss.takeSpear` (unparks Falke empty-slot) / `ROT_TrainLogic.StartOutro`+`UnJam` / MeatBlocker `pickup` never ran party-wide. AssetStudio `ItemPickup_#*` bind those methods on `onPickup` (dump.cs ~484299). Fix (Dig H): idempotent `EnsurePartyOnPickup(worldId, p)` (`HashSet` once-per-id); call from `ApplyHide` (Triggered) **and** host `BroadcastTriggered`; host-native `Postfix`/`NoteTaken` `NoteOnPickupFired(id)` after native `pickUp` so Broadcast does not double-fire; `ApplyGrant` switches to same Ensure (claimer de-duped vs State); `BeginApply` around Invoke; clear set on scene refresh / claim release. Protocol 10 unchanged. Presentation `OpenBook`/`StartCutscene`/`dimPOI` — same acceptance as UseItem remount; soak late-join book flash on FullRefresh remount.
+
+### Before → After (player)
+- **Before:** Peer2 picks a tarot card / ring / Falke spear / train key / MeatBlocker item. Peer2 sees TakeCard/takeRing/takeSpear/StartOutro/MeatBlocker. Host and Peer3/4 only hide the prop — empty tarot board, rings still present, Falke empty-slot parked, train outro jammed, MeatBlocker pickups counter stuck (host misses when client claims).
+- **After:** Every peer applying Triggered hide (and host BroadcastTriggered on client-claim) runs the same `onPickup` bindings once — TakeCard/takeRing/takeSpear/Train StartOutro+UnJam/MeatBlocker pickup apply for the whole party. Host-native take Notes first so Broadcast does not double-fire.
+
+### Dig notes (Batch 29)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| ApplyGrant claimer-only Invoke; ApplyHide/BroadcastTriggered no onPickup; host miss on client-claim | Dig H: ApplyGrant ~702–705; ApplyHide ~611–630; BroadcastTriggered ~523–555; false “Host already Invoked”; AssetStudio TakeCard/takeRing/takeSpear/StartOutro+UnJam; MeatBlocker pickup | **SHIPPED** (HashSet Ensure + NoteOnPickupFired) |
+
+Protocol stays **10** (no new ushort). Late-join FullRefresh may flash OpenBook/StartCutscene once per claimed story pickup — same class of remount acceptance as UseItem 0.5.21/0.5.23; soak if noisy.
+
 ## 0.5.23 — 2026-09-27
 
 Protocol **v10**. Batch 28 ship (Dig G #2): UseItem late-join / FullRefresh rising-edge preserve.
