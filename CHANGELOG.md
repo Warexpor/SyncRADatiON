@@ -1,3 +1,22 @@
+## 0.5.43 — 2026-09-27
+
+Protocol **v10**. Batch 48 ship (Dig X): MultiLock hold mid-key element bits via IsProgressed so N-peer remount / late-join keep inserted keys, not only final Bool0 unlocked.
+
+### Fixed
+- **MultiLock IsProgressed Bool0-only — remount / late-join drop mid-key** — TryRead/Apply already sync `unlocked` + Fire/Earth/Water/Air/Gold(/Star) via Int0 bits (protocol 8 reuse; ApplyMulti onUnlocked from 0.5.29); IsProgressed fell through ProgressedBool0 (Bool0 only) so unsolved key inserts were sent live but never held across remount. Softlock: host inserts one elemental key mid-solve → remount / late-join lose inserted keys / can strand door gate until Bool0 unlock. Fix (Dig X, mirror Incinerator 0.5.42 / ServiceLock 0.5.39 mid-hold): IsProgressed = Bool0 || Int0!=0; EnvEmit on MED/LAB `UnlockKey` (Read mid / Progressed unlocked). Existing Int0 pack/unpack + onUnlocked Apply stay. Protocol 10 unchanged (reuse MultiLock Bool0 unlocked + Int0 bits; no new ushort).
+
+### Before → After (player)
+- **Before:** Host inserts mid-key(s) on MultiLock. Peers may see live Int0 briefly, but remount / late-join FullRefresh drop inserted keys — mid-key state is not held until final Bool0 unlock snap; door gate can strand.
+- **After:** IsProgressed holds mid-key (Int0!=0) across remount; UnlockKey emit so Progressed/Read latch immediately. Bool0 unlocked still onUnlocked / TryUnlockDoors as before.
+
+### Dig X residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| IsProgressed Bool0-only; no UnlockKey emit → remount / late-join drop mid-key Int0 | Dig X: TryRead/Apply already Bool0+Int0; Melon UnlockKey; Fire=1 Earth=2 Water=4 Air=8 Gold=16 Star=32; ProgressedBool0 fallthrough | **SHIPPED** (IsProgressed Bool0\|\|Int0!=0; UnlockKey EnvEmit; ApplyMulti retained; protocol 10) |
+
+Protocol stays **10** (reuse MultiLock Bool0 unlocked + Int0 bits; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
 ## 0.5.42 — 2026-09-27
 
 Protocol **v10**. Batch 47 ship (Dig W): MED_Incinerator hold mid-dial A/B/C via IsProgressed so N-peer remount / late-join keep unsolved dial state, not only final Bool0 solved.

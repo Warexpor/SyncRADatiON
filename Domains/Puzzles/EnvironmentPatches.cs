@@ -53,6 +53,25 @@ namespace SyncRADation.Patches
                 else Read(PuzzleType.MED_Incinerator, x);
             }
 
+            public static void MultiLock(Component x)
+            {
+                if (x == null) return;
+                bool ok = false;
+                try
+                {
+                    var med = x as MED_MultiLock;
+                    if (med != null) ok = med.unlocked;
+                    else
+                    {
+                        var lab = x as LAB_MultiLock;
+                        if (lab != null) ok = lab.unlocked;
+                    }
+                }
+                catch { }
+                if (ok) Progressed(PuzzleType.MultiLock, x);
+                else Read(PuzzleType.MultiLock, x);
+            }
+
             static void Send(PuzzleType type, Component c, bool progressed)
             {
                 if (c == null || NetGate.IsApplying) return;
@@ -263,6 +282,24 @@ namespace SyncRADation.Patches
     {
         [HarmonyPostfix]
         public static void Postfix(MED_Incinerator __instance) => EnvEmit.Incinerator(__instance);
+    }
+
+    // MultiLock: emit mid-key element bits on UnlockKey (Int0), Progressed on full unlock.
+    // Native UnlockKey sets Fire/Earth/Water/Air/Gold(/Star) then may latch unlocked —
+    // patch so peers see mid-key without waiting for Tick (Dig X). IsProgressed holds
+    // Int0!=0 across remount. Existing ApplyMulti onUnlocked paths stay (0.5.29).
+    [HarmonyPatch(typeof(MED_MultiLock), nameof(MED_MultiLock.UnlockKey))]
+    public static class MedMultiLockUnlockKeyPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(MED_MultiLock __instance) => EnvEmit.MultiLock(__instance);
+    }
+
+    [HarmonyPatch(typeof(LAB_MultiLock), nameof(LAB_MultiLock.UnlockKey))]
+    public static class LabMultiLockUnlockKeyPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(LAB_MultiLock __instance) => EnvEmit.MultiLock(__instance);
     }
 
     [HarmonyPatch(typeof(ROT_MeatBlocker), nameof(ROT_MeatBlocker.pickup))]

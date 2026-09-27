@@ -407,6 +407,10 @@ namespace SyncRADation.Networking
             // late-join re-snaps unsolved dial changes, not only final Bool0 solved.
             if (e.Type == PuzzleType.MED_Incinerator)
                 return e.Bool0 || e.Int0 != 10 || e.Int1 != 10 || e.Int2 != 10;
+            // MultiLock: hold partial element-key pack (Int0 Fire/Earth/Water/Air/Gold[/Star])
+            // so remount / late-join re-snaps mid-key inserts, not only final Bool0 unlocked.
+            if (e.Type == PuzzleType.MultiLock)
+                return e.Bool0 || e.Int0 != 0;
             return ProgressedBool0.Contains(e.Type) && e.Bool0;
         }
 
