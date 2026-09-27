@@ -711,11 +711,83 @@ namespace SyncRADation.Networking
         public static void ApplyShrine(RES_Shrine x, PuzzleStateEntry e)
         {
             if (x == null) return;
+            // Rising-edge final-pose (Dig P): Melon solved / busy / big / mid / small /
+            // onSuccess / LeftDoor / RightDoor / OpenAngle / doorPos / content.
+            // Native CheckSolve (~0x4B6AF0) early-outs when solved already true —
+            // never starts delayedReactionToSolve.MoveNext (~0x6EEAA0): latch solved,
+            // content.SetActive(true), MoveTowards doorPos→1 (Update applies
+            // LeftDoor Z=-OpenAngle*doorPos / RightDoor Z=+OpenAngle*doorPos),
+            // onSuccess.Invoke, StartCoroutine(release) (busy clear). Prior Apply
+            // latched solved then CheckSolve → peers miss doors/content/dimPOI;
+            // sticky solved unrecovered. Asset onSuccess → MinimapPOIObject.dimPOI ×2
+            // (safe both-path like DoorLockEvent/MultiCondition). LoadState when
+            // solved also snaps doorPos=1 + content (no onSuccess). Mirror
+            // RadioStationTutorial / Magpie final-pose + DoorLockEvent rising-edge
+            // Invoke. Protocol 10 unchanged (reuse RES_Shrine Bool0/Bool1/Int0..2).
+            bool was = false;
+            try { was = x.solved; } catch { }
             x.solved = e.Bool0; x.busy = e.Bool1;
             x.big = e.Int0; x.mid = e.Int1; x.small = e.Int2;
             if (!e.Bool0) return;
-            try { x.CheckSolve(); } catch { }
+            if (!was)
+            {
+                NetGate.BeginApply();
+                try
+                {
+                    try
+                    {
+                        if (x.onSuccess != null)
+                            x.onSuccess.Invoke();
+                    }
+                    catch { }
+                    SnapShrineFinalPose(x);
+                }
+                catch { }
+                finally { NetGate.EndApply(); }
+            }
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
+        }
+
+        /// <summary>
+        /// delayedReaction / LoadState final pose: doorPos=1, LeftDoor Z=-OpenAngle,
+        /// RightDoor Z=+OpenAngle, content active. Does not start release coroutine.
+        /// </summary>
+        static void SnapShrineFinalPose(RES_Shrine x)
+        {
+            if (x == null) return;
+            try { x.doorPos = 1f; } catch { }
+            float open = 0f;
+            try { open = x.OpenAngle; } catch { }
+            try
+            {
+                if (x.LeftDoor != null)
+                {
+                    var e = x.LeftDoor.localEulerAngles;
+                    e.x = 0f;
+                    e.y = 0f;
+                    e.z = -open;
+                    x.LeftDoor.localEulerAngles = e;
+                }
+            }
+            catch { }
+            try
+            {
+                if (x.RightDoor != null)
+                {
+                    var e = x.RightDoor.localEulerAngles;
+                    e.x = 0f;
+                    e.y = 0f;
+                    e.z = open;
+                    x.RightDoor.localEulerAngles = e;
+                }
+            }
+            catch { }
+            try
+            {
+                if (x.content != null)
+                    x.content.SetActive(true);
+            }
+            catch { }
         }
 
         // Radio peel — façade for any leftover callers.

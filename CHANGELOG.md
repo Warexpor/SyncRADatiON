@@ -1,3 +1,22 @@
+## 0.5.35 — 2026-09-27
+
+Protocol **v10**. Batch 40 ship (Dig P): RES_Shrine ApplyShrine final-pose (doors / content / onSuccess) so peers + late-join FullRefresh latch the released shrine pose instead of sticky-solved softlock.
+
+### Fixed
+- **ApplyShrine latches solved then CheckSolve — peers miss delayedReactionToSolve final pose** — ApplyShrine set `solved`/`busy`/`big`/`mid`/`small` then called native `CheckSolve()`. Native CheckSolve (~0x4B6AF0) immediately exits when `solved` is already true → never starts `delayedReactionToSolve`. MoveNext (~0x6EEAA0) does solved transition, `content.SetActive(true)`, MoveTowards `doorPos`→1 (Update applies LeftDoor Z=`-OpenAngle*doorPos` / RightDoor Z=`+OpenAngle*doorPos`), `onSuccess.Invoke`, StartCoroutine(`release`). Asset `onSuccess` → `MinimapPOIObject.dimPOI` ×2. Softlock: live peers + late-join FullRefresh latch shrine solved but miss final door/release pose, content activation, minimap dimming; native re-check cannot recover (solved sticky). Melon fields `solved`/`busy`/`big`/`mid`/`small`/`onSuccess`/`LeftDoor`/`RightDoor`/`OpenAngle`/`doorPos`/`content` verified; LoadState when solved snaps `doorPos=1` + content (no onSuccess). Fix (Dig P, mirror RadioStationTutorial/Magpie final-pose + DoorLockEvent rising-edge Invoke): capture `was=solved`; latch fields; **never** CheckSolve after latching solved; if `!e.Bool0` return; if `!was` → BeginApply + `onSuccess.Invoke()` once + SnapShrineFinalPose (`doorPos=1`, LeftDoor Z=`-OpenAngle`, RightDoor Z=`+OpenAngle`, content active) for both MutateWorld and FullRefresh (dimPOI safe). Bool1 busy + Int0..2 plate apply preserved. Protocol 10 unchanged (reuse RES_Shrine Bool0/Bool1/Int0..2; no new ushort).
+
+### Before → After (player)
+- **Before:** Host solves the RES shrine (plates align → CheckSolve → delayedReaction opens doors, activates content, dims minimap POIs). Peers latch `solved=true` then call CheckSolve which no-ops — doors stay closed, content stays inactive, minimap POIs stay bright. Late joiner FullRefresh same. Sticky solved cannot recover.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh on false→true `solved` edge BeginApply-Invokes `onSuccess` (dimPOI ×2) and snaps doors open (`doorPos=1`, Left/Right ±OpenAngle) + content active. Plate Int0..2 + busy Bool1 still apply as before.
+
+### Dig P residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| ApplyShrine latched solved then CheckSolve; CheckSolve early-out skips delayedReaction → peers miss doors/content/onSuccess | Dig P: ApplyShrine CheckSolve-after-latch; Melon solved/busy/big/mid/small/onSuccess/LeftDoor/RightDoor/OpenAngle/doorPos/content; CheckSolve ~0x4B6AF0 early-out; delayedReaction ~0x6EEAA0 doorPos→1 + content + onSuccess; Asset onSuccess=dimPOI×2; LoadState doorPos=1 when solved | **SHIPPED** (!was onSuccess+SnapShrineFinalPose both paths; no CheckSolve after latch; protocol 10 Bool0/Bool1/Int0..2 reuse) |
+
+Protocol stays **10** (reuse RES_Shrine Bool0 solved + Bool1 busy + Int0..2 plates; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
 ## 0.5.34 — 2026-09-27
 
 Protocol **v10**. Batch 39 ship (Dig O): LAB_Rings sync partial finger states via `PuzzleStateEntry.Int0` (4×2-bit) so N-peer place/take and late-join FullRefresh see in-progress rings, not only final solve.
