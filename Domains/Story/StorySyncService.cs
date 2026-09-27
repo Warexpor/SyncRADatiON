@@ -675,8 +675,32 @@ namespace SyncRADation.Networking
         internal static void ApplyMultiConditionEvent(MultiConditionEvent x, PuzzleStateEntry e)
         {
             if (x == null) return;
+            // Rising-edge OnTryDone: Melon triedOnce / tried / OnTryDone (PascalCase
+            // UnityEvent). Native TryOnce early-outs on triedOnce — consequence never
+            // recoverable once latched without Invoke. Live StoryCmd.MultiConditionFire
+            // already TryOnce/TryTrigger + OnTryDone.Invoke (OK). Late-join FullRefresh
+            // previously only latched triedOnce — softlock (Proceed / ProceedDelayed /
+            // delayedEvent / SetTrigger never fire). Dig M: mirror ApplyDoorLockEvent
+            // 0.5.31 both-path rising-edge: capture was=triedOnce; latch; if !e.Bool0
+            // return; if !was → BeginApply + OnTryDone.Invoke(). Live StoryCmd path
+            // sets triedOnce first → Apply sees was=true → no double-fire. Protocol 10
+            // unchanged (reuse MultiConditionEvent Bool0 triedOnce + Int0 tried).
+            bool was = false;
+            try { was = x.triedOnce; } catch { }
             x.triedOnce = e.Bool0;
             x.tried = e.Int0;
+            if (!e.Bool0) return;
+            if (!was)
+            {
+                NetGate.BeginApply();
+                try
+                {
+                    if (x.OnTryDone != null)
+                        x.OnTryDone.Invoke();
+                }
+                catch { }
+                finally { NetGate.EndApply(); }
+            }
         }
 
         internal static void ApplySaveRoomEvent(SaveRoomEvent x, PuzzleStateEntry e)

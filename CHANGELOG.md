@@ -1,3 +1,22 @@
+## 0.5.32 — 2026-09-27
+
+Protocol **v10**. Batch 37 ship (Dig M): MultiConditionEvent ApplyMultiConditionEvent rising-edge `OnTryDone` so Proceed / ProceedDelayed / delayedEvent / SetTrigger fire for late-join FullRefresh (and live MutateWorld if StoryCmd missed); live StoryCmd path stays sole fire via rising-edge.
+
+### Fixed
+- **ApplyMultiConditionEvent latch-only — late-join skips OnTryDone** — ApplyMultiConditionEvent (~675–680) only latched `triedOnce` + `tried`. Never Invoked `OnTryDone`. Live `StoryCmd.MultiConditionFire` calls `TryOnce`/`TryTrigger` AND `OnTryDone.Invoke` — OK. Late-join FullRefresh latched `triedOnce=true` with no Invoke; native `TryOnce` early-outs on `triedOnce` → consequence never recoverable (cutscene/story softlock). Melon fields `triedOnce` / `tried` / `OnTryDone` verified (`OnTryDone` PascalCase UnityEvent). Assets: `OnTryDone` → Proceed / ProceedDelayed / delayedEvent / SetTrigger. Fix (Dig M, mirror ApplyDoorLockEvent 0.5.31 both-path): capture `was=triedOnce`; latch triedOnce+tried; if `!e.Bool0` return; if `!was` → BeginApply + `OnTryDone.Invoke()`. Live StoryCmd sets triedOnce first → Apply sees `was=true` → no double-fire. Protocol 10 unchanged (no new ushort).
+
+### Before → After (player)
+- **Before:** Host fires a MultiConditionEvent. Live peers get OnTryDone via StoryCmd (OK). Late joiner FullRefresh latches `triedOnce=true` but never Invokes OnTryDone — Proceed/ProceedDelayed/delayedEvent/SetTrigger never run; native TryOnce early-outs forever — cutscene/story softlock.
+- **After:** Late-join FullRefresh **and** live MutateWorld Apply on false→true `triedOnce` edge BeginApply-Invokes `OnTryDone`. Live StoryCmd path still fires once; rising-edge skips Apply re-Invoke when StoryCmd already latched triedOnce.
+
+### Dig M residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| ApplyMultiConditionEvent latch-only; late-join skips OnTryDone → Proceed/delayedEvent softlock | Dig M: ApplyMultiConditionEvent ~675–680; Melon triedOnce/tried/OnTryDone; live StoryCmd MultiConditionFire already Invokes; native TryOnce early-out on triedOnce; DoorLockEvent 0.5.31 both-path rising-edge | **SHIPPED** (!was OnTryDone for both MutateWorld and FullRefresh; live StoryCmd double-fire avoided via rising-edge) |
+
+Protocol stays **10** (reuse MultiConditionEvent Bool0 triedOnce + Int0 tried; no new ushort). Host-authoritative; N-peer late-join Apply path.
+
 ## 0.5.31 — 2026-09-27
 
 Protocol **v10**. Batch 36 ship (Dig L): DoorLockEventInteraction ApplyDoorLockEvent rising-edge `onSolved` so DoorLockEvent GO SetActive(false) fires for live peers **and** late-join FullRefresh (LoadState ≡ onSolved; no onLoad).
