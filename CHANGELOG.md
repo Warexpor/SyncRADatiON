@@ -1,3 +1,29 @@
+## 0.5.17 — 2026-09-27
+
+Protocol **v10**. Continuous Batch 21 dig → ship (host-local UseItem ConsumesKey ring revoke).
+
+### Fixed
+- **Host-local UseItem / UseItemMulti ConsumesKey PartyKeyRing revoke** — `UseItemInteractionPatch.OnLocalUnlocked` only `SendInteractionRequest` when `NetGate.Client`. Host unlocks via native Dialoguer (`onMessageEvent` RemoveItem + `dialogueOver`) and returned after `_sent.Add` with **no** `ApplyUseItem` → no `UnlockInteractiveLocks` / `RevokeConsumed`. Puzzle poll still Emited `unlocked`, so N=3–4 peers kept ring + `EnsureInBag` bag ghosts / `InLocalBag` after the host spent a unique. Same hole for host `UseItemMulti.ready` (Prefix allows Host, never `ApplyUseItemMulti`). Now host calls `HostRevokeIfConsumed` / `HostRevokeUseItemMulti` (same ConsumesKey detect + CraftRevokeSentinel fan-out as 0.5.14–0.5.16). `ApplyUseItem` early-out on already-unlocked also `TryRevokeUseItemKey` (idempotent).
+
+### Before → After (player)
+- **Before:** Host uses AirlockKey (or other ConsumesKey unique) on a door/lock. Host bag loses the key (native RemoveItem), door unlocks for the party, but ring never drops → Peer2–Peer4 keep `EnsureInBag` mirrors and can still UseItem a consumed unique.
+- **After:** Host-local unlock runs the same `RevokeConsumed` path as client→host `ApplyUseItem`; sentinel strips bag mirrors on every peer (protocol 10, no new message).
+
+### Dig notes (Batch 21)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| Host UseItem ConsumesKey never RevokeConsumed | `OnLocalUnlocked`: `_sent.Add` then `if (!NetGate.Client) return` — no ApplyUseItem; `RemoveItem` unpatched; Puzzle Emit is unlocked-bool only | **SHIPPED** |
+| Host UseItemMulti.ready same hole | Prefix `if (NetGate.Host) return true` runs native ready; no consume loop | **SHIPPED** (Postfix) |
+| FreeDoorController.ConsumesKey | Awake @ RVA 0x899520 copies key→IL+0x38, ConsumesKey→IL+0x48; UnlockInteractiveLocks already reads IL | **OK** — setup helper |
+| ConnectedDoorLockController.ConsumesKey | OnEnable-only setup onto CD/ILS; CD covered 0.5.16 | **OK** |
+| ApplyUseItem already-unlocked skip revoke | `if (u.unlocked && !u.repeatable) return true` before UnlockInteractiveLocks — host-first then client request skipped revoke | **SHIPPED** (early-out TryRevoke) |
+| Remaining EnsureInBag outside craft/use/drop/CD | death / storage / Offer-after-floor covered prior | **OK** |
+| InteractionRequest apply-when-gone beyond DroppedPickup/StorageTake | UseItem/door/Put party-benefit (0.5.12) | **OK** |
+| Sticky Dialoguer / EventZone / airlock / Boss / DoorNative unload / join dump / Radio FMOD / wiki off-ring / Domains HasPeer-without-apply | no new hard proof this dig | **park** |
+| SceneFollow RestorePlay / Adler EV / KillSilent / Mural Blocker late-join / Alarm / ending merge / MeatBlocker / Falke empty-slot | parked list | **park** |
+
+Protocol stays **10** (reuse CraftRevokeSentinel / `RevokeConsumed`; no new ushort).
+
 ## 0.5.16 — 2026-09-27
 
 Protocol **v10**. Continuous Batch 20 dig → ship (ConnectedDoors.ConsumesKey ring revoke).

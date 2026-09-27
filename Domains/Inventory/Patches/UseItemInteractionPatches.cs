@@ -23,6 +23,20 @@ namespace SyncRADation.Patches
             if (!fromUpdate || !AirlockCinematic.IsPenTitlesCard(u))
                 AirlockCinematic.NoteLocalUnlock(u);
             if (!_sent.Add(id)) return;
+            // Host unlocks via native Dialoguer (no InteractionRequest). Revoke ConsumesKey
+            // ring + EnsureInBag mirrors the same as ApplyUseItem (0.5.17).
+            if (NetGate.Host)
+            {
+                try { InteractionSyncService.HostRevokeIfConsumed(u); } catch { }
+                try
+                {
+                    var net = LanNetworkManager.Instance;
+                    if (net != null)
+                        net.PuzzleSync.Emit(PuzzleType.UseItemInteraction, id, u);
+                }
+                catch { }
+                return;
+            }
             if (!NetGate.Client) return;
             PlaytestLog.Event("Interact", "request UseItem (unlocked) id=" + id.ToString("X16"));
             LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.UseItem);
@@ -87,6 +101,13 @@ namespace SyncRADation.Patches
             LanNetworkManager.Instance.SendInteractionRequest(
                 WorldId.FromGameObject(__instance.gameObject), InteractionKind.UseItemMulti);
             return false;
+        }
+
+        [HarmonyPostfix]
+        public static void Postfix(UseItemMultiInteraction __instance)
+        {
+            if (NetGate.IsApplying || !NetGate.Live || !NetGate.Host) return;
+            try { InteractionSyncService.HostRevokeUseItemMulti(__instance); } catch { }
         }
     }
 }

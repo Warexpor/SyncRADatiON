@@ -179,7 +179,13 @@ namespace SyncRADation.Networking
                     + " from=" + senderId);
                 return true;
             }
-            if (u.unlocked && !u.repeatable) return true;
+            // Already unlocked (e.g. host-local Dialoguer path): still revoke if
+            // ConsumesKey — host OnLocalUnlocked pre-0.5.17 never ran ApplyUseItem.
+            if (u.unlocked && !u.repeatable)
+            {
+                TryRevokeUseItemKey(u);
+                return true;
+            }
 
             AnItem key = u.key;
             if (key != null && !PartyKeyRing.LocalOrRingHas(key))
@@ -307,6 +313,56 @@ namespace SyncRADation.Networking
         {
             // Ring drop + EnsureInBag mirror strip on all peers via CraftRevokeSentinel fan-out.
             try { PartyKeyRing.RevokeConsumed(key._item); } catch { }
+        }
+
+        /// <summary>
+        /// Host-local UseItem unlock (Dialoguer onMessageEvent/dialogueOver) never sends
+        /// InteractionRequest — only clients do. Run the same ConsumesKey ring revoke
+        /// ApplyUseItem would, so N-peer EnsureInBag mirrors drop (protocol 10).
+        /// Idempotent with ApplyUseItem / CraftRevokeSentinel.
+        /// </summary>
+        public static void HostRevokeIfConsumed(UseItemInteraction u)
+        {
+            if (u == null) return;
+            TryRevokeUseItemKey(u);
+        }
+
+        /// <summary>
+        /// Host-local UseItemMulti.ready() runs natively (Prefix allows Host) without
+        /// ApplyUseItemMulti — revoke each part ConsumesKey the same way.
+        /// </summary>
+        public static void HostRevokeUseItemMulti(UseItemMultiInteraction m)
+        {
+            if (m == null) return;
+            try
+            {
+                var list = m.Interactions;
+                if (list == null) return;
+                bool any = false;
+                for (int i = 0; i < list.Count; i++)
+                {
+                    var u = list[i];
+                    if (u == null) continue;
+                    if (TryRevokeUseItemKey(u)) any = true;
+                }
+                if (any)
+                    PartyKeyRing.Broadcast();
+            }
+            catch { }
+        }
+
+        /// <returns>true if a ConsumesKey revoke ran</returns>
+        static bool TryRevokeUseItemKey(UseItemInteraction u)
+        {
+            if (u == null) return false;
+            AnItem key = null;
+            try { key = u.key; } catch { }
+            if (key == null) return false;
+            bool consumes = UnlockInteractiveLocks(u, key);
+            if (!consumes) return false;
+            ConsumeKey(key);
+            PartyKeyRing.Broadcast();
+            return true;
         }
 
         static bool UnlockInteractiveLocks(UseItemInteraction u, AnItem key)
