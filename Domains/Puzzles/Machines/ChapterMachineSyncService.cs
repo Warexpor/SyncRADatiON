@@ -16,8 +16,16 @@ namespace SyncRADation.Networking
             {
                 case PuzzleType.MED_CardWriter:
                 {
+                    // Dig AB: pack nodes[i].connected → Int0; remainingSteps → Int1;
+                    // Int3 = node count (valid marker so all-zero mid-state is retained).
+                    // Bool0=solved, Bool1=hasCard retained. AssetStudio MED_CardWriter:
+                    // 17 MED_KeyNodeConnection nodes (not KeyGrid's 17 GridSprites — same
+                    // SO type; pack ≤32). maxSteps/remainingSteps initial 8.
                     var x = (MED_CardWriter)c;
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.solved, x.hasCard, false, 0, 0, 0, 0, 0);
+                    int bits = 0, count = 0, steps = 0;
+                    try { PackCardWriterNodes(x, out bits, out count); } catch { }
+                    try { steps = x.remainingSteps; } catch { }
+                    entry = PuzzleDomainUtil.Mk(type, wid, x.solved, x.hasCard, false, bits, steps, 0, count, 0);
                     return true;
                 }
                 case PuzzleType.RES_Shutters:
@@ -262,8 +270,87 @@ namespace SyncRADation.Networking
 
         public static void ApplyCardWriter(MED_CardWriter x, PuzzleStateEntry e)
         {
-            if (x != null)
-                SnapCardWriter(x, e.Bool0, e.Bool1);
+            if (x == null) return;
+            // Dig AB: Bool0 solved / Bool1 hasCard; Int0 connected pack; Int1 remainingSteps;
+            // Int3 count marker gates node+steps apply so all-zero packs still refresh.
+            // Snap card pose without UI/cinematic until solved (existing SnapCardWriter).
+            if (e.Int3 > 0)
+            {
+                ApplyCardWriterNodes(x, e.Int0, e.Int3);
+                try { x.remainingSteps = e.Int1; } catch { }
+                try
+                {
+                    if (x.remainingText != null)
+                        x.remainingText.text = e.Int1.ToString();
+                }
+                catch { }
+            }
+            SnapCardWriter(x, e.Bool0, e.Bool1);
+            // Mid-insert pose: card present, prompts off — no pickup reveal / tinyCard
+            // (those stay solved-only inside SnapCardWriter).
+            if (!e.Bool0 && e.Bool1)
+            {
+                try { if (x.Card != null) x.Card.SetActive(true); } catch { }
+                try { if (x.insertCardPrompt != null) x.insertCardPrompt.SetActive(false); } catch { }
+                try { if (x.insertCard != null) x.insertCard.SetActive(false); } catch { }
+            }
+        }
+
+        /// <summary>Pack ≤32 MED_KeyNodeConnection.connected bits; count = valid marker.</summary>
+        static void PackCardWriterNodes(MED_CardWriter x, out int bits, out int count)
+        {
+            bits = 0;
+            count = 0;
+            if (x == null) return;
+            try
+            {
+                var nodes = x.nodes;
+                if (nodes == null) return;
+                int n = nodes.Count;
+                if (n > 32) n = 32;
+                count = n;
+                for (int i = 0; i < n; i++)
+                {
+                    try
+                    {
+                        var node = nodes[i];
+                        if (node != null && node.connected)
+                            bits |= 1 << i;
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>Unpack Int0 into nodes[i].connected under NetGate.</summary>
+        static void ApplyCardWriterNodes(MED_CardWriter x, int bits, int count)
+        {
+            if (x == null) return;
+            NetGate.BeginApply();
+            try
+            {
+                try
+                {
+                    var nodes = x.nodes;
+                    if (nodes == null) return;
+                    int n = nodes.Count;
+                    if (count > 0 && count < n) n = count;
+                    if (n > 32) n = 32;
+                    for (int i = 0; i < n; i++)
+                    {
+                        try
+                        {
+                            var node = nodes[i];
+                            if (node != null)
+                                node.connected = (bits & (1 << i)) != 0;
+                        }
+                        catch { }
+                    }
+                }
+                catch { }
+            }
+            finally { NetGate.EndApply(); }
         }
 
         public static void ApplyShutters(RES_Shutters x, PuzzleStateEntry e)

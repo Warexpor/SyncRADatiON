@@ -99,6 +99,15 @@ namespace SyncRADation.Patches
                 else Read(PuzzleType.DialLock, x);
             }
 
+            public static void CardWriter(MED_CardWriter x)
+            {
+                if (x == null) return;
+                bool ok = false;
+                try { ok = x.solved; } catch { }
+                if (ok) Progressed(PuzzleType.MED_CardWriter, x);
+                else Read(PuzzleType.MED_CardWriter, x);
+            }
+
             static void Send(PuzzleType type, Component c, bool progressed)
             {
                 if (c == null || NetGate.IsApplying) return;
@@ -185,6 +194,11 @@ namespace SyncRADation.Patches
         }
     }
 
+    // MED_CardWriter: emit partial connected pack + remainingSteps on Update while
+    // card / writeMode / mid-trace active (Dig AB). Native durable state mutates
+    // inside Update (no separate write/trace method) — patch so peers see mid-graph
+    // without waiting for Tick. Read mid / Progressed solved. IsProgressed holds
+    // Bool0||Bool1||Int3 across remount. eatCard covers insert edge.
     [HarmonyPatch(typeof(MED_CardWriter), "Update")]
     public static class MedCardWriterPatch
     {
@@ -194,11 +208,39 @@ namespace SyncRADation.Patches
             if (__instance == null || NetGate.IsApplying) return;
             try
             {
-                if (__instance.solved)
-                    EnvEmit.ReadOnce(PuzzleType.MED_CardWriter, __instance);
+                bool active = false;
+                try { active = __instance.solved || __instance.hasCard || __instance.writeMode; } catch { }
+                if (!active)
+                {
+                    // Mid-trace with card already inserted may leave writeMode false
+                    // briefly — still emit when any node is connected.
+                    try
+                    {
+                        var nodes = __instance.nodes;
+                        if (nodes != null)
+                        {
+                            int n = nodes.Count;
+                            for (int i = 0; i < n; i++)
+                            {
+                                var node = nodes[i];
+                                if (node != null && node.connected) { active = true; break; }
+                            }
+                        }
+                    }
+                    catch { }
+                }
+                if (active)
+                    EnvEmit.CardWriter(__instance);
             }
             catch { }
         }
+    }
+
+    [HarmonyPatch(typeof(MED_CardWriter), nameof(MED_CardWriter.eatCard))]
+    public static class MedCardWriterEatCardPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(MED_CardWriter __instance) => EnvEmit.CardWriter(__instance);
     }
 
     [HarmonyPatch(typeof(ROT_Pipes), nameof(ROT_Pipes.TurnValve))]

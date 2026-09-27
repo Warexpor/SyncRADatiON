@@ -415,6 +415,11 @@ namespace SyncRADation.Networking
             // remount / late-join re-snaps unsolved dial changes, not only final Bool0 solved.
             if (e.Type == PuzzleType.DialLock)
                 return e.Bool0 || e.Int0 != 0 || e.Int1 != 0 || e.Int2 != 0 || e.Int3 != 5;
+            // MED_CardWriter: hold partial connected pack (Int3 count marker) + hasCard
+            // so remount / late-join re-snaps mid-trace / inserted card, including
+            // all-zero Int0 packs (Dig AB).
+            if (e.Type == PuzzleType.MED_CardWriter)
+                return e.Bool0 || e.Bool1 || e.Int3 != 0;
             // RES_Power: hold mid-fuse states pack (Int0) so remount / late-join
             // re-snaps unsolved fuse flips, not only final Bool0 solved.
             if (e.Type == PuzzleType.RES_Power)

@@ -1,3 +1,22 @@
+## 0.5.47 — 2026-09-27
+
+Protocol **v10**. Batch 52 ship (Dig AB): MED_CardWriter sync partial `nodes[i].connected` + `remainingSteps` via Int0/Int1 so N-peer mid-trace / inserted card and late-join FullRefresh keep graph state, not only final Bool0 solved.
+
+### Fixed
+- **MED_CardWriter Read/Apply solved/hasCard-only — peers miss mid-trace connected / remainingSteps** — TryRead emitted only `solved`/`hasCard` Bool0/Bool1 (Int0–Int3=0); Apply/SnapCardWriter never transferred `nodes[i].connected` or `remainingSteps`. Client Update emit was solved-only via ReadOnce; IsProgressed fell through ProgressedBool0 (Bool0 only) so inserted/in-progress cards vanished on remount/late-join. Native durable state: 17 `MED_KeyNodeConnection.connected` bits (AssetStudio MED_CardWriter nodes list; same SO type as KeyGrid), `remainingSteps`/`maxSteps` (initial **8**), `writeMode`/`hasCard`/`solved`. Softlock: host inserts blank + burns mid-trace → peers / late-join lose card + graph until Bool0 solve snap. Melon fields `nodes`/`remainingSteps`/`maxSteps`/`writeMode`/`hasCard`/`solved` and `MED_KeyNodeConnection.connected` verified. Fix (Dig AB, mirror MED_KeyGrid 0.5.41 / LAB_Rings 0.5.34 Int pack): pack connected bits → Int0; remainingSteps → Int1; node-count/valid marker → Int3 (preserve all-zero partial); Bool0=solved Bool1=hasCard retained; Apply unpacks connected + sets remainingSteps/remainingText then SnapCardWriter (mid-insert Card pose without pickup/tinyCard cinematic until solved); IsProgressed = Bool0 || Bool1 || Int3!=0; EnvEmit on Update (card/writeMode/mid-trace) + eatCard (Read mid / Progressed solved). Protocol 10 unchanged (reuse MED_CardWriter Bool0/Bool1 + Int0 connected + Int1 steps + Int3 count; no new ushort).
+
+### Before → After (player)
+- **Before:** Host inserts blank card and burns mid-trace on MED card writer. Peers / late-join FullRefresh see only an empty / unsolved writer — mid-node `connected` + remainingSteps + inserted card never leave the host until final Bool0 solve snap; remount drops in-progress cards.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh apply the Int0 connected pack + Int1 remainingSteps + Bool1 hasCard pose. IsProgressed holds mid-trace Int3 count (including all-zero Int0) and hasCard across remount; Bool0 solved still SnapCardWriter pickup/tinyCard as before.
+
+### Dig AB residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| Read/Apply Bool0/Bool1 only; Update emit solved-only; IsProgressed Bool0-only → peers + remount / late-join miss mid-trace connected / remainingSteps / inserted card | Dig AB: Melon MED_CardWriter nodes/remainingSteps/maxSteps/writeMode/hasCard/solved; MED_KeyNodeConnection.connected; AssetStudio 17 nodes + maxSteps=8 remainingSteps=8; ProgressedBool0 fallthrough | **SHIPPED** (Int0 connected pack; Int1 remainingSteps; Int3 count marker; Apply nodes+steps+mid-insert pose; IsProgressed Bool0\|\|Bool1\|\|Int3; Update/eatCard EnvEmit; protocol 10) |
+
+Protocol stays **10** (reuse MED_CardWriter Bool0 solved + Bool1 hasCard + Int0 connected pack + Int1 remainingSteps + Int3 count; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
 ## 0.5.46 — 2026-09-27
 
 Protocol **v10**. Batch 51 ship (Dig AA): ROT_DialLock hold mid-dial A/B/C/D via IsProgressed so N-peer remount / late-join keep unsolved dial state, not only final Bool0 solved.
