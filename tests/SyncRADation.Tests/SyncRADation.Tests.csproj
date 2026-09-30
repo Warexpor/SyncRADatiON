@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Regression net for the pure wire/logic code. Compiles the game sources straight from the repo
+    (linked, never copied) against tiny shims instead of Unity/MelonLoader. No game files are edited.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>SyncRADation.Tests</RootNamespace>
+    <!-- NetSchema.Hash mixes the assembly version; pin it so the golden hash only moves when the protocol moves. -->
+    <AssemblyVersion>9.9.9.9</AssemblyVersion>
+    <FileVersion>9.9.9.9</FileVersion>
+    <!-- Linked game files use net472-era idioms and unassigned public struct fields. -->
+    <NoWarn>$(NoWarn);CS0649;CS0169;CS0414;CS8981;xUnit1026</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="LiteNetLib">
+      <HintPath>../../lib/LiteNetLib.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Game sources under test (pure: LiteNetLib + BCL + the shimmed UnityEngine/ModRuntime/Guard/ModConfig surface). -->
+  <ItemGroup>
+    <Compile Include="../../Networking/Messages/*.cs" LinkBase="Game/Networking/Messages" />
+    <Compile Include="../../Sync/WorldId.cs" Link="Game/Sync/WorldId.cs" />
+    <Compile Include="../../Bootstrap/PluginInfo.cs" Link="Game/Bootstrap/PluginInfo.cs" />
+  </ItemGroup>
+</Project>
