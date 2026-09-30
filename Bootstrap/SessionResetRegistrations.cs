@@ -47,6 +47,7 @@ namespace SyncRADation
             SessionReset.RegisterConnection("PartySave", PartySaveService.Reset);
             SessionReset.RegisterConnection("HostReload", HostReload.Reset);
             SessionReset.RegisterConnection("SceneFollow", SceneFollowService.Reset);
+            SessionReset.RegisterConnection("SceneWorldDiff", () => Net()?.SceneHandlers.Reset()); // WorldId divergence state
             SessionReset.RegisterConnection("StorageTxn", StorageTxn.Reset);            // gives a reserved put back to the bag
             SessionReset.RegisterConnection("DroppedItems", DroppedItemManager.ClearAll); // wipe clears them in the Load postfix
             SessionReset.RegisterConnection("Hitch", HitchTrace.Reset);

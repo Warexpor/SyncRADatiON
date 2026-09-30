@@ -1,6 +1,6 @@
 # SyncRADation — SIGNALIS Multiplayer Mod
 
-**Status:** v0.5.59 — protocol **v14**. Host-authoritative world/story + native presentation/FMOD. Dual-instance playtest required. Decompile: `~/Archive/Windows-Desktop/Dev/SIGNALIS DECOMPILED` (`~/Omarchy_Backup/Desktop/Dev/...` is gone on this machine).
+**Status:** v0.5.60 — protocol **v15**. Host-authoritative world/story + native presentation/FMOD. Dual-instance playtest required. Decompile: `~/Archive/Windows-Desktop/Dev/SIGNALIS DECOMPILED` (`~/Omarchy_Backup/Desktop/Dev/...` is gone on this machine).
 
 ## Product
 
@@ -17,7 +17,7 @@ LAN multiplayer MelonLoader mod for SIGNALIS (Unity IL2CPP / Unhollower-style Ma
 
 Walk up to a dropped prop for the native TAKE prompt (yes/no inspect, ammo count). There is no extra pickup key.
 
-## What is synced (0.5.59)
+## What is synced (0.5.60)
 
 | Area | Authority | Notes |
 |------|-----------|--------|
@@ -49,7 +49,7 @@ Bootstrap/                 # SyncRADationMod, ModRuntime, PluginInfo
 Networking/
   LanNetworkManager*.cs    # thin transport + HandlerRegistry + PublicApi
   Dispatch/                # TryDispatch* → domain NetHandlers
-  Messages/                # NetMessages (protocol 14)
+  Messages/                # NetMessages (protocol 15)
 Domains/
   Doors/ Enemies/ Bosses/ Story/ Scene/ Audio/
   Pickups/ Inventory/ Players/ Combat/ Puzzles/ Session/
@@ -66,7 +66,7 @@ UI/ Config/ Cheats/
 
 ## Protocol
 
-- **ProtocolVersion = 14** (PartyLife.Scene, Handshake GameBuildHash/GameBuild, ItemPickedUp.ClaimerPlayerId, FmodEmitter.Comp, FmodEmitterRequest 67, DropRekey 73; v13 retained)
+- **ProtocolVersion = 15** (SceneHello/SceneFollow registry checksum, SceneDiff 74; v14 retained: PartyLife.Scene, Handshake GameBuildHash/GameBuild, ItemPickedUp.ClaimerPlayerId, FmodEmitter.Comp, FmodEmitterRequest 67, DropRekey 73; v13 retained)
 - Port default `7777`, key `SyncRADation`
 - v6: full SProgress dump, UnityEvent presentation, FmodEmitter Play/Stop
 - v7: `PlayerRoster` (3+ peers), recycled client ids, join/resync dump to the requester only
@@ -77,6 +77,7 @@ UI/ Config/ Cheats/
 - v12: handshake gains `SchemaHash` + `ModVersion`; `PartyLife`/`PartySave`/`PartyRoom` (NetMessageType 40–42): downed/revive/wipe + party-save snapshots; N-player hardening (Sequenced channel 1 for enemy/boss snapshots, handshake-gated sends)
 - v13: `PuzzleStateEntry` gains `Seq` + `Mask` (host-stamped version / client edit mask, cell-wise merge); PuzzleType 78–81 (`ROT_DiskManager`, `DET_WallCreature`, `MapReveal`, `MEM_ChecklistLogic`); StoryCmd 20–23 (`GoToPenny`, `PartyCheat`, `EndDelta`, `EndGraves`; requests ride `InspectFlag` Int0 = 100 + cmd); `WorldPickupDeny` 60, `AvatarOneShot` 61, `BossHit` 62, `EnemyAction` 63
 - v14: `PartyLife` gains `Scene` (wipe reload target); `Handshake` gains `GameBuildHash` + `GameBuild` (rejects a different game build); `ItemPickedUp.ClaimerPlayerId`; `FmodEmitter.Comp` (emitter keyed by WorldId + component index) + client→host `FmodEmitterRequest` 67; host-only `DropRekey` 73 (departed peer's floor drops move to the host key space); `BonePose` clamp 1023; `Room` is a capped string; incremental `StoryCommit` carries only dirty keys; `SchemaHash` mixes the dll MVID
+- v15: `SceneHello` + `SceneFollow` gain `Stats` (per WorldRegistry category: id count + FNV-1a64 checksum of the sorted WorldIds, `Sync/WorldChecksum.cs`); host-only `SceneDiff` 74 (host WorldIds of the differing categories, chunks of 256, at most 2048 per category). A mismatch logs one `[Scene] WorldId divergence` line, the client logs `[Scene] missing:` / `[Scene] extra:` (20 ids each) and requests one full dump; F2 shows `World: in sync` / `World: N ids differ`
 
 ## This machine (dual-instance, Linux + Proton)
 

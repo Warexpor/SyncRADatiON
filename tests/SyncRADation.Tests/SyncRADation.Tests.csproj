@@ -34,6 +34,7 @@
   <ItemGroup>
     <Compile Include="../../Networking/Messages/*.cs" LinkBase="Game/Networking/Messages" />
     <Compile Include="../../Sync/WorldId.cs" Link="Game/Sync/WorldId.cs" />
+    <Compile Include="../../Sync/WorldChecksum.cs" Link="Game/Sync/WorldChecksum.cs" />
     <Compile Include="../../Bootstrap/PluginInfo.cs" Link="Game/Bootstrap/PluginInfo.cs" />
     <Compile Include="../../Sync/SessionReset.cs" Link="Game/Sync/SessionReset.cs" />
   </ItemGroup>

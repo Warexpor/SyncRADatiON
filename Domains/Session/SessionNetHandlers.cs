@@ -36,6 +36,7 @@ namespace SyncRADation.Networking
             _lastDumpAt.Clear();
             _rateDeferred.Clear();
             _dumpFailures.Clear();
+            LastSnapshotRequestAt = -999f;
         }
 
         internal void NotePeerGone(int playerId)
@@ -247,9 +248,13 @@ namespace SyncRADation.Networking
             }
         }
 
+        /// <summary>Client: unscaled time of the last snapshot request (-999 = none). Lets the WorldId divergence path skip a redundant one.</summary>
+        internal float LastSnapshotRequestAt { get; private set; } = -999f;
+
         internal void RequestWorldSnapshot()
         {
             if (_net.Role != NetworkRole.Client || !_net.HandshakeComplete) return;
+            LastSnapshotRequestAt = Time.unscaledTime;
             var msg = new SnapshotRequestMessage { SenderPlayerId = _net.LocalPlayerId };
             var writer = new NetDataWriter();
             writer.Put((byte)NetMessageType.SnapshotRequest);

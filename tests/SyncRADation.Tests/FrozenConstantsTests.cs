@@ -15,10 +15,10 @@ namespace SyncRADation.Tests
     {
         // NetSchema.StructuralHash (Hash minus the module id, which changes with every rebuild) with the test assembly pinned to AssemblyVersion 9.9.9.9 (see the csproj).
         // Moves whenever PluginInfo.ProtocolVersion or any id of the mixed enums changes.
-        private const uint GoldenSchemaHash = 0x3A5857E6U;
+        private const uint GoldenSchemaHash = 0xB903EC3EU;
 
         [Fact]
-        public void ProtocolVersion_is_14() => Assert.Equal(14, PluginInfo.ProtocolVersion);
+        public void ProtocolVersion_is_15() => Assert.Equal(15, PluginInfo.ProtocolVersion);
 
         [Fact]
         public void Channels_and_connection_key_are_frozen()
@@ -35,6 +35,9 @@ namespace SyncRADation.Tests
         {
             Assert.Equal(16000, NetWire.MaxString);
             Assert.Equal(4 * 1024 * 1024, NetWire.MaxLongStringBytes);
+            Assert.Equal(8, NetWire.MaxWorldCategories);
+            Assert.Equal(256, NetWire.MaxSceneDiffIds);
+            Assert.Equal(2048, NetWire.MaxSceneDiffTotalIds);
             Assert.Equal(512, NetWire.MaxEnemies);
             Assert.Equal(64, NetWire.MaxBosses);
             Assert.Equal(8192, NetWire.MaxStoryFlags);
@@ -105,9 +108,9 @@ namespace SyncRADation.Tests
         public void NetMessageType_Highest_equals_the_true_maximum()
         {
             int max = Actual(typeof(NetMessageType)).Values.Max();
-            Assert.Equal(73, max);
+            Assert.Equal(74, max);
             Assert.Equal((int)NetMessageType._Highest, max);
-            Assert.Equal(37, Actual(typeof(NetMessageType)).Count);
+            Assert.Equal(38, Actual(typeof(NetMessageType)).Count);
         }
 
         [Fact]
@@ -143,7 +146,7 @@ namespace SyncRADation.Tests
             h = MixS(h, asmVersion);
             h = MixI(h, protocolVersion);
             // Same order as NetSchema.Compute. Enum.GetValues includes the _Highest alias, i.e. NetMessageType's max appears twice.
-            h = MixEnum(h, "NetMessageType", FrozenTables.T_NetMessageType.Select(x => x.Value).Concat(new[] { 73 }));
+            h = MixEnum(h, "NetMessageType", FrozenTables.T_NetMessageType.Select(x => x.Value).Concat(new[] { 74 }));
             h = MixEnum(h, "InteractionKind", FrozenTables.T_InteractionKind.Select(x => x.Value));
             h = MixEnum(h, "StoryCmd", FrozenTables.T_StoryCmd.Select(x => x.Value));
             h = MixEnum(h, "DeathKind", FrozenTables.T_DeathKind.Select(x => x.Value));
@@ -186,7 +189,7 @@ namespace SyncRADation.Tests
         public void SchemaHash_golden_value()
         {
             Assert.Equal(GoldenSchemaHash, NetSchema.StructuralHash);
-            Assert.Equal(GoldenSchemaHash, Replicate("9.9.9.9", 14));
+            Assert.Equal(GoldenSchemaHash, Replicate("9.9.9.9", 15));
         }
 
         [Fact]
@@ -203,9 +206,9 @@ namespace SyncRADation.Tests
         [Fact]
         public void SchemaHash_is_sensitive_to_protocol_version_assembly_version_and_enum_ids()
         {
-            uint baseline = Replicate("9.9.9.9", 14);
-            Assert.NotEqual(baseline, Replicate("9.9.9.9", 13));
-            Assert.NotEqual(baseline, Replicate("9.9.9.8", 14));
+            uint baseline = Replicate("9.9.9.9", 15);
+            Assert.NotEqual(baseline, Replicate("9.9.9.9", 14));
+            Assert.NotEqual(baseline, Replicate("9.9.9.8", 15));
             Assert.Equal(NetSchema.Hash, NetSchema.Hash); // cached, stable
             Assert.Equal(PluginInfo.Version, NetSchema.ModVersion);
         }

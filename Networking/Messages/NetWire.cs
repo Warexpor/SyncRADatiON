@@ -31,6 +31,12 @@ namespace SyncRADation.Networking
         public const int MaxKeyRing = 512;
         public const int MaxRoster = 32;
         public const int MaxBones = 4095;
+        /// <summary>WorldId registry categories carried in SceneHello / SceneFollow (WorldChecksum uses 4).</summary>
+        public const int MaxWorldCategories = 8;
+        /// <summary>WorldIds per SceneDiff chunk (256 * 8 bytes stays well inside one MTU-fragmented reliable packet).</summary>
+        public const int MaxSceneDiffIds = 256;
+        /// <summary>Most ids the host lists per category across all chunks of one SceneDiff (the rest is reported as truncated).</summary>
+        public const int MaxSceneDiffTotalIds = 2048;
 
         // Warn-once keys: intentionally persistent (a wire warning is not repeated every session).
         private static readonly HashSet<string> Warned = new HashSet<string>();

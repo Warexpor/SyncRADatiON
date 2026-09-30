@@ -73,6 +73,7 @@ namespace SyncRADation.Networking
             case NetMessageType.PlayerRoster:
             case NetMessageType.WorldPickupDeny:
             case NetMessageType.DropRekey:
+            case NetMessageType.SceneDiff:
                 return true;
             default:
                 return false;

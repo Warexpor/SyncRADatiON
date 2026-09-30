@@ -46,7 +46,8 @@ namespace SyncRADation.UI
             int rows = roster != null ? roster.Count : 0;
             int auditRows = ModRuntime.PatchAuditOk ? 0 : 1 + ModRuntime.PatchAuditMissing.Count;
             _windowRect.height = BaseHeight + (rows > 0 ? (rows + 1) * RowHeight : 0f)
-                + 2 * RowHeight + auditRows * RowHeight;
+                + 2 * RowHeight + auditRows * RowHeight
+                + (net.Role != NetworkRole.Offline ? RowHeight : 0f);
 
             GUI.Box(_windowRect, "SyncRADation v" + PluginInfo.Version);
 
@@ -100,6 +101,12 @@ namespace SyncRADation.UI
                 if (GUI.Button(CR(10, y, 150, 30), "Disconnect"))
                     net.StopNetwork();
                 y += 40f;
+            }
+
+            if (net.Role != NetworkRole.Offline)
+            {
+                GUI.Label(CR(10, y, 340, 20), net.WorldSyncStatus);
+                y += RowHeight;
             }
 
             GUI.Label(CR(10, y, 340, 20), "FF=" + (ModConfig.FriendlyFire?.Value == true ? "ON" : "OFF")

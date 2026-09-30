@@ -1,3 +1,24 @@
+## 0.5.60 — 2026-10-01
+
+Protocol **v15**. WorldId divergence between peers (different hierarchy order, save-dependent spawns, renamed objects) is now visible and self-reporting instead of scattered `MISS` lines. **Not playtested**: compile- and unit-tested only.
+
+### Added
+- **Registry checksum** — `Sync/WorldChecksum.cs` (pure): FNV-1a64 over the sorted WorldIds per category (enemies, double / connected / sliding doors; F11 `SR_Spawn_*` enemies excluded) plus counts. `WorldRegistry.Rebuild` computes and caches it once; logged as `checksum=` on the `[WorldRegistry]` line.
+- **`SceneHello` / `SceneFollow` carry the checksum** (`Stats`). The host compares a client's hello with its own and logs one `[Scene] WorldId divergence with p<N> in <scene>: enemies 30/31! ...` line; a client compares the host's hello / follow with its own rebuild the same way.
+- **`SceneDiff` (74, host to client)** — the host's WorldIds of the differing categories, chunks of 256, at most 2048 per category (a longer list is flagged truncated). The client logs `[Scene] missing:` (ids it lacks) and `[Scene] extra:` (by hierarchy path), 20 each. A client that detects the mismatch first re-sends its hello to ask for the diff and requests one full dump (rate-limited).
+- F2 shows `World: in sync` / `World: N ids differ` (host: lower bound from counts, worst peer).
+- Tests: `WorldChecksumTests`, frozen tables for id 74, wire caps.
+
+### Changed
+- Protocol **14 → 15**: `SceneHello.Stats`, `SceneFollow.Stats`, `SceneDiff` 74. A 0.5.59 peer is rejected by the handshake. Solo play only pays one sort + hash per registry rebuild.
+
+### Open risks / untested
+- **Not playtested.** Checksums are taken at `Rebuild`; objects that appear later (chunk streaming) are not in them, so a host and client that rebuild at different moments can report a false divergence. Watch the `[Scene] WorldId divergence` lines in a normal session before trusting them.
+- Pickups, puzzles and emitters are not in the WorldRegistry, so they are not covered.
+
+Protocol **15**. Product **0.5.60** (not 1.0).
+
+
 ## 0.5.59 — 2026-10-01
 
 Protocol **v14**. Code-review batch: 4 adversarial reviews of 0.5.57/0.5.58 (death and net core, puzzles/doors/audio, pickups/combat/bosses, story/scene) and the fixes for their findings, plus `Guard` logging, a unit-test project, a boot patch audit, a game-build handshake, a session-reset registry and an RVA-folding audit. **Still NOT playtested**: compile-checked (Release, 0 errors, 0 warnings) and unit-tested only; nothing here has run in the game.

@@ -23,6 +23,94 @@ namespace SyncRADation.Sync
         private static float _lastRebuildAt = -999f;
         private static string _lastRebuildScene = "";
 
+        // Registry checksum (Sync/WorldChecksum): per category, computed once at the end of Rebuild from the sorted WorldIds.
+        // The id lists are kept (sorted) so a SceneDiff answers with exactly the set the checksum was taken over.
+        private static readonly int[] ChecksumCountsArr = new int[WorldChecksum.CategoryCount];
+        private static readonly ulong[] ChecksumSumsArr = new ulong[WorldChecksum.CategoryCount];
+        private static readonly List<ulong>[] ChecksumIds = NewIdLists();
+        private static string _checksumScene = "";
+
+        private static List<ulong>[] NewIdLists()
+        {
+            var lists = new List<ulong>[WorldChecksum.CategoryCount];
+            for (int i = 0; i < lists.Length; i++) lists[i] = new List<ulong>();
+            return lists;
+        }
+
+        /// <summary>Scene the cached checksum was taken in ("" = none yet).</summary>
+        public static string ChecksumScene => _checksumScene;
+        public static bool HasChecksum => _checksumScene.Length > 0;
+        /// <summary>Per-category id counts of the last Rebuild. Shared array: copy, do not mutate.</summary>
+        public static int[] ChecksumCounts => ChecksumCountsArr;
+        /// <summary>Per-category WorldId checksums of the last Rebuild. Shared array: copy, do not mutate.</summary>
+        public static ulong[] ChecksumSums => ChecksumSumsArr;
+
+        /// <summary>Sorted WorldIds the checksum of a category was taken over (shared list, read only).</summary>
+        public static List<ulong> ChecksumIdsOf(int category) =>
+            category >= 0 && category < ChecksumIds.Length ? ChecksumIds[category] : null;
+
+        /// <summary>Hierarchy path of a registered object for a diff log line ("" when it is not registered any more).</summary>
+        public static string DescribeId(int category, ulong id)
+        {
+            try
+            {
+                Component c = null;
+                switch (category)
+                {
+                    case WorldChecksum.Enemies: EnemyController e; if (Enemies.TryGetValue(id, out e)) c = e; break;
+                    case WorldChecksum.DoubleDoors: Doorway_Double d; if (DoubleDoors.TryGetValue(id, out d)) c = d; break;
+                    case WorldChecksum.ConnectedDoors: ConnectedDoors cd; if (ConnectedDoorMap.TryGetValue(id, out cd)) c = cd; break;
+                    case WorldChecksum.SlidingDoors: EventSlidingDoor s; if (SlidingDoors.TryGetValue(id, out s)) c = s; break;
+                }
+                if (c != null) return WorldId.GetHierarchyPath(c.transform);
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            return "";
+        }
+
+        static void ComputeChecksum()
+        {
+            for (int i = 0; i < ChecksumIds.Length; i++) ChecksumIds[i].Clear();
+            foreach (var kvp in Enemies)
+            {
+                // F11 spawns are host-authored per session (SR_Spawn_*): the other peer legitimately lacks them at rebuild time.
+                EnemyController e = kvp.Value;
+                if (e == null || IsSpawnName(e)) continue;
+                ChecksumIds[WorldChecksum.Enemies].Add(kvp.Key);
+            }
+            foreach (var kvp in DoubleDoors) ChecksumIds[WorldChecksum.DoubleDoors].Add(kvp.Key);
+            foreach (var kvp in ConnectedDoorMap) ChecksumIds[WorldChecksum.ConnectedDoors].Add(kvp.Key);
+            foreach (var kvp in SlidingDoors) ChecksumIds[WorldChecksum.SlidingDoors].Add(kvp.Key);
+            for (int i = 0; i < ChecksumIds.Length; i++)
+            {
+                ChecksumIds[i].Sort();
+                ChecksumCountsArr[i] = ChecksumIds[i].Count;
+                ChecksumSumsArr[i] = WorldChecksum.ComputeSorted(ChecksumIds[i]);
+            }
+            _checksumScene = _sceneName;
+        }
+
+        static bool IsSpawnName(Component c)
+        {
+            try
+            {
+                string n = c.gameObject.name;
+                return n != null && n.StartsWith("SR_Spawn_", System.StringComparison.Ordinal);
+            }
+            catch (System.Exception ex) { Guard.Swallow(ex); return false; }
+        }
+
+        static void ClearChecksum()
+        {
+            for (int i = 0; i < ChecksumIds.Length; i++)
+            {
+                ChecksumIds[i].Clear();
+                ChecksumCountsArr[i] = 0;
+                ChecksumSumsArr[i] = 0;
+            }
+            _checksumScene = "";
+        }
+
         /// <summary>
         /// Rebuild only when the registry is older than maxAgeSeconds or the active scene changed.
         /// A scene load used to rebuild 3-4x (ModRuntime, OnSceneChanged, handshake, dump).
@@ -132,11 +220,15 @@ namespace SyncRADation.Sync
                 ModRuntime.Log?.Error("[WorldRegistry] Rebuild failed: " + ex);
             }
 
+            try { ComputeChecksum(); }
+            catch (System.Exception ex) { ClearChecksum(); ModRuntime.Log?.Warning("[WorldRegistry] checksum failed: " + ex.Message); }
+
             ModRuntime.Log?.Msg("[WorldRegistry] scene='" + _sceneName
                 + "' enemies=" + Enemies.Count
                 + " doubleDoors=" + DoubleDoors.Count
                 + " connectedDoors=" + ConnectedDoorMap.Count
-                + " slidingDoors=" + SlidingDoors.Count);
+                + " slidingDoors=" + SlidingDoors.Count
+                + " checksum=" + WorldChecksum.Combine(ChecksumSumsArr).ToString("X16"));
 
         }
 
@@ -150,6 +242,7 @@ namespace SyncRADation.Sync
             SlidingDoors.Clear();
             _sceneName = "";
             _lastRebuildScene = "";
+            ClearChecksum();
         }
 
         public static void RegisterEnemy(ulong id, EnemyController enemy)

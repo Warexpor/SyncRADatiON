@@ -350,6 +350,7 @@ namespace SyncRADation.Networking
             AvatarHandlers.ResetSendState();
             DroppedItemHandlers.Reset();
             SessionHandlers.Reset();
+            SceneHandlers.Reset();
             // Sticky beyond drop-claims + dump queue: client puppets/boss AI, EventZone
             // once-fired, cutscene skip/start sets, airlock unlocks + personal scene,
             // SceneFollow inflight coalesce, Dialoguer flavor gate.
@@ -801,6 +802,7 @@ namespace SyncRADation.Networking
                 if (_role == NetworkRole.Host)
                 {
                     SessionHandlers.NotePeerGone(playerId);
+                    SceneHandlers.NotePeerGone(playerId);
                     RebuildHostSession();
                     if (wasReady)
                         BroadcastPlayerRoster();

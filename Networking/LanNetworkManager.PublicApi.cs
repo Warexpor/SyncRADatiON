@@ -77,6 +77,9 @@ namespace SyncRADation.Networking
 
         public void BroadcastSceneHello() => SceneHandlers.BroadcastSceneHello();
 
+        /// <summary>F2 line: "World: in sync" or "World: N ids differ".</summary>
+        public string WorldSyncStatus => SceneHandlers.WorldSyncStatus();
+
         public void SendSceneFollow(string sceneName, bool isRequest) =>
             SceneHandlers.SendSceneFollow(sceneName, isRequest);
 

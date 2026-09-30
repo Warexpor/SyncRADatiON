@@ -100,7 +100,7 @@ namespace SyncRADation.Tests
             byte[] empty = WireFuzz.Write(WithCount(t, f, cap, 0, new Random(1))).CopyData();
             byte[] one = WireFuzz.Write(WithCount(t, f, cap, 1, new Random(1))).CopyData();
             int at = Enumerable.Range(0, empty.Length).First(i => i >= one.Length || empty[i] != one[i]); // first byte of the count field
-            bool isByteCount = key == "PlayerRosterMessage.PlayerIds";
+            bool isByteCount = key == "PlayerRosterMessage.PlayerIds" || key.EndsWith(".Stats", StringComparison.Ordinal);
 
             byte[] tooBig = (byte[])empty.Clone();
             if (isByteCount) tooBig[at] = (byte)(cap.Cap + 1);

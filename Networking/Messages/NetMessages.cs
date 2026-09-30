@@ -55,7 +55,9 @@ namespace SyncRADation.Networking
         // 64-66, 68-72: reserved for other domains. 73-75: pickups / inventory / combat.
         /// <summary>Host → all: a departed peer's floor drop moved into the host key namespace.</summary>
         DropRekey = 73,
-        _Highest = 73
+        /// <summary>Host → one client: the host's WorldIds of the categories whose registry checksum differs (chunked).</summary>
+        SceneDiff = 74,
+        _Highest = 74
     }
 
     public enum InteractionKind : byte
@@ -682,17 +684,56 @@ namespace SyncRADation.Networking
         }
     }
 
+    /// <summary>One WorldRegistry category: how many ids it holds and the FNV-1a64 checksum of the sorted ids (Sync/WorldChecksum).</summary>
+    public struct WorldCategoryStat
+    {
+        public int Count;
+        public ulong Sum;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(Count);
+            w.Put(Sum);
+        }
+
+        public static WorldCategoryStat Deserialize(NetDataReader r) =>
+            new WorldCategoryStat { Count = r.GetInt(), Sum = r.GetULong() };
+
+        internal static void PutAll(NetDataWriter w, WorldCategoryStat[] stats)
+        {
+            int n = stats != null ? stats.Length : 0;
+            n = NetWire.ClampCount(n, NetWire.MaxWorldCategories, "WorldCategoryStat");
+            w.Put((byte)n);
+            for (int i = 0; i < n; i++)
+                stats[i].Serialize(w);
+        }
+
+        internal static WorldCategoryStat[] GetAll(NetDataReader r)
+        {
+            int n = r.GetByte();
+            if (n > NetWire.MaxWorldCategories)
+                throw new System.IO.InvalidDataException("WorldCategoryStat count " + n);
+            var arr = n > 0 ? new WorldCategoryStat[n] : Array.Empty<WorldCategoryStat>();
+            for (int i = 0; i < n; i++)
+                arr[i] = Deserialize(r);
+            return arr;
+        }
+    }
+
     public struct SceneHelloMessage
     {
         public int SenderPlayerId;
         public string SceneName;
         public string RoomName;
+        /// <summary>Sender's WorldRegistry checksum for <see cref="SceneName"/> (empty = none yet). Client → host: diff request; host → client: self-check.</summary>
+        public WorldCategoryStat[] Stats;
 
         public void Serialize(NetDataWriter w)
         {
             w.Put(SenderPlayerId);
             NetWire.PutString(w, SceneName);
             NetWire.PutString(w, RoomName);
+            WorldCategoryStat.PutAll(w, Stats);
         }
 
         public static SceneHelloMessage Deserialize(NetDataReader r)
@@ -701,8 +742,62 @@ namespace SyncRADation.Networking
             {
                 SenderPlayerId = r.GetInt(),
                 SceneName = r.GetString(),
-                RoomName = r.GetString()
+                RoomName = r.GetString(),
+                Stats = WorldCategoryStat.GetAll(r)
             };
+        }
+    }
+
+    /// <summary>
+    /// Host → one client: the host's WorldIds (sorted) for one category whose checksum differs from the client's.
+    /// Chunked: <see cref="Part"/> of <see cref="Parts"/>; <see cref="HostCount"/> is the host's full id count for the
+    /// category (more than the ids sent = truncated at NetWire.MaxSceneDiffTotalIds). <see cref="CategoryMask"/> lists
+    /// every category of this diff so the client knows when it has all of them.
+    /// </summary>
+    public struct SceneDiffMessage
+    {
+        public int SenderPlayerId;
+        public string SceneName;
+        public byte Category;
+        public byte CategoryMask;
+        public byte Part;
+        public byte Parts;
+        public int HostCount;
+        public ulong[] Ids;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(SenderPlayerId);
+            NetWire.PutString(w, SceneName);
+            w.Put(Category);
+            w.Put(CategoryMask);
+            w.Put(Part);
+            w.Put(Parts);
+            w.Put(HostCount);
+            int n = Ids != null ? Ids.Length : 0;
+            n = NetWire.ClampCount(n, NetWire.MaxSceneDiffIds, "SceneDiff");
+            w.Put(n);
+            for (int i = 0; i < n; i++)
+                w.Put(Ids[i]);
+        }
+
+        public static SceneDiffMessage Deserialize(NetDataReader r)
+        {
+            var msg = new SceneDiffMessage
+            {
+                SenderPlayerId = r.GetInt(),
+                SceneName = r.GetString(),
+                Category = r.GetByte(),
+                CategoryMask = r.GetByte(),
+                Part = r.GetByte(),
+                Parts = r.GetByte(),
+                HostCount = r.GetInt()
+            };
+            int n = NetWire.ReadCount(r, NetWire.MaxSceneDiffIds, "SceneDiff");
+            msg.Ids = n > 0 ? new ulong[n] : Array.Empty<ulong>();
+            for (int i = 0; i < n; i++)
+                msg.Ids[i] = r.GetULong();
+            return msg;
         }
     }
 
@@ -1333,12 +1428,15 @@ namespace SyncRADation.Networking
         public int SenderPlayerId;
         public string SceneName;
         public bool IsRequest;
+        /// <summary>Host's WorldRegistry checksum for <see cref="SceneName"/> when its registry is already built for that scene (empty otherwise, and on requests).</summary>
+        public WorldCategoryStat[] Stats;
 
         public void Serialize(NetDataWriter w)
         {
             w.Put(SenderPlayerId);
             NetWire.PutString(w, SceneName);
             w.Put(IsRequest);
+            WorldCategoryStat.PutAll(w, Stats);
         }
 
         public static SceneFollowMessage Deserialize(NetDataReader r) =>
@@ -1346,7 +1444,8 @@ namespace SyncRADation.Networking
             {
                 SenderPlayerId = r.GetInt(),
                 SceneName = r.GetString(),
-                IsRequest = r.GetBool()
+                IsRequest = r.GetBool(),
+                Stats = WorldCategoryStat.GetAll(r)
             };
     }
 

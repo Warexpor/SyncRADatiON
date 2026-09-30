@@ -32,6 +32,9 @@ namespace SyncRADation.Tests
         /// <summary>Every array-typed field on a wire struct. Key: "TypeName.Field".</summary>
         public static readonly Dictionary<string, ArrayCap> ArrayCaps = new Dictionary<string, ArrayCap>
         {
+            ["SceneHelloMessage.Stats"] = new ArrayCap(NetWire.MaxWorldCategories),
+            ["SceneFollowMessage.Stats"] = new ArrayCap(NetWire.MaxWorldCategories),
+            ["SceneDiffMessage.Ids"] = new ArrayCap(NetWire.MaxSceneDiffIds),
             ["PlayerRosterMessage.PlayerIds"] = new ArrayCap(NetWire.MaxRoster),
             ["WorldPickupStateMessage.Entries"] = new ArrayCap(NetWire.MaxPickupEntries),
             ["PlayerStateMessage.BoneRotations"] = new ArrayCap(NetWire.MaxBones, 1, true),

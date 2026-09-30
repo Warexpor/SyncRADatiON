@@ -25,6 +25,12 @@ namespace SyncRADation.Networking
                 SceneHandlers.HandleSceneFollow(follow);
                 return true;
             }
+            case NetMessageType.SceneDiff:
+            {
+                var diff = SceneDiffMessage.Deserialize(reader);
+                if (_role == NetworkRole.Client && senderId == 0) SceneHandlers.HandleSceneDiff(diff); // host-authored only
+                return true;
+            }
             case NetMessageType.SnapshotRequest:
             {
                 var req = SnapshotRequestMessage.Deserialize(reader);
