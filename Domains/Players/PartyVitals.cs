@@ -14,6 +14,8 @@ namespace SyncRADation.Players
             public bool Down;
             public float DownAt;
             public float ReviveSentAt = -99f;
+            /// <summary>Revived, but no "alive" vital seen yet: the peer may still be loading / not have applied it.</summary>
+            public bool AwaitingAck;
             public bool HasPos;
             public Vector3 Pos;
             public string Room = "";
@@ -21,6 +23,11 @@ namespace SyncRADation.Players
 
         /// <summary>A stale "dead" vital still in flight must not re-down a peer we just revived.</summary>
         private const float ReviveGrace = 1.5f;
+        /// <summary>
+        /// A revived peer keeps reporting dead=true until it applies the revive (it defers while loading a scene).
+        /// Ignore "dead" from it until it reports alive once, but never longer than this.
+        /// </summary>
+        private const float AckTimeout = 15f;
 
         private static readonly Dictionary<int, Entry> _entries = new Dictionary<int, Entry>();
         private static readonly List<int> _scratch = new List<int>(8);
@@ -67,9 +74,11 @@ namespace SyncRADation.Players
         {
             if (playerId < 0 || IsLocal(playerId)) return;
             var e = Get(playerId);
+            if (!dead && e.AwaitingAck)
+                e.AwaitingAck = false;
             if (dead)
             {
-                if (!e.Down && Time.unscaledTime - e.ReviveSentAt >= ReviveGrace)
+                if (!e.Down && !IsAwaitingAck(e) && Time.unscaledTime - e.ReviveSentAt >= ReviveGrace)
                 {
                     e.Down = true;
                     e.DownAt = Time.unscaledTime;
@@ -88,6 +97,7 @@ namespace SyncRADation.Players
             if (playerId < 0 || IsLocal(playerId)) return;
             var e = Get(playerId);
             if (e.Down) return;
+            if (IsAwaitingAck(e)) return; // stale: a peer that has not applied its revive cannot die again yet
             if (Time.unscaledTime - e.ReviveSentAt < ReviveGrace) return;
             e.Down = true;
             e.DownAt = Time.unscaledTime;
@@ -101,6 +111,15 @@ namespace SyncRADation.Players
             var e = Get(playerId);
             e.Down = false;
             e.ReviveSentAt = Time.unscaledTime;
+            e.AwaitingAck = true;
+        }
+
+        private static bool IsAwaitingAck(Entry e)
+        {
+            if (!e.AwaitingAck) return false;
+            if (Time.unscaledTime - e.ReviveSentAt < AckTimeout) return true;
+            e.AwaitingAck = false; // peer never acked: trust its vitals again
+            return false;
         }
 
         /// <summary>Party wipe: everyone is alive again; ignore stale "dead" vitals still in flight.</summary>

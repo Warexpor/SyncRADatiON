@@ -51,6 +51,18 @@ namespace SyncRADation.Networking
         private readonly List<PendingRevert> _reverts = new List<PendingRevert>(2);
         private const float RevertWindow = 4f;
 
+        // Native ItemPickup.dialoguerCallback schedules Invoke("release", 0.1) (Ghidra ItemPickup.c).
+        // Unity cancels/never runs a pending Invoke once the GameObject is deactivated, so a prop must
+        // not be hidden for its own claimer until release has run. Key = WorldId, value = safety expiry.
+        private readonly Dictionary<ulong, float> _releasePending = new Dictionary<ulong, float>();
+        private readonly HashSet<ulong> _deferredHide = new HashSet<ulong>();
+        private readonly List<ulong> _expiredScratch = new List<ulong>(2);
+        private const float ReleaseWaitOpen = 120f;
+        private const float ReleaseWaitCallback = 3f;
+
+        // Claims whose native release must be measured: what the bag really gained vs the claim count.
+        private readonly Dictionary<ulong, NativePending> _gainCheck = new Dictionary<ulong, NativePending>();
+
         /// <summary>
         /// Native release runs ~0.1s after dialoguerCallback. Record the bag count now so a later
         /// deny can tell whether (and how much) native already added.
@@ -66,6 +78,85 @@ namespace SyncRADation.Networking
                 BagBefore = before,
                 Time = Time.unscaledTime
             };
+            ExpectGain(worldId, item, count, before);
+        }
+
+        /// <summary>Remember the bag before native release so a partial AddItemToMax can be measured.</summary>
+        public void ExpectGain(ulong worldId, Items.itemlist item, int count, int bagBefore = -1)
+        {
+            if (worldId == 0 || item == Items.itemlist.None) return;
+            if (bagBefore < 0) bagBefore = DroppedItemManager.CountInBag(item);
+            _gainCheck[worldId] = new NativePending
+            {
+                Item = item,
+                Count = count > 0 ? count : 1,
+                BagBefore = bagBefore,
+                Time = Time.unscaledTime
+            };
+        }
+
+        static ulong IdOf(ItemPickup p)
+        {
+            if (p == null) return 0;
+            try { return p.gameObject != null ? WorldId.FromGameObject(p.gameObject) : 0UL; }
+            catch (System.Exception e) { Guard.Swallow(e); return 0; }
+        }
+
+        /// <summary>
+        /// Native pickUp/dialoguerCallback is running for this prop on the local peer: its release is
+        /// still to come, so HidePickup defers. seconds = safety expiry if release never runs.
+        /// </summary>
+        public void MarkReleasePending(ItemPickup p, bool callbackSeen)
+        {
+            ulong id = IdOf(p);
+            if (id == 0) return;
+            _releasePending[id] = Time.unscaledTime + (callbackSeen ? ReleaseWaitCallback : ReleaseWaitOpen);
+        }
+
+        bool IsReleasePending(ulong id)
+        {
+            float until;
+            if (!_releasePending.TryGetValue(id, out until)) return false;
+            if (Time.unscaledTime > until)
+            {
+                _releasePending.Remove(id);
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>Native release finished: measure the gain, spawn any overflow, then hide.</summary>
+        public void OnNativeRelease(ItemPickup p)
+        {
+            ulong id = IdOf(p);
+            if (id == 0) return;
+            _releasePending.Remove(id);
+            CheckGain(id, p);
+            if (_deferredHide.Remove(id))
+                HideOnePickup(p);
+        }
+
+        void CheckGain(ulong id, ItemPickup p)
+        {
+            NativePending np;
+            if (!_gainCheck.TryGetValue(id, out np)) return;
+            _gainCheck.Remove(id);
+            int gained = DroppedItemManager.CountInBag(np.Item) - np.BagBefore;
+            if (gained < 0) gained = 0;
+            SpawnOverflow(np.Item, np.Count - gained, "release");
+        }
+
+        /// <summary>AddItem/AddItemToMax cap at maxNumber: the part that did not fit goes on the floor.</summary>
+        static void SpawnOverflow(Items.itemlist item, int remainder, string why)
+        {
+            if (remainder <= 0 || item == Items.itemlist.None) return;
+            // Key/Object ride the party key ring; they never stack or overflow.
+            if (PartyKeyRing.IsKeyOrObject(item)) return;
+            var net = LanNetworkManager.Instance;
+            if (net == null || !net.IsConnected) return;
+            PlaytestLog.Event("Pickup", "overflow " + why + " " + item + " x" + remainder + " -> floor");
+            try { net.DropOverflow(item, remainder); }
+            catch (System.Exception ex) { ModRuntime.Log?.Warning("[WorldPickup] overflow drop: " + ex.Message); }
         }
 
         /// <summary>
@@ -104,7 +195,8 @@ namespace SyncRADation.Networking
             try
             {
                 var an = InventoryManager.getItem(r.Item);
-                if (an != null) InventoryManager.RemoveItem(an, take);
+                // Bag entries may be a different AnItem instance than the catalog one (ring-seeded copies).
+                if (an != null) InventoryManager.RemoveItem(PartyKeyRing.FindInBag(an) ?? an, take);
             }
             catch (System.Exception ex)
             {
@@ -164,6 +256,32 @@ namespace SyncRADation.Networking
                 if (stale != null)
                     for (int i = 0; i < stale.Count; i++) _nativePending.Remove(stale[i]);
             }
+            if (_gainCheck.Count > 0)
+            {
+                float now = Time.unscaledTime;
+                _expiredScratch.Clear();
+                foreach (var kvp in _gainCheck)
+                    if (now - kvp.Value.Time > 30f) _expiredScratch.Add(kvp.Key);
+                for (int i = 0; i < _expiredScratch.Count; i++) _gainCheck.Remove(_expiredScratch[i]);
+            }
+            if (_releasePending.Count > 0)
+            {
+                float now = Time.unscaledTime;
+                _expiredScratch.Clear();
+                foreach (var kvp in _releasePending)
+                    if (now > kvp.Value) _expiredScratch.Add(kvp.Key);
+                for (int i = 0; i < _expiredScratch.Count; i++)
+                {
+                    ulong id = _expiredScratch[i];
+                    _releasePending.Remove(id);
+                    // Release never ran (prop gone / dialogue aborted): apply the hide we held back.
+                    if (_deferredHide.Remove(id))
+                    {
+                        ItemPickup p;
+                        if (_byId.TryGetValue(id, out p) && p != null) HideOnePickup(p);
+                    }
+                }
+            }
         }
 
         /// <summary>Client: host refused the claim — someone else owns the prop; undo the native add.</summary>
@@ -177,6 +295,7 @@ namespace SyncRADation.Networking
             _byId.TryGetValue(id, out p);
             try { if (p != null && p.gameObject == null) p = null; } catch { p = null; }
 
+            _gainCheck.Remove(id);
             NativePending np;
             if (!_nativePending.TryGetValue(id, out np))
             {
@@ -203,6 +322,11 @@ namespace SyncRADation.Networking
             _claimedItemOf.Clear();
             _byId.Clear();
             _partyOnPickupFired.Clear();
+            // Props of the old scene are gone: their held-back hides / release waits die with them.
+            // In-flight claims (_nativePending/_reverts/_gainCheck) keep their own 4-30 s expiry so a
+            // grant/deny that lands just after the load still balances the bag.
+            _releasePending.Clear();
+            _deferredHide.Clear();
             _timer = 0f;
             foreach (var item in _keepItemsScratch)
                 _claimedItems.Add(item);
@@ -220,8 +344,18 @@ namespace SyncRADation.Networking
             _claimedItemOf.Clear();
             _byId.Clear();
             _partyOnPickupFired.Clear();
+            ClearPending();
             _timer = 0f;
         }
+        void ClearPending()
+        {
+            _nativePending.Clear();
+            _reverts.Clear();
+            _releasePending.Clear();
+            _deferredHide.Clear();
+            _gainCheck.Clear();
+        }
+
         public void RequestFullSend() => _needFull = true;
         public static Items.itemlist ResolveItem(ItemPickup p)
         {
@@ -327,6 +461,17 @@ namespace SyncRADation.Networking
 
         public void HidePickup(ItemPickup p)
         {
+            if (p == null) return;
+            if (_releasePending.Count > 0)
+            {
+                ulong id = IdOf(p);
+                if (id != 0 && IsReleasePending(id))
+                {
+                    // Hiding now would SetActive(false) under the pending Invoke("release").
+                    _deferredHide.Add(id);
+                    return;
+                }
+            }
             HideOnePickup(p);
         }
 
@@ -630,6 +775,7 @@ namespace SyncRADation.Networking
             _claimerOf.Remove(worldId);
             _claimedItemOf.Remove(worldId);
             _partyOnPickupFired.Remove(worldId);
+            _deferredHide.Remove(worldId);
             // Only drop the item-enum mark when no other WorldId still claims that unique.
             if (noted != Items.itemlist.None)
             {
@@ -644,6 +790,21 @@ namespace SyncRADation.Networking
             PlaytestLog.Event("Pickup", "release claim id=" + worldId.ToString("X16")
                 + " by=" + claimerPlayerId + " item=" + noted);
             return true;
+        }
+
+        /// <summary>Host declined its own yes/no: free the claim and tell peers to show the prop again.</summary>
+        public void ReleaseAndBroadcast(ulong worldId, int claimerPlayerId)
+        {
+            if (!ReleaseClaimIf(worldId, claimerPlayerId)) return;
+            _gainCheck.Remove(worldId);
+            var net = LanNetworkManager.Instance;
+            if (net == null) return;
+            net.SendWorldPickupState(new[]
+            {
+                new WorldPickupEntry { WorldId = unchecked((long)worldId), Triggered = false, Active = true }
+            }, false);
+            ItemPickup p;
+            if (_byId.TryGetValue(worldId, out p) && p != null) RestorePickup(p);
         }
 
         /// <summary>
@@ -774,6 +935,7 @@ namespace SyncRADation.Networking
                     _claimerOf.Remove(id);
                     _claimedItemOf.Remove(id);
                     _partyOnPickupFired.Remove(id);
+                    _deferredHide.Remove(id);
                     if (noted != Items.itemlist.None)
                     {
                         bool still = false;
@@ -852,6 +1014,7 @@ namespace SyncRADation.Networking
                     catch { p = null; }
                 }
 
+                KeyValuePair<Items.itemlist, int> pendingOverflow = default(KeyValuePair<Items.itemlist, int>);
                 NetGate.BeginApply();
                 try
                 {
@@ -883,10 +1046,26 @@ namespace SyncRADation.Networking
                     // native pickUp) must AddItem even if the bag already holds a stack of it, otherwise
                     // ammo/health/batteries are hidden for all peers and granted to nobody.
                     bool nativeAdds = _nativePending.Remove(id);
+                    int grantCount = msg.Count > 0 ? msg.Count : 1;
+                    int overflow = 0;
                     if (!nativeAdds)
-                        InventoryManager.AddItem(item, msg.Count > 0 ? msg.Count : 1);
+                    {
+                        int before = DroppedItemManager.CountInBag(kind);
+                        InventoryManager.AddItem(item, grantCount);
+                        // AddItem silently caps at maxNumber: measure what the bag really took.
+                        int gained = DroppedItemManager.CountInBag(kind) - before;
+                        overflow = grantCount - (gained > 0 ? gained : 0);
+                    }
+                    else
+                    {
+                        // Native release owns the add (and its onPickup Invoke): partial gains are
+                        // measured there (CheckGain), and party onPickup must not fire a second time.
+                        NoteOnPickupFired(id);
+                    }
                     PartyKeyRing.Note(item);
                     PartyKeyRing.BindUseDialogue(item);
+                    if (overflow > 0)
+                        pendingOverflow = new KeyValuePair<Items.itemlist, int>(kind, overflow);
 
                     // Client Prefix blocks ItemPickup.pickUp, so onPickup never ran.
                     // Host-claim comment was false when client claims — host+non-claimers
@@ -899,8 +1078,12 @@ namespace SyncRADation.Networking
                     NetGate.EndApply();
                 }
 
+                if (pendingOverflow.Value > 0)
+                    SpawnOverflow(pendingOverflow.Key, pendingOverflow.Value, "grant");
+
                 if (p != null)
                 {
+                    // Deferred while this peer's native release is still pending (inspect claims).
                     HidePickup(p);
                     try { if (p._item != null) PartyKeyRing.Note(p._item); } catch (System.Exception e) { Guard.Swallow(e); }
                 }

@@ -9,10 +9,22 @@ namespace SyncRADation.Patches
 {
     internal static class SceneLoadGate
     {
+        static string _lastBlockedScene;
+        static float _lastBlockedLog;
+
+        /// <summary>True when the load must run untouched: a mod apply scope, or no live party (vanilla host / offline).</summary>
+        public static bool Bypass()
+        {
+            if (SceneFollowService.LoadsSuppressed) return false;
+            return NetGate.IsApplying || !NetGate.Party;
+        }
+
         public static bool GateLevel(string scene)
         {
+            if (SceneFollowService.LoadsSuppressed) return false;
             if (NetGate.IsApplying) return true;
-            if (!NetGate.Live) return true;
+            // A host with nobody connected is vanilla: no follow broadcast, no gate.
+            if (!NetGate.Party) return true;
             if (string.IsNullOrEmpty(scene)) return true;
             if (SceneFollowService.IsTransient(scene)) return true;
             if (AirlockCinematic.IsPersonalChapterLoad(scene))
@@ -24,13 +36,29 @@ namespace SyncRADation.Patches
 
             if (NetGate.Host)
             {
+                // The host reaching the main menu (quit to menu / credits done) ends the session: clients that
+                // follow to a menu still connected would Continue / New Game into a host that never loaded a slot.
+                // Clients get the reason, go offline and stay where they are (or keep watching their own credits).
+                if (SceneFollowService.IsMainMenu(scene))
+                {
+                    PlaytestLog.Event("Scene", "host load '" + scene + "' - ending session");
+                    LanNetworkManager.Instance.EndSession("Host returned to the main menu");
+                    return true;
+                }
                 SceneFollowService.NoteGoingTo(scene);
                 PlaytestLog.Event("Scene", "host load '" + scene + "'");
                 LanNetworkManager.Instance.SendSceneFollow(scene, false);
                 return true;
             }
 
-            PlaytestLog.Event("Scene", "client blocked local load, request '" + scene + "'");
+            // CreditsEnd re-issues its load every frame after the fade: one log line per scene per 5 s.
+            float now = Time.unscaledTime;
+            if (!string.Equals(_lastBlockedScene, scene, System.StringComparison.Ordinal) || now - _lastBlockedLog > 5f)
+            {
+                _lastBlockedScene = scene;
+                _lastBlockedLog = now;
+                PlaytestLog.Event("Scene", "client blocked local load, request '" + scene + "'");
+            }
             SceneFollowService.RequestFollow(scene);
             return false;
         }
@@ -49,8 +77,7 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static bool Prefix(int target)
         {
-            if (NetGate.IsApplying) return true;
-            if (!NetGate.Live) return true;
+            if (SceneLoadGate.Bypass()) return true;
             return SceneLoadGate.GateLevel(SceneFollowService.ResolveLevelName(target));
         }
     }
@@ -68,8 +95,7 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static bool Prefix(int scene)
         {
-            if (NetGate.IsApplying) return true;
-            if (!NetGate.Live) return true;
+            if (SceneLoadGate.Bypass()) return true;
             return SceneLoadGate.GateLevel(SceneFollowService.ResolveLevelName(scene));
         }
     }
@@ -94,8 +120,16 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static bool Prefix()
         {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
-            return NetGate.Host;
+            if (NetGate.IsApplying || !NetGate.Party) return true;
+            // Host: allowed; its ResetNow + LoadLevel(MainMenu) ends the session (SceneLoadGate). Client: quit to menu
+            // leaves the party. Stop synchronously so the native ResetNow + LoadLevel that follows run offline - a
+            // deferred stop would let that load be gated as a follow request and the quit silently did nothing.
+            if (NetGate.Client)
+            {
+                LanNetworkManager.Instance.EndSession("Left to the main menu");
+                return true;
+            }
+            return true;
         }
     }
 
@@ -114,8 +148,7 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static bool Prefix(int sceneBuildIndex)
         {
-            if (NetGate.IsApplying) return true;
-            if (!NetGate.Live) return true;
+            if (SceneLoadGate.Bypass()) return true;
             return SceneLoadGate.GateLevel(SceneFollowService.ResolveLevelName(sceneBuildIndex));
         }
     }
@@ -126,8 +159,7 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static bool Prefix(LoadLevelZone __instance)
         {
-            if (NetGate.IsApplying) return true;
-            if (!NetGate.Live) return true;
+            if (SceneLoadGate.Bypass()) return true;
             if (__instance == null) return true;
             string scene = __instance.SceneName;
             if (string.IsNullOrEmpty(scene)) return true;

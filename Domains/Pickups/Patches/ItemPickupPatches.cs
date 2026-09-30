@@ -12,14 +12,48 @@ namespace SyncRADation.Patches
         static Items.itemlist _pendingItem;
         static float _pendingTime;
 
+        /// <summary>SessionReset: the in-flight world-pickup claim and the pre-drop bag count belong to the session that just ended.</summary>
+        internal static void ResetSession()
+        {
+            _pendingId = 0;
+            _pendingItem = Items.itemlist.None;
+            _pendingTime = 0f;
+            _countBeforeDrop = 0;
+        }
+
         internal static void NoteTakenFromCallback(ItemPickup p)
         {
             if (p != null && ItemSystem.DroppedItemManager.IsDropped(p))
             {
+                // Native release only adds on a yes answer (Dialoguer global bool 1); a "no" must not
+                // grant or claim the floor item (release Prefix then lets native release run).
+                if (!AnsweredYes())
+                {
+                    PlaytestLog.Verbose("Drop", "take declined");
+                    return;
+                }
                 TakeDropped(p);
                 return;
             }
+            // Native release is now ~0.1 s away: keep the prop active until it has run.
+            try
+            {
+                var net = LanNetworkManager.Instance;
+                if (p != null && net != null && net.IsConnected)
+                    net.PickupSync.MarkReleasePending(p, true);
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
             NoteTaken(p);
+        }
+
+        internal static bool AnsweredYes()
+        {
+            try { return Dialoguer.GetGlobalBoolean(1); }
+            catch (System.Exception ex)
+            {
+                ModRuntime.Log?.Warning("[Pickup] yes/no answer unreadable: " + ex.Message);
+                return true;
+            }
         }
 
         internal static bool TakeDropped(ItemPickup p)
@@ -218,7 +252,10 @@ namespace SyncRADation.Patches
 
             // Inspect cards: native pickUp shows yes/no. Claim only after the item is in the bag.
             if (IsInspect(__instance))
+            {
+                net.PickupSync.MarkReleasePending(__instance, false);
                 return true;
+            }
 
             if (WorldClaimNeedsBagRoom(_pendingItem) && !BagHasRoomForWorld(_pendingItem))
             {
@@ -226,7 +263,9 @@ namespace SyncRADation.Patches
                 // Client: block native (would dual-grant) and skip claim wire.
                 PlaytestLog.Event("Pickup", "deny bag full " + __instance.gameObject.name
                     + " item=" + _pendingItem);
-                return net.Role == NetworkRole.Host;
+                if (net.Role != NetworkRole.Host) return false;
+                net.PickupSync.MarkReleasePending(__instance, false);
+                return true;
             }
 
             if (net.Role == NetworkRole.Host)
@@ -241,6 +280,7 @@ namespace SyncRADation.Patches
                 }
                 PlaytestLog.Event("Pickup", "host take " + __instance.gameObject.name
                     + " id=" + id.ToString("X16"));
+                net.PickupSync.MarkReleasePending(__instance, false);
                 return true;
             }
 
@@ -366,12 +406,12 @@ namespace SyncRADation.Patches
 
             // Native release only adds when the yes/no answer (Dialoguer global bool 1) was yes
             // (ItemPickup.release, Ghidra ItemPickup.c: GetGlobalBoolean(1) gate before AddItemToMax).
-            bool accepted = true;
-            try { accepted = Dialoguer.GetGlobalBoolean(1); }
-            catch (System.Exception ex) { ModRuntime.Log?.Warning("[Pickup] yes/no answer unreadable: " + ex.Message); }
-            if (!accepted)
+            if (!AnsweredYes())
             {
                 PlaytestLog.Verbose("Pickup", "declined id=" + id.ToString("X16"));
+                // Host pre-claimed in Prefix/Postfix before the answer: a "no" gives the prop back.
+                if (net.Role == NetworkRole.Host)
+                    net.PickupSync.ReleaseAndBroadcast(id, net.LocalPlayerId);
                 return;
             }
             int takeCount = CountOf(p);
@@ -385,6 +425,9 @@ namespace SyncRADation.Patches
                     net.PickupSync.RevertNativeGrantNow(item, takeCount, p);
                     return;
                 }
+                // Native release (0.1 s away) does the add: measure it so a partial AddItemToMax
+                // leaves the remainder on the floor instead of vanishing with the claimed prop.
+                net.PickupSync.ExpectGain(id, item, takeCount);
                 // Inspect/confirm path: native already Invoked — Note before Broadcast (Dig H).
                 net.PickupSync.NoteOnPickupFired(id);
                 net.PickupSync.BroadcastTriggered(id, true);
@@ -440,7 +483,8 @@ namespace SyncRADation.Patches
             try
             {
                 var item = InventoryManager.getItem(kind);
-                if (item != null && PartyKeyRing.InLocalBag(item)) return true;
+                if (item != null && PartyKeyRing.InLocalBag(item))
+                    return !ItemSystem.DroppedItemManager.StackAtCap(kind);
                 int used = 0;
                 var dict = InventoryManager.elsterItems;
                 if (dict == null) return true;
@@ -598,7 +642,7 @@ namespace SyncRADation.Patches
             {
                 var item = InventoryManager.getItem(itemEnum);
                 if (item != null)
-                    InventoryManager.RemoveItem(item, count);
+                    InventoryManager.RemoveItem(PartyKeyRing.FindInBag(item) ?? item, count);
             }
             catch (System.Exception e) { Guard.Swallow(e); }
             // Allow a later respawn/dump of the same key to be claimed again.
@@ -635,12 +679,28 @@ namespace SyncRADation.Patches
             {
                 if (__instance != null && ItemSystem.DroppedItemManager.IsDropped(__instance))
                 {
+                    // "no": native release skips the add and just restores play state.
+                    if (!ItemPickupPatches.AnsweredYes()) return true;
                     ItemPickupPatches.TakeDropped(__instance);
                     return false;
                 }
             }
             catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] release: " + ex.Message); }
             return true;
+        }
+
+        [HarmonyPostfix]
+        public static void Postfix(ItemPickup __instance)
+        {
+            try
+            {
+                var net = LanNetworkManager.Instance;
+                if (__instance == null || net == null || !net.IsConnected) return;
+                if (ItemSystem.DroppedItemManager.IsDropped(__instance)) return;
+                // Native release ran: settle the gain (overflow to floor) and run the held-back hide.
+                net.PickupSync.OnNativeRelease(__instance);
+            }
+            catch (System.Exception ex) { ModRuntime.Log?.Warning("[Pickup] release post: " + ex.Message); }
         }
     }
 

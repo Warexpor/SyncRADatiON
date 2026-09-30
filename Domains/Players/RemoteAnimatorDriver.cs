@@ -145,6 +145,12 @@ namespace SyncRADation.Players
             _pendingTriggers |= triggers;
         }
 
+        /// <summary>Forget queued one-shots (e.g. Die/Hurt of a life that just ended).</summary>
+        public void DropPending(AnimTriggers mask)
+        {
+            _pendingTriggers &= ~mask;
+        }
+
         public void ApplyBoneChunk(ushort totalBones, ushort startBone, float[] eulers)
         {
             if (eulers == null || eulers.Length < 3 || totalBones == 0) return;

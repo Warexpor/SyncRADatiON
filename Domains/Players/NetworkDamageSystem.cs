@@ -1,14 +1,16 @@
 // Native HurtElster is the only HP path. Co-op death: any player (host or client) who dies while
 // a teammate lives is DOWNED (input off, cloaked so enemies ignore them, proxy shows dead), then
 // the host respawns them next to the nearest living teammate after DownedRespawnDelay seconds.
-// The party wipes (host reloads its last save, clients restore bag snapshots) only when every
-// player is down. Solo / no party: nothing here runs, the native game over stays vanilla.
+// The party wipes (host reloads its last save via HostReload, clients restore bag snapshots and follow the
+// host's scene load) only when every player is down. Solo / no party: nothing here runs, the native game over
+// stays vanilla.
 using FMODUnity;
 using SyncRADation.Config;
 using SyncRADation.ItemSystem;
 using SyncRADation.Networking;
 using SyncRADation.Sync;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace SyncRADation.Players
 {
@@ -19,6 +21,13 @@ namespace SyncRADation.Players
         private const float WipeDebounce = 6f;
         private const float RoomReportInterval = 0.5f;
         private const float HostTickInterval = 0.25f;
+        /// <summary>
+        /// A downed player drops its bag only after this grace, and only if a teammate is still up then. Two players
+        /// dying together learn about each other within an RTT; deciding at the moment of death dropped both bags just
+        /// before the wipe reload destroyed them.
+        /// </summary>
+        private const float DropGrace = 1.5f;
+        private const float WipeLogInterval = 5f;
 
         private static bool _isDead;
         private static float _downAt;
@@ -31,6 +40,11 @@ namespace SyncRADation.Players
         private static bool _hasPendingRevive;
         private static PartyLifeMessage _pendingRevive;
         private static float _lastSafetyLog = -99f;
+        private static bool _dropPending;
+        private static float _dropAt;
+        private static float _wipeBlockedLog = -99f;
+        private static Animator _deathAnim;
+        private static GameObject _deathAnimFor;
 
         public static bool IsDead => _isDead;
 
@@ -157,18 +171,16 @@ namespace SyncRADation.Players
             var net = ModRuntime.Network;
             if (net == null || !net.IsConnected || !PartyLive) return;
 
-            bool othersAlive = PartyVitals.AnyOtherAlive(net);
             _isDead = true;
             _downAt = Time.unscaledTime;
             _hasPendingRevive = false;
             PartySaveService.NoteBagAtDown();
             ApplyDownedLocal(true);
 
-            // Last one standing down: the wipe reload follows, floor items would only be cleared.
-            if (othersAlive)
-                DropInventoryOnDeath();
-            else
-                PlaytestLog.Event("Damage", "last player down — skip floor drop (wipe follows)");
+            // Floor drop is decided DropGrace later (TickDownedDrop): if everyone is down by then the wipe reload
+            // follows and dropped items would only be destroyed.
+            _dropPending = true;
+            _dropAt = _downAt + DropGrace;
 
             try
             {
@@ -197,10 +209,11 @@ namespace SyncRADation.Players
             }
             catch (System.Exception ex) { LogOnce("down cloak", ex); }
 
-            if (!firstTime) return;
+            // Every frame while downed (firstTime or not): a scene change swaps the player object and its animator
+            // comes up alive, so re-assert the dead pose whenever the Dead bool is not set.
             try
             {
-                var anim = PlayerState.player != null ? PlayerState.player.GetComponentInChildren<Animator>(true) : null;
+                var anim = DeathAnimator();
                 if (anim != null && !anim.GetBool("Dead"))
                 {
                     anim.SetTrigger("Die");
@@ -208,6 +221,37 @@ namespace SyncRADation.Players
                 }
             }
             catch (System.Exception ex) { LogOnce("down anim", ex); }
+        }
+
+        /// <summary>The animator ElsterDeathHandler drives (its own <c>anim</c>), falling back to the first one in the tree.</summary>
+        private static Animator DeathAnimator()
+        {
+            var player = PlayerState.player;
+            if (player == null) return null;
+            if (_deathAnimFor == player && _deathAnim != null) return _deathAnim;
+            Animator anim = null;
+            try
+            {
+                var handler = player.GetComponent<ElsterDeathHandler>();
+                if (handler != null) anim = handler.anim;
+            }
+            catch (System.Exception ex) { LogOnce("death handler anim", ex); }
+            if (anim == null)
+                anim = player.GetComponentInChildren<Animator>(true);
+            _deathAnimFor = player;
+            _deathAnim = anim;
+            return anim;
+        }
+
+        /// <summary>While downed: after DropGrace, drop the bag if a teammate is still up (else the wipe reload follows).</summary>
+        private static void TickDownedDrop(LanNetworkManager net)
+        {
+            if (!_dropPending || Time.unscaledTime < _dropAt) return;
+            _dropPending = false;
+            if (PartyVitals.AnyOtherAlive(net))
+                DropInventoryOnDeath();
+            else
+                PlaytestLog.Event("Damage", "last player down — skip floor drop (wipe follows)");
         }
 
         private static void DropInventoryOnDeath()
@@ -342,7 +386,9 @@ namespace SyncRADation.Players
             _hasPendingRevive = false;
             var msg = _pendingRevive;
 
-            if (msg.HasPos)
+            // The teleport target is in msg.Scene; if we loaded somewhere else meanwhile its XYZ is meaningless here.
+            bool teleport = msg.HasPos && SceneMatches(msg.Scene);
+            if (teleport)
             {
                 try { PlayerState.player.transform.position = new Vector3(msg.PosX, msg.PosY, msg.PosZ); }
                 catch (System.Exception ex) { LogOnce("revive teleport", ex); }
@@ -351,10 +397,18 @@ namespace SyncRADation.Players
 
             ClearDownedLocal(msg.Hp > 0 ? msg.Hp : ReviveHp(), false);
             PlaytestLog.Event("Damage", "respawned hp=" + PlayerState.hp
-                + (msg.HasPos ? " at teammate (" + msg.PosX.ToString("F1") + "," + msg.PosZ.ToString("F1") + ")" : " in place"));
+                + (teleport ? " at teammate (" + msg.PosX.ToString("F1") + "," + msg.PosZ.ToString("F1") + ")"
+                    : (msg.HasPos ? " in place (teammate scene '" + msg.Scene + "' != here)" : " in place")));
             var net = ModRuntime.Network;
             try { net?.AvatarHandlers.SendLocalVital(); }
             catch (System.Exception ex) { LogOnce("vital send", ex); }
+        }
+
+        private static bool SceneMatches(string scene)
+        {
+            if (string.IsNullOrEmpty(scene)) return true;
+            try { return string.Equals(SceneManager.GetActiveScene().name, scene, System.StringComparison.Ordinal); }
+            catch (System.Exception ex) { LogOnce("scene match", ex); return true; }
         }
 
         /// <summary>Client: host wiped the party. No own-slot load: bag from the save snapshot, follow the host reload.</summary>
@@ -362,10 +416,14 @@ namespace SyncRADation.Players
         {
             var net = ModRuntime.Network;
             if (net == null) return;
-            PlaytestLog.Event("Damage", "party wipe — host reloads last save");
+            PlaytestLog.Event("Damage", "party wipe — host reloads '" + msg.Scene + "'");
+            // The host reverted to a save, this peer never loads a slot: story progress is replaced by the host's next full dump.
+            try { net.StorySync.OnPartyWipe(); }
+            catch (System.Exception ex) { LogOnce("wipe story", ex); }
 
             var token = new PartySaveToken { Slot = msg.SaveSlot, Counter = msg.SaveCounter, Stamp = msg.SaveStamp };
             WipeWorldLocal(net);
+            FollowWipeReload(msg.Scene);
 
             string source;
             var bag = PartySaveService.ResolveWipeBag(token, out source);
@@ -381,8 +439,34 @@ namespace SyncRADation.Players
 
             ClearDownedLocal(100, true);
             PartyVitals.ReviveAll(net);
+            // Session-scoped sticky state (puzzle memory, fired zones, held boss snapshots...) belongs to the world
+            // that is being replaced. Clients never run SaveManager.Load, so they reset here; the host in its Load postfix.
+            SessionReset.RunAll(SessionReset.ReasonWipe);
             try { net.AvatarHandlers.SendLocalVital(); }
             catch (System.Exception ex) { LogOnce("vital send", ex); }
+        }
+
+        /// <summary>
+        /// The host's LoadLevel already broadcast SceneFollow, which drags clients in a different scene. A client that
+        /// is already in the reload scene would ignore it (Apply: same scene), so it reloads itself: the world it has
+        /// is the pre-wipe one. SceneFollowService.AlreadyGoingTo covers the follow having arrived first.
+        /// </summary>
+        private static void FollowWipeReload(string scene)
+        {
+            if (string.IsNullOrEmpty(scene) || SceneFollowService.IsTransient(scene)) return;
+            try
+            {
+                if (SceneFollowService.LocalIsTransient() || SceneFollowService.AlreadyGoingTo(scene)) return;
+                if (!SceneMatches(scene)) return; // SceneFollow loads it
+                SceneFollowService.NoteGoingTo(scene);
+                try { DroppedItemManager.RestorePlayForLoad(); }
+                catch (System.Exception ex) { LogOnce("wipe restore play", ex); }
+                NetGate.BeginApply();
+                try { AsyncLoader.LoadLevel(scene); }
+                finally { NetGate.EndApply(); }
+                PlaytestLog.Event("Damage", "wipe: same-scene reload '" + scene + "'");
+            }
+            catch (System.Exception ex) { LogOnce("wipe follow", ex); }
         }
 
         /// <summary>Clear floor drops + claim state on this peer before the save reload.</summary>
@@ -507,7 +591,8 @@ namespace SyncRADation.Players
                 PosX = bestPos.x,
                 PosY = bestPos.y,
                 PosZ = bestPos.z,
-                Room = best >= 0 ? RoomOf(net, best) : ""
+                Room = best >= 0 ? RoomOf(net, best) : "",
+                Scene = best >= 0 ? net.SceneOf(best) : ""
             };
             PlaytestLog.Event("Damage", "revive p" + pid + (best >= 0 ? " near p" + best : " in place (no teammate in scene)"));
 
@@ -522,12 +607,37 @@ namespace SyncRADation.Players
                 ApplyRevive(msg);
         }
 
+        /// <summary>
+        /// Everyone is down: reload the host into its save (HostReload replicates LoadMenuUI.confirmLoading), then tell
+        /// clients. Returns without touching any state (so the next tick retries) while the host is mid-load.
+        /// The key ring / floor drops / pickup claims are reset by the SaveManager.Load postfix once the load
+        /// really ran, never here.
+        /// </summary>
         private static void ExecuteWipe(LanNetworkManager net)
         {
-            _wipeAt = Time.unscaledTime;
+            float now = Time.unscaledTime;
+            if (SceneFollowService.LocalIsTransient() || HostReload.Pending)
+            {
+                if (now - _wipeBlockedLog >= WipeLogInterval)
+                {
+                    _wipeBlockedLog = now;
+                    PlaytestLog.Event("Damage", "wipe deferred (" + (HostReload.Pending ? HostReload.Describe : "host loading") + ")");
+                }
+                return;
+            }
+
+            _wipeAt = now;
             _allDownSince = -1f;
-            var token = PartySaveService.Current;
-            PlaytestLog.Event("Damage", "party wipe — reloading last save"
+
+            var plan = HostReload.TryBegin();
+            if (!plan.Started)
+            {
+                PlaytestLog.Warn("Damage", "party wipe could not start a reload - retry after debounce");
+                return;
+            }
+
+            var token = plan.Mode == HostReload.Mode.Save ? PartySaveService.TokenForSlot(plan.Slot) : default(PartySaveToken);
+            PlaytestLog.Event("Damage", "party wipe — " + plan.Mode + " reload '" + plan.Scene + "'"
                 + (token.Valid ? " token=" + token.Key : " (no party snapshot)"));
 
             net.SendPartyLife(new PartyLifeMessage
@@ -535,34 +645,14 @@ namespace SyncRADation.Players
                 Kind = PartyLifeKind.Wipe,
                 PlayerId = -1,
                 Room = "",
+                Scene = plan.Scene,
                 SaveSlot = token.Slot,
                 SaveCounter = token.Counter,
                 SaveStamp = token.Stamp
             });
 
-            WipeWorldLocal(net);
             ClearDownedLocal(100, true);
             PartyVitals.ReviveAll(net);
-            ReloadHostSave();
-        }
-
-        private static void ReloadHostSave()
-        {
-            // SaveManager.Load postfix (DeathPatches) resets the key ring to the party snapshot,
-            // claimed uniques and floor drops, and re-broadcasts the ring.
-            NetGate.BeginApply();
-            try
-            {
-                SaveManager.Load();
-            }
-            catch (System.Exception ex)
-            {
-                ModRuntime.Log?.Warning("[Damage] SaveManager.Load failed: " + ex.Message);
-            }
-            finally
-            {
-                NetGate.EndApply();
-            }
         }
 
         // ------------------------------------------------------------------ revive helpers
@@ -626,11 +716,17 @@ namespace SyncRADation.Players
         /// <summary>Undo every downed-state side effect and set hp.</summary>
         private static void ClearDownedLocal(int hp, bool wiped)
         {
+            bool wasDead = _isDead;
             _isDead = false;
             _hasPendingRevive = false;
+            _dropPending = false;
             PartySaveService.ClearBagAtDown();
             try { PlayerState.hp = Mathf.Clamp(hp, 1, 100); } catch (System.Exception ex) { LogOnce("clear hp", ex); }
-            try { PlayerState.cloaked = _prevCloaked; } catch (System.Exception ex) { LogOnce("clear cloak", ex); }
+            // Only undo the cloak we set: a peer that was never downed (wipe) may be cloaked by GrayFox on its own.
+            if (wasDead)
+            {
+                try { PlayerState.cloaked = _prevCloaked; } catch (System.Exception ex) { LogOnce("clear cloak", ex); }
+            }
             _prevCloaked = false;
             try { PlayerState.suspendInput = false; } catch (System.Exception ex) { LogOnce("clear suspendInput", ex); }
             try { PlayerState.gameOver = false; } catch (System.Exception ex) { LogOnce("clear gameOver", ex); }
@@ -644,7 +740,7 @@ namespace SyncRADation.Players
             catch (System.Exception ex) { LogOnce("clear gameState", ex); }
             try
             {
-                var anim = PlayerState.player != null ? PlayerState.player.GetComponentInChildren<Animator>(true) : null;
+                var anim = DeathAnimator();
                 if (anim != null)
                 {
                     anim.SetBool("Dead", false);
@@ -657,7 +753,8 @@ namespace SyncRADation.Players
             try
             {
                 var s = PlayerState.settings;
-                PlayerState.phoenix = true;
+                // Native healElster sets phoenix itself, except on difficulty 2 (no free revive there): mirror that.
+                if (s != null && s.difficulty != 2) PlayerState.phoenix = true;
                 PlayerState.hurtCool = 0f;
                 if (s != null) PlayerState.inviTimer = s.maxInvi;
             }
@@ -674,6 +771,8 @@ namespace SyncRADation.Players
             var net = ModRuntime.Network;
             if (net == null) return;
 
+            HostReload.Tick();
+
             if (_isDead)
             {
                 if (!net.IsConnected)
@@ -683,6 +782,7 @@ namespace SyncRADation.Players
                     return;
                 }
                 ApplyDownedLocal(false);
+                TickDownedDrop(net);
                 TryApplyPendingRevive();
             }
             else if (PartyLive)
@@ -730,17 +830,24 @@ namespace SyncRADation.Players
                 ClearDownedLocal(ReviveHp(), false);
             _isDead = false;
             _hasPendingRevive = false;
+            _dropPending = false;
+            _deathAnim = null;
+            _deathAnimFor = null;
             _allDownSince = -1f;
             _wipeAt = -99f;
+            _wipeBlockedLog = -99f;
             _hostTick = 0f;
             _roomTimer = 0f;
             _lastRoomSent = "";
             _prevCloaked = false;
             PartyVitals.Reset();
             PartySaveService.Reset();
-            try { PlayerState.suspendInput = false; } catch (System.Exception ex) { LogOnce("reset suspendInput", ex); }
+            HostReload.Reset();
+            // suspendInput is restored by ClearDownedLocal when we were downed; touching it while never downed would
+            // un-pause a menu/inventory the player has open (StartHost/Connect call StopNetwork first).
         }
 
+        // Warn-once keys: intentionally persistent.
         private static readonly System.Collections.Generic.HashSet<string> _logged =
             new System.Collections.Generic.HashSet<string>();
 

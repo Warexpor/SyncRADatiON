@@ -139,6 +139,8 @@ namespace SyncRADation.Patches
             if (ec == null) return;
 
             _adoptedChildren.Add(cid);
+            // New enemy => its weapon hurtboxes must enter the host's damage scan without waiting a full refresh.
+            ClientDamageService.NoteSpawn();
             EntitySpawner.AdoptNativeSpawn(ec, broadcast: true);
         }
     }

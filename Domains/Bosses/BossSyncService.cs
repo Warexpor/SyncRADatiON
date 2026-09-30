@@ -154,6 +154,7 @@ namespace SyncRADation.Networking
                 PlaytestLog.Event("Boss", "hit MISS " + msg.Kind + " wid=" + msg.WorldId.ToString("X16") + " from=" + senderId);
                 return;
             }
+            bool stabbed = false, dupSpear = false;
             try
             {
                 NetGate.BeginApply();
@@ -167,20 +168,38 @@ namespace SyncRADation.Networking
                             break;
                         case BossHitKind.Stab:
                             if (b.state == END_Boss.states.downed)
+                            {
                                 b.Stab();
+                                stabbed = true;
+                            }
                             break;
                         case BossHitKind.TakeSpear:
                         {
                             var spears = b.PickupSpears;
                             int idx = msg.Amount;
-                            if (spears != null && idx >= 0 && idx < spears.Length
-                                && spears[idx] != null && spears[idx].activeSelf)
-                                b.takeSpear(spears[idx]); // host postfix relays the hide to every client
+                            if (spears != null && idx >= 0 && idx < spears.Length && spears[idx] != null)
+                            {
+                                if (spears[idx].activeSelf)
+                                {
+                                    NoteSpearTaker(idx, senderId);
+                                    b.takeSpear(spears[idx]); // host postfix relays the hide to every client
+                                }
+                                else
+                                {
+                                    // Lost the race: this peer's own UnityEvent entry already added the spear
+                                    // to its bag, but the host gave it to the first taker. Take it back.
+                                    int taker;
+                                    if (!_spearTaker.TryGetValue(idx, out taker) || taker != senderId)
+                                        dupSpear = true;
+                                }
+                            }
                             break;
                         }
                     }
                 }
                 finally { NetGate.EndApply(); }
+                if (stabbed) RevokeSpear(b);
+                if (dupSpear) AckConsumeSpear(b, msg.WorldId, senderId);
                 _forceSend = true;
                 PlaytestLog.Event("Boss", "hit " + msg.Kind + " amt=" + msg.Amount + " from=" + senderId);
             }
@@ -188,6 +207,41 @@ namespace SyncRADation.Networking
             {
                 ModRuntime.Log?.Warning("[BossSync] host hit " + msg.Kind + ": " + ex.Message);
             }
+        }
+
+        private readonly Dictionary<int, int> _spearTaker = new Dictionary<int, int>();
+
+        /// <summary>Host: who got PickupSpears[idx] (first taker wins; later calls keep the first).</summary>
+        public void NoteSpearTaker(int idx, int playerId)
+        {
+            if (!_spearTaker.ContainsKey(idx)) _spearTaker[idx] = playerId;
+        }
+
+        /// <summary>The stab consumed SpearItem on the host bag only: retire it from the ring and every peer's bag.</summary>
+        void RevokeSpear(END_Boss b)
+        {
+            try
+            {
+                var item = b != null ? b.SpearItem : null;
+                if (item != null) PartyKeyRing.RevokeConsumed(item._item);
+            }
+            catch (Exception ex) { WarnOnce("stab revoke", ex); }
+        }
+
+        /// <summary>Tell a peer that lost the spear race to drop the copy its local UnityEvent added.</summary>
+        void AckConsumeSpear(END_Boss b, long wid, int senderId)
+        {
+            var net = LanNetworkManager.Instance;
+            if (net == null || senderId == net.LocalPlayerId) return;
+            try
+            {
+                var item = b != null ? b.SpearItem : null;
+                if (item == null) return;
+                net.SendInteractionAck(senderId, wid, InteractionKind.UseItem, true,
+                    "consume:" + (int)item._item + ":1");
+                PlaytestLog.Event("Boss", "spear race lost p" + senderId + " -> consume ack");
+            }
+            catch (Exception ex) { WarnOnce("spear consume ack", ex); }
         }
 
         /// <summary>Client: host presentation event (Falke spear taken, Chimera rifle shot).</summary>
@@ -493,8 +547,10 @@ namespace SyncRADation.Networking
                 bool want = false;
                 if (b.state == END_Boss.states.downed)
                 {
-                    try { want = b.deployed || (b.SpearItem != null && InventoryManager.hasItem(b.SpearItem)); }
-                    catch { want = true; }
+                    // Native CheckDowned enables StabInteraction only when hasItem(SpearItem) (ring-aware);
+                    // `deployed` alone lets the boss go down but never shows the prompt.
+                    try { want = b.SpearItem != null && InventoryManager.hasItem(b.SpearItem); }
+                    catch (Exception ex) { Guard.Swallow(ex); want = false; }
                 }
                 if (go.activeSelf != want) go.SetActive(want);
             }
@@ -779,6 +835,7 @@ namespace SyncRADation.Networking
             _clientDisabled = false;
             _hostToLocal.Clear();
             _lastHp.Clear();
+            _spearTaker.Clear();
             _bossCacheReady = false;
             _endBosses = Array.Empty<END_Boss>();
             _adlers = Array.Empty<BOS_Adler>();

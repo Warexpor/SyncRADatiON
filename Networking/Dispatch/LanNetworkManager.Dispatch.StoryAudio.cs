@@ -27,6 +27,9 @@ namespace SyncRADation.Networking
             case NetMessageType.FmodEmitter:
                 FmodHandlers.HandleFmodEmitter(FmodEmitterMessage.Deserialize(reader));
                 return true;
+            case NetMessageType.FmodEmitterRequest:
+                FmodHandlers.HandleFmodEmitterRequest(FmodEmitterRequestMessage.Deserialize(reader), senderId);
+                return true;
             default:
                 return false;
             }

@@ -1,8 +1,8 @@
-# Domains — where to fix what (0.5.58 / protocol 13)
+# Domains — where to fix what (0.5.59 / protocol 14)
 
 Composed `*SyncService` / `*NetHandlers` / `Patches/`. Namespaces stay `SyncRADation.Networking` / `.Patches` / `.Players` / `.ItemSystem`.
 
-Authority + reverse-check: repo root `AGENTS.md`. Protocol **13** wire in `Networking/Messages/NetMessages.cs` + `PartyMessages.cs` + `NetWire.cs` (schema hash). Version/protocol constants: `Bootstrap/PluginInfo.cs` (version is single-sourced from there).
+Authority + reverse-check: repo root `AGENTS.md`. Protocol **14** wire in `Networking/Messages/NetMessages.cs` + `PartyMessages.cs` + `NetWire.cs` (schema hash). Version/protocol constants: `Bootstrap/PluginInfo.cs` (version is single-sourced from there).
 
 ## Symptom → path
 
@@ -43,6 +43,13 @@ Authority + reverse-check: repo root `AGENTS.md`. Protocol **13** wire in `Netwo
 | FMOD world emitters | `Audio/` | Skip Music/Cutscenes/Ambience beds |
 | Gunshot wake | `Combat/Patches/GunshotWakePatch` | Host wakes near shot |
 | Swallowed exceptions / `[Guard]` log lines | `Sync/Guard.cs` | Throttled per tag (first hit, then one line / 30 s with count) |
+| Party wipe host reload (scene + save reload, watchdog, peers follow) | `Session/HostReload` + `Combat/PartyNetHandlers` | `PartyLife.Scene`; watchdog 45 s |
+| Boot patch audit / reflected-member table (`[Harmony] audit:` line, F2 status) | `Bootstrap/PatchAudit` | Add every new `GetField/GetMethod/GetProperty/Find("...")` literal to its table |
+| Game build hash in handshake (other game build → rejected) | `Bootstrap/GameBuild` + `Networking/LanNetworkManager` | `Handshake.GameBuildHash`/`GameBuild` |
+| Session state that must not leak between sessions / wipe reloads | `Sync/SessionReset` + `Bootstrap/SessionResetRegistrations` | Register a clear, or comment why the static is persistent |
+| Client quit-to-menu / host→MainMenu ends the session | `Networking/LanNetworkManager.SessionEnd` (`EndSession`) | Uses `RejectPeer` / `RequestStop` / `_stopReason` |
+| Shared-RVA (folded) patch firing for a foreign `this` | `Sync/Il2CppRealType` (`Is<T>`) + `docs/RVA_FOLDING.md` | Guard first statement; `RvaFoldingTests` pins the list |
+| Story wire helpers (dirty-key commit entries, caps) | `Networking/Messages/StoryWire` | `StoryWireTests` |
 | Handshake / roster | `Networking/LanNetworkManager` + `Dispatch/` | Peer map |
 | Join / resync dump | `Session/SessionNetHandlers` | `_unicastPlayerId` via BeginUnicast/EndUnicast; **Puzzle ForceFullSend** + **Boss RequestFullSend** so mid-join unicast is complete |
 | SceneHello / SceneFollow | `Scene/SceneNetHandlers` + `SceneFollowService` | |

@@ -78,7 +78,7 @@ namespace SyncRADation.Networking
             if (ack.Kind == InteractionKind.DroppedPickup)
                 ItemPickupPatches.NoteDropClaimAck(ack.Ok, ack.WorldId);
             if (ack.Kind == InteractionKind.StoragePut || ack.Kind == InteractionKind.StorageTake)
-                StorageTxn.Complete(ack.Kind, ack.Ok);
+                StorageTxn.Complete(ack.Kind, ack.Ok, ack.WorldId);
 
             if (!ack.Ok)
             {
@@ -149,6 +149,19 @@ namespace SyncRADation.Networking
         static Items.itemlist _item;
         static int _count;
 
+        // Transaction id rides InteractionRequest.WorldId (storage has no WorldId of its own) and the
+        // host echoes it in the ack, so a stale / late ack or the ack of a "return" put can never
+        // complete the wrong in-flight transaction.
+        static long _txnCounter;
+        static long _txn;
+        // A put whose 6 s timeout already gave the bag copy back: a late OK ack means the host did box it.
+        static long _lateTxn;
+        static Items.itemlist _lateItem;
+        static int _lateCount;
+
+        internal static long NextTxn() => ++_txnCounter;
+        internal static long CurrentTxn => _txn;
+
         internal static void Reset()
         {
             // Session ended with a put in flight: give the bag copy back (ack will never arrive).
@@ -156,6 +169,8 @@ namespace SyncRADation.Networking
             _busy = false;
             _putReserved = false;
             _count = 0;
+            _txn = 0;
+            _lateTxn = 0;
         }
 
         /// <summary>Returns false when the request must not be sent (busy / nothing to put / no room).</summary>
@@ -166,6 +181,13 @@ namespace SyncRADation.Networking
                 if (Time.unscaledTime - _since <= TimeoutSec)
                     return false;
                 PlaytestLog.Warn("StorageBox", "txn timeout — restoring reserve");
+                // Restore gives the reserved put back; remember it so a late OK ack can undo that again.
+                if (_putReserved)
+                {
+                    _lateTxn = _txn;
+                    _lateItem = _item;
+                    _lateCount = _count;
+                }
                 Restore();
             }
             var kind = (Items.itemlist)enumVal;
@@ -220,15 +242,48 @@ namespace SyncRADation.Networking
             }
             _busy = true;
             _since = Time.unscaledTime;
+            _txn = NextTxn();
             return true;
         }
 
-        internal static void Complete(InteractionKind kind, bool ok)
+        internal static void Complete(InteractionKind kind, bool ok, long txn)
         {
+            if (_lateTxn != 0 && txn == _lateTxn && kind == InteractionKind.StoragePut)
+            {
+                // Late ack for a put we already rolled back: if the host boxed it, take the copy out
+                // again (otherwise the item exists in the bag and the box).
+                if (ok) RemoveLate();
+                _lateTxn = 0;
+                return;
+            }
+            if (txn != _txn || !_busy)
+            {
+                PlaytestLog.Verbose("StorageBox", "ignored stale ack " + kind + " txn=" + txn + " cur=" + _txn);
+                return;
+            }
             if (kind == InteractionKind.StoragePut && _putReserved && !ok)
                 Restore();
             _putReserved = false;
             _busy = false;
+            _txn = 0;
+        }
+
+        static void RemoveLate()
+        {
+            if (_lateItem == Items.itemlist.None) return;
+            NetGate.BeginApply();
+            try
+            {
+                var an = InventoryManager.getItem(_lateItem);
+                if (an != null)
+                    InventoryManager.RemoveItem(PartyKeyRing.FindInBag(an) ?? an, _lateCount > 0 ? _lateCount : 1);
+                PlaytestLog.Event("StorageBox", "late put ack — removed restored copy " + _lateItem + " x" + _lateCount);
+            }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[StorageBox] late ack undo: " + ex.Message);
+            }
+            finally { NetGate.EndApply(); }
         }
 
         static void Restore()
@@ -250,6 +305,7 @@ namespace SyncRADation.Networking
             }
             _putReserved = false;
             _busy = false;
+            _txn = 0;
         }
 
         /// <summary>Overflow the bag could not hold — host boxes it again (no bag reserve, flagged "return").</summary>
@@ -259,7 +315,8 @@ namespace SyncRADation.Networking
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected || net.Role == NetworkRole.Host) return;
             PlaytestLog.Event("StorageBox", "return overflow item=" + enumVal + " x" + n);
-            net.SendInteractionRequest(0, InteractionKind.StoragePut, enumVal, n, text: "return");
+            // Own transaction id: its ack must not complete whatever transaction is in flight now.
+            net.SendInteractionRequest(unchecked((ulong)NextTxn()), InteractionKind.StoragePut, enumVal, n, text: "return");
         }
     }
 }

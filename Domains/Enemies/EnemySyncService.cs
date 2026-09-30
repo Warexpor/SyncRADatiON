@@ -22,6 +22,7 @@ namespace SyncRADation.Networking
             public float Start;
         }
         private readonly Dictionary<ulong, PoseInterp> _interp = new Dictionary<ulong, PoseInterp>();
+        private readonly Dictionary<ulong, float> _lastAnimTime = new Dictionary<ulong, float>();
         private readonly List<ulong> _interpDead = new List<ulong>(4);
         private const float TeleportDist = 8f;
         private int _mapMisses;
@@ -44,6 +45,11 @@ namespace SyncRADation.Networking
             }
             if (net.Role != NetworkRole.Host) return;
             if (!net.IsConnected) return;
+
+            // Enemy/boss weapon hurtboxes vs remote proxies (proxies have no colliders, so the native
+            // Hurtbox.OnTriggerEnter never fires for them). Every frame — a swing window can be shorter
+            // than the 15 Hz snapshot gate below — and it early-outs when there are no remote proxies.
+            ClientDamageService.TickHurtboxes(net);
 
             _sendTimer += Mathf.Min(Time.deltaTime, 0.1f);
             if (_sendTimer < PluginInfo.EntitySendInterval && !_forceSend) return;
@@ -72,7 +78,7 @@ namespace SyncRADation.Networking
                 {
                     nearest = FindNearestTarget(et.position, net, pm);
                     if (nearest != null && !EnemyVisiblyInChunk(e))
-                        WakeForCombat(e);
+                        WakeForCombat(e, wakeAi: true);
                 }
 
                 Vector3 pos;
@@ -163,10 +169,6 @@ namespace SyncRADation.Networking
 
             if (_snapList.Count > 0)
                 net.SendEnemyState(_snapList);
-
-            // Enemy/boss weapon hurtboxes vs remote proxies (proxies have no colliders, so the
-            // native Hurtbox.OnTriggerEnter never fires for them). Host-authoritative.
-            ClientDamageService.TickHurtboxes(net);
 
             RetargetAltAi(net, pm);
             }
@@ -346,7 +348,8 @@ namespace SyncRADation.Networking
         {
             if (_interp.Count == 0) return;
             float now = Time.time;
-            float dur = PluginInfo.EntitySendInterval;
+            // 1.5x the send interval: a snapshot that lands late no longer leaves the puppet standing still.
+            float dur = PluginInfo.EntitySendInterval * 1.5f;
             _interpDead.Clear();
             foreach (var kvp in _interp)
             {
@@ -403,7 +406,7 @@ namespace SyncRADation.Networking
                             if (enemy.BurnEffect != null) enemy.BurnEffect.Burn();
                             enemy.burndown();
                             break;
-                        case EnemyActionKind.WakeUp: break; // WakeForCombat above already woke it
+                        case EnemyActionKind.WakeUp: WakeFromFlashlight(enemy, fromPlayer); break;
                     }
                 }
                 finally { NetGate.EndApply(); }
@@ -415,6 +418,32 @@ namespace SyncRADation.Networking
             {
                 ModRuntime.Log?.Warning("[EnemySync] action " + action + ": " + ex.Message);
             }
+        }
+
+        /// <summary>
+        /// Client flashlight wake. Native WakeUpFlashlight also fires PlayerState.fireGun + screen shake +
+        /// rumble on the HOST (and WakeUp needs host LOS), so set just the AI state it changes:
+        /// woken, not tracking/attacking, heading for the waker, pursuit.
+        /// </summary>
+        static void WakeFromFlashlight(EnemyController enemy, int fromPlayer)
+        {
+            if (enemy == null) return;
+            enemy.tracking = false;
+            enemy.attacking = false;
+            enemy.woken = true;
+            try
+            {
+                var net = LanNetworkManager.Instance;
+                var proxy = net != null && net.ProxyManager != null ? net.ProxyManager.GetProxy(fromPlayer) : null;
+                if (proxy != null && proxy.GameObject != null)
+                {
+                    var pp = proxy.GameObject.transform.position;
+                    enemy.targetPosition = new Vector2(pp.x, pp.y);
+                }
+            }
+            catch (Exception ex) { Guard.Swallow(ex); }
+            if (enemy.state == EnemyController.enemystate.sleep)
+                enemy.state = EnemyController.enemystate.pursuit;
         }
 
         private void ApplyEnemyState(EnemySnapshotNet snap)
@@ -530,7 +559,12 @@ namespace SyncRADation.Networking
                         // Re-Play only when the host moved to a different state. Comparing
                         // normalizedTime restarted short one-shot clips every snapshot (stutter).
                         var stateInfo = anim.GetCurrentAnimatorStateInfo(0);
-                        if (stateInfo.fullPathHash != snap.AnimHash)
+                        // normalizedTime only grows within a state, so a sharp drop with the same hash is the
+                        // host restarting that clip (a repeated attack): replay it too.
+                        float lastT;
+                        bool restarted = _lastAnimTime.TryGetValue(id, out lastT) && snap.AnimTime < lastT - 0.5f;
+                        _lastAnimTime[id] = snap.AnimTime;
+                        if (stateInfo.fullPathHash != snap.AnimHash || restarted)
                             anim.Play(snap.AnimHash, 0, snap.AnimTime);
                     }
                     catch (Exception e) { Guard.Swallow(e); }
@@ -663,7 +697,7 @@ namespace SyncRADation.Networking
         /// Host: sleeping-chunk enemies have no AI and TakeDamage no-ops.
         /// Wake the parent Room chain when a peer is in that room or a hit arrives.
         /// </summary>
-        public static void WakeForCombat(EnemyController enemy)
+        public static void WakeForCombat(EnemyController enemy, bool wakeAi = false)
         {
             if (enemy == null || enemy.gameObject == null) return;
             try
@@ -678,7 +712,10 @@ namespace SyncRADation.Networking
                 }
                 enemy.enabled = true;
                 if (enemy.agent != null) enemy.agent.enabled = true;
-                enemy.WakeUp();
+                // EnemyController.WakeUp is a no-op without host LOS and, WITH it, also shakes the host
+                // screen / rumbles / plays WakeSFX (Ghidra EnemyController.c). Only the chunk-wake tick
+                // (a peer is near a sleeping enemy) asks for it; combat side effects never do.
+                if (wakeAi) enemy.WakeUp();
             }
             catch (Exception e) { Guard.Swallow(e); }
         }
@@ -713,6 +750,7 @@ namespace SyncRADation.Networking
         {
             _clientPuppeted.Clear();
             _interp.Clear();
+            _lastAnimTime.Clear();
             SyncRADation.Patches.EnemySpawnerPatches.ClearAdopted();
             ClientDamageService.OnSceneChanged();
             _mapHits = 0;

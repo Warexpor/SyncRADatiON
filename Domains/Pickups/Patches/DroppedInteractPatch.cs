@@ -10,6 +10,13 @@ namespace SyncRADation.Patches
     {
         static bool _interactThisFrame;
 
+        /// <summary>SessionReset: drop the per-frame flag and the highlight reference (the highlighted clone dies with the session).</summary>
+        internal static void ResetSession()
+        {
+            _interactThisFrame = false;
+            _highlighted = null;
+        }
+
         [HarmonyPrefix]
         public static void Prefix(Interactor __instance)
         {

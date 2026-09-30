@@ -19,6 +19,7 @@ namespace SyncRADation.Networking
             _net = net ?? throw new System.ArgumentNullException(nameof(net));
         }
 
+        // Persistent on purpose: serialized size of an empty snapshot struct, a pure cache that never depends on session state.
         private static int _snapBytes;
 
         static int SnapshotBytes()
@@ -91,6 +92,7 @@ namespace SyncRADation.Networking
             {
                 if (msg.Seq > 0) return;
                 EntitySpawner.FinishSpawn(msg.TypeKey, new Vector3(msg.PosX, msg.PosY, msg.PosZ), msg.RotY, 0, true);
+                ClientDamageService.NoteSpawn();
                 return;
             }
             EntitySpawner.ApplyFromNet(msg);
@@ -173,6 +175,34 @@ namespace SyncRADation.Networking
             _net.EnemySync.ApplyActionOnHost(unchecked((ulong)msg.EnemyWorldId), msg.Action, senderId);
         }
 
+        const float MaxRelayedDamage = 100f;
+
+        void RelayFriendlyDamage(EnemyDamageMessage msg)
+        {
+            int target = msg.TargetPlayerId;
+            if (target == msg.AttackerPlayerId || !_net.HasPeer(target)) return;
+            if (PartyVitals.IsDown(target)) return;
+            float dmg = msg.Damage;
+            if (float.IsNaN(dmg) || dmg <= 0f) return;
+            if (dmg > MaxRelayedDamage) dmg = MaxRelayedDamage;
+            var relay = new EnemyDamageMessage
+            {
+                AttackerPlayerId = msg.AttackerPlayerId,
+                TargetPlayerId = target,
+                EnemyWorldId = 0,
+                Damage = dmg,
+                IsStagger = msg.IsStagger
+            };
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.EnemyDamage);
+            relay.Serialize(writer);
+            if (_net.TryGetPeer(target, out var peer) && peer.ConnectionState == ConnectionState.Connected)
+            {
+                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+                PlaytestLog.Verbose("Damage", "FF relay p" + msg.AttackerPlayerId + " -> p" + target + " dmg=" + dmg.ToString("F0"));
+            }
+        }
+
         internal void HandleEnemyDamage(EnemyDamageMessage msg)
         {
             ulong enemyId = unchecked((ulong)msg.EnemyWorldId);
@@ -184,6 +214,14 @@ namespace SyncRADation.Networking
             {
                 PlaytestLog.Warn("Damage", "rejected client damage to player " + msg.TargetPlayerId
                     + " from " + msg.AttackerPlayerId + " (FriendlyFire off)");
+                return;
+            }
+
+            // Client -> client friendly fire rides the host: re-author it to the target peer (the attacker id
+            // was stamped from the peer map, damage is clamped, downed / departed / self targets are refused).
+            if (_net.Role == NetworkRole.Host && msg.TargetPlayerId >= 0 && msg.TargetPlayerId != _net.LocalPlayerId)
+            {
+                RelayFriendlyDamage(msg);
                 return;
             }
 

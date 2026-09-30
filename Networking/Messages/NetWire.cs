@@ -32,6 +32,7 @@ namespace SyncRADation.Networking
         public const int MaxRoster = 32;
         public const int MaxBones = 4095;
 
+        // Warn-once keys: intentionally persistent (a wire warning is not repeated every session).
         private static readonly HashSet<string> Warned = new HashSet<string>();
 
         internal static void WarnOnce(string key, string msg)
@@ -108,21 +109,54 @@ namespace SyncRADation.Networking
     /// <summary>Build/schema fingerprint exchanged in the handshake so mismatched builds are rejected even when ProtocolVersion matches.</summary>
     public static class NetSchema
     {
+        // Pure computed caches of this dll's schema: persistent by definition.
         private static uint _hash;
         private static bool _ready;
 
         public static string ModVersion => PluginInfo.Version;
 
+        /// <summary>
+        /// Handshake fingerprint: structural hash (assembly version, protocol, every wire enum id) plus this
+        /// module's MVID. The csproj builds deterministically, so the MVID is a content hash of the dll: two
+        /// stale/modified dlls of the same version no longer look identical.
+        /// </summary>
         public static uint Hash
         {
             get
             {
                 if (!_ready)
                 {
-                    _hash = Compute();
+                    _hash = Mix(StructuralHash, ModuleId);
                     _ready = true;
                 }
                 return _hash;
+            }
+        }
+
+        private static uint _structural;
+        private static bool _structuralReady;
+
+        /// <summary>Hash without the module id (what the tests pin: stable across rebuilds).</summary>
+        public static uint StructuralHash
+        {
+            get
+            {
+                if (!_structuralReady)
+                {
+                    _structural = Compute();
+                    _structuralReady = true;
+                }
+                return _structural;
+            }
+        }
+
+        /// <summary>MVID of the dll the schema lives in ("N" format). Never throws.</summary>
+        public static string ModuleId
+        {
+            get
+            {
+                try { return typeof(NetSchema).Module.ModuleVersionId.ToString("N"); }
+                catch { return "no-mvid"; }
             }
         }
 
@@ -159,7 +193,7 @@ namespace SyncRADation.Networking
             return h;
         }
 
-        private static uint Mix(uint h, string s)
+        internal static uint Mix(uint h, string s)
         {
             for (int i = 0; i < s.Length; i++)
             {

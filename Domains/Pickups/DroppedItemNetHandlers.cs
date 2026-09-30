@@ -44,9 +44,114 @@ namespace SyncRADation.Networking
             _net.BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
         }
 
+        /// <summary>
+        /// Next free local index for this peer's key namespace. Skips 0 and any index whose key is still
+        /// on the floor, so a wrap-around (or a host that adopted a departed peer's drops) cannot collide.
+        /// </summary>
         internal ushort AllocateItemIndex()
         {
+            for (int guard = 0; guard < 0x10000; guard++)
+            {
+                ushort idx = _nextItemIndex++;
+                if (idx == 0) continue;
+                int key = (_net.LocalPlayerId << 16) | idx;
+                if (!DroppedItemManager.TryGet(key, out _, out _))
+                    return idx;
+            }
             return _nextItemIndex++;
+        }
+
+        /// <summary>
+        /// Host: a peer left. Its drops keep the key (peerId &lt;&lt; 16 | index), but that id is recycled
+        /// for the next joiner whose index counter restarts at 1 — a new drop would collide with (and
+        /// silently reuse) the old floor item. Re-key every orphaned drop into the host namespace.
+        /// </summary>
+        internal void RehomeDropsOf(int playerId)
+        {
+            if (_net.Role != NetworkRole.Host || playerId < 1) return;
+            var old = new System.Collections.Generic.List<int>(4);
+            foreach (var d in DroppedItemManager.All())
+            {
+                if (((d.Key >> 16) & 0xFF) == playerId) old.Add(d.Key);
+            }
+            for (int i = 0; i < old.Count; i++)
+            {
+                int oldKey = old[i];
+                ushort idx = AllocateItemIndex();
+                int newKey = (_net.LocalPlayerId << 16) | idx;
+                if (!DroppedItemManager.Rekey(oldKey, newKey)) continue;
+                SendDropRekey(new DropRekeyMessage
+                {
+                    OldOwner = (byte)((oldKey >> 16) & 0xFF),
+                    OldIndex = (ushort)(oldKey & 0xFFFF),
+                    NewOwner = (byte)_net.LocalPlayerId,
+                    NewIndex = idx
+                });
+                PlaytestLog.Event("Pickup", "rehomed drop " + oldKey + " -> " + newKey + " (p" + playerId + " left)");
+            }
+        }
+
+        internal void SendDropRekey(DropRekeyMessage msg)
+        {
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.DropRekey);
+            msg.Serialize(writer);
+            _net.BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        internal void HandleDropRekey(DropRekeyMessage msg)
+        {
+            // Host-authored only (dispatch drops client-originated copies).
+            int oldKey = (msg.OldOwner << 16) | msg.OldIndex;
+            int newKey = (msg.NewOwner << 16) | msg.NewIndex;
+            DroppedItemManager.Rekey(oldKey, newKey);
+        }
+
+        /// <summary>
+        /// Host gate for a client-originated ItemPickedUp: the host is the only legitimate author of a
+        /// floor-item claim, so a client may only retire a drop it owns, never grant, never someone else's.
+        /// </summary>
+        internal bool AcceptClientPickedUp(ref ItemPickedUpMessage msg, int senderId)
+        {
+            msg.ClaimerPlayerId = (byte)senderId;
+            if (msg.GrantToReceiver) return false;
+            return msg.SenderID == senderId;
+        }
+
+        /// <summary>
+        /// Overflow the bag could not hold (partial pickup): drop it at the local player's feet as a normal
+        /// dropped item so the remainder is neither lost nor duplicated.
+        /// </summary>
+        internal bool DropOverflow(Items.itemlist item, int count)
+        {
+            if (item == Items.itemlist.None || count <= 0) return false;
+            var localPlayer = _net.GetLocalPlayer();
+            if (localPlayer == null) localPlayer = PlayerState.player;
+            if (localPlayer == null) return false;
+            var pos = DroppedItemManager.FloorDropPos(localPlayer.transform);
+            int n = DroppedItemManager.SanitizeStack(count, PartyKeyRing.IsKeyOrObject(item));
+            ushort idx = AllocateItemIndex();
+            int key = (_net.LocalPlayerId << 16) | idx;
+            GameObject spawned = null;
+            try { spawned = DroppedItemManager.SpawnLocalItem(item, n, key, pos); }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[Drop] overflow spawn crashed: " + ex.Message);
+                return false;
+            }
+            if (spawned == null) return false;
+            SendDropItem(new DropItemSpawnMessage
+            {
+                SenderID = (byte)_net.LocalPlayerId,
+                LocalIndex = idx,
+                ItemEnum = (ushort)item,
+                Count = n,
+                PosX = pos.x,
+                PosY = pos.y,
+                PosZ = pos.z
+            });
+            ModRuntime.Log?.Msg("[Drop] overflow " + item + " x" + n + " key=" + key);
+            return true;
         }
 
         internal void DumpDroppedItems()
@@ -135,7 +240,7 @@ namespace SyncRADation.Networking
                 return false;
             }
 
-            ushort idx = _nextItemIndex++;
+            ushort idx = AllocateItemIndex();
             int key = (_net.LocalPlayerId << 16) | idx;
             GameObject spawned = null;
             try { spawned = DroppedItemManager.SpawnLocalItem(itemToDrop, count, key, pos); }
@@ -202,7 +307,8 @@ namespace SyncRADation.Networking
                 LocalIndex = localIdx,
                 ItemEnum = (ushort)itemEnum,
                 Count = count,
-                GrantToReceiver = shared
+                GrantToReceiver = shared,
+                ClaimerPlayerId = (byte)claimerId
             });
 
             if (claimerId == _net.LocalPlayerId)
@@ -241,6 +347,10 @@ namespace SyncRADation.Networking
             int key = (msg.SenderID << 16) | msg.LocalIndex;
             if (DroppedItemManager.GetItem(key) != null)
             {
+                Items.itemlist have; int haveCount;
+                if (DroppedItemManager.TryGet(key, out have, out haveCount) && have != (Items.itemlist)msg.ItemEnum)
+                    ModRuntime.Log?.Warning("[Drop] key collision " + key + " existing=" + have
+                        + " incoming=" + (Items.itemlist)msg.ItemEnum + " — dropped duplicate spawn");
                 DetachDroppedKey((Items.itemlist)msg.ItemEnum);
                 return;
             }
@@ -362,7 +472,8 @@ namespace SyncRADation.Networking
             try
             {
                 var item = InventoryManager.getItem(itemEnum);
-                if (item != null && PartyKeyRing.InLocalBag(item)) return true;
+                if (item != null && PartyKeyRing.InLocalBag(item))
+                    return !DroppedItemManager.StackAtCap(itemEnum);
                 int used = 0;
                 var dict = InventoryManager.elsterItems;
                 if (dict == null) return true;

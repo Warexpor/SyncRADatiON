@@ -12,6 +12,9 @@ namespace SyncRADation.Networking
             = new Dictionary<string, StoryFlagEntry>();
         private bool _needSend = true;
         private bool _fullDump = true;
+        // Keys written since the last send: an incremental commit carries only these (full = whole table).
+        private readonly HashSet<string> _dirty = new HashSet<string>();
+        private string _lastXml = "";
         private float _timer;
         public StoryCmd LastCmd;
         public ulong LastWorldId;
@@ -21,6 +24,10 @@ namespace SyncRADation.Networking
         // --- Client-only: commit buffered while the local scene is loading -------------------
         private StoryCommitMessage _pendingCommit;
         private bool _hasPendingCommit;
+        // Client: until this time every FULL commit replaces local SProgress wholesale (host reverted to a save after a
+        // party wipe; the host may send a pre-reload dump before the post-reload one, each is exact so the last wins).
+        private float _authoritativeUntil;
+        const float AuthoritativeWindow = 30f;
 
         // --- Client-only: SProgress writes forwarded to the host (coalesced per key) ---------
         private readonly Dictionary<string, StoryFlagEntry> _outbox = new Dictionary<string, StoryFlagEntry>();
@@ -45,6 +52,13 @@ namespace SyncRADation.Networking
         // --- Scripted cheat relay / one-shot dedupe (goto / sethp / goToPenny) ----------------
         private readonly Dictionary<string, float> _cheatStamp = new Dictionary<string, float>();
         private bool _endingBroadcast;
+        private static bool _endingApply;
+
+        /// <summary>True while a client replays the host's DetermineEnding (Finale.determineEnding, CalculatePlaystyle suppressed).</summary>
+        public static bool InEndingApply => _endingApply;
+
+        /// <summary>Host: the ending was already started + broadcast this scene.</summary>
+        public bool EndingBroadcasted => _endingBroadcast;
 
         /// <summary>True while a client-applied presentation runs UnityEvents whose SProgress writes must reach the host.</summary>
         public static bool ClientAuthorScope => _authorDepth > 0;
@@ -56,9 +70,38 @@ namespace SyncRADation.Networking
         public static void BeginSuppressForward() => _suppressForward++;
         public static void EndSuppressForward() { if (_suppressForward > 0) _suppressForward--; }
 
+        /// <summary>
+        /// StopNetwork with a party dialogue on screen: its Continue / End came from the host and will never arrive, and
+        /// RestoreLocalControl only flips gameState back to play (the dialogue UI would stay up). Close it locally;
+        /// loads are swallowed so an end callback cannot start one.
+        /// </summary>
+        private static void CloseStickyDialogue()
+        {
+            try
+            {
+                var net = LanNetworkManager.Instance;
+                if (net == null || net.Role == NetworkRole.Offline) return;
+                if (PlayerState.gameState != PlayerState.gameStates.dialogue) return;
+                NetGate.BeginApply();
+                SceneFollowService.BeginSuppressLoads();
+                try { Dialoguer.EndDialogue(); }
+                finally
+                {
+                    SceneFollowService.EndSuppressLoads();
+                    NetGate.EndApply();
+                }
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+        }
+
         public void Reset()
         {
+            CloseStickyDialogue();
             _flags.Clear();
+            _dirty.Clear();
+            _lastXml = "";
+            _authoritativeUntil = 0f;
+            _endingApply = false;
             _needSend = true;
             _fullDump = true;
             _timer = 0f;
@@ -110,7 +153,23 @@ namespace SyncRADation.Networking
         {
             if (string.IsNullOrEmpty(e.Key)) return;
             _flags[e.Key] = e;
+            _dirty.Add(e.Key);
             _needSend = true;
+        }
+
+        /// <summary>
+        /// Client: the host reverted the party to a save (wipe reload). The clients never load a slot, so their local
+        /// SProgress still holds keys the reverted progress no longer has: full commits replace it wholesale for a while.
+        /// A commit buffered from before the wipe is stale and dropped.
+        /// </summary>
+        public void OnPartyWipe()
+        {
+            var net = LanNetworkManager.Instance;
+            if (net == null || net.Role != NetworkRole.Client) return;
+            _authoritativeUntil = Time.unscaledTime + AuthoritativeWindow;
+            _hasPendingCommit = false;
+            _endBaseValid = false;
+            PlaytestLog.Event("Story", "party wipe: full commits are authoritative for " + AuthoritativeWindow + "s");
         }
 
         public void TickHost(LanNetworkManager net)
@@ -139,6 +198,8 @@ namespace SyncRADation.Networking
         public void TickClient(LanNetworkManager net)
         {
             if (net == null || net.Role != NetworkRole.Client || !net.IsConnected) return;
+            // A blocked / queued scene request that never arrived is re-asked (host may have been busy > the queue TTL).
+            SceneFollowService.TickClient();
             if (SceneFollowService.LocalIsTransient()) return;
 
             if (_hasPendingCommit && !net.SceneMismatch)
@@ -152,7 +213,9 @@ namespace SyncRADation.Networking
             _clientTimer += Mathf.Min(Time.deltaTime, 0.1f);
             if (_clientTimer < 0.2f) return;
             _clientTimer = 0f;
-            if (_hasPendingCommit) return;
+            // Not gated on a pending commit: under a permanent scene mismatch (wreck / hole split) the pending commit
+            // never applies, and gating here stopped the outbox + END delta flush forever. END deltas are relative to
+            // the last *applied* baseline, so flushing while a commit is pending stays consistent.
             FlushOutbox(net);
             FlushEndDelta(net);
         }
@@ -439,15 +502,8 @@ namespace SyncRADation.Networking
             return true;
         }
 
-        public static bool TryParseTag(string tag, out int id, out int step)
-        {
-            id = -1;
-            step = 0;
-            if (string.IsNullOrEmpty(tag)) return false;
-            int c = tag.IndexOf(':');
-            if (c <= 0) return false;
-            return int.TryParse(tag.Substring(0, c), out id) && int.TryParse(tag.Substring(c + 1), out step);
-        }
+        public static bool TryParseTag(string tag, out int id, out int step) =>
+            StoryWire.TryParseDialogueTag(tag, out id, out step);
 
         /// <summary>Client: accept a host dialogue presentation only if it is newer than what this peer already mirrored.</summary>
         private bool ClientDialogueAccept(StoryCmd cmd, string tag)
@@ -494,6 +550,13 @@ namespace SyncRADation.Networking
 
         private bool CheatRecently(string cheat) => Throttled(cheat.Trim().ToLowerInvariant(), 3f);
 
+        /// <summary>A party cheat ran inside a replayed presentation: open the dedupe window without relaying it.</summary>
+        public void StampPartyCheat(string cheat)
+        {
+            if (!IsPartyCheat(cheat)) return;
+            CheatRecently(cheat);
+        }
+
         /// <summary>True when this key already fired inside the window (and stamps it otherwise).</summary>
         public bool Throttled(string key, float seconds)
         {
@@ -512,7 +575,7 @@ namespace SyncRADation.Networking
         {
             if (!IsPartyCheat(cheat)) return;
             var net = LanNetworkManager.Instance;
-            if (net == null || !net.IsConnected) return;
+            if (net == null || !net.IsConnected || !net.HasReadyPeers) return;
             if (CheatRecently(cheat)) return;
             if (net.Role == NetworkRole.Host)
             {
@@ -544,7 +607,11 @@ namespace SyncRADation.Networking
             finally { NetGate.EndApply(); }
         }
 
-        /// <summary>Host broadcasts END state + DetermineEnding once so every peer starts the same ending.</summary>
+        /// <summary>
+        /// Host broadcasts END state + DetermineEnding once so every peer starts the same ending. Must run AFTER the
+        /// native Finale.determineEnding: that is where CalculatePlaystyle settles Circle/Death/Ending, and the
+        /// commit + Int0 carry those final values (clients suppress their own CalculatePlaystyle).
+        /// </summary>
         public bool HostBroadcastEnding(LanNetworkManager net)
         {
             if (_endingBroadcast) return false;
@@ -556,16 +623,29 @@ namespace SyncRADation.Networking
 
         public void Send(LanNetworkManager net, bool full, bool replayPresentation = false)
         {
+            // Full = the whole live table (join / resync / scene change). Incremental = only keys written since the
+            // last send: re-sending every flag to N-1 peers on each 0.75 s commit was pure bandwidth.
+            StoryFlagEntry[] arr;
             if (full)
+            {
                 DumpLiveProgress();
-
-            var arr = new StoryFlagEntry[_flags.Count];
-            int i = 0;
-            foreach (var kvp in _flags)
-                arr[i++] = kvp.Value;
+                _dirty.Clear();
+                arr = new StoryFlagEntry[_flags.Count];
+                int i = 0;
+                foreach (var kvp in _flags)
+                    arr[i++] = kvp.Value;
+            }
+            else
+            {
+                arr = StoryWire.TakeDirty(_flags, _dirty);
+            }
 
             string xml = "";
             try { xml = Dialoguer.GetGlobalVariablesState() ?? ""; } catch (System.Exception e) { Guard.Swallow(e); }
+            // Dialoguer globals ride every full commit; an incremental one only when they changed (client ignores "").
+            string xmlWire = xml;
+            if (!full && string.Equals(xml, _lastXml, System.StringComparison.Ordinal)) xmlWire = "";
+            else _lastXml = xml;
 
             int circle = 0, death = 0, graves = 0, leave = 0, ending = 0;
             int npc = 0, healedSeg = 0, doors = 0;
@@ -589,10 +669,12 @@ namespace SyncRADation.Networking
             try { gs = (byte)PlayerState.gameState; } catch (System.Exception e) { Guard.Swallow(e); }
 
             bool replay = replayPresentation && CanReplayPresentation(LastCmd, LastWorldId);
+            if (replayPresentation && !replay && LastCmd == StoryCmd.DialoguerStartId)
+                PlaytestLog.Event("Story", "skip dialogue replay (host not at the first node of a live dialogue)");
             net.SendStoryCommit(new StoryCommitMessage
             {
                 FullRefresh = full,
-                DialoguerXml = xml,
+                DialoguerXml = xmlWire,
                 EndCircle = circle,
                 EndDeath = death,
                 EndGraves = graves,
@@ -615,7 +697,7 @@ namespace SyncRADation.Networking
                     + " gs=" + gs);
         }
 
-        static bool CanReplayPresentation(StoryCmd cmd, ulong id)
+        bool CanReplayPresentation(StoryCmd cmd, ulong id)
         {
             switch (cmd)
             {
@@ -633,8 +715,17 @@ namespace SyncRADation.Networking
                 case StoryCmd.EndGraves:
                     return false;
                 case StoryCmd.DialoguerStartId:
-                    // Dialogue id is packed into LastWorldId (wire WorldId is always 0 for Dialoguer).
-                    return true;
+                {
+                    // Dialogue id is packed into LastWorldId (wire WorldId is always 0 for Dialoguer). LastCmd is not
+                    // cleared by natural ends (DialoguerDialogueManager.endDialogue is not patched), so require the
+                    // host to actually be in a dialogue. Dialoguer.StartDialogue enters at node 0 and the branch path
+                    // of later nodes is not reproducible, so a late joiner is only brought in while the host has not
+                    // advanced yet (step 0); past that the replay is skipped (the next host Continue / End still lands).
+                    bool inDialogue = false;
+                    try { inDialogue = PlayerState.gameState == PlayerState.gameStates.dialogue; }
+                    catch (System.Exception e) { Guard.Swallow(e); }
+                    return inDialogue && _dlgActive && _dlgId == unchecked((int)(uint)id) && _dlgStep == 0;
+                }
                 case StoryCmd.CutsceneStart:
                 {
                     var c = WorldLookup.Find<CutsceneManager>(id);
@@ -658,6 +749,9 @@ namespace SyncRADation.Networking
             {
                 var p = SProgress.progress;
                 if (p == null) return;
+                // The table mirrors the live slot exactly: after SaveManager.Load (wipe reload), SProgress.Load or
+                // ResetProgress, keys the loaded progress does not have must not be resurrected by stale entries.
+                _flags.Clear();
                 DumpBools(p);
                 DumpInts(p);
                 DumpFloats(p);
@@ -761,33 +855,57 @@ namespace SyncRADation.Networking
             catch (System.Exception e) { Guard.Swallow(e); }
         }
 
+        /// <summary>
+        /// Buffered commits are cumulative: flags union by key (newer wins; incremental commits only carry changed
+        /// keys), scalars are the newest, a FULL refresh / replay target already buffered is never lost.
+        /// </summary>
+        private void MergePending(ref StoryCommitMessage msg)
+        {
+            if (!_hasPendingCommit) return;
+            var old = _pendingCommit;
+            // A newer FULL commit already is the whole table (union with an older full would keep keys the host since
+            // dropped); an incremental one only adds to whatever was buffered.
+            if (!msg.FullRefresh) msg.Flags = StoryWire.MergeFlags(old.Flags, msg.Flags);
+            if (old.FullRefresh && !msg.FullRefresh)
+            {
+                msg.FullRefresh = true;
+                if (msg.ActiveStoryCmd == 0)
+                {
+                    msg.ActiveStoryCmd = old.ActiveStoryCmd;
+                    msg.ActiveWorldId = old.ActiveWorldId;
+                }
+            }
+            if (string.IsNullOrEmpty(msg.DialoguerXml)) msg.DialoguerXml = old.DialoguerXml;
+            _hasPendingCommit = false;
+        }
+
         public void ApplyCommit(StoryCommitMessage msg)
         {
             var net = LanNetworkManager.Instance;
             if (net != null && net.Role == NetworkRole.Host) return;
-            if (SceneFollowService.LocalIsTransient())
+            if (SceneFollowService.LocalIsTransient() || (net != null && net.SceneMismatch))
             {
-                // Loading: keep the newest commit (flags are cumulative) and apply it once the scene is up.
-                if (_hasPendingCommit && _pendingCommit.FullRefresh && !msg.FullRefresh)
-                {
-                    msg.FullRefresh = true;
-                    if (msg.ActiveStoryCmd == 0)
-                    {
-                        msg.ActiveStoryCmd = _pendingCommit.ActiveStoryCmd;
-                        msg.ActiveWorldId = _pendingCommit.ActiveWorldId;
-                    }
-                }
+                // Loading or in a scene the host is not in (wreck / hole split can stay mismatched for a long
+                // time): keep the newest commit, merged, and apply it once the scene is up / matches.
+                MergePending(ref msg);
                 _pendingCommit = msg;
                 _hasPendingCommit = true;
-                PlaytestLog.Verbose("Story", "buffer commit (loading)");
+                PlaytestLog.Verbose("Story", "buffer commit (" + (SceneFollowService.LocalIsTransient() ? "loading" : "scene mismatch") + ")");
                 return;
             }
-            if (net != null && net.SceneMismatch) return;
+            // A live commit supersedes the buffered (older) one: fold it in so TickClient never re-applies it on top.
+            MergePending(ref msg);
+
+            // Party wipe: the host reverted to a save, this peer never loaded a slot. FULL commits inside the window
+            // after it replace local progress exactly (keys absent on the host are removed, not kept).
+            bool authoritative = msg.FullRefresh && Time.unscaledTime < _authoritativeUntil;
+            if (authoritative)
+                PlaytestLog.Event("Story", "authoritative full commit: clearing local SProgress");
 
             // Unsent local END contributions survive the overwrite below (client increments between commits).
             var unsent = new int[7];
             float unsentHeal = 0f, unsentMem = 0f;
-            if (_endBaseValid)
+            if (_endBaseValid && !authoritative)
             {
                 var cur = new int[7];
                 float ch, cm;
@@ -801,8 +919,10 @@ namespace SyncRADation.Networking
             }
 
             NetGate.BeginApply();
+            if (authoritative) BeginSuppressForward();
             try
             {
+                if (authoritative) ClearLocalProgress();
                 if (msg.Flags != null)
                 {
                     for (int i = 0; i < msg.Flags.Length; i++)
@@ -866,6 +986,7 @@ namespace SyncRADation.Networking
             }
             finally
             {
+                if (authoritative) EndSuppressForward();
                 NetGate.EndApply();
             }
 
@@ -884,12 +1005,13 @@ namespace SyncRADation.Networking
                     // ActiveWorldId carries packed dialogue id (presentation WorldId is 0).
                     int dialogueId = (int)msg.ActiveWorldId;
                     PlaytestLog.Event("Story", "late-join Dialoguer replay id=" + dialogueId);
+                    // The host only replays while it is at node 0, so the tag is exactly id:0.
                     ApplyPresentation(new StoryPresentationMessage
                     {
                         WorldId = 0,
                         Cmd = StoryCmd.DialoguerStartId,
                         Int0 = dialogueId,
-                        Text = ""
+                        Text = StoryWire.DialogueTag(dialogueId, 0)
                     });
                 }
                 else if (msg.ActiveWorldId != 0)
@@ -903,6 +1025,22 @@ namespace SyncRADation.Networking
                     });
                 }
             }
+        }
+
+        /// <summary>Empty the live SProgress slot's key / value lists (what a fresh slot starts with); slotID is kept.</summary>
+        private static void ClearLocalProgress()
+        {
+            try
+            {
+                var p = SProgress.progress;
+                if (p == null) return;
+                try { p.boolKeys?.Clear(); p.bools?.Clear(); } catch (System.Exception e) { Guard.Swallow(e); }
+                try { p.intKeys?.Clear(); p.ints?.Clear(); } catch (System.Exception e) { Guard.Swallow(e); }
+                try { p.floatKeys?.Clear(); p.floats?.Clear(); } catch (System.Exception e) { Guard.Swallow(e); }
+                try { p.stringKeys?.Clear(); p.strings?.Clear(); } catch (System.Exception e) { Guard.Swallow(e); }
+                try { p.vectorKeys?.Clear(); p.vectors?.Clear(); } catch (System.Exception e) { Guard.Swallow(e); }
+            }
+            catch (System.Exception ex) { WarnOnce("ClearLocalProgress", ex); }
         }
 
         public void BroadcastPresentation(StoryCmd cmd, ulong worldId, int int0, string text)
@@ -972,6 +1110,18 @@ namespace SyncRADation.Networking
                 return;
             }
 
+            // Replayed author-scope events (EventZone / MultiCondition / cutscene skip / proceed) can run END_Manager
+            // writes on every in-room peer, while the host already counted them natively (or exactly one requester
+            // should). The presentation Text says who counts (StoryWire); a peer that does not re-baselines its END
+            // delta afterwards so the replay is never sent to the host as a contribution.
+            bool endSkip = false;
+            if (msg.Cmd == StoryCmd.EventZoneFire || msg.Cmd == StoryCmd.MultiConditionFire
+                || msg.Cmd == StoryCmd.CutsceneSkip || msg.Cmd == StoryCmd.CutsceneProceed)
+            {
+                endSkip = !StoryWire.CountsEndHere(msg.Text, net != null ? net.LocalPlayerId : -1);
+                if (endSkip && net != null) FlushEndDelta(net);
+            }
+
             NetGate.BeginApply();
             try
             {
@@ -991,7 +1141,13 @@ namespace SyncRADation.Networking
                             PlaytestLog.Verbose("Story", "skip flavor DialoguerStartId i=" + msg.Int0);
                         else if (ClientDialogueAccept(msg.Cmd, msg.Text))
                         {
-                            try { Dialoguer.StartDialogue(msg.Int0); }
+                            // A client-initiated start kept its native callback (the request itself never ran it).
+                            var cb = DialoguerGate.TakeCallback(msg.Int0);
+                            try
+                            {
+                                if (cb != null) Dialoguer.StartDialogue(msg.Int0, cb);
+                                else Dialoguer.StartDialogue(msg.Int0);
+                            }
                             catch (System.Exception ex) { WarnOnce("Dialoguer.StartDialogue", ex); }
                         }
                         break;
@@ -1165,12 +1321,20 @@ namespace SyncRADation.Networking
                             var finales = WorldLookup.All<Finale>();
                             if (finales != null)
                             {
-                                for (int fi = 0; fi < finales.Length; fi++)
+                                // CalculatePlaystyle is suppressed on clients (it would recompute Circle/Death from this
+                                // peer's own GlobalStats); the commit sent right before this already carries the host's
+                                // final END values, and CutsceneStart must not start the ending cutscene a second time.
+                                _endingApply = true;
+                                try
                                 {
-                                    if (finales[fi] == null) continue;
-                                    finales[fi].determineEnding();
-                                    break;
+                                    for (int fi = 0; fi < finales.Length; fi++)
+                                    {
+                                        if (finales[fi] == null) continue;
+                                        finales[fi].determineEnding();
+                                        break;
+                                    }
                                 }
+                                finally { _endingApply = false; }
                             }
                         }
                         catch (System.Exception ex) { WarnOnce("DetermineEnding", ex); }
@@ -1212,7 +1376,17 @@ namespace SyncRADation.Networking
             finally
             {
                 NetGate.EndApply();
+                if (endSkip) RebaseEnd();
             }
+        }
+
+        /// <summary>Re-baseline the END delta to the current statics: writes made so far are not this peer's contribution.</summary>
+        private void RebaseEnd()
+        {
+            if (!_endBaseValid) return;
+            var cur = new int[7];
+            float healed, memory;
+            if (ReadEnd(cur, out healed, out memory)) CaptureEndBase(cur, healed, memory);
         }
 
         /// <summary>

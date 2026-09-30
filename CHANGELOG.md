@@ -1,3 +1,58 @@
+## 0.5.59 — 2026-10-01
+
+Protocol **v14**. Code-review batch: 4 adversarial reviews of 0.5.57/0.5.58 (death and net core, puzzles/doors/audio, pickups/combat/bosses, story/scene) and the fixes for their findings, plus `Guard` logging, a unit-test project, a boot patch audit, a game-build handshake, a session-reset registry and an RVA-folding audit. **Still NOT playtested**: compile-checked (Release, 0 errors, 0 warnings) and unit-tested only; nothing here has run in the game.
+
+### Added
+- **Real party wipe** — `Domains/Session/HostReload.cs`: the host sets the save slot / `SaveManager.loading`, reloads the scene recorded in the save and drags the clients along via scene follow (the 0.5.57 wipe called `SaveManager.Load()` without the loading flag and did nothing). 45 s watchdog; ring/drop resets run only after the load happened.
+- **`Bootstrap/PatchAudit.cs`** — one `[Harmony] audit: N ok, M missing` line at boot plus a line per missing patch target or reflected member (8 checks in the hand table: `openDoors`, `closeDoors`, `cycle`, `m_ForwardAmount`, `m_TurnAmount`, `StorageBox.open`, `ready`, laser-dot shader). Shown in F2. A source-scan test keeps the table complete.
+- **Game build handshake** — `Bootstrap/GameBuild.cs`; `Handshake` gains `GameBuildHash` + `GameBuild`; a different game build is rejected with a reason. F2 shows the game build.
+- **`Sync/SessionReset.cs` + `Bootstrap/SessionResetRegistrations.cs`** — every static that must not leak from one session (or wipe reload) into the next registers a clear; persistent statics carry a one-line reason. Runs at StartHost / ConnectToHost / StopNetwork and after a wipe. Covers the pickup, drop-interact, puzzle apply-scope, key-ring and inventory re-entrancy statics that were unreachable before.
+- **`Sync/Il2CppRealType.Is<T>`** — real-type check for patches on identical-code-folded native methods; `docs/RVA_FOLDING.md`, `scripts/rva_fold_scan.py`, `RvaFoldingTests` (see Engineering).
+- **New messages** — `FmodEmitterRequest` (67, client to host: a world emitter the client triggered, host relays), `DropRekey` (73, host to all: a departed peer's floor drops move into the host key space).
+- **`Networking/LanNetworkManager.SessionEnd.cs`** — `EndSession(reason)`: client quit-to-menu and host to MainMenu end the session cleanly with a reason instead of being blocked / leaving peers hanging.
+- **`Networking/Messages/StoryWire.cs`** — shared caps/helpers for StoryCommit entries (+ `StoryWireTests`). `NetGate.Party` (`Live && HasReadyPeers`).
+
+### Fixed
+**Death & party save**
+- Wipe now reloads the save (see Added); `PartyLife` carries the `Scene` to reload. First-join-only bag restore, per-process `bag_snapshots_<n>` files (two instances on one PC no longer overwrite each other), solo Save/Load does no file IO. `DeathPolicy(ClientDowned)` is relayed. `PartyVitals.AwaitingAck` tracks the pending acknowledgement. Story progress is replaced by the host's next full dump after a wipe (`StorySyncService.OnPartyWipe`).
+
+**Networking**
+- `BonePose` clamp 1023 (matches the reader), `Room` travels as a capped string (`NetWire.PutString`), `SchemaHash` now mixes the dll MVID (a rebuilt dll of the same version is rejected), `ConnectedPeers()` is a cached array, `StopNetwork` restores control only if a session was live, F2 shows the patch audit.
+
+**Puzzles & doors & audio**
+- Puzzle emit gate + `_lastAuthor` + unicast-back; held-door fixes; `Doorway_Double.locked` polled; deferred door open; FMOD emitters keyed by (WorldId, component index) via `FmodEmitterMessage.Comp` (several emitters on one object no longer collide); `WorldLookup.Invalidate<T>()`; `PEN_Reaktor` per-rod merge; struct `PKey` puzzle keys; pre-seed pending solves flushed when the gate arms; late joiners re-request missing state.
+- **Removed the `MultiKeyLock.Update` patch**: it was the empty stub at RVA 0x2CB6B0 shared with ~3,000 methods, so the detour ran for all of them. Partial key packs ride the 0.5 s poll.
+
+**Pickups, combat, bosses**
+- Release-pending prop hide; own hurtbox list ticked per frame; Falke spear consume acks + stab ring retire; `WakeUp` direct state; overflow drop (`DropOverflow`); `ItemPickedUp.ClaimerPlayerId` (host is the only author of a floor-item claim); departed peer's drops re-homed (`DropRekey`); storage txn id rides `InteractionRequest.WorldId`; `EnemyDamage` relayed to the target when friendly fire is on.
+
+**Story & scene**
+- Only the int overloads of `Dialoguer.StartDialogue` are patched (enum overloads share the RVA) + nested-start guard; `determineEnding` postfix broadcast; `_flags.Clear()` before a full dump; buffered commits newest-wins; host `Note` while applying; unload-time savers no longer forward; "MainMenu2" matched with StartsWith; 90 s queue + resend; incremental commits carry only dirty keys; `CutsceneCut.Proceed` guarded against the folded `END_Boss.StartBattle`.
+
+**Engineering**
+- **RVA folding audit** — all 204 `[HarmonyPatch]` targets checked against `script.json`: 8 share a native function with other methods. 1 removed (`MultiKeyLock.Update`), 5 guarded with `Il2CppRealType.Is<T>(__instance)` first (`Interaction.reset`, `Interaction.setInRange`, `ROT_MeatBlocker.pickup`, `ROT_Tarot.flip` (8 targets, one body), `CutsceneCut.Proceed`), 2 static Dialoguer wrappers left as is (same parameters, nested guard). Table: `docs/RVA_FOLDING.md`. `RvaFoldingTests` fails if a patch lands on a listed empty stub or a listed folded method without the guard.
+- Tests: serial execution (shared statics), `SessionResetTests`, `StoryWireTests`, `RvaFoldingTests`, `PatchAuditTableTests`; frozen tables cover ids 67 and 73, golden hash recomputed.
+
+### Changed
+- Protocol **13 → 14**: `PartyLife.Scene`, Handshake `GameBuildHash`/`GameBuild`, `ItemPickedUp.ClaimerPlayerId`, `FmodEmitter.Comp`, `FmodEmitterRequest` 67, `DropRekey` 73, `BonePose` clamp, `Room` capped string, incremental `StoryCommit` dirty keys. A 0.5.58 peer is rejected by the handshake.
+- Version single-sourced from `Bootstrap/PluginInfo.cs` (csproj, `scripts/build.sh`, `scripts/package.sh` read it); `scripts/test.sh` runs the unit tests; `scripts/rva_fold_scan.py` added.
+
+### Before → After (player)
+- **Before:** a party wipe did nothing visible (everyone stood up where they died, bags reverted); two instances on one PC shared bag snapshots; a client's "quit to menu" was blocked; door/puzzle emitters with several sounds per object collided; some emitters fired only for the author; a stale or different game build could join and desync.
+- **After:** a wipe reloads the last save for everyone; each process keeps its own snapshot; quit-to-menu ends the session; emitters are per component; build mismatches are refused with a reason.
+
+### Open risks / untested
+- **Nothing has been run in game.** All of the above is compile- and unit-tested only; run `docs/PLAYTEST.md` on two, then three instances.
+- PatchAudit may flag `m_ForwardAmount` / `m_TurnAmount` / `StorageBox.open` if the Il2Cpp wrappers hide these private members (the code falls back gracefully; the audit line would then be a false alarm or a real dead feature, unknown until a boot log exists).
+- Wipe reload is a new path: 45 s watchdog, save-slot / `SaveManager.loading` replication, scene-follow of clients are unverified.
+- Client END counters are only partly synced (host commits the tally; client-side ending counters are not authoritative).
+- `Il2CppRealType.Is<T>` relies on `TryCast`; a foreign `this` that is not a valid object could still misbehave. The folding table covers only current patch targets (script.json is from the 0.5.x game build).
+- Dropping `MultiKeyLock.Update` adds up to 0.5 s latency to partial key-pack sync.
+- Protocol 14 is incompatible with 0.5.58; every player must update.
+- 0.5.57 / 0.5.58 open risks still stand.
+
+Protocol **14**. Product **0.5.59** (not 1.0).
+
 ## 0.5.58 — 2026-10-01
 
 Protocol **v13**. Three parallel workers merged on top of 0.5.57: story/cutscenes/scene flow, puzzles/doors/audio, and pickups/combat/enemies/bosses. **Nothing in this release has been playtested** — compile-checked only (Release, 0 errors, 0 warnings). Each area was finished (resumed after a session-limit interruption) and compile-checked on its own before the merge.

@@ -46,6 +46,24 @@ namespace SyncRADation.Patches
                 LanNetworkManager.Instance.BossHandlers.SendBossHitToHost(wid, BossHitKind.Stab, 0);
                 return false;
             }
+
+            /// <summary>
+            /// Native Stabbed removes SpearItem from the HOST bag only (first MoveNext, Ghidra END_Boss.c). The
+            /// spear usually lives on the party ring / a client bag, so a local host press must also retire it
+            /// there (ring drop + bag-mirror strip + fan-out). Client-requested stabs do the same in
+            /// BossSyncService.ApplyHitOnHost, outside the apply gate.
+            /// </summary>
+            [HarmonyPostfix]
+            public static void Postfix(END_Boss __instance)
+            {
+                if (!NetGate.Host || NetGate.IsApplying) return;
+                try
+                {
+                    var item = __instance != null ? __instance.SpearItem : null;
+                    if (item != null) PartyKeyRing.RevokeConsumed(item._item);
+                }
+                catch (System.Exception ex) { Guard.Swallow(ex); }
+            }
         }
 
         [HarmonyPatch(typeof(END_Boss), nameof(END_Boss.takeSpear))]
@@ -67,6 +85,13 @@ namespace SyncRADation.Patches
             [HarmonyPrefix]
             public static bool Prefix(END_Boss __instance, GameObject spear)
             {
+                // Native takeSpear decrements ammo on EVERY call (Ghidra END_Boss.c), so a repeat for a
+                // spear that is already gone would corrupt the count the snapshot mirrors.
+                if (NetGate.Host)
+                {
+                    try { if (spear == null || !spear.activeSelf) return false; }
+                    catch (System.Exception e) { Guard.Swallow(e); }
+                }
                 if (!ClientForward(__instance)) return true;
                 long wid;
                 int idx = IndexOf(__instance, spear);
@@ -82,7 +107,9 @@ namespace SyncRADation.Patches
                 long wid;
                 int idx = IndexOf(__instance, spear);
                 if (idx < 0 || !TryBossId(__instance, out wid)) return;
-                LanNetworkManager.Instance.BossHandlers.BroadcastBossEvent(wid, BossHitKind.TakeSpear, idx);
+                var net = LanNetworkManager.Instance;
+                net.BossSync.NoteSpearTaker(idx, net.LocalPlayerId); // no-op when a client request already recorded it
+                net.BossHandlers.BroadcastBossEvent(wid, BossHitKind.TakeSpear, idx);
             }
         }
 

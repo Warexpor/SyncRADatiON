@@ -2,6 +2,7 @@
 using HarmonyLib;
 using SyncRADation.Networking;
 using SyncRADation.Sync;
+using UnityEngine;
 
 namespace SyncRADation.Patches
 {
@@ -45,10 +46,26 @@ namespace SyncRADation.Patches
         public static bool WakeFlashlightPrefix(EnemyController __instance) => Forward(__instance, EnemyActionKind.WakeUp);
 
         [HarmonyPrefix, HarmonyPatch(nameof(EnemyController.Hit))]
-        public static void HitPrefix(EnemyController __instance)
+        public static void HitPrefix(EnemyController __instance, out Transform __state)
         {
+            __state = null;
             if (!NetGate.Host) return;
             ClientDamageService.OnEnemyHit(__instance);
+            // Native Hit moves playerPos onto the host Elster; when that slot holds a remote proxy, park a
+            // scratch transform there for the call so the proxy is not teleported (restored in the Postfix).
+            var scratch = ClientDamageService.HitScratchFor(__instance);
+            if (scratch != null)
+            {
+                __state = __instance.playerPos;
+                __instance.playerPos = scratch;
+            }
+        }
+
+        [HarmonyPostfix, HarmonyPatch(nameof(EnemyController.Hit))]
+        public static void HitPostfix(EnemyController __instance, Transform __state)
+        {
+            if (__state == null || __instance == null) return;
+            __instance.playerPos = __state;
         }
     }
 }

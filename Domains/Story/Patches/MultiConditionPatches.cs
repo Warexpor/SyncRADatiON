@@ -11,7 +11,7 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static bool Prefix(MultiConditionEvent __instance)
         {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
+            if (NetGate.IsApplying || !NetGate.Party) return true;
             if (__instance == null) return true;
             if (NetGate.Host) return true;
             LanNetworkManager.Instance.SendInteractionRequest(
@@ -22,12 +22,12 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(MultiConditionEvent __instance)
         {
-            if (!NetGate.Host || NetGate.IsApplying || !NetGate.Live) return;
+            if (!NetGate.Host || NetGate.IsApplying || !NetGate.Party) return;
             if (__instance == null) return;
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             if (id == 0 || !EventZonePatch.MarkMultiOnce(id)) return;
             LanNetworkManager.Instance.StorySync.BroadcastPresentation(
-                StoryCmd.MultiConditionFire, id, 0, "");
+                StoryCmd.MultiConditionFire, id, 0, StoryWire.HostCounted);
         }
     }
 
@@ -37,7 +37,7 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static bool Prefix(MultiConditionEvent __instance)
         {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
+            if (NetGate.IsApplying || !NetGate.Party) return true;
             if (__instance == null) return true;
             if (NetGate.Host) return true;
             LanNetworkManager.Instance.SendInteractionRequest(
@@ -48,12 +48,12 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(MultiConditionEvent __instance)
         {
-            if (!NetGate.Host || NetGate.IsApplying || !NetGate.Live) return;
+            if (!NetGate.Host || NetGate.IsApplying || !NetGate.Party) return;
             if (__instance == null) return;
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             if (id == 0 || !EventZonePatch.MarkMultiTrigger(id)) return;
             LanNetworkManager.Instance.StorySync.BroadcastPresentation(
-                StoryCmd.MultiConditionFire, id, 1, "");
+                StoryCmd.MultiConditionFire, id, 1, StoryWire.HostCounted);
         }
     }
 }

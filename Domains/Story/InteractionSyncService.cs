@@ -43,7 +43,7 @@ namespace SyncRADation.Networking
                 switch (msg.Kind)
                 {
                     case InteractionKind.EventZone:
-                        ok = ApplyEventZone(id);
+                        ok = ApplyEventZone(id, msg.SenderPlayerId);
                         break;
                     case InteractionKind.UseItem:
                         ok = ApplyUseItem(id, msg.SenderPlayerId, out string consumeReason);
@@ -93,7 +93,7 @@ namespace SyncRADation.Networking
                         ok = true;
                         break;
                     case InteractionKind.CutsceneSkip:
-                        ok = ApplyCutsceneSkip(id, net);
+                        ok = ApplyCutsceneSkip(id, net, msg.SenderPlayerId);
                         break;
                     case InteractionKind.DialogueContinue:
                     {
@@ -162,7 +162,7 @@ namespace SyncRADation.Networking
                         if (!ok) reason = "unknown scene";
                         break;
                     case InteractionKind.CutsceneProceed:
-                        ok = ApplyCutsceneProceed(id, net);
+                        ok = ApplyCutsceneProceed(id, net, msg.SenderPlayerId);
                         break;
                     case InteractionKind.DroppedPickup:
                         ok = net.TryClaimDropped(msg.Int0, msg.SenderPlayerId, out reason);
@@ -190,7 +190,7 @@ namespace SyncRADation.Networking
             net.SendInteractionAck(msg.SenderPlayerId, ackId, msg.Kind, ok, reason);
         }
 
-        private static bool ApplyEventZone(ulong id)
+        private static bool ApplyEventZone(ulong id, int senderId)
         {
             var z = Find<EventZone>(id);
             if (z == null) return false;
@@ -198,13 +198,16 @@ namespace SyncRADation.Networking
             if (z.triggered) return true;
             z.triggered = true;
             SyncRADation.Patches.EventZonePatch.MarkFired(id);
-            if (LocalInspect.InLocalRoom(z.gameObject))
+            bool hostRan = LocalInspect.InLocalRoom(z.gameObject);
+            if (hostRan)
             {
                 try { if (z.onInRange != null) z.onInRange.Invoke(); } catch (System.Exception e) { Guard.Swallow(e); }
             }
             else
                 PlaytestLog.Event("Interact", "EventZone other-room id=" + id.ToString("X16"));
-            LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.EventZoneFire, id, 0, "");
+            // END attribution: host ran it natively (it counted) or only the requesting client counts.
+            LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.EventZoneFire, id, 0,
+                hostRan ? StoryWire.HostCounted : StoryWire.PlayerCounted(senderId));
             return true;
         }
 
@@ -333,11 +336,12 @@ namespace SyncRADation.Networking
             return true;
         }
 
-        private static bool ApplyCutsceneProceed(ulong id, LanNetworkManager net)
+        private static bool ApplyCutsceneProceed(ulong id, LanNetworkManager net, int senderId)
         {
             var cut = Find<CutsceneCut>(id);
             if (cut == null) return false;
-            if (LocalInspect.InLocalRoom(cut.gameObject))
+            bool hostRan = LocalInspect.InLocalRoom(cut.gameObject);
+            if (hostRan)
             {
                 NetGate.BeginApply();
                 try { cut.Proceed(); }
@@ -345,7 +349,8 @@ namespace SyncRADation.Networking
             }
             else
                 PlaytestLog.Event("Interact", "CutsceneProceed other-room id=" + id.ToString("X16"));
-            net.StorySync.BroadcastPresentation(StoryCmd.CutsceneProceed, id, 0, "");
+            net.StorySync.BroadcastPresentation(StoryCmd.CutsceneProceed, id, 0,
+                hostRan ? StoryWire.HostCounted : StoryWire.PlayerCounted(senderId));
             return true;
         }
 
@@ -612,7 +617,7 @@ namespace SyncRADation.Networking
             _requestStamp.Clear();
         }
 
-        private static bool ApplyCutsceneSkip(ulong id, LanNetworkManager net)
+        private static bool ApplyCutsceneSkip(ulong id, LanNetworkManager net, int senderId)
         {
             var c = Find<CutsceneManager>(id);
             if (c != null && LocalInspect.AirlockCinematic(c.gameObject))
@@ -622,9 +627,11 @@ namespace SyncRADation.Networking
                 PlaytestLog.Event("Interact", "CutsceneSkip already done id=" + id.ToString("X16"));
                 return true;
             }
-            net.StorySync.BroadcastPresentation(StoryCmd.CutsceneSkip, id, 0, "");
             // Same gate as Start: a host that is not in the room / never started it does not run the skip events.
-            if (c != null && SkipApplicable(c, id))
+            bool hostRuns = c != null && SkipApplicable(c, id);
+            net.StorySync.BroadcastPresentation(StoryCmd.CutsceneSkip, id, 0,
+                hostRuns ? StoryWire.HostCounted : StoryWire.PlayerCounted(senderId));
+            if (hostRuns)
             {
                 StorySyncService.BeginAuthorScope();
                 try { NativeSkip(c); }
@@ -661,6 +668,14 @@ namespace SyncRADation.Networking
                 return false;
             _startStamp[id] = now;
             return true;
+        }
+
+        /// <summary>Non-mutating: a start for this id was recorded inside the dedupe window (peek, unlike RememberStart).</summary>
+        internal static bool StartedRecently(ulong id)
+        {
+            if (id == 0) return false;
+            float last;
+            return _startStamp.TryGetValue(id, out last) && Time.unscaledTime - last < StartDedupeSeconds;
         }
 
         /// <summary>
@@ -910,6 +925,7 @@ namespace SyncRADation.Networking
 
         private static bool ApplyMultiCondition(ulong id, int kind)
         {
+            // The host runs TryOnce / TryTrigger natively whatever room it is in, so it always counts END effects.
             var m = Find<MultiConditionEvent>(id);
             if (m == null) return false;
             NetGate.BeginApply();
@@ -919,7 +935,8 @@ namespace SyncRADation.Networking
                 else m.TryOnce();
             }
             finally { NetGate.EndApply(); }
-            LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.MultiConditionFire, id, kind, "");
+            LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.MultiConditionFire, id, kind,
+                StoryWire.HostCounted);
             return true;
         }
 
@@ -971,13 +988,15 @@ namespace SyncRADation.Networking
         {
             // Finale.determineEnding has a per-object `once`; the broadcast has the same once-per-scene guard,
             // so two players reaching the finale at once start the ending a single time for everyone.
-            if (!net.StorySync.HostBroadcastEnding(net)) return;
+            if (net.StorySync.EndingBroadcasted) return;
             var f = FirstFinale();
             if (f == null) return;
+            // Native first: CalculatePlaystyle settles Circle/Death/Ending here; the broadcast then carries them.
             NetGate.BeginApply();
             try { f.determineEnding(); }
             catch (System.Exception ex) { StorySyncService.WarnOnce("Host determineEnding", ex); }
             finally { NetGate.EndApply(); }
+            net.StorySync.HostBroadcastEnding(net);
         }
 
         internal static void HostGoToPenny(LanNetworkManager net)
@@ -1020,7 +1039,13 @@ namespace SyncRADation.Networking
                 VecZ = msg.Float2,
                 StringVal = strVal
             };
-            if (StorySyncService.SameAsLocal(probe)) return true;
+            if (StorySyncService.SameAsLocal(probe))
+            {
+                // Host already holds this value; make sure it is committed (a host-side write made in an apply scope
+                // or before the table existed may not have been noted) so out-of-room peers converge.
+                SProgressPatches.NoteEntry(story, probe);
+                return true;
+            }
             NetGate.BeginApply();
             try
             {

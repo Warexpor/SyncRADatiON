@@ -15,8 +15,29 @@ namespace SyncRADation
         public static LanNetworkManager Network { get; private set; }
         public static bool VerboseLogging => ModConfig.VerboseLogging?.Value == true;
 
+        // Boot/process-lifetime values (logger, harmony, running flag, FF edge state reset per scene): not session state.
         private static bool _running;
         private static HarmonyLib.Harmony _harmony;
+
+        /// <summary>False when the boot audit found a Harmony target or reflected member that no longer resolves.</summary>
+        public static bool PatchAuditOk { get; private set; } = true;
+        /// <summary>One line for F2: "Harmony audit: N ok, M missing" (or "not run").</summary>
+        public static string PatchAuditSummary { get; private set; } = "Harmony audit: not run";
+        private static readonly System.Collections.Generic.List<string> _patchAuditMissing = new System.Collections.Generic.List<string>();
+        /// <summary>First missing items (capped) for F2.</summary>
+        public static System.Collections.Generic.IReadOnlyList<string> PatchAuditMissing => _patchAuditMissing;
+
+        internal static void SetPatchAudit(bool ok, int okCount, int missingCount)
+        {
+            PatchAuditOk = ok;
+            PatchAuditSummary = "Harmony audit: " + okCount + " ok, " + missingCount + " missing";
+            _patchAuditMissing.Clear();
+        }
+
+        internal static void AddPatchAuditMissing(string item)
+        {
+            if (_patchAuditMissing.Count < 8) _patchAuditMissing.Add(item);
+        }
 
         private static bool _lastLocalShooting;
         private static float _ffCooldown;
@@ -30,12 +51,19 @@ namespace SyncRADation
             {
                 ModConfig.Bind();
                 PatchAllSafe();
+                try { PatchAudit.Run(typeof(ModRuntime).Assembly.GetTypes()); }
+                catch (System.Exception ex) { Guard.Swallow("ModRuntime.PatchAudit", ex); }
+                GameBuild.Compute();
+                try { SessionResetRegistrations.RegisterAll(); }
+                catch (System.Exception ex) { Guard.Swallow("ModRuntime.SessionReset", ex); }
+                Log.Msg("[SessionReset] " + SessionReset.Count + " clears registered");
 
                 Log.Msg("=============================================");
                 Log.Msg("  " + PluginInfo.Name + " v" + PluginInfo.Version);
                 Log.Msg("  " + PluginInfo.Description);
                 Log.Msg("  Protocol v" + PluginInfo.ProtocolVersion + " | Port " + PluginInfo.DefaultPort
                     + " | MaxPlayers " + PluginInfo.MaxPlayers + " | schema #" + NetSchema.Hash.ToString("X8"));
+                Log.Msg("  Game build " + GameBuild.Label + " (handshake rejects a different build)");
                 Log.Msg("  F2 menu | F3 quick connect | G/DROP drop | native TAKE pickup");
                 Log.Msg("  FriendlyFire=" + (ModConfig.FriendlyFire?.Value == true)
                     + " VerboseLogging=" + VerboseLogging);
@@ -162,8 +190,10 @@ namespace SyncRADation
                 _lastLocalShooting = Input.GetButton("Fire1") || Input.GetMouseButton(0);
             }
 
-            NetworkDamageSystem.TickRespawn();
-            Cheats.EntitySpawner.Tick();
+            try { NetworkDamageSystem.TickRespawn(); }
+            catch (System.Exception ex) { Guard.Swallow("ModRuntime.TickRespawn", ex); }
+            try { Cheats.EntitySpawner.Tick(); }
+            catch (System.Exception ex) { Guard.Swallow("ModRuntime.EntitySpawnerTick", ex); }
 
             if (net != null && net.IsConnected)
                 HitchTrace.Frame();
@@ -195,6 +225,8 @@ namespace SyncRADation
             WorldRegistry.Rebuild();
             Cheats.EntitySpawner.HarvestLoaded();
             Network?.OnSceneChanged();
+            try { HostReload.OnSceneArrived(scene); }
+            catch (System.Exception e) { Guard.Swallow("ModRuntime.HostReloadArrived", e); }
         }
 
         private static int GetWallMask()

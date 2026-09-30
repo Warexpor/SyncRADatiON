@@ -103,6 +103,18 @@ namespace SyncRADation.Tests
                 Assert.True(seen.Contains(k), "ArrayCaps lists " + k + " which no longer exists");
         }
 
+        // ------------------------------------------------------------------ FMOD emitters
+
+        [Fact]
+        public void FmodEmitter_component_index_survives_the_wire_for_every_byte_value()
+        {
+            for (int comp = 0; comp <= 255; comp++)
+            {
+                AssertRoundTrip(new FmodEmitterMessage { WorldId = -5, Play = true, Kind = 0, Path = "", Comp = (byte)comp }, "FmodEmitter comp=" + comp);
+                AssertRoundTrip(new FmodEmitterRequestMessage { WorldId = long.MinValue, Play = comp % 2 == 0, Comp = (byte)comp }, "FmodEmitterRequest comp=" + comp);
+            }
+        }
+
         // ------------------------------------------------------------------ PuzzleStateEntry
 
         public static IEnumerable<object[]> PuzzleTypes() =>
@@ -140,12 +152,14 @@ namespace SyncRADation.Tests
         [Fact]
         public void Handshake_round_trips_the_real_protocol_version_and_schema_hash()
         {
-            var h = new HandshakeMessage { ProtocolVersion = PluginInfo.ProtocolVersion, AssignedPlayerId = 2, SchemaHash = NetSchema.Hash, ModVersion = PluginInfo.Version };
+            var h = new HandshakeMessage { ProtocolVersion = PluginInfo.ProtocolVersion, AssignedPlayerId = 2, SchemaHash = NetSchema.Hash, ModVersion = PluginInfo.Version, GameBuildHash = 0xC0FFEE11u, GameBuild = "1.0.3 / Unity 6000" };
             var back = HandshakeMessage.Deserialize(new NetDataReader(WireFuzz.Write(h).CopyData()));
             Assert.Equal(PluginInfo.ProtocolVersion, back.ProtocolVersion);
             Assert.Equal(NetSchema.Hash, back.SchemaHash);
             Assert.Equal(PluginInfo.Version, back.ModVersion);
             Assert.Equal(2, back.AssignedPlayerId);
+            Assert.Equal(0xC0FFEE11u, back.GameBuildHash);
+            Assert.Equal("1.0.3 / Unity 6000", back.GameBuild);
         }
 
         [Fact]
@@ -193,9 +207,10 @@ namespace SyncRADation.Tests
         [Fact]
         public void Party_messages_round_trip_with_null_room_as_empty()
         {
-            var life = PartyLifeMessage.Deserialize(new NetDataReader(WireFuzz.Write(new PartyLifeMessage { Kind = PartyLifeKind.Wipe, Room = null, SaveStamp = long.MinValue, HasPos = true, PosX = 1, PosY = 2, PosZ = 3 }).CopyData()));
+            var life = PartyLifeMessage.Deserialize(new NetDataReader(WireFuzz.Write(new PartyLifeMessage { Kind = PartyLifeKind.Wipe, Room = null, Scene = null, SaveStamp = long.MinValue, HasPos = true, PosX = 1, PosY = 2, PosZ = 3 }).CopyData()));
             Assert.Equal(PartyLifeKind.Wipe, life.Kind);
             Assert.Equal("", life.Room);
+            Assert.Equal("", life.Scene);
             Assert.Equal(long.MinValue, life.SaveStamp);
             Assert.Equal((1f, 2f, 3f), (life.PosX, life.PosY, life.PosZ));
             var save = PartySaveMessage.Deserialize(new NetDataReader(WireFuzz.Write(new PartySaveMessage { Slot = 2, Counter = -1, Stamp = 99, Flags = PartySaveMessage.FlagJoin }).CopyData()));

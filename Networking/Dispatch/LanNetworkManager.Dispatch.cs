@@ -71,6 +71,8 @@ namespace SyncRADation.Networking
             case NetMessageType.FmodEmitter:
             case NetMessageType.InteractionAck:
             case NetMessageType.PlayerRoster:
+            case NetMessageType.WorldPickupDeny:
+            case NetMessageType.DropRekey:
                 return true;
             default:
                 return false;

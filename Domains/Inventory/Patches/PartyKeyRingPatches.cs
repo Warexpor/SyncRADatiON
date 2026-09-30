@@ -155,6 +155,9 @@ namespace SyncRADation.Patches
     {
         static bool _resolving;
 
+        /// <summary>SessionReset: re-entrancy flag.</summary>
+        internal static void ResetSession() => _resolving = false;
+
         [HarmonyPrefix]
         public static bool Prefix(AnItem __instance, ref string __result)
         {
@@ -179,6 +182,9 @@ namespace SyncRADation.Patches
     public static class InventoryGetNamePatch
     {
         static bool _resolving;
+
+        /// <summary>SessionReset: re-entrancy flag.</summary>
+        internal static void ResetSession() => _resolving = false;
 
         [HarmonyPrefix]
         public static bool Prefix(AnItem item, ref string __result)

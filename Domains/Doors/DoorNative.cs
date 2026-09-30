@@ -146,6 +146,19 @@ namespace SyncRADation.Networking
             return any && solved;
         }
 
+        /// <summary>True when a DoorLockControl governs this door and it is already unlocked (host truth).</summary>
+        public static bool DoorLockUnlocked(Doorway_Double d)
+        {
+            if (d == null) return false;
+            try
+            {
+                var dlc = DoorLockOn(d.gameObject);
+                return dlc != null && !dlc.locked;
+            }
+            catch (System.Exception ex) { PuzzleSyncService.WarnOnce("door-dlc-unlocked", ex.Message); }
+            return false;
+        }
+
         static void ScanGoverningLocks(Doorway_Double d, out bool any, out bool solved)
         {
             any = false; solved = true;
@@ -503,7 +516,8 @@ namespace SyncRADation.Networking
                 return;
             }
             WorldSfx.Play(path, at.transform);
-            PlaytestLog.Verbose("Door", "sfx " + path + " @ " + at.name + " vol=" + vol.ToString("0.00"));
+            if (ModRuntime.VerboseLogging)
+                PlaytestLog.Verbose("Door", "sfx " + path + " @ " + at.name + " vol=" + vol.ToString("0.00"));
         }
     }
 }

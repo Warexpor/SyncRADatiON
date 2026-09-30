@@ -1,6 +1,6 @@
 # SyncRADation playtest / soak checklist
 
-Target build: **0.5.58, protocol 13**. None of the 0.5.57 / 0.5.58 work has been run in game, so this list is the gate. Run it on **two instances** first (host + client), then repeat the marked items with **three** (host + two clients, `MaxPlayers` >= 3).
+Target build: **0.5.59, protocol 14**. None of the 0.5.57 / 0.5.58 / 0.5.59 work has been run in game, so this list is the gate. Run it on **two instances** first (host + client), then repeat the marked items with **three** (host + two clients, `MaxPlayers` >= 3).
 
 Conventions:
 
@@ -10,11 +10,11 @@ Conventions:
 - Same DLL on every peer. Keep `VerboseLogging=false` unless a failure needs detail.
 - A failure counts even if the game keeps running: grep `[Guard]` and `[Harmony]` at the end of each section and note anything new.
 
-Session info to record: date, build (0.5.58), players, chapter, result notes.
+Session info to record: date, build (0.5.59), players, chapter, result notes.
 
 ## 0. Preflight
 
-- [ ] Both logs show the boot banner with version 0.5.58 and `[Harmony] patched` lines with no failed patch.
+- [ ] Both logs show the boot banner with version 0.5.59 and `[Harmony] patched` lines with no failed patch.
 - [ ] Host Game then Connect: `Handshake OK` on both sides, F2 roster lists both players.
 - [ ] Both players see each other's proxy, animation and held weapon.
 - [ ] Offline (no session) `F2` menu works and the game plays like vanilla (see section 18 for the full pass).

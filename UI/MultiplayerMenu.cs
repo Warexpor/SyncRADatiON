@@ -44,7 +44,9 @@ namespace SyncRADation.UI
             // Roster rows (remote players only; the local line is part of the role row).
             List<int> roster = net.Role != NetworkRole.Offline ? net.GetSessionPlayerIdsSorted() : null;
             int rows = roster != null ? roster.Count : 0;
-            _windowRect.height = BaseHeight + (rows > 0 ? (rows + 1) * RowHeight : 0f);
+            int auditRows = ModRuntime.PatchAuditOk ? 0 : 1 + ModRuntime.PatchAuditMissing.Count;
+            _windowRect.height = BaseHeight + (rows > 0 ? (rows + 1) * RowHeight : 0f)
+                + 2 * RowHeight + auditRows * RowHeight;
 
             GUI.Box(_windowRect, "SyncRADation v" + PluginInfo.Version);
 

@@ -3,6 +3,8 @@
 // own 6-slot bag under the same token. A party wipe (or a late join into the same save)
 // restores those snapshots instead of letting each peer load its own save slot.
 // Persisted as plain text under MelonLoader UserData/SyncRADation/.
+// Solo play stays vanilla: outside a hosted session the Save/Load postfixes only write two ints (no file IO, no
+// token). The run is remembered in memory (_runSlot / _runDirty) and a token is minted when a host session starts.
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -48,8 +50,10 @@ namespace SyncRADation.Networking
     {
         private const int MaxBagSnapshots = 24;
         private const string HostFile = "host_saves.txt";
-        private const string BagFile = "bag_snapshots.txt";
+        private const string LegacyBagFile = "bag_snapshots.txt";
+        private const int MaxInstanceSlots = 16;
 
+        // Token/ring/bag tables mirror files under UserData: persistent across sessions on purpose (Reset only drops Current/_bagAtDeath).
         private static bool _hostLoaded;
         private static bool _bagsLoaded;
         private static long _stamp;
@@ -59,6 +63,16 @@ namespace SyncRADation.Networking
         private static readonly List<string> _bagOrder = new List<string>();
         private static readonly Dictionary<string, BagEntry[]> _bags = new Dictionary<string, BagEntry[]>();
         private static BagEntry[] _bagAtDeath;
+
+        // Run tracking (solo + hosted): which slot this run was last saved to / loaded from.
+        private static int _runSlot;
+        private static bool _runDirty;
+        // Client: only the first join of this process restores a bag from the join token (a reconnect mid-session
+        // must not roll the bag back to the last save). Persistent on purpose: not a session value.
+        private static bool _joinRestoreDone;
+        // Per-process bag file slot (see BagPath): two client processes from one install never share a file.
+        private static int _instanceSlot = -1;
+        private static System.IO.FileStream _instanceLock;
 
         /// <summary>Host: token of the save the session is running from (set by Save / Load). Unused on clients.</summary>
         public static PartySaveToken Current;
@@ -70,6 +84,44 @@ namespace SyncRADation.Networking
             string dir = Path.Combine(MelonLoader.MelonUtils.UserDataDirectory, "SyncRADation");
             Directory.CreateDirectory(dir);
             return dir;
+        }
+
+        /// <summary>
+        /// Stable per-process slot among processes sharing one install: the first free slot whose lock file we can
+        /// hold exclusively for the process lifetime. A restarted client gets its old slot back (snapshot survives a
+        /// restart); a concurrent second process gets another one (no last-writer-wins on one file).
+        /// </summary>
+        private static int InstanceSlot()
+        {
+            if (_instanceSlot >= 0) return _instanceSlot;
+            _instanceSlot = 0;
+            try
+            {
+                string dir = Dir();
+                for (int n = 0; n < MaxInstanceSlots; n++)
+                {
+                    try
+                    {
+                        var fs = new FileStream(Path.Combine(dir, "bag_snapshots_" + n + ".lock"),
+                            FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+                        _instanceLock = fs; // held until the process exits
+                        _instanceSlot = n;
+                        break;
+                    }
+                    catch (IOException ex) { Guard.Swallow("PartySave.InstanceSlotBusy", ex); } // held by another live process: next slot
+                }
+            }
+            catch (Exception ex)
+            {
+                Guard.Swallow("PartySave.InstanceSlot", ex);
+            }
+            PlaytestLog.Event("PartySave", "bag snapshot instance slot " + _instanceSlot);
+            return _instanceSlot;
+        }
+
+        private static string BagPath()
+        {
+            return Path.Combine(Dir(), "bag_snapshots_" + InstanceSlot() + ".txt");
         }
 
         private static void EnsureHostLoaded()
@@ -143,7 +195,9 @@ namespace SyncRADation.Networking
             _bagsLoaded = true;
             try
             {
-                string path = Path.Combine(Dir(), BagFile);
+                string path = BagPath();
+                if (!File.Exists(path) && InstanceSlot() == 0)
+                    path = Path.Combine(Dir(), LegacyBagFile); // pre-0.5.59 shared file: first process adopts it
                 if (!File.Exists(path)) return;
                 foreach (string raw in File.ReadAllLines(path))
                 {
@@ -175,7 +229,7 @@ namespace SyncRADation.Networking
                     if (!_bags.TryGetValue(_bagOrder[i], out bag)) continue;
                     sb.Append("bag=").Append(_bagOrder[i]).Append('|').Append(JoinBag(bag)).Append('\n');
                 }
-                File.WriteAllText(Path.Combine(Dir(), BagFile), sb.ToString());
+                File.WriteAllText(BagPath(), sb.ToString());
             }
             catch (Exception ex)
             {
@@ -245,11 +299,17 @@ namespace SyncRADation.Networking
             }
         }
 
-        /// <summary>Host (or offline solo host): a native SaveManager.Save happened.</summary>
+        /// <summary>Hosted session: a native SaveManager.Save happened. Mints the party token for the slot.</summary>
         public static PartySaveToken OnHostSaved()
         {
+            _runSlot = CurrentSlot();
+            _runDirty = false;
+            return Mint(_runSlot);
+        }
+
+        private static PartySaveToken Mint(int slot)
+        {
             EnsureHostLoaded();
-            int slot = CurrentSlot();
             var token = new PartySaveToken { Slot = slot, Counter = ++_next, Stamp = _stamp };
             _slotTokens[slot] = token;
             _rings[token.Key] = PartyKeyRing.Export();
@@ -260,17 +320,71 @@ namespace SyncRADation.Networking
             return token;
         }
 
-        /// <summary>Host: a native SaveManager.Load happened. Session now runs from that slot's last token.</summary>
+        /// <summary>Solo (no hosted session): remember the run's slot in memory only. No file IO, no token.</summary>
+        public static void NoteSoloSave()
+        {
+            _runSlot = CurrentSlot();
+            _runDirty = true;
+        }
+
+        /// <summary>Hosted session: a real native SaveManager.Load happened. Session now runs from that slot's last token.</summary>
         public static void OnHostLoaded()
         {
             EnsureHostLoaded();
             int slot = CurrentSlot();
+            _runSlot = slot;
+            _runDirty = false;
             PartySaveToken token;
             if (!_slotTokens.TryGetValue(slot, out token))
                 token = default(PartySaveToken);
             Current = token;
             PlaytestLog.Event("PartySave", "host loaded slot=" + slot
                 + (token.Valid ? " token=" + token.Key : " (no party snapshot)"));
+        }
+
+        /// <summary>Solo: a real native Load happened. Remember the slot; the token (if any) is picked up at session start.</summary>
+        public static void NoteSoloLoad()
+        {
+            _runSlot = CurrentSlot();
+            _runDirty = false;
+            Current = default(PartySaveToken);
+        }
+
+        /// <summary>SaveManager.NewGame (any role): this run has no save; a stale token must never be used for it.</summary>
+        public static void OnNewGame()
+        {
+            _runSlot = 0;
+            _runDirty = false;
+            Current = default(PartySaveToken);
+        }
+
+        /// <summary>
+        /// Host session begins: adopt the run in memory. A save made in solo gets its token now (one file write);
+        /// a run merely loaded from a slot reuses that slot's last token. Decision: solo saves are never stamped
+        /// at save time (vanilla cost), but the token is available from the moment hosting starts.
+        /// </summary>
+        public static void OnSessionStart()
+        {
+            Current = default(PartySaveToken);
+            if (_runSlot <= 0) return;
+            if (_runDirty)
+            {
+                _runDirty = false;
+                Mint(_runSlot);
+                return;
+            }
+            EnsureHostLoaded();
+            PartySaveToken token;
+            if (_slotTokens.TryGetValue(_runSlot, out token))
+                Current = token;
+        }
+
+        /// <summary>Token of the last party save in a slot (invalid when none).</summary>
+        public static PartySaveToken TokenForSlot(int slot)
+        {
+            EnsureHostLoaded();
+            PartySaveToken token;
+            return _slotTokens.TryGetValue(slot, out token) ? token : default(PartySaveToken);
         }
 
         /// <summary>Key ring as captured at the last party save (empty when none).</summary>
@@ -317,6 +431,12 @@ namespace SyncRADation.Networking
 
             if ((msg.Flags & PartySaveMessage.FlagJoin) != 0)
             {
+                if (_joinRestoreDone)
+                {
+                    PlaytestLog.Event("PartySave", "rejoin: keep bag (token " + token.Key + ")");
+                    return;
+                }
+                _joinRestoreDone = true;
                 BagEntry[] bag;
                 if (_bags.TryGetValue(token.Key, out bag))
                 {
@@ -380,10 +500,14 @@ namespace SyncRADation.Networking
             _bagAtDeath = null;
         }
 
-        /// <summary>Network stop: forget the downed-bag capture. Host token survives (set by offline Load too).</summary>
+        /// <summary>
+        /// Network stop: forget the downed-bag capture and the session token. The run (slot / dirty flag) and the
+        /// persisted token tables survive: hosting again from the same run re-adopts them in OnSessionStart.
+        /// </summary>
         public static void Reset()
         {
             _bagAtDeath = null;
+            Current = default(PartySaveToken);
         }
 
         // ------------------------------------------------------------------ bag capture / restore

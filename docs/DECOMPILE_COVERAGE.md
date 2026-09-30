@@ -7,7 +7,7 @@ Prefer `05_CSharp_source/Assembly-CSharp_MelonLoader/` + `00_CODE_VIEW/dump.cs`.
 
 **Rules:** no invented sync. New `PuzzleType` / Boss / StoryCommit fields = protocol bump. **No park tables** — close gaps or classify intentional local.
 
-Last loop: 2026-09-30 (protocol 13). Shipped in product **0.5.58**.
+Last loop: 2026-09-30 (protocol 14). Shipped in product **0.5.59**.
 
 ## Implemented this loop (protocol 11)
 

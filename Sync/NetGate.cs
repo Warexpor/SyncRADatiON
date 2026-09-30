@@ -5,6 +5,7 @@ namespace SyncRADation.Sync
 {
     public static class NetGate
     {
+        // Re-entrancy counter; cleared by SessionReset ("NetGate", connection scope) and StopNetwork.
         private static int _applying;
 
         public static bool IsApplying => _applying > 0;
@@ -24,6 +25,19 @@ namespace SyncRADation.Sync
             {
                 var n = LanNetworkManager.Instance;
                 return n != null && n.IsConnected;
+            }
+        }
+
+        /// <summary>
+        /// Live AND at least one remote peer finished the handshake (host: a client; client: the host).
+        /// A host with nobody connected is vanilla: gate every suppressive / dedupe branch on this, not on Live.
+        /// </summary>
+        public static bool Party
+        {
+            get
+            {
+                var n = LanNetworkManager.Instance;
+                return n != null && n.IsConnected && n.HasReadyPeers;
             }
         }
 

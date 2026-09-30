@@ -37,7 +37,7 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static bool Prefix(EventZone __instance)
         {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
+            if (NetGate.IsApplying || !NetGate.Party) return true;
             if (__instance == null || __instance.triggered) return true;
             // Host still runs native (keycard slot EventZones). Client skips so
             // airlock titles stay local and are not remoted as a party EventZone.
@@ -73,13 +73,14 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(EventZone __instance)
         {
-            if (!NetGate.Host || NetGate.IsApplying || !NetGate.Live) return;
+            if (!NetGate.Host || NetGate.IsApplying || !NetGate.Party) return;
             if (__instance == null || !__instance.triggered) return;
             if (LocalInspect.AirlockCinematic(__instance.gameObject)) return;
             if (LocalInspect.LockWorld(__instance.gameObject)) return;
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             if (!_fired.Add(id)) return;
-            LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.EventZoneFire, id, 0, "");
+            // Host ran onInRange natively in its own room: it counted any END effects.
+            LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.EventZoneFire, id, 0, StoryWire.HostCounted);
         }
     }
 }

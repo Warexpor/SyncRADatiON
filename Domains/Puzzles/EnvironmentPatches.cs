@@ -9,8 +9,24 @@ namespace SyncRADation.Patches
         static class EnvEmit
         {
             // Update-postfix edges (Magpie/Shutters/…) — one emit per WorldId until scene refresh.
-            static readonly System.Collections.Generic.HashSet<string> _once
-                = new System.Collections.Generic.HashSet<string>();
+            static readonly System.Collections.Generic.HashSet<(byte, ulong)> _once
+                = new System.Collections.Generic.HashSet<(byte, ulong)>();
+
+            // Update postfixes run every frame: the WorldId (scene + hierarchy-path hash) is computed once per
+            // component. The Unity instance id is only a local cache key, never sent.
+            static readonly System.Collections.Generic.Dictionary<int, ulong> _ids
+                = new System.Collections.Generic.Dictionary<int, ulong>();
+
+            static ulong IdOf(Component c)
+            {
+                int iid = c.GetInstanceID();
+                ulong id;
+                if (_ids.TryGetValue(iid, out id)) return id;
+                id = WorldId.FromGameObject(c.gameObject);
+                if (_ids.Count > 2048) _ids.Clear();
+                _ids[iid] = id;
+                return id;
+            }
 
             public static void Progressed(PuzzleType type, Component c) => Send(type, c, true);
             public static void Read(PuzzleType type, Component c) => Send(type, c, false);
@@ -19,14 +35,17 @@ namespace SyncRADation.Patches
                 if (c == null || NetGate.IsApplying) return;
                 var net = LanNetworkManager.Instance;
                 if (net == null || !net.IsConnected) return;
-                ulong id = WorldId.FromGameObject(c.gameObject);
-                string key = ((byte)type) + "_" + id.ToString("X");
+                var key = ((byte)type, IdOf(c));
                 if (_once.Contains(key)) return;
                 Send(type, c, false);
                 _once.Add(key);
             }
 
-            public static void ClearOnce() => _once.Clear();
+            public static void ClearOnce()
+            {
+                _once.Clear();
+                _ids.Clear();
+            }
 
             public static void LabRings(LAB_Rings x)
             {
@@ -135,27 +154,6 @@ namespace SyncRADation.Patches
                 else Read(PuzzleType.PEN_Reaktor, x);
             }
 
-            public static void MultiKey(MultiKeyLock x)
-            {
-                if (x == null) return;
-                bool unlocked = false;
-                try
-                {
-                    var keys = x.keys;
-                    if (keys != null && keys.Length > 0)
-                    {
-                        unlocked = true;
-                        for (int i = 0; i < keys.Length; i++)
-                        {
-                            if (!keys[i]) { unlocked = false; break; }
-                        }
-                    }
-                }
-                catch (System.Exception e) { Guard.Swallow(e); }
-                if (unlocked) Progressed(PuzzleType.MultiKeyLock, x);
-                else Read(PuzzleType.MultiKeyLock, x);
-            }
-
             public static void MusicBox(RES_MusicBox x)
             {
                 if (x == null) return;
@@ -213,7 +211,7 @@ namespace SyncRADation.Patches
                 if (c == null || NetGate.IsApplying) return;
                 var net = LanNetworkManager.Instance;
                 if (net == null || !net.IsConnected) return;
-                ulong id = WorldId.FromGameObject(c.gameObject);
+                ulong id = IdOf(c);
                 if (progressed) net.PuzzleSync.EmitProgressed(type, id);
                 else net.PuzzleSync.Emit(type, id, c);
             }
@@ -369,7 +367,7 @@ namespace SyncRADation.Patches
         }
     }
 
-    // PEN_Reaktor: emit mid-rod positions pack on Update (Int0 + Int1 current),
+    // PEN_Reaktor: emit mid-rod positions pack on Update (Int0; the cursor is not synced),
     // Progressed on solve. Native Update (RVA 0x537C80) mutates positions[current]
     // Clamp 0..4 then derives values/Dvalue/Dtemp/total — patch so peers see mid
     // rods without waiting for Tick (Dig AG). IsProgressed holds Bool0||Bool1||
@@ -623,20 +621,8 @@ namespace SyncRADation.Patches
         public static void Postfix(ROT_Mural __instance) => EnvEmit.Mural(__instance);
     }
 
-    // MultiKeyLock.Update writes keys[] from inserts. Emit mid-pack (Int0) without
-    // waiting for the 0.5s poll. IsProgressed holds Bool0 || Int0!=0.
-    [HarmonyPatch(typeof(MultiKeyLock), "Update")]
-    public static class MultiKeyLockUpdatePatch
-    {
-        [HarmonyPostfix]
-        public static void Postfix(MultiKeyLock __instance)
-        {
-            if (__instance == null || NetGate.IsApplying) return;
-            var net = LanNetworkManager.Instance;
-            if (net == null || !net.IsConnected) return;
-            EnvEmit.MultiKey(__instance);
-        }
-    }
+    // MultiKeyLock.Update is deliberately NOT patched: it is the empty stub at RVA 0x2CB6B0 shared with ~3,000 unrelated
+    // methods (docs/RVA_FOLDING.md), so a detour would run for all of them every call. Partial key packs (Int0) ride the 0.5 s poll.
 
     [HarmonyPatch(typeof(RES_MusicBox), nameof(RES_MusicBox.LoadCassette))]
     public static class MusicBoxCassettePatch
@@ -694,6 +680,8 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(ROT_MeatBlocker __instance)
         {
+            // RVA 0x4BB310 is shared with RegexParser.MoveRight (docs/RVA_FOLDING.md).
+            if (!Il2CppRealType.Is<ROT_MeatBlocker>(__instance)) return;
             // Hold Death-seal emit while NG+ KeyOfSacrifice is still obtainable —
             // mirrors ApplyMeatBlocker hold (wiki Artifact softlock).
             try
@@ -803,6 +791,8 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(ROT_Tarot __instance)
         {
+            // ROT_Tarot.flip (RVA 0x4BFB20) is shared with FlipSwitch.Flip (docs/RVA_FOLDING.md).
+            if (!Il2CppRealType.Is<ROT_Tarot>(__instance)) return;
             if (__instance == null || NetGate.IsApplying) return;
             EnvEmit.Read(PuzzleType.ROT_Tarot, __instance);
         }

@@ -78,6 +78,7 @@ namespace SyncRADation.Networking
         public GameObject GetLocalPlayer() => _localPlayer;
         public void SetLocalPlayer(GameObject go) { _localPlayer = go; }
 
+        // Subscriber lists of the Connected/Disconnected events: registered once by domains, persistent by design.
         private static Action _connected;
         private static Action _disconnected;
 
@@ -99,14 +100,28 @@ namespace SyncRADation.Networking
             ConstructDomainHandlers();
         }
 
-        /// <summary>Transport: connected peers for sequenced avatar sends.</summary>
-        internal System.Collections.Generic.IEnumerable<NetPeer> ConnectedPeers()
+        private NetPeer[] _connectedPeersCache = Array.Empty<NetPeer>();
+        private bool _connectedPeersDirty = true;
+
+        /// <summary>
+        /// Transport: handshaken peers for sequenced avatar sends. A cached array (rebuilt only when a peer connects,
+        /// handshakes, leaves or the session stops): called at 30 Hz per send, so no iterator / list garbage.
+        /// Safe to iterate while the roster mutates (a rebuild swaps in a new array).
+        /// </summary>
+        internal NetPeer[] ConnectedPeers()
         {
-            foreach (var kvp in _peers)
+            if (_connectedPeersDirty)
             {
-                if (_readyPeers.Contains(kvp.Key))
-                    yield return kvp.Value;
+                var list = new List<NetPeer>(_readyPeers.Count);
+                foreach (var kvp in _peers)
+                {
+                    if (_readyPeers.Contains(kvp.Key))
+                        list.Add(kvp.Value);
+                }
+                _connectedPeersCache = list.ToArray();
+                _connectedPeersDirty = false;
             }
+            return _connectedPeersCache;
         }
 
         /// <summary>Peer for a handshaken player id (pre-handshake peers are never returned).</summary>
@@ -218,6 +233,7 @@ namespace SyncRADation.Networking
         public void StartHost(int port)
         {
             StopNetwork();
+            SessionReset.RunAll(SessionReset.ReasonStart);
             if (port < 1 || port > 65535)
             {
                 StatusText = "Invalid port " + port;
@@ -248,6 +264,8 @@ namespace SyncRADation.Networking
             }
             _sessionPlayerIds.Add(0);
             _handshakeComplete = true;
+            try { PartySaveService.OnSessionStart(); }
+            catch (Exception ex) { Guard.Swallow("PartySave.OnSessionStart", ex); }
             StatusText = "Hosting on port " + port + " (0/" + (PluginInfo.MaxPlayers - 1) + " clients)";
             ModRuntime.Log?.Msg("[Network] Hosting on port " + port + " maxPlayers=" + PluginInfo.MaxPlayers
                 + " schema=" + NetSchema.Hash.ToString("X8"));
@@ -256,6 +274,7 @@ namespace SyncRADation.Networking
         public void ConnectToHost(string address, int port)
         {
             StopNetwork();
+            SessionReset.RunAll(SessionReset.ReasonStart);
             address = (address ?? "").Trim();
             if (address.Length == 0 || port < 1 || port > 65535)
             {
@@ -288,6 +307,7 @@ namespace SyncRADation.Networking
             // Client initially connects with unknown playerId; host will assign in handshake
             _peers.Clear();
             _peerToId.Clear();
+            _connectedPeersDirty = true;
             _connectStartedAt = Time.realtimeSinceStartup;
             StatusText = "Connecting to " + address + ":" + port;
             ModRuntime.Log?.Msg("[Network] Connecting to " + address + ":" + port);
@@ -307,7 +327,9 @@ namespace SyncRADation.Networking
             _stopPending = false;
             _stopReason = "";
             _connectStartedAt = 0f;
+            bool wasLive = _handshakeComplete;
             _readyPeers.Clear();
+            _connectedPeersDirty = true;
             _peerConnectedAt.Clear();
             _loggedGateDrops.Clear();
             _localPlayer = null;
@@ -336,10 +358,13 @@ namespace SyncRADation.Networking
             try { Patches.EventZonePatch.OnSceneChanged(); } catch (Exception e) { Guard.Swallow(e); }
             try { SceneFollowService.Reset(); } catch (Exception e) { Guard.Swallow(e); }
             try { Patches.DialoguerGate.ClearFlavor(); } catch (Exception e) { Guard.Swallow(e); }
+            // Every registered static session value (Sync/SessionReset): the explicit resets above stay (idempotent).
+            SessionReset.RunAll(SessionReset.ReasonStop);
             _handshakeComplete = false;
             _vitalTimer = 0f;
             _peers.Clear();
             _peerToId.Clear();
+            _connectedPeersDirty = true;
             _sessionPlayerIds.Clear();
             _peerScenes.Clear();
             _unicastPlayerId = -1;
@@ -365,7 +390,11 @@ namespace SyncRADation.Networking
 
             _role = NetworkRole.Offline;
             StatusText = string.IsNullOrEmpty(stopReason) ? "Offline" : "Offline - " + stopReason;
-            RestoreLocalControl();
+            // Only undo session effects when a session was actually live: StartHost / ConnectToHost call StopNetwork
+            // first, and forcing gameState = play / timeScale = 1 there would un-pause a menu or inventory the player
+            // opened (F2 is used from the pause menu).
+            if (wasLive)
+                RestoreLocalControl();
         }
 
         static void RestoreLocalControl()
@@ -699,6 +728,7 @@ namespace SyncRADation.Networking
 
                 // Not in the session/roster until its Handshake passes (pre-handshake gating).
                 _peers[playerId] = peer;
+                _connectedPeersDirty = true;
                 _peerToId[peer] = playerId;
                 _peerConnectedAt[playerId] = Time.realtimeSinceStartup;
                 ModRuntime.Log?.Msg("[Network] Peer connected, assigned playerId=" + playerId + " (awaiting handshake)");
@@ -710,7 +740,9 @@ namespace SyncRADation.Networking
                     ProtocolVersion = PluginInfo.ProtocolVersion,
                     AssignedPlayerId = playerId,
                     SchemaHash = NetSchema.Hash,
-                    ModVersion = NetSchema.ModVersion
+                    ModVersion = NetSchema.ModVersion,
+                    GameBuildHash = GameBuild.Hash,
+                    GameBuild = GameBuild.Version
                 }.Serialize(w);
                 SendPeer(peer, w, DeliveryMethod.ReliableOrdered, NetChannels.Events);
             }
@@ -718,6 +750,7 @@ namespace SyncRADation.Networking
             {
                 // Client connected to host
                 _peers[0] = peer; // host is playerId 0
+                _connectedPeersDirty = true;
                 _peerToId[peer] = 0;
                 ModRuntime.Log?.Msg("[Network] Connected to host");
 
@@ -729,7 +762,9 @@ namespace SyncRADation.Networking
                     ProtocolVersion = PluginInfo.ProtocolVersion,
                     AssignedPlayerId = -1,
                     SchemaHash = NetSchema.Hash,
-                    ModVersion = NetSchema.ModVersion
+                    ModVersion = NetSchema.ModVersion,
+                    GameBuildHash = GameBuild.Hash,
+                    GameBuild = GameBuild.Version
                 }.Serialize(w);
                 SendPeer(peer, w, DeliveryMethod.ReliableOrdered, NetChannels.Events);
             }
@@ -757,6 +792,7 @@ namespace SyncRADation.Networking
                 ModRuntime.Log?.Msg("[Network] Player " + playerId + " disconnected: " + disconnectInfo.Reason
                     + (remoteReason.Length > 0 ? " (" + remoteReason + ")" : ""));
                 bool wasReady = _readyPeers.Remove(playerId);
+                _connectedPeersDirty = true;
                 _peerConnectedAt.Remove(playerId);
                 _proxyManager.DestroyProxy(playerId);
                 _peers.Remove(playerId);
@@ -812,6 +848,10 @@ namespace SyncRADation.Networking
             if (hs.SchemaHash != NetSchema.Hash)
                 return "Mod build mismatch: " + remote + " " + (hs.ModVersion ?? "?") + " (#" + hs.SchemaHash.ToString("X8")
                     + ") vs local " + NetSchema.ModVersion + " (#" + NetSchema.Hash.ToString("X8") + ")";
+            // Hash 0 = that side could not fingerprint its game files: nothing to compare.
+            if (hs.GameBuildHash != 0 && GameBuild.Hash != 0 && hs.GameBuildHash != GameBuild.Hash)
+                return "Game build mismatch: " + remote + " " + (hs.GameBuild ?? "?") + " (#" + hs.GameBuildHash.ToString("X8")
+                    + ") vs local " + GameBuild.Version + " (#" + GameBuild.Hash.ToString("X8") + ") - both players need the same SIGNALIS version";
             return null;
         }
 
@@ -838,7 +878,9 @@ namespace SyncRADation.Networking
             if (_role == NetworkRole.Host)
             {
                 if (senderId < 1) return;
-                if (!_readyPeers.Add(senderId))
+                bool newlyReady = _readyPeers.Add(senderId);
+                if (newlyReady) _connectedPeersDirty = true;
+                if (!newlyReady)
                 {
                     // A repeated Handshake must not retrigger roster/dump work.
                     if (_loggedGateDrops.Add("hs:" + senderId))
@@ -883,6 +925,7 @@ namespace SyncRADation.Networking
             ModRuntime.Log?.Msg("[Network] Host assigned playerId=" + _localPlayerId);
 
             _readyPeers.Add(0);
+            _connectedPeersDirty = true;
             _handshakeComplete = true;
             _connectStartedAt = 0f;
             _lastStateTime = Time.time;

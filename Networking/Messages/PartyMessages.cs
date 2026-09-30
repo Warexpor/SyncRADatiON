@@ -20,6 +20,8 @@ namespace SyncRADation.Networking
         public bool HasPos;
         public float PosX, PosY, PosZ;
         public string Room;
+        /// <summary>Revive: scene the teleport target stands in (skip the teleport when the reviver's scene differs). Wipe: scene the host reloads.</summary>
+        public string Scene;
         public int SaveSlot;
         public int SaveCounter;
         public long SaveStamp;
@@ -33,7 +35,8 @@ namespace SyncRADation.Networking
             w.Put(PosX);
             w.Put(PosY);
             w.Put(PosZ);
-            w.Put(Room ?? "");
+            NetWire.PutString(w, Room);
+            NetWire.PutString(w, Scene);
             w.Put(SaveSlot);
             w.Put(SaveCounter);
             w.Put(SaveStamp);
@@ -50,6 +53,7 @@ namespace SyncRADation.Networking
                 PosY = r.GetFloat(),
                 PosZ = r.GetFloat(),
                 Room = r.GetString(),
+                Scene = r.GetString(),
                 SaveSlot = r.GetInt(),
                 SaveCounter = r.GetInt(),
                 SaveStamp = r.GetLong()
@@ -96,7 +100,7 @@ namespace SyncRADation.Networking
         public void Serialize(NetDataWriter w)
         {
             w.Put(PlayerId);
-            w.Put(Room ?? "");
+            NetWire.PutString(w, Room);
         }
 
         public static PartyRoomMessage Deserialize(NetDataReader r) =>

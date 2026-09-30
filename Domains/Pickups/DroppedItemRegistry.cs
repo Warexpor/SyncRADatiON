@@ -158,6 +158,36 @@ namespace SyncRADation.ItemSystem
             catch { return 0; }
         }
 
+        /// <summary>True when the bag already holds a full stack (AddItem would silently drop everything).</summary>
+        public static bool StackAtCap(Items.itemlist id)
+        {
+            try
+            {
+                var item = InventoryManager.getItem(id);
+                if (item == null) return false;
+                if (SyncRADation.Networking.PartyKeyRing.IsKeyOrObject(item)) return false;
+                int max = item.maxNumber;
+                return max > 0 && CountInBag(id) >= max;
+            }
+            catch (System.Exception e) { Guard.Swallow(e); return false; }
+        }
+
+        /// <summary>Move a registered drop to a new key (and rename its GameObject). False when absent / newKey taken.</summary>
+        public static bool Rekey(int oldKey, int newKey)
+        {
+            if (oldKey == newKey) return false;
+            Drop drop;
+            if (!_worldItems.TryGetValue(oldKey, out drop)) return false;
+            if (_worldItems.ContainsKey(newKey)) return false;
+            _worldItems.Remove(oldKey);
+            drop.Key = newKey;
+            _worldItems[newKey] = drop;
+            try { if (drop.Go != null) drop.Go.name = NamePrefix + newKey; }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            if (_deferKey == oldKey) _deferKey = newKey;
+            return true;
+        }
+
         public static Interaction NearbyInteraction(Vector3 pos, float maxDist)
         {
             Interaction best = null;
@@ -273,9 +303,16 @@ namespace SyncRADation.ItemSystem
             {
                 if (PlayerState.gameState == PlayerState.gameStates.dialogue)
                 {
+                    // EndDialogue fires the dialogue's end callbacks, which can start a load of their own (and
+                    // IsApplying lets loads through): swallow loads for the duration, the follow's own load comes after.
                     SyncRADation.Sync.NetGate.BeginApply();
+                    SyncRADation.Networking.SceneFollowService.BeginSuppressLoads();
                     try { Dialoguer.EndDialogue(); }
-                    finally { SyncRADation.Sync.NetGate.EndApply(); }
+                    finally
+                    {
+                        SyncRADation.Networking.SceneFollowService.EndSuppressLoads();
+                        SyncRADation.Sync.NetGate.EndApply();
+                    }
                 }
             }
             catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] RestorePlayForLoad dialogue: " + ex.Message); }

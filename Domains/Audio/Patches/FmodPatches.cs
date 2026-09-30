@@ -23,7 +23,7 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(StudioEventEmitter __instance)
         {
-            FmodEmitterSync.HostEmit(__instance, true);
+            FmodEmitterSync.EmitterChanged(__instance, true);
         }
     }
 
@@ -33,7 +33,7 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(StudioEventEmitter __instance)
         {
-            FmodEmitterSync.HostEmit(__instance, false);
+            FmodEmitterSync.EmitterChanged(__instance, false);
         }
     }
 

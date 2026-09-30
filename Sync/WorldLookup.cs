@@ -22,6 +22,14 @@ namespace SyncRADation.Sync
             _sceneName = "";
         }
 
+        /// <summary>Drop the cached scan of one type (a component was instantiated after the scene scan).</summary>
+        public static void Invalidate<T>() where T : UnityEngine.Object
+        {
+            Type t = typeof(T);
+            _allByType.Remove(t);
+            _idByType.Remove(t);
+        }
+
         static void EnsureScene()
         {
             string name = "";
@@ -160,11 +168,10 @@ namespace SyncRADation.Sync
                 c = string.CompareOrdinal(sa, sb);
                 if (c != 0) return c < 0;
 
-                var pa = candidate.transform.position;
-                var pb = current.transform.position;
-                if (pa.x != pb.x) return pa.x < pb.x;
-                if (pa.y != pb.y) return pa.y < pb.y;
-                if (pa.z != pb.z) return pa.z < pb.z;
+                // Same scene, path and component slot: nothing stable separates them (position can differ per
+                // peer once things move), so keep the incumbent and say so.
+                PlaytestLog.Warn("World", "PreferOver tie on '" + WorldId.GetHierarchyPath(candidate.transform)
+                    + "' — keeping the first registered");
             }
             catch (Exception ex)
             {

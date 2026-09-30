@@ -49,6 +49,8 @@ namespace SyncRADation.ItemSystem
 
         public static int SanitizeStack(int n, bool unique) => DroppedItemRegistry.SanitizeStack(n, unique);
         public static int CountInBag(Items.itemlist id) => DroppedItemRegistry.CountInBag(id);
+        public static bool StackAtCap(Items.itemlist id) => DroppedItemRegistry.StackAtCap(id);
+        public static bool Rekey(int oldKey, int newKey) => DroppedItemRegistry.Rekey(oldKey, newKey);
         public static Interaction NearbyInteraction(Vector3 pos, float maxDist)
             => DroppedItemRegistry.NearbyInteraction(pos, maxDist);
         public static void SetHighlight(GameObject go, bool on) => DroppedItemRegistry.SetHighlight(go, on);

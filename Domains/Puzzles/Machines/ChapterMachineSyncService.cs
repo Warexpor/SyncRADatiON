@@ -44,16 +44,16 @@ namespace SyncRADation.Networking
                 case PuzzleType.PEN_Reaktor:
                 {
                     var x = (PEN_Reaktor)c;
-                    // Dig AG: durable mid-state is positions[4] (0..4) + current.
+                    // Dig AG: durable mid-state is positions[4] (0..4).
                     // Pack positions[0..3] → Int0 as 4×3-bit (mirror DET_ServiceLock);
-                    // Int1=current; Bool0=solved; Bool1=valid. Int2/Int3 unused.
+                    // Bool0=solved; Bool1=valid. Int1 stays 0: the rod-selection cursor (current) is per
+                    // player, and syncing it made two players overwrite each other's cursor. Int2/Int3 unused.
                     // Derived Dvalue/Dtemp/total/values recomputed by native Update from
                     // positions — packing them alone cannot stick. Initial AssetStudio
                     // positions [0,4,3,1] → Int0=736≠0 so IsProgressed holds from load.
-                    int pack = 0, cur = 0;
+                    int pack = 0;
                     try { pack = PackReaktorPositions(x); } catch (System.Exception e) { Guard.Swallow(e); }
-                    try { cur = x.current; } catch (System.Exception e) { Guard.Swallow(e); }
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.solved, x.valid, false, pack, cur, 0, 0, 0);
+                    entry = PuzzleDomainUtil.Mk(type, wid, x.solved, x.valid, false, pack, 0, 0, 0, 0);
                     return true;
                 }
                 case PuzzleType.LAB_Rings:
@@ -511,7 +511,7 @@ namespace SyncRADation.Networking
             // Mirror RES_Shrine / DoorLockEvent rising-edge: Invoke on BOTH live
             // MutateWorld AND FullRefresh (idempotent SetActive final-pose; no separate
             // onLoad). Protocol 10 unchanged (reuse PEN_Reaktor Bool0 solved).
-            // Dig AG: wire Int0 = positions[0..3] 4×3-bit pack; Int1 = current.
+            // Dig AG: wire Int0 = positions[0..3] 4×3-bit pack; Int1 unused (cursor is per player).
             // Derived Dvalue/Dtemp/total are NOT written — native Update recomputes
             // them from positions every frame. Prefer letting Update lerp Rods.
             bool was = false;
@@ -519,7 +519,6 @@ namespace SyncRADation.Networking
             try { x.valid = e.Bool1; } catch (System.Exception ex) { Guard.Swallow(ex); }
             int pack = SanitizeReaktorPack(e.Int0);
             ApplyReaktorPositions(x, pack);
-            try { x.current = e.Int1; } catch (System.Exception ex) { Guard.Swallow(ex); }
             if (!e.Bool0) return;
             if (!was)
             {

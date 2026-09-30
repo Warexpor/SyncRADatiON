@@ -22,6 +22,9 @@ namespace SyncRADation.Players
         private bool _hasFxState;
 
         public bool LastDead { get; private set; }
+        // Reliable AvatarOneShot(Die) and PlayerVital(dead) both announce a death and race each other.
+        private float _dieShotAt = -99f;
+        private const float DieDedupe = 2f;
 
         public RemotePlayerProxy(GameObject go, int playerId)
         {
@@ -73,6 +76,12 @@ namespace SyncRADation.Players
         {
             bool wasDead = LastDead;
             LastDead = dead;
+            if (!dead && wasDead)
+            {
+                // Drop anything the reliable one-shot path queued for the old life.
+                _fxTriggers &= ~(AnimTriggers.Die | AnimTriggers.Hurt);
+                AnimDriver?.DropPending(AnimTriggers.Die | AnimTriggers.Hurt);
+            }
 
             try
             {
@@ -81,7 +90,18 @@ namespace SyncRADation.Players
                 {
                     anim.SetBool("Dead", dead);
                     if (dead && !wasDead)
-                        anim.SetTrigger("Die");
+                    {
+                        // A one-shot Die that already fired owns this death: a second latched Die would
+                        // replay the death clip right after the revive.
+                        if (Time.unscaledTime - _dieShotAt > DieDedupe)
+                            anim.SetTrigger("Die");
+                    }
+                    else if (!dead && wasDead)
+                    {
+                        anim.ResetTrigger("Die");
+                        anim.ResetTrigger("Hurt");
+                        _dieShotAt = -99f;
+                    }
                 }
             }
             catch (System.Exception e) { Guard.Swallow(e); }
@@ -115,7 +135,9 @@ namespace SyncRADation.Players
         /// <summary>Reliable one-shot triggers (AvatarOneShot): same consumers as the pose-carried flags.</summary>
         public void ApplyOneShot(AnimTriggers triggers)
         {
+            if (LastDead) triggers &= ~(AnimTriggers.Die | AnimTriggers.Hurt); // already down: no second Die / Hurt
             if (triggers == AnimTriggers.None) return;
+            if ((triggers & AnimTriggers.Die) != 0) _dieShotAt = Time.unscaledTime;
             AnimDriver.AddOneShot(triggers);
             _fxTriggers |= triggers;
             _fxPending = true;

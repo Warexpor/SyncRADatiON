@@ -205,6 +205,8 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(Interaction __instance)
         {
+            // RVA 0x60E4D0 is shared with InteractionItem.reset, UnityDefaultGui.onEndedHandler, CheckIfInsideBeam.FixedUpdate (docs/RVA_FOLDING.md).
+            if (!Il2CppRealType.Is<Interaction>(__instance)) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected || __instance == null) return;
             if (!net.PuzzleSync.ShouldKillOverlay(__instance)) return;
@@ -234,6 +236,8 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static bool Prefix(Interaction __instance, bool _inRange)
         {
+            // RVA 0x2AA2B0 is shared with ten unrelated bool setters (docs/RVA_FOLDING.md).
+            if (!Il2CppRealType.Is<Interaction>(__instance)) return true;
             if (!_inRange || __instance == null) return true;
             var net = LanNetworkManager.Instance;
             if (net != null && net.IsConnected && net.PuzzleSync.ShouldKillOverlay(__instance))

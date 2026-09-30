@@ -56,18 +56,15 @@ namespace SyncRADation.Patches
                 // *consequences* the host may not have run (host in another room): author them on the host.
                 if (NetGate.Client && StorySyncService.ClientAuthorScope)
                     story.ClientForward(e);
+                // Host-run apply scopes (ApplyMultiCondition / ApplyCutscene / ApplyEventZone / party cheats) write
+                // consequence flags too: they are committed so out-of-room peers get them before the next full dump.
+                else if (NetGate.Host)
+                    NoteEntry(story, e);
                 return true;
             }
             if (NetGate.Host)
             {
-                switch (e.Kind)
-                {
-                    case 0: story.NoteBool(e.Key, e.BoolVal); break;
-                    case 1: story.NoteInt(e.Key, e.IntVal); break;
-                    case 2: story.NoteFloat(e.Key, e.FloatVal); break;
-                    case 3: story.NoteString(e.Key, e.StringVal); break;
-                    default: story.NoteVector(e.Key, new Vector3(e.FloatVal, e.VecY, e.VecZ)); break;
-                }
+                NoteEntry(story, e);
                 return true;
             }
             // Client write outside an apply scope. Book / EventScreen flags keep their immediate request;
@@ -81,6 +78,18 @@ namespace SyncRADation.Patches
             }
             story.ClientForward(e);
             return true;
+        }
+
+        internal static void NoteEntry(StorySyncService story, StoryFlagEntry e)
+        {
+            switch (e.Kind)
+            {
+                case 0: story.NoteBool(e.Key, e.BoolVal); break;
+                case 1: story.NoteInt(e.Key, e.IntVal); break;
+                case 2: story.NoteFloat(e.Key, e.FloatVal); break;
+                case 3: story.NoteString(e.Key, e.StringVal); break;
+                default: story.NoteVector(e.Key, new Vector3(e.FloatVal, e.VecY, e.VecZ)); break;
+            }
         }
 
         static bool IsInspectOrigin()
@@ -114,7 +123,13 @@ namespace SyncRADation.Patches
         public static void Finalizer()
         {
             StorySyncService.EndSuppressForward();
-            try { LanNetworkManager.Instance?.StorySync.ResetEndBase(); }
+            try
+            {
+                var story = LanNetworkManager.Instance?.StorySync;
+                story?.ResetEndBase();
+                // The live slot was replaced wholesale (wipe reload / Continue): clients get a FULL, authoritative dump.
+                if (NetGate.Host) story?.RequestFullSend();
+            }
             catch (System.Exception ex) { StorySyncService.WarnOnce("Load ResetEndBase", ex); }
         }
     }
@@ -127,9 +142,86 @@ namespace SyncRADation.Patches
         public static void Finalizer()
         {
             StorySyncService.EndSuppressForward();
-            try { LanNetworkManager.Instance?.StorySync.ResetEndBase(); }
+            try
+            {
+                var story = LanNetworkManager.Instance?.StorySync;
+                story?.ResetEndBase();
+                if (NetGate.Host) story?.RequestFullSend();
+            }
             catch (System.Exception ex) { StorySyncService.WarnOnce("NewGame ResetEndBase", ex); }
         }
+    }
+
+    // Per-player state that the game writes into SProgress *outside* SaveManager.Save/Load (unload-time OnDisable
+    // hooks, UI/minimap savers). Pseudo-C verified (Ghidra): EnemyController.OnDisable -> Save (hp / revives /
+    // pos / rot / queuedForRespawn / permadeath per enemy), RadioManager.OnDisable + SaveState (RadioFreq),
+    // HelpInputPrompts.OnDisable + SaveState (prompt flag), InventoryBase.SaveState (selectedSlot),
+    // MinimapPOIManager.Save / PersistentMinimapManager.Save (minimap discovery), SaveGameScreenshotMaker.save
+    // (screenshot path). A client scene change used to flood the host with these (client puppets' default
+    // permadeath=false could overwrite the host's dead state; radio freq became shared): never forward them.
+    // Shared puzzle/door *SaveState/OnDisable writers (Keypad3D, ConnectedDoors, CryoDoorLock, ...) are deliberately
+    // NOT here: those are world state the host dedupes (SameAsLocal) and commits.
+    [HarmonyPatch(typeof(EnemyController), "Save")]
+    public static class EnemySaveScopePatch
+    {
+        [HarmonyPrefix] public static void Prefix() => StorySyncService.BeginSuppressForward();
+        [HarmonyFinalizer] public static void Finalizer() => StorySyncService.EndSuppressForward();
+    }
+
+    [HarmonyPatch(typeof(RadioManager), "OnDisable")]
+    public static class RadioDisableScopePatch
+    {
+        [HarmonyPrefix] public static void Prefix() => StorySyncService.BeginSuppressForward();
+        [HarmonyFinalizer] public static void Finalizer() => StorySyncService.EndSuppressForward();
+    }
+
+    [HarmonyPatch(typeof(RadioManager), "SaveState")]
+    public static class RadioSaveScopePatch
+    {
+        [HarmonyPrefix] public static void Prefix() => StorySyncService.BeginSuppressForward();
+        [HarmonyFinalizer] public static void Finalizer() => StorySyncService.EndSuppressForward();
+    }
+
+    [HarmonyPatch(typeof(HelpInputPrompts), "OnDisable")]
+    public static class HelpPromptsDisableScopePatch
+    {
+        [HarmonyPrefix] public static void Prefix() => StorySyncService.BeginSuppressForward();
+        [HarmonyFinalizer] public static void Finalizer() => StorySyncService.EndSuppressForward();
+    }
+
+    [HarmonyPatch(typeof(HelpInputPrompts), "SaveState")]
+    public static class HelpPromptsSaveScopePatch
+    {
+        [HarmonyPrefix] public static void Prefix() => StorySyncService.BeginSuppressForward();
+        [HarmonyFinalizer] public static void Finalizer() => StorySyncService.EndSuppressForward();
+    }
+
+    [HarmonyPatch(typeof(InventoryBase), "SaveState")]
+    public static class InventoryBaseSaveScopePatch
+    {
+        [HarmonyPrefix] public static void Prefix() => StorySyncService.BeginSuppressForward();
+        [HarmonyFinalizer] public static void Finalizer() => StorySyncService.EndSuppressForward();
+    }
+
+    [HarmonyPatch(typeof(MinimapPOIManager), "Save")]
+    public static class MinimapPoiSaveScopePatch
+    {
+        [HarmonyPrefix] public static void Prefix() => StorySyncService.BeginSuppressForward();
+        [HarmonyFinalizer] public static void Finalizer() => StorySyncService.EndSuppressForward();
+    }
+
+    [HarmonyPatch(typeof(PersistentMinimapManager), "Save")]
+    public static class PersistentMinimapSaveScopePatch
+    {
+        [HarmonyPrefix] public static void Prefix() => StorySyncService.BeginSuppressForward();
+        [HarmonyFinalizer] public static void Finalizer() => StorySyncService.EndSuppressForward();
+    }
+
+    [HarmonyPatch(typeof(SaveGameScreenshotMaker), "save")]
+    public static class ScreenshotSaveScopePatch
+    {
+        [HarmonyPrefix] public static void Prefix() => StorySyncService.BeginSuppressForward();
+        [HarmonyFinalizer] public static void Finalizer() => StorySyncService.EndSuppressForward();
     }
 
     // END_Manager: Add* and the direct static writes (NPC_Tracker, InteractiveLockSingle, PlayerState heal,
@@ -151,8 +243,11 @@ namespace SyncRADation.Patches
         [HarmonyPatch(nameof(END_Manager.CalculatePlaystyle))]
         public static bool PrefixCalculatePlaystyle()
         {
-            // Host owns playstyle inputs; client receives them via StoryCommit.
-            if (NetGate.IsApplying || !NetGate.Live) return true;
+            // CalculatePlaystyle mutates Circle/Death from the local per-player GlobalStats and is only called from
+            // Finale.determineEnding (Ghidra). The host runs it once; clients must NOT recompute, including inside
+            // the DetermineEnding apply scope: they already hold the host's post-calculation END values
+            // (StoryCommit sent from the determineEnding postfix) and only replay the presentation.
+            if (!NetGate.Live) return true;
             return !NetGate.Client;
         }
 
@@ -184,22 +279,34 @@ namespace SyncRADation.Patches
         }
     }
 
-    // Ending start is party-wide: host broadcasts (after a fresh commit), a client asks the host.
+    // Ending start is party-wide: the host runs the native determineEnding FIRST (it calls CalculatePlaystyle, which
+    // mutates Circle/Death), then a postfix broadcasts the final END values + verdict; a client asks the host.
+    // `once` (per Finale) means a second call is a native no-op, so only the call that actually ran broadcasts.
     [HarmonyPatch(typeof(Finale), nameof(Finale.determineEnding))]
     public static class FinaleDetermineEndingPatch
     {
         [HarmonyPrefix]
-        public static bool Prefix()
+        public static bool Prefix(Finale __instance, out bool __state)
         {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
+            __state = false;
+            if (NetGate.IsApplying || !NetGate.Party) return true;
             var net = LanNetworkManager.Instance;
             if (NetGate.Host)
             {
-                net.StorySync.HostBroadcastEnding(net);
+                try { __state = __instance != null && !__instance.once; }
+                catch (Exception e) { Guard.Swallow(e); __state = true; }
                 return true;
             }
             net.SendInteractionRequest(0, InteractionKind.InspectFlag, 100 + (int)StoryCmd.DetermineEnding);
             return false;
+        }
+
+        [HarmonyPostfix]
+        public static void Postfix(bool __state)
+        {
+            if (!__state || !NetGate.Host || NetGate.IsApplying) return;
+            var net = LanNetworkManager.Instance;
+            net.StorySync.HostBroadcastEnding(net);
         }
     }
 
@@ -209,7 +316,7 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static bool Prefix()
         {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
+            if (NetGate.IsApplying || !NetGate.Party) return true;
             var net = LanNetworkManager.Instance;
             if (NetGate.Host)
             {
@@ -230,8 +337,17 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static void Prefix(string cheat)
         {
-            if (NetGate.IsApplying || !NetGate.Live) return;
-            LanNetworkManager.Instance.StorySync.OnScriptedCheat(cheat);
+            if (!NetGate.Party) return;
+            var story = LanNetworkManager.Instance.StorySync;
+            // A cheat run inside a replayed presentation (goToPenny on a client) must not relay again, but it must
+            // stamp the dedupe window: the host's own PartyCheat relay of the same goto / sethp arrives right after
+            // and would otherwise run it a second time on this peer.
+            if (NetGate.IsApplying)
+            {
+                story.StampPartyCheat(cheat);
+                return;
+            }
+            story.OnScriptedCheat(cheat);
         }
     }
 
@@ -263,6 +379,9 @@ namespace SyncRADation.Patches
     public static class InventoryGetCountPatch
     {
         static bool _counting;
+
+        /// <summary>SessionReset: re-entrancy flag, cleared in case an exception path ever left it set.</summary>
+        internal static void ResetSession() => _counting = false;
 
         [HarmonyPostfix]
         public static void Postfix(AnItem item, ref int __result)
@@ -340,7 +459,7 @@ namespace SyncRADation.Patches
             // otherwise box twice but only remove once. Put reserves the bag copy up front.
             if (!StorageTxn.TryBegin(put, item, enumVal, ref n)) return false;
             LanNetworkManager.Instance.SendInteractionRequest(
-                0,
+                unchecked((ulong)StorageTxn.CurrentTxn),
                 put ? InteractionKind.StoragePut : InteractionKind.StorageTake,
                 enumVal,
                 n);
@@ -429,7 +548,58 @@ namespace SyncRADation.Patches
             _flavorId = 0;
         }
 
-        public static bool Start(int dialogueId)
+        // --- Re-entrancy (finding 1) ---------------------------------------------------------------------
+        // Dialoguer.StartDialogue(int) and (DialoguerDialogues) share RVA 0x42AF20, and the callback overloads share
+        // 0x426320 (script.json): two detours on one native function would run both prefixes per call, the second
+        // HostDialogueStart(id) returning false inside its dedupe window and skipping the native body on the host.
+        // Only the int overloads are patched now (the enum overloads are the same machine code, so the one detour
+        // covers them) and this depth guard makes any nested start of the same id a pass-through regardless.
+        static int _depth;
+        static int _depthId;
+        static float _depthAt;
+
+        // Dialogue callbacks (StartDialogue(int, DialoguerCallback)) of a client-initiated start: the client only
+        // *requests* the start, so the callback is kept and handed to the replayed start from the host.
+        static DialoguerCallback _pendingCb;
+        static int _pendingCbId;
+        static float _pendingCbAt;
+
+        public static DialoguerCallback TakeCallback(int dialogueId)
+        {
+            var cb = _pendingCb;
+            bool ok = cb != null && _pendingCbId == dialogueId && Time.unscaledTime - _pendingCbAt < 15f;
+            _pendingCb = null;
+            _pendingCbId = 0;
+            return ok ? cb : null;
+        }
+
+        static int _localEnd;
+        /// <summary>Scope: this peer alone leaves the dialogue (damage cancel); never forwarded to the host / party.</summary>
+        public static void BeginLocalEnd() => _localEnd++;
+        public static void EndLocalEnd() { if (_localEnd > 0) _localEnd--; }
+
+        public static bool Start(int dialogueId, DialoguerCallback callback, out bool entered)
+        {
+            entered = false;
+            if (_depth > 0 && _depthId == dialogueId && Time.unscaledTime - _depthAt < 2f)
+                return true;
+            bool run = StartCore(dialogueId, callback);
+            if (run)
+            {
+                _depth++;
+                _depthId = dialogueId;
+                _depthAt = Time.unscaledTime;
+                entered = true;
+            }
+            return run;
+        }
+
+        public static void Exit(bool entered)
+        {
+            if (entered && _depth > 0) _depth--;
+        }
+
+        static bool StartCore(int dialogueId, DialoguerCallback callback)
         {
             if (NetGate.IsApplying)
             {
@@ -439,7 +609,8 @@ namespace SyncRADation.Patches
                 ClearFlavor();
                 return true;
             }
-            if (!NetGate.Live) return true;
+            // Host with nobody connected is vanilla: no dedupe window, no broadcast, no bookkeeping.
+            if (!NetGate.Party) return true;
             if (LocalInspect.DialoguerFlavor(dialogueId) || LocalInspect.InspectScreen())
             {
                 _flavorId = dialogueId;
@@ -461,13 +632,19 @@ namespace SyncRADation.Patches
                 return true;
             }
             PlaytestLog.Event("Story", "request Dialoguer " + dialogueId);
+            if (callback != null)
+            {
+                _pendingCb = callback;
+                _pendingCbId = dialogueId;
+                _pendingCbAt = Time.unscaledTime;
+            }
             LanNetworkManager.Instance.SendInteractionRequest(0, InteractionKind.DialogueStart, dialogueId);
             return false;
         }
 
         public static bool Continue(int choice)
         {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
+            if (NetGate.IsApplying || !NetGate.Party) return true;
             if (_flavorActive || LocalInspect.InspectScreen())
             {
                 if (_flavorId == (int)DialoguerDialogues.useItemDialogue)
@@ -493,7 +670,8 @@ namespace SyncRADation.Patches
 
         public static bool End()
         {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
+            if (NetGate.IsApplying || !NetGate.Party) return true;
+            if (_localEnd > 0) return true; // damage cancel: only this peer leaves the dialogue
             if (_flavorActive || LocalInspect.InspectScreen())
             {
                 _flavorActive = false;
@@ -537,29 +715,18 @@ namespace SyncRADation.Patches
         }
     }
 
+    // Only the int overloads: the DialoguerDialogues overloads are the same native functions (see DialoguerGate).
     [HarmonyPatch(typeof(Dialoguer), nameof(Dialoguer.StartDialogue), new[] { typeof(int) })]
     public static class DialoguerStartIntPatch
     {
         [HarmonyPrefix]
-        public static bool Prefix(int dialogueId) => DialoguerGate.Start(dialogueId);
+        public static bool Prefix(int dialogueId, out bool __state) => DialoguerGate.Start(dialogueId, null, out __state);
 
         // Flavor sticky set in Start — clear if native throws after Prefix returned true.
         [HarmonyFinalizer]
-        public static void Finalizer(Exception __exception)
+        public static void Finalizer(Exception __exception, bool __state)
         {
-            if (__exception != null) DialoguerGate.ClearFlavor();
-        }
-    }
-
-    [HarmonyPatch(typeof(Dialoguer), nameof(Dialoguer.StartDialogue), new[] { typeof(DialoguerDialogues) })]
-    public static class DialoguerStartEnumPatch
-    {
-        [HarmonyPrefix]
-        public static bool Prefix(DialoguerDialogues dialogue) => DialoguerGate.Start((int)dialogue);
-
-        [HarmonyFinalizer]
-        public static void Finalizer(Exception __exception)
-        {
+            DialoguerGate.Exit(__state);
             if (__exception != null) DialoguerGate.ClearFlavor();
         }
     }
@@ -568,26 +735,24 @@ namespace SyncRADation.Patches
     public static class DialoguerStartIntCbPatch
     {
         [HarmonyPrefix]
-        public static bool Prefix(int dialogueId) => DialoguerGate.Start(dialogueId);
+        public static bool Prefix(int dialogueId, DialoguerCallback callback, out bool __state) =>
+            DialoguerGate.Start(dialogueId, callback, out __state);
 
         [HarmonyFinalizer]
-        public static void Finalizer(Exception __exception)
+        public static void Finalizer(Exception __exception, bool __state)
         {
+            DialoguerGate.Exit(__state);
             if (__exception != null) DialoguerGate.ClearFlavor();
         }
     }
 
-    [HarmonyPatch(typeof(Dialoguer), nameof(Dialoguer.StartDialogue), new[] { typeof(DialoguerDialogues), typeof(DialoguerCallback) })]
-    public static class DialoguerStartEnumCbPatch
+    // BlackSleekGuiSubs listens to the LOCAL player's damage and ends the dialogue through Dialoguer.EndDialogue,
+    // which the End gate would forward (DialogueEnd ends it for everyone). Damage only takes this peer out.
+    [HarmonyPatch(typeof(BlackSleekGuiSubs), "CancelDialogueOnDamageReceived")]
+    public static class CancelDialogueOnDamagePatch
     {
-        [HarmonyPrefix]
-        public static bool Prefix(DialoguerDialogues dialogue) => DialoguerGate.Start((int)dialogue);
-
-        [HarmonyFinalizer]
-        public static void Finalizer(Exception __exception)
-        {
-            if (__exception != null) DialoguerGate.ClearFlavor();
-        }
+        [HarmonyPrefix] public static void Prefix() => DialoguerGate.BeginLocalEnd();
+        [HarmonyFinalizer] public static void Finalizer() => DialoguerGate.EndLocalEnd();
     }
 
     [HarmonyPatch(typeof(Dialoguer), nameof(Dialoguer.ContinueDialogue), new[] { typeof(int) })]

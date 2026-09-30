@@ -20,7 +20,7 @@ namespace SyncRADation.Patches
                 try { if (__instance.cutscene == null) return false; } catch (System.Exception e) { Guard.Swallow(e); }
                 return true;
             }
-            if (!NetGate.Live) return true;
+            if (!NetGate.Party) return true;
             if (LocalInspect.AirlockCinematic(__instance.gameObject)) return true;
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             InteractionSyncService.RememberSkip(id);
@@ -28,7 +28,8 @@ namespace SyncRADation.Patches
             try { running = __instance.cutscene != null && !__instance.completed; } catch (System.Exception e) { Guard.Swallow(e); }
             if (NetGate.Host)
             {
-                LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.CutsceneSkip, id, 0, "");
+                // Host skipped natively in its own cutscene: it counted any END effects of the skip events.
+                LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.CutsceneSkip, id, 0, StoryWire.HostCounted);
                 return running;
             }
             LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.CutsceneSkip);
@@ -42,7 +43,23 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static bool Prefix(CutsceneManager __instance)
         {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
+            if (!NetGate.Party) return true;
+            if (NetGate.IsApplying)
+            {
+                // A client replaying the host's DetermineEnding runs Finale.determineEnding natively, which starts the
+                // ending cutscene; the host's CutsceneStart for it usually arrived first and is already running.
+                if (StorySyncService.InEndingApply && __instance != null)
+                {
+                    try
+                    {
+                        ulong eid = WorldId.FromGameObject(__instance.gameObject);
+                        if (InteractionSyncService.StartedHere(__instance) || InteractionSyncService.StartedRecently(eid))
+                            return false;
+                    }
+                    catch (System.Exception e) { Guard.Swallow(e); }
+                }
+                return true;
+            }
             if (__instance == null) return true;
             if (LocalInspect.AirlockCinematic(__instance.gameObject)) return true;
             try { if (__instance.completed) return false; } catch (System.Exception e) { Guard.Swallow(e); }
@@ -54,7 +71,14 @@ namespace SyncRADation.Patches
             // duplicate, so the requester never played it and repeatable cutscenes stayed dead.
             if (NetGate.Host)
             {
-                InteractionSyncService.RememberStart(id);
+                // A client request (ApplyCutscene) may have started it inside the dedupe window: a second native
+                // StartCutscene has no already-started guard and would run a second coroutine. The earlier start
+                // already broadcast, so just swallow this one.
+                if (!InteractionSyncService.RememberStart(id))
+                {
+                    PlaytestLog.Event("Story", "host StartCutscene dup id=" + id.ToString("X16"));
+                    return false;
+                }
                 LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.CutsceneStart, id, 0, "");
                 return true;
             }
@@ -66,7 +90,7 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(CutsceneManager __instance)
         {
-            if (__instance == null || !NetGate.Live) return;
+            if (__instance == null || !NetGate.Party) return;
             if (LocalInspect.AirlockCinematic(__instance.gameObject)) return;
             try
             {
@@ -83,7 +107,7 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static bool Prefix()
         {
-            if (!NetGate.Live) return true;
+            if (!NetGate.Party) return true;
             try
             {
                 var all = AirlockCinematic.AllTitles();
@@ -194,13 +218,15 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static bool Prefix(CutsceneCut __instance)
         {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
-            if (__instance == null) return true;
+            // CutsceneCut.Proceed shares RVA 0x516A00 with END_Boss.StartBattle and XmlSerializationWriter.TopLevelElement
+            // (script.json, identical code folding): the detour also fires for those, with a foreign `this`.
+            if (!Il2CppRealType.Is<CutsceneCut>(__instance)) return true;
+            if (NetGate.IsApplying || !NetGate.Party) return true;
             if (LocalInspect.AirlockCinematic(__instance.gameObject)) return true;
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             if (NetGate.Host)
             {
-                LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.CutsceneProceed, id, 0, "");
+                LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.CutsceneProceed, id, 0, StoryWire.HostCounted);
                 return true;
             }
             LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.CutsceneProceed);

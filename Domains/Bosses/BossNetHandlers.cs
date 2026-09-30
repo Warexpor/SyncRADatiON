@@ -14,6 +14,7 @@ namespace SyncRADation.Networking
             _net = net ?? throw new System.ArgumentNullException(nameof(net));
         }
 
+        // Persistent on purpose: serialized size of an empty snapshot struct, a pure cache that never depends on session state.
         private static int _snapBytes;
 
         static int SnapshotBytes()

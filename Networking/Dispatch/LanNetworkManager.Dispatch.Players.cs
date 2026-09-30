@@ -43,6 +43,9 @@ namespace SyncRADation.Networking
             case NetMessageType.ItemPickedUp:
             {
                 var pickMsg = ItemPickedUpMessage.Deserialize(reader);
+                // Host is the only author of a floor-item claim; a client may only retire its own drop.
+                if (_role == NetworkRole.Host && !DroppedItemHandlers.AcceptClientPickedUp(ref pickMsg, senderId))
+                    return true;
                 DroppedItemHandlers.HandleItemPickedUp(pickMsg);
                 if (_role == NetworkRole.Host)
                 {
@@ -51,6 +54,12 @@ namespace SyncRADation.Networking
                     pickMsg.Serialize(w);
                     RelayRaw(w, DeliveryMethod.ReliableOrdered, senderId);
                 }
+                return true;
+            }
+            case NetMessageType.DropRekey:
+            {
+                var rekey = DropRekeyMessage.Deserialize(reader);
+                if (_role != NetworkRole.Host) DroppedItemHandlers.HandleDropRekey(rekey); // host-authored only
                 return true;
             }
             case NetMessageType.FriendlyFire:
@@ -71,6 +80,15 @@ namespace SyncRADation.Networking
                 var dp = DeathPolicyMessage.Deserialize(reader);
                 if (_role == NetworkRole.Host) dp.SenderPlayerId = senderId;
                 CombatHandlers.HandleDeathPolicy(dp);
+                if (_role == NetworkRole.Host && dp.Kind == DeathKind.ClientDowned)
+                {
+                    // Relay (3+ players): every other client learns at once that this one is down, instead of waiting
+                    // for its next 5 Hz vital. Reliable + ordered like the original. Stamped with the real sender id.
+                    var w = new NetDataWriter();
+                    w.Put((byte)NetMessageType.DeathPolicy);
+                    dp.Serialize(w);
+                    RelayRaw(w, DeliveryMethod.ReliableOrdered, senderId);
+                }
                 return true;
             }
             case NetMessageType.PartyLife:

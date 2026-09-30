@@ -9,28 +9,39 @@ using SyncRADation.Sync;
 namespace SyncRADation.Patches
 {
     /// <summary>
-    /// Host (or offline solo host) load: the session now runs from that slot's last party save.
-    /// Reset the party key ring to that save's snapshot, claimed uniques and floor drops so a
-    /// wipe reload does not keep state the save never had. Clients keep their own saves untouched.
+    /// A real native load (SaveManager.loading was true on entry; otherwise native Load is a no-op): a hosted
+    /// session now runs from that slot's last party save. Reset the party key ring to that save's snapshot,
+    /// claimed uniques and floor drops so a wipe reload does not keep state the save never had. Clients keep
+    /// their own saves untouched. Solo play: two int writes, nothing else.
     /// </summary>
     [HarmonyPatch(typeof(SaveManager), nameof(SaveManager.Load))]
     public static class SaveManagerLoadPatch
     {
-        [HarmonyPostfix]
-        public static void Postfix()
+        [HarmonyPrefix]
+        public static void Prefix(out bool __state)
         {
+            __state = HostReload.LoadWillRun();
+        }
+
+        [HarmonyPostfix]
+        public static void Postfix(bool __state)
+        {
+            if (!__state) return; // native Load returned immediately: nothing was loaded
             var net = ModRuntime.Network;
             if (net != null && net.Role == NetworkRole.Client) return;
             try
             {
+                bool wipe = HostReload.OnLoadFinished();
+                if (!NetGate.Host)
+                {
+                    PartySaveService.NoteSoloLoad();
+                    return;
+                }
                 PartySaveService.OnHostLoaded();
-                if (!NetGate.Host) return;
-                PartyKeyRing.Import(PartySaveService.RingForCurrent());
-                PartyKeyRing.Broadcast();
-                DroppedItemManager.ClearAll();
-                ItemPickupPatches.ResetDropClaims();
-                net.PickupSync.Reset();
-                PlaytestLog.Event("PartySave", "host load — ring/claims/floor drops reset");
+                HostReload.ResetHostWorldState(net);
+                PlaytestLog.Event("PartySave", "host load — ring/claims/floor drops reset" + (wipe ? " (wipe reload)" : ""));
+                if (wipe)
+                    SessionReset.RunAll(SessionReset.ReasonWipe);
             }
             catch (System.Exception ex)
             {
@@ -39,7 +50,10 @@ namespace SyncRADation.Patches
         }
     }
 
-    /// <summary>Host save = party save: stamp a token, snapshot the key ring, tell clients to snapshot their bags.</summary>
+    /// <summary>
+    /// Host save = party save: stamp a token, snapshot the key ring, tell clients to snapshot their bags.
+    /// Solo: remembers the slot in memory only (no token, no file write).
+    /// </summary>
     [HarmonyPatch(typeof(SaveManager), nameof(SaveManager.Save))]
     public static class SaveManagerSavePatch
     {
@@ -50,14 +64,50 @@ namespace SyncRADation.Patches
             if (net != null && net.Role == NetworkRole.Client) return;
             try
             {
+                HostReload.NoteSlotBound();
+                if (!NetGate.Host)
+                {
+                    PartySaveService.NoteSoloSave();
+                    return;
+                }
                 var token = PartySaveService.OnHostSaved();
-                if (NetGate.Host)
-                    net.PartyHandlers.SendPartySave(token, 0);
+                net.PartyHandlers.SendPartySave(token, 0);
             }
             catch (System.Exception ex)
             {
                 ModRuntime.Log?.Warning("[PartySave] Save postfix failed: " + ex.Message);
             }
+        }
+    }
+
+    /// <summary>New game: the run has no save yet. Forget the previous token; the next level load is the start scene.</summary>
+    [HarmonyPatch(typeof(SaveManager), nameof(SaveManager.NewGame))]
+    public static class SaveManagerNewGamePatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix()
+        {
+            try
+            {
+                PartySaveService.OnNewGame();
+                HostReload.NoteNewGame();
+            }
+            catch (System.Exception ex)
+            {
+                ModRuntime.Log?.Warning("[PartySave] NewGame postfix failed: " + ex.Message);
+            }
+        }
+    }
+
+    /// <summary>Records the level the game loads right after NewGame: where a wipe of a never-saved run restarts.</summary>
+    [HarmonyPatch(typeof(AsyncLoader), nameof(AsyncLoader.LoadLevel), new[] { typeof(string) })]
+    public static class AsyncLoaderNewGameSceneCapture
+    {
+        [HarmonyPostfix]
+        public static void Postfix(string target)
+        {
+            try { HostReload.NoteLevelLoad(target); }
+            catch (System.Exception ex) { Guard.Swallow("DeathPatches.NewGameScene", ex); }
         }
     }
 

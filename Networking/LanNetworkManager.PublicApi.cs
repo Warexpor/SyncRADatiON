@@ -48,6 +48,8 @@ namespace SyncRADation.Networking
 
         public ushort AllocateItemIndex() => DroppedItemHandlers.AllocateItemIndex();
 
+        public bool DropOverflow(Items.itemlist item, int count) => DroppedItemHandlers.DropOverflow(item, count);
+
         public void DumpDroppedItems() => DroppedItemHandlers.DumpDroppedItems();
 
         public bool TryDropCurrentItem() => DroppedItemHandlers.TryDropCurrentItem();

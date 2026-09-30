@@ -49,7 +49,13 @@ namespace SyncRADation.Networking
         BossHit = 62,
         /// <summary>Client → host: authoritative enemy side effect (stomp Kill, push, burn, wake).</summary>
         EnemyAction = 63,
-        _Highest = 63
+        // 67-69: Puzzles / Doors / Audio domain.
+        /// <summary>Client → host: a world StudioEventEmitter the client triggered locally (host relays to the other clients).</summary>
+        FmodEmitterRequest = 67,
+        // 64-66, 68-72: reserved for other domains. 73-75: pickups / inventory / combat.
+        /// <summary>Host → all: a departed peer's floor drop moved into the host key namespace.</summary>
+        DropRekey = 73,
+        _Highest = 73
     }
 
     public enum InteractionKind : byte
@@ -239,6 +245,10 @@ namespace SyncRADation.Networking
         /// <summary>Build/schema fingerprint (assembly version + message/enum id lists). See NetSchema.</summary>
         public uint SchemaHash;
         public string ModVersion;
+        /// <summary>Hash of the game build (Application.version + Unity version + GameAssembly.dll head/tail). See GameBuild.</summary>
+        public uint GameBuildHash;
+        /// <summary>Human-readable game build label for reject messages / F2 (e.g. "1.0.3 / Unity 2021.3.x").</summary>
+        public string GameBuild;
 
         public void Serialize(NetDataWriter w)
         {
@@ -246,6 +256,8 @@ namespace SyncRADation.Networking
             w.Put(AssignedPlayerId);
             w.Put(SchemaHash);
             NetWire.PutString(w, ModVersion);
+            w.Put(GameBuildHash);
+            NetWire.PutString(w, GameBuild);
         }
 
         public static HandshakeMessage Deserialize(NetDataReader r)
@@ -255,7 +267,9 @@ namespace SyncRADation.Networking
                 ProtocolVersion = r.GetInt(),
                 AssignedPlayerId = r.GetInt(),
                 SchemaHash = r.GetUInt(),
-                ModVersion = r.GetString()
+                ModVersion = r.GetString(),
+                GameBuildHash = r.GetUInt(),
+                GameBuild = r.GetString()
             };
         }
     }
@@ -475,6 +489,9 @@ namespace SyncRADation.Networking
         public ushort StartBone;
         public float[] Eulers; // Count * 3, Count = Eulers.Length / 3
 
+        /// <summary>Largest bone count Deserialize accepts in one chunk.</summary>
+        public const int MaxChunkBones = 1023;
+
         public int Count => Eulers != null ? Eulers.Length / 3 : 0;
 
         public void Serialize(NetDataWriter w)
@@ -482,7 +499,13 @@ namespace SyncRADation.Networking
             w.Put(SenderPlayerId);
             w.Put(TotalBones);
             w.Put(StartBone);
+            // Reader accepts 1..MaxChunkBones; a longer chunk would leave count*3 ushorts unread and desync the stream.
             int count = Count;
+            if (count > MaxChunkBones)
+            {
+                NetWire.WarnOnce("bonepose", "BonePose chunk of " + count + " bones clamped to " + MaxChunkBones);
+                count = MaxChunkBones;
+            }
             w.Put((ushort)count);
             for (int i = 0; i < count * 3; i++)
                 w.Put(PlayerStateMessage.EncodeAngle(Eulers[i]));
@@ -497,7 +520,7 @@ namespace SyncRADation.Networking
                 StartBone = r.GetUShort()
             };
             int count = r.GetUShort();
-            if (count > 0 && count < 1024)
+            if (count > 0 && count <= MaxChunkBones)
             {
                 msg.Eulers = new float[count * 3];
                 for (int i = 0; i < msg.Eulers.Length; i++)
@@ -773,6 +796,8 @@ namespace SyncRADation.Networking
         public ushort ItemEnum;
         public int Count;
         public bool GrantToReceiver;
+        /// <summary>Player who took the drop (host-stamped for client-originated copies).</summary>
+        public byte ClaimerPlayerId;
 
         public void Serialize(NetDataWriter w)
         {
@@ -781,6 +806,7 @@ namespace SyncRADation.Networking
             w.Put(ItemEnum);
             w.Put(Count);
             w.Put(GrantToReceiver);
+            w.Put(ClaimerPlayerId);
         }
 
         public static ItemPickedUpMessage Deserialize(NetDataReader r)
@@ -791,9 +817,36 @@ namespace SyncRADation.Networking
                 LocalIndex = r.GetUShort(),
                 ItemEnum = r.GetUShort(),
                 Count = r.GetInt(),
-                GrantToReceiver = r.GetBool()
+                GrantToReceiver = r.GetBool(),
+                ClaimerPlayerId = r.GetByte()
             };
         }
+    }
+
+    /// <summary>Host → all: drop key (OldOwner,OldIndex) is now (NewOwner,NewIndex).</summary>
+    public struct DropRekeyMessage
+    {
+        public byte OldOwner;
+        public ushort OldIndex;
+        public byte NewOwner;
+        public ushort NewIndex;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(OldOwner);
+            w.Put(OldIndex);
+            w.Put(NewOwner);
+            w.Put(NewIndex);
+        }
+
+        public static DropRekeyMessage Deserialize(NetDataReader r) =>
+            new DropRekeyMessage
+            {
+                OldOwner = r.GetByte(),
+                OldIndex = r.GetUShort(),
+                NewOwner = r.GetByte(),
+                NewIndex = r.GetUShort()
+            };
     }
 
     public struct FriendlyFireMessage
@@ -1589,6 +1642,8 @@ namespace SyncRADation.Networking
         public byte Kind; // 0 = StudioEventEmitter, 1 = PlayOneShot path
         public float PosX, PosY, PosZ;
         public string Path;
+        /// <summary>Index of the StudioEventEmitter among the GameObject's StudioEventEmitters (serialized order, identical on every peer).</summary>
+        public byte Comp;
 
         public void Serialize(NetDataWriter w)
         {
@@ -1599,6 +1654,7 @@ namespace SyncRADation.Networking
             w.Put(PosY);
             w.Put(PosZ);
             NetWire.PutString(w, Path);
+            w.Put(Comp);
         }
 
         public static FmodEmitterMessage Deserialize(NetDataReader r) =>
@@ -1610,7 +1666,31 @@ namespace SyncRADation.Networking
                 PosX = r.GetFloat(),
                 PosY = r.GetFloat(),
                 PosZ = r.GetFloat(),
-                Path = r.GetString()
+                Path = r.GetString(),
+                Comp = r.GetByte()
+            };
+    }
+
+    /// <summary>Client → host: world emitter Play/Stop the client triggered itself. The host plays it and relays it as FmodEmitter to everyone but the sender.</summary>
+    public struct FmodEmitterRequestMessage
+    {
+        public long WorldId;
+        public bool Play;
+        public byte Comp;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(WorldId);
+            w.Put(Play);
+            w.Put(Comp);
+        }
+
+        public static FmodEmitterRequestMessage Deserialize(NetDataReader r) =>
+            new FmodEmitterRequestMessage
+            {
+                WorldId = r.GetLong(),
+                Play = r.GetBool(),
+                Comp = r.GetByte()
             };
     }
 }

@@ -163,14 +163,20 @@ namespace SyncRADation.Tests
         }
 
         [Fact]
-        public void Raw_unclamped_Room_strings_in_Party_messages_throw_at_write_time_when_absurdly_long()
+        public void Party_Room_and_Scene_strings_use_the_capped_writer_and_truncate_instead_of_throwing()
         {
-            // PartyLife/PartyRoom use w.Put(Room ?? "") directly instead of NetWire.PutString, so an over-long value is
-            // not truncated: LiteNetLib throws OverflowException inside Serialize (before anything is sent). Room names
-            // are short, so this is latent; pin it so a switch to PutString (truncate) shows up as a deliberate change.
+            // PartyLife/PartyRoom write Room (and PartyLife Scene) through NetWire.PutString: an absurdly long value is
+            // truncated to MaxString chars instead of throwing OverflowException inside Serialize.
             string tooLong = new string('r', 70000);
-            Assert.ThrowsAny<Exception>(() => WireFuzz.Write(new PartyRoomMessage { PlayerId = 7, Room = tooLong }));
-            Assert.ThrowsAny<Exception>(() => WireFuzz.Write(new PartyLifeMessage { Room = tooLong }));
+            var room = (PartyRoomMessage)WireFuzz.RoundTrip(new PartyRoomMessage { PlayerId = 7, Room = tooLong }, out var r1, out _);
+            Assert.Equal(NetWire.MaxString, room.Room.Length);
+            Assert.True(r1.EndOfData);
+
+            var life = (PartyLifeMessage)WireFuzz.RoundTrip(new PartyLifeMessage { Room = tooLong, Scene = tooLong, SaveSlot = 3 }, out var r2, out _);
+            Assert.Equal(NetWire.MaxString, life.Room.Length);
+            Assert.Equal(NetWire.MaxString, life.Scene.Length);
+            Assert.Equal(3, life.SaveSlot); // fields after the strings survive
+            Assert.True(r2.EndOfData);
 
             string ok = new string('r', NetWire.MaxString);
             var back = (PartyRoomMessage)WireFuzz.RoundTrip(new PartyRoomMessage { PlayerId = 7, Room = ok }, out var r, out _);
@@ -281,9 +287,8 @@ namespace SyncRADation.Tests
 
         // ------------------------------------------------------------------ known defect
 
-        [Fact(Skip = "KNOWN BUG (report): BonePoseMessage.Serialize does not clamp its bone count but Deserialize only reads 1..1023 bones. " +
-                     "A chunk with >= 1024 bones (Eulers.Length >= 3072) leaves count*3 ushorts unread -> stream desync. " +
-                     "Fix: clamp Count to 1023 in Serialize, or throw in Deserialize. Remove this Skip when fixed.")]
+        // Writer clamps to the reader's 1..1023 chunk so an oversized chunk cannot leave unread ushorts behind.
+        [Fact]
         public void BonePose_over_1023_bones_must_not_desync_the_stream()
         {
             var msg = new BonePoseMessage { SenderPlayerId = 1, TotalBones = 2000, StartBone = 0, Eulers = new float[1024 * 3] };

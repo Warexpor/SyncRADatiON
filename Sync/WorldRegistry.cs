@@ -47,6 +47,7 @@ namespace SyncRADation.Sync
                 map[id] = c;
                 return;
             }
+            if (existingComp == (Component)c) return;
             WorldLookup.NoteDuplicate(id, what, c, existingComp);
             if (WorldLookup.PreferOver(c, existingComp))
                 map[id] = c;
@@ -77,10 +78,16 @@ namespace SyncRADation.Sync
                         if (SyncRADation.Cheats.EntitySpawner.IsTemplateObject(e.gameObject)) continue;
                         ulong id = WorldId.FromGameObject(e.gameObject);
                         if (id == 0) continue;
+                        EnemyController before;
+                        Enemies.TryGetValue(id, out before);
                         Register(Enemies, id, e, "EnemyController");
                         EnemyController winner;
                         if (Enemies.TryGetValue(id, out winner) && winner == e)
+                        {
+                            // A replaced duplicate loses its reverse entry too.
+                            if (before != null && before != e) EnemyIds.Remove(before.GetInstanceID());
                             EnemyIds[e.GetInstanceID()] = id;
+                        }
                     }
                 }
 
@@ -148,8 +155,21 @@ namespace SyncRADation.Sync
         public static void RegisterEnemy(ulong id, EnemyController enemy)
         {
             if (id == 0 || enemy == null) return;
+            EnemyController old;
+            if (Enemies.TryGetValue(id, out old) && old != null && old != enemy)
+                EnemyIds.Remove(old.GetInstanceID());
             Enemies[id] = enemy;
             EnemyIds[enemy.GetInstanceID()] = id;
+            // Destroyed enemies never unregister: rebuild the reverse map from the live forward map once it
+            // has drifted, so it stays bounded by the live enemy set.
+            if (EnemyIds.Count > Enemies.Count + 64)
+            {
+                EnemyIds.Clear();
+                foreach (var kvp in Enemies)
+                {
+                    if (kvp.Value != null) EnemyIds[kvp.Value.GetInstanceID()] = kvp.Key;
+                }
+            }
         }
 
         /// <summary>WorldId cached at Rebuild/Register time. False for enemies the registry never saw.</summary>

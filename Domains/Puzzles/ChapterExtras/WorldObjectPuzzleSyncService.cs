@@ -14,7 +14,22 @@ namespace SyncRADation.Networking
         static readonly System.Collections.Generic.Dictionary<long, int> _checklistSeen
             = new System.Collections.Generic.Dictionary<long, int>();
 
-        public static void Reset() => _checklistSeen.Clear();
+        // Highest HP seen per wall creature this session (its undamaged HP). IsProgressed holds a creature that is
+        // below it, so partial damage survives a room remount, not only the dead state.
+        static readonly System.Collections.Generic.Dictionary<long, int> _wallMaxHp
+            = new System.Collections.Generic.Dictionary<long, int>();
+
+        public static void Reset()
+        {
+            _checklistSeen.Clear();
+            _wallMaxHp.Clear();
+        }
+
+        internal static bool WallDamaged(long wid, int hp)
+        {
+            int max;
+            return _wallMaxHp.TryGetValue(wid, out max) && hp < max;
+        }
 
         // Decompile MEM_ChecklistLogic: CheckItem(i) writes "x" into checklistBook.variables[i]; the list is
         // complete when every index 1..len-2 is "x" (then ArianeBusy off / ArianeReady on).
@@ -55,6 +70,8 @@ namespace SyncRADation.Networking
                     var x = (DET_WallCreature)c;
                     if (x.hitb == null) return false;
                     int hp = x.hitb.HP;
+                    int maxHp;
+                    if (!_wallMaxHp.TryGetValue(wid, out maxHp) || hp > maxHp) _wallMaxHp[wid] = hp;
                     entry = PuzzleDomainUtil.Mk(type, wid, hp < 1, false, false, hp, 0, 0, 0, 0);
                     return true;
                 }
@@ -135,8 +152,12 @@ namespace SyncRADation.Networking
         public static void ApplyWallCreature(DET_WallCreature x, PuzzleStateEntry e)
         {
             if (x == null || x.hitb == null) return;
-            // Damage only moves HP down: concurrent hits from several players merge as min().
-            if (e.Int0 < x.hitb.HP)
+            // Live: damage only moves HP down, concurrent hits from several players merge as min().
+            // Dump / held re-snap (not a live edge) is the host's settled state: set it exactly, so a
+            // heal / re-arm the host already did reaches late joiners and remounts.
+            int seenMax;
+            if (!_wallMaxHp.TryGetValue(e.WorldId, out seenMax) || e.Int0 > seenMax) _wallMaxHp[e.WorldId] = e.Int0;
+            if (e.Int0 < x.hitb.HP || (e.Int0 != x.hitb.HP && !PuzzleSyncService.LiveEdge))
                 x.hitb.HP = e.Int0;
         }
 

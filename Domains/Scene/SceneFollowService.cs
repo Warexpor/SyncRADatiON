@@ -15,6 +15,7 @@ namespace SyncRADation.Networking
             if (net == null || !net.IsConnected) return;
             if (string.IsNullOrEmpty(sceneName) || IsTransient(sceneName)) return;
             if (AlreadyRequested(sceneName) || AlreadyGoingTo(sceneName)) return;
+            if (!string.Equals(_requested, sceneName, System.StringComparison.Ordinal)) _retries = 0;
             NoteRequested(sceneName);
             net.SendSceneFollow(sceneName, true);
         }
@@ -115,9 +116,19 @@ namespace SyncRADation.Networking
         public const string DeadMenuScene = "DeadMenu";
         public const string EndCreditsScene = "EndCredits";
 
+        /// <summary>
+        /// "MainMenu" (SceneHelper.resetGame, StringLiteral_13696 -> index 13695) or "MainMenu2" (CreditsEnd,
+        /// StringLiteral_13714 -> index 13713): Ghidra string literals are off by one against stringliteral.json.
+        /// </summary>
+        public static bool IsMainMenu(string sceneName)
+        {
+            return !string.IsNullOrEmpty(sceneName)
+                && sceneName.StartsWith(MainMenuScene, System.StringComparison.Ordinal);
+        }
+
         public static bool IsMenuScene(string sceneName)
         {
-            return string.Equals(sceneName, MainMenuScene, System.StringComparison.Ordinal)
+            return IsMainMenu(sceneName)
                 || string.Equals(sceneName, DeadMenuScene, System.StringComparison.Ordinal)
                 || string.Equals(sceneName, EndCreditsScene, System.StringComparison.Ordinal)
                 || string.Equals(sceneName, "Credits", System.StringComparison.Ordinal);
@@ -131,7 +142,7 @@ namespace SyncRADation.Networking
 
         static bool HostStillInCredits(string requested)
         {
-            return string.Equals(requested, MainMenuScene, System.StringComparison.Ordinal)
+            return IsMainMenu(requested)
                 && string.Equals(HostSceneNow(), EndCreditsScene, System.StringComparison.Ordinal);
         }
 
@@ -139,6 +150,10 @@ namespace SyncRADation.Networking
         {
             // Menu scenes keep the last hp / charState statics: a dead hp there is not "the host is dying".
             if (IsMenuScene(HostSceneNow())) return false;
+            // Profile select / calibration and any other non-gameplay scene have no live player object: the stale
+            // hp / charState statics there are not "the host is dying".
+            try { if (PlayerState.player == null) return false; }
+            catch (System.Exception ex) { PlaytestLog.Warn("Scene", "player: " + ex.Message); }
             try { if (PlayerState.charState == PlayerState.charStates.dead) return true; }
             catch (System.Exception ex) { PlaytestLog.Warn("Scene", "charState: " + ex.Message); }
             try { if (PlayerState.hp <= 0) return true; }
@@ -164,7 +179,10 @@ namespace SyncRADation.Networking
 
         static string _queued;
         static float _queuedAt;
-        const float QueueTtl = 20f;
+        // The request waits for as long as the host stays busy (dual-box chapter loads and a death / respawn can each
+        // run past 30 s); it is only abandoned after this hard cap, and then the requester is pointed back at the
+        // host's scene instead of being left hanging.
+        const float QueueMaxWait = 90f;
 
         static void QueueRequest(string sceneName, string reason)
         {
@@ -183,10 +201,16 @@ namespace SyncRADation.Networking
                 _queued = null;
                 return;
             }
-            if (Time.unscaledTime - _queuedAt > QueueTtl)
+            if (!net.HasReadyPeers)
+            {
+                _queued = null; // the requester is gone
+                return;
+            }
+            if (Time.unscaledTime - _queuedAt > QueueMaxWait)
             {
                 PlaytestLog.Event("Scene", "drop stale queued peer '" + _queued + "'");
                 _queued = null;
+                ResendHostScene(net);
                 return;
             }
             if (HostBusyReason(_queued) != null) return;
@@ -195,6 +219,56 @@ namespace SyncRADation.Networking
             PlaytestLog.Event("Scene", "run queued peer '" + q + "'");
             TryApplyRequest(q);
         }
+
+        /// <summary>Tell everyone (a requester whose request was dropped included) which scene the host is actually in.</summary>
+        static void ResendHostScene(LanNetworkManager net)
+        {
+            try
+            {
+                string here = HostSceneNow();
+                if (IsTransient(here) || net == null || !net.IsConnected) return;
+                net.SendSceneFollow(here, false);
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+        }
+
+        // --- Client: re-ask when a blocked / queued request never produced a load --------------------------
+        const float RetryAfter = 25f;
+        const int MaxRetries = 2;
+        static int _retries;
+
+        public static void TickClient()
+        {
+            if (string.IsNullOrEmpty(_requested)) return;
+            var net = LanNetworkManager.Instance;
+            if (net == null || net.Role != NetworkRole.Client || !net.IsConnected) return;
+            if (Time.unscaledTime - _requestedAt < RetryAfter) return;
+            string scene = _requested;
+            if (string.Equals(HostSceneNow(), scene, System.StringComparison.Ordinal) || LocalIsTransient())
+            {
+                _requested = null;
+                _retries = 0;
+                return;
+            }
+            if (_retries >= MaxRetries)
+            {
+                PlaytestLog.Warn("Scene", "gave up re-requesting '" + scene + "'");
+                _requested = null;
+                _retries = 0;
+                return;
+            }
+            _retries++;
+            NoteRequested(scene);
+            PlaytestLog.Event("Scene", "re-request '" + scene + "' (attempt " + (_retries + 1) + ")");
+            net.SendSceneFollow(scene, true);
+        }
+
+        // Scope: loads are swallowed (even inside IsApplying). Used while a follow tears down a dialogue whose end
+        // callbacks could otherwise start a load of their own on the follower.
+        static int _suppressLoads;
+        public static bool LoadsSuppressed => _suppressLoads > 0;
+        public static void BeginSuppressLoads() => _suppressLoads++;
+        public static void EndSuppressLoads() { if (_suppressLoads > 0) _suppressLoads--; }
 
         public static bool LocalIsTransient()
         {
@@ -334,6 +408,8 @@ namespace SyncRADation.Networking
             _requestedAt = 0f;
             _queued = null;
             _queuedAt = 0f;
+            _retries = 0;
+            _suppressLoads = 0;
         }
 
         public static bool IsTransient(string sceneName)
@@ -377,7 +453,10 @@ namespace SyncRADation.Networking
             if (string.Equals(_pending, sceneName, System.StringComparison.Ordinal))
                 _pending = null;
             if (string.Equals(_requested, sceneName, System.StringComparison.Ordinal))
+            {
                 _requested = null;
+                _retries = 0;
+            }
         }
 
         public static string ResolveLevelName(int index)
@@ -415,7 +494,7 @@ namespace SyncRADation.Networking
             // gameStates.cutscene / PlayerState.cutscene / dialogue sticky on the follower.
             try { DroppedItemManager.RestorePlayForLoad(); }
             catch (System.Exception ex) { PlaytestLog.Warn("Scene", "RestorePlayForLoad: " + ex.Message); }
-            if (string.Equals(sceneName, MainMenuScene, System.StringComparison.Ordinal))
+            if (IsMainMenu(sceneName))
             {
                 // SceneHelper.resetGame / CreditsEnd run ResetNow before the menu load; a peer that is dragged
                 // there by the host never ran it.
