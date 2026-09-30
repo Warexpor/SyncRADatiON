@@ -16,6 +16,14 @@ namespace SyncRADation.Config
         public static MelonPreferences_Entry<bool> SyncWorldPickups;
         public static MelonPreferences_Entry<bool> SyncPlayerVitals;
         public static MelonPreferences_Entry<bool> VerboseLogging;
+        /// <summary>Host only: session capacity (host + clients). 2..8, default 4.</summary>
+        public static MelonPreferences_Entry<int> MaxPlayers;
+
+        public const int DefaultMaxPlayers = 4;
+        public const int MinMaxPlayers = 2;
+        public const int HardMaxPlayers = 8;
+        /// <summary>Seconds a downed player waits before respawning next to a living teammate.</summary>
+        public static MelonPreferences_Entry<float> DownedRespawnDelay;
 
         public static void Bind()
         {
@@ -34,11 +42,39 @@ namespace SyncRADation.Config
             VerboseLogging = Category.CreateEntry("VerboseLogging", false,
                 "OFF unless diagnosing. When true: FMOD Play/Stop, proxy clone/FX internals, incremental puzzle apply. Set in MelonPreferences.cfg under [SyncRADation] on BOTH installs.");
 
+            MaxPlayers = Category.CreateEntry("MaxPlayers", DefaultMaxPlayers,
+                "Host session capacity incl. host (2-8). Applies on next Host Game.");
+            if (MaxPlayers.Value < MinMaxPlayers || MaxPlayers.Value > HardMaxPlayers)
+                MaxPlayers.Value = System.Math.Max(MinMaxPlayers, System.Math.Min(HardMaxPlayers, MaxPlayers.Value));
+            DownedRespawnDelay = Category.CreateEntry("DownedRespawnDelay", 20f,
+                "Seconds a downed player (host or client) waits before respawning next to the nearest living teammate. The party wipes (host reloads its last save) only when everyone is down.");
+
             if (!SyncPuzzles.Value && ExperimentalPuzzles.Value)
                 SyncPuzzles.Value = true;
             ExperimentalPuzzles.Value = SyncPuzzles.Value;
         }
 
+        public static float DownedRespawnSeconds
+        {
+            get
+            {
+                float v = DownedRespawnDelay != null ? DownedRespawnDelay.Value : 20f;
+                return v < 1f ? 1f : (v > 600f ? 600f : v);
+            }
+        }
+
         public static bool PuzzlesEnabled => SyncPuzzles?.Value == true;
+
+        /// <summary>Clamped MaxPlayers (2..8); DefaultMaxPlayers before Bind().</summary>
+        public static int MaxPlayersClamped
+        {
+            get
+            {
+                int v = MaxPlayers != null ? MaxPlayers.Value : DefaultMaxPlayers;
+                if (v < MinMaxPlayers) v = MinMaxPlayers;
+                if (v > HardMaxPlayers) v = HardMaxPlayers;
+                return v;
+            }
+        }
     }
 }

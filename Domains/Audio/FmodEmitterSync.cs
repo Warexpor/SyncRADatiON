@@ -101,7 +101,9 @@ namespace SyncRADation.Networking
 
         public static void HostEmit(StudioEventEmitter emitter, bool play)
         {
-            if (emitter == null || !NetGate.Host || NetGate.IsApplying) return;
+            // On the host, IsApplying is only ever a client-originated apply (puzzle/door/interaction).
+            // Those world sounds must still fan out to every client, so the gate is not checked here.
+            if (emitter == null || !NetGate.Host) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
             ulong id = WorldId.FromGameObject(emitter.gameObject);
@@ -131,7 +133,7 @@ namespace SyncRADation.Networking
 
         public static void HostOneShot(string path, Vector3 pos)
         {
-            if (string.IsNullOrEmpty(path) || !NetGate.Host || NetGate.IsApplying) return;
+            if (string.IsNullOrEmpty(path) || !NetGate.Host) return;
             if (IsLocalOneShot(path)) return;
             if (IsSceneBed(path)) return;
             if (IsDoorSfxPath(path)) return;
@@ -180,12 +182,14 @@ namespace SyncRADation.Networking
         /// <summary>Shared host relay for world one-shots (string / Guid / Attached).</summary>
         public static void TryHostWorldOneShot(string path, Vector3 position)
         {
-            if (NetGate.IsApplying || !NetGate.Host) return;
+            if (!NetGate.Host) return;
             if (string.IsNullOrEmpty(path)) return;
             if (IsLocalOneShot(path)) return;
             if (IsDoorSfxPath(path)) return;
+            // Host's own nearby sounds stay local; a host-applied client action is relayed even next to the host.
             var player = PlayerState.player;
-            if (player != null && (player.transform.position - position).sqrMagnitude < 4f)
+            if (!NetGate.IsApplying && player != null
+                && (player.transform.position - position).sqrMagnitude < 4f)
                 return;
             HostOneShot(path, position);
         }

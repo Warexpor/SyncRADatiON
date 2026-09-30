@@ -1,5 +1,6 @@
 using LiteNetLib;
 using LiteNetLib.Utils;
+using SyncRADation.Config;
 
 namespace SyncRADation.Networking
 {
@@ -16,11 +17,16 @@ namespace SyncRADation.Networking
                 AvatarHandlers.HandleBonePose(BonePoseMessage.Deserialize(reader), senderId);
                 return true;
             case NetMessageType.PlayerVital:
-                AvatarHandlers.HandlePlayerVital(PlayerVitalMessage.Deserialize(reader), senderId);
+            {
+                var vital = PlayerVitalMessage.Deserialize(reader);
+                if (_role == NetworkRole.Host) vital.SenderPlayerId = senderId; // identity = peer map, not wire
+                AvatarHandlers.HandlePlayerVital(vital, senderId);
                 return true;
+            }
             case NetMessageType.DropItemSpawn:
             {
                 var dropMsg = DropItemSpawnMessage.Deserialize(reader);
+                if (_role == NetworkRole.Host) dropMsg.SenderID = (byte)senderId; // owner namespace of the item key
                 DroppedItemHandlers.HandleDropItemSpawn(dropMsg);
                 if (_role == NetworkRole.Host)
                 {
@@ -45,10 +51,33 @@ namespace SyncRADation.Networking
                 return true;
             }
             case NetMessageType.FriendlyFire:
-                CombatHandlers.HandleFriendlyFire(FriendlyFireMessage.Deserialize(reader), senderId);
+            {
+                var ff = FriendlyFireMessage.Deserialize(reader);
+                if (_role == NetworkRole.Host)
+                {
+                    // Host forwards FF to the target peer: refuse when FF is off or the claim is self/forged.
+                    if (ModConfig.FriendlyFire?.Value != true || ff.TargetPlayerId == senderId)
+                        return true;
+                    ff.AttackerPlayerId = senderId;
+                }
+                CombatHandlers.HandleFriendlyFire(ff, senderId);
                 return true;
+            }
             case NetMessageType.DeathPolicy:
-                CombatHandlers.HandleDeathPolicy(DeathPolicyMessage.Deserialize(reader));
+            {
+                var dp = DeathPolicyMessage.Deserialize(reader);
+                if (_role == NetworkRole.Host) dp.SenderPlayerId = senderId;
+                CombatHandlers.HandleDeathPolicy(dp);
+                return true;
+            }
+            case NetMessageType.PartyLife:
+                PartyHandlers.HandlePartyLife(PartyLifeMessage.Deserialize(reader), senderId);
+                return true;
+            case NetMessageType.PartySave:
+                PartyHandlers.HandlePartySave(PartySaveMessage.Deserialize(reader), senderId);
+                return true;
+            case NetMessageType.PartyRoom:
+                PartyHandlers.HandlePartyRoom(PartyRoomMessage.Deserialize(reader), senderId);
                 return true;
             default:
                 return false;

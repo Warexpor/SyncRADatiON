@@ -19,6 +19,7 @@ namespace SyncRADation.Networking
         internal void SendFriendlyFire(int targetPlayerId, float damage, Vector3 hitPos)
         {
             if (ModConfig.FriendlyFire?.Value != true) return;
+            if (PartyVitals.IsDown(targetPlayerId)) return; // downed players cannot be shot
 
             var msg = new FriendlyFireMessage
             {

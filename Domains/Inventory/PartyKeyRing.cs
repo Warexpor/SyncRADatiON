@@ -263,6 +263,29 @@ namespace SyncRADation.Networking
             catch { }
         }
 
+        /// <summary>Party save snapshot: copy of the ring (Key/Object enums).</summary>
+        public static ushort[] Export() => Snapshot();
+
+        /// <summary>
+        /// Party wipe / load: replace the ring with a saved snapshot (host) and forget bag
+        /// mirror bookkeeping. Caller broadcasts.
+        /// </summary>
+        public static void Import(ushort[] enums)
+        {
+            _keys.Clear();
+            _bagAttempt.Clear();
+            _bagEnsureAt.Clear();
+            if (enums != null)
+            {
+                for (int i = 0; i < enums.Length; i++)
+                {
+                    if (IsKeyOrObject((Items.itemlist)enums[i]))
+                        _keys.Add(enums[i]);
+                }
+            }
+            PlaytestLog.Event("KeyRing", "import count=" + _keys.Count);
+        }
+
         static ushort[] Snapshot()
         {
             var arr = new ushort[_keys.Count];

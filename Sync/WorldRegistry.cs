@@ -17,6 +17,38 @@ namespace SyncRADation.Sync
         public static int EnemyCount => Enemies.Count;
         public static int DoorCount => DoubleDoors.Count + ConnectedDoorMap.Count + SlidingDoors.Count;
 
+        private static float _lastRebuildAt = -999f;
+        private static string _lastRebuildScene = "";
+
+        /// <summary>
+        /// Rebuild only when the registry is older than maxAgeSeconds or the active scene changed.
+        /// A scene load used to rebuild 3-4x (ModRuntime, OnSceneChanged, handshake, dump).
+        /// </summary>
+        public static void RebuildIfStale(float maxAgeSeconds = 2f)
+        {
+            string scene = "";
+            try { scene = SceneManager.GetActiveScene().name ?? ""; } catch { }
+            float now = Time.realtimeSinceStartup;
+            if (scene == _lastRebuildScene && now - _lastRebuildAt < maxAgeSeconds)
+                return;
+            Rebuild();
+        }
+
+        static void Register<T>(Dictionary<ulong, T> map, ulong id, T c, string what) where T : Component
+        {
+            T existing;
+            Component existingComp;
+            // Component-typed compare: Unity fake-null does not survive a generic T == null.
+            if (!map.TryGetValue(id, out existing) || (existingComp = existing) == null)
+            {
+                map[id] = c;
+                return;
+            }
+            WorldLookup.NoteDuplicate(id, what, c, existingComp);
+            if (WorldLookup.PreferOver(c, existingComp))
+                map[id] = c;
+        }
+
         public static void Rebuild()
         {
             WorldLookup.Invalidate();
@@ -26,6 +58,8 @@ namespace SyncRADation.Sync
             SlidingDoors.Clear();
 
             _sceneName = SceneManager.GetActiveScene().name ?? "";
+            _lastRebuildScene = _sceneName;
+            _lastRebuildAt = Time.realtimeSinceStartup;
 
             try
             {
@@ -39,10 +73,7 @@ namespace SyncRADation.Sync
                         if (SyncRADation.Cheats.EntitySpawner.IsTemplateObject(e.gameObject)) continue;
                         ulong id = WorldId.FromGameObject(e.gameObject);
                         if (id == 0) continue;
-                        if (!Enemies.ContainsKey(id))
-                            Enemies[id] = e;
-                        else
-                            ModRuntime.Log?.Warning("[WorldRegistry] Enemy WorldId collision: " + WorldId.DebugLabel(id, e.transform));
+                        Register(Enemies, id, e, "EnemyController");
                     }
                 }
 
@@ -54,10 +85,7 @@ namespace SyncRADation.Sync
                         var d = doubles[i];
                         if (d == null) continue;
                         ulong id = WorldId.FromGameObject(d.gameObject);
-                        if (id != 0 && !DoubleDoors.ContainsKey(id))
-                            DoubleDoors[id] = d;
-                        else if (id != 0)
-                            ModRuntime.Log?.Warning("[WorldRegistry] Double door WorldId collision: " + WorldId.DebugLabel(id, d.transform));
+                        if (id != 0) Register(DoubleDoors, id, d, "Doorway_Double");
                     }
                 }
 
@@ -69,10 +97,7 @@ namespace SyncRADation.Sync
                         var c = connected[i];
                         if (c == null) continue;
                         ulong id = WorldId.FromGameObject(c.gameObject);
-                        if (id != 0 && !ConnectedDoorMap.ContainsKey(id))
-                            ConnectedDoorMap[id] = c;
-                        else if (id != 0)
-                            ModRuntime.Log?.Warning("[WorldRegistry] ConnectedDoor WorldId collision: " + WorldId.DebugLabel(id, c.transform));
+                        if (id != 0) Register(ConnectedDoorMap, id, c, "ConnectedDoors");
                     }
                 }
 
@@ -84,10 +109,7 @@ namespace SyncRADation.Sync
                         var s = sliding[i];
                         if (s == null) continue;
                         ulong id = WorldId.FromGameObject(s.gameObject);
-                        if (id != 0 && !SlidingDoors.ContainsKey(id))
-                            SlidingDoors[id] = s;
-                        else if (id != 0)
-                            ModRuntime.Log?.Warning("[WorldRegistry] Sliding door WorldId collision: " + WorldId.DebugLabel(id, s.transform));
+                        if (id != 0) Register(SlidingDoors, id, s, "EventSlidingDoor");
                     }
                 }
             }
@@ -112,6 +134,7 @@ namespace SyncRADation.Sync
             ConnectedDoorMap.Clear();
             SlidingDoors.Clear();
             _sceneName = "";
+            _lastRebuildScene = "";
         }
 
         public static void RegisterEnemy(ulong id, EnemyController enemy)

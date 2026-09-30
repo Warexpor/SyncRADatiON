@@ -1,6 +1,6 @@
 # SyncRADation — SIGNALIS Multiplayer Mod
 
-**Status:** v0.5.56 — protocol **v11**. Host-authoritative world/story + native presentation/FMOD. Dual-instance playtest required. Decompile: `~/Archive/Windows-Desktop/Dev/SIGNALIS DECOMPILED` (`~/Omarchy_Backup/Desktop/Dev/...` is gone on this machine).
+**Status:** v0.5.57 — protocol **v12**. Host-authoritative world/story + native presentation/FMOD. Dual-instance playtest required. Decompile: `~/Archive/Windows-Desktop/Dev/SIGNALIS DECOMPILED` (`~/Omarchy_Backup/Desktop/Dev/...` is gone on this machine).
 
 ## Product
 
@@ -17,7 +17,7 @@ LAN multiplayer MelonLoader mod for SIGNALIS (Unity IL2CPP / Unhollower-style Ma
 
 Walk up to a dropped prop for the native TAKE prompt (yes/no inspect, ammo count). There is no extra pickup key.
 
-## What is synced (0.5.56)
+## What is synced (0.5.57)
 
 | Area | Authority | Notes |
 |------|-----------|--------|
@@ -49,7 +49,7 @@ Bootstrap/                 # SyncRADationMod, ModRuntime, PluginInfo
 Networking/
   LanNetworkManager*.cs    # thin transport + HandlerRegistry + PublicApi
   Dispatch/                # TryDispatch* → domain NetHandlers
-  Messages/                # NetMessages (protocol 11)
+  Messages/                # NetMessages (protocol 12)
 Domains/
   Doors/ Enemies/ Bosses/ Story/ Scene/ Audio/
   Pickups/ Inventory/ Players/ Combat/ Puzzles/ Session/
@@ -66,7 +66,7 @@ UI/ Config/ Cheats/
 
 ## Protocol
 
-- **ProtocolVersion = 11** (PuzzleType 77 MED_Adler_EVdoors DoorL/DoorR local X; v10 retained)
+- **ProtocolVersion = 12** (handshake SchemaHash/ModVersion, PartyLife/PartySave/PartyRoom 40–42; v11 retained)
 - Port default `7777`, key `SyncRADation`
 - v6: full SProgress dump, UnityEvent presentation, FmodEmitter Play/Stop
 - v7: `PlayerRoster` (3+ peers), recycled client ids, join/resync dump to the requester only
@@ -74,6 +74,7 @@ UI/ Config/ Cheats/
 - v9: PuzzleType 64–72 (MusicBox…OpenableDrawer), `PuzzleStateEntry.Float1`, BossSnapshotNet Hp/Corrupt, END playstyle on StoryCommit, FMOD Guid/Attached/`fmod` one-shots, SceneManager.LoadScene gate
 - v10: PuzzleType 73–76 (GunCase, AraNest, LAB_RifleQuest, LOV_Microfiche) + client emit for SwingDoor/DoorwaySimple/StorageBox/KeyGrid/ArianePhotoCode
 - v11: PuzzleType 77 (`MED_Adler_EVdoors` DoorL/DoorR local X pose) + AdoptNativeSpawn template bank + death-bag ring Note
+- v12: handshake gains `SchemaHash` + `ModVersion`; `PartyLife`/`PartySave`/`PartyRoom` (NetMessageType 40–42): downed/revive/wipe + party-save snapshots; N-player hardening (Sequenced channel 1 for enemy/boss snapshots, handshake-gated sends)
 
 ## This machine (dual-instance, Linux + Proton)
 

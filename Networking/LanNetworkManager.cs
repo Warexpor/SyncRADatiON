@@ -45,9 +45,24 @@ namespace SyncRADation.Networking
         private string _localSceneName = "";
         private bool _sceneMismatch;
         private readonly List<int> _stalePeerIds = new List<int>(8);
+        /// <summary>Handshaken player ids (host: clients that passed Handshake; client: {0} once host handshake is OK).</summary>
+        private readonly HashSet<int> _readyPeers = new HashSet<int>();
+        private readonly Dictionary<int, float> _peerConnectedAt = new Dictionary<int, float>();
+        private readonly List<int> _timedOutPeers = new List<int>(4);
+        private readonly Dictionary<string, int> _tickFailures = new Dictionary<string, int>();
+        private readonly Dictionary<byte, int> _dispatchFailures = new Dictionary<byte, int>();
+        private readonly HashSet<string> _loggedGateDrops = new HashSet<string>();
+        private int _lastAssignedId; // round-robin cursor for AllocClientId (0 = none yet)
+        private float _connectStartedAt;
+        private bool _stopPending;
+        private string _stopReason = "";
+        private const float ConnectTimeoutSeconds = 12f;
+        private const float HandshakeTimeoutSeconds = 10f;
 
         public NetworkRole Role => _role;
         public bool IsConnected => _handshakeComplete && (_role == NetworkRole.Host || _peers.Count > 0);
+        /// <summary>True when at least one remote peer finished the handshake (host: a client; client: the host).</summary>
+        public bool HasReadyPeers => _handshakeComplete && _readyPeers.Count > 0;
         public int LocalPlayerId => _localPlayerId;
         public string StatusText { get; private set; } = "Offline";
         public bool SceneMismatch => _sceneMismatch;
@@ -88,12 +103,56 @@ namespace SyncRADation.Networking
         internal System.Collections.Generic.IEnumerable<NetPeer> ConnectedPeers()
         {
             foreach (var kvp in _peers)
-                yield return kvp.Value;
+            {
+                if (_readyPeers.Contains(kvp.Key))
+                    yield return kvp.Value;
+            }
         }
 
-        internal bool TryGetPeer(int playerId, out NetPeer peer) => _peers.TryGetValue(playerId, out peer);
+        /// <summary>Peer for a handshaken player id (pre-handshake peers are never returned).</summary>
+        internal bool TryGetPeer(int playerId, out NetPeer peer)
+        {
+            peer = null;
+            return _readyPeers.Contains(playerId) && _peers.TryGetValue(playerId, out peer);
+        }
 
-        internal bool HasPeer(int playerId) => _peers.ContainsKey(playerId);
+        internal bool HasPeer(int playerId) => _readyPeers.Contains(playerId) && _peers.ContainsKey(playerId);
+
+        internal bool IsPeerReady(int playerId) => _readyPeers.Contains(playerId);
+
+        /// <summary>Session ids (host + clients), ascending. For UI.</summary>
+        public List<int> GetSessionPlayerIdsSorted()
+        {
+            var ids = new List<int>(_sessionPlayerIds);
+            ids.Sort();
+            return ids;
+        }
+
+        public string GetPeerSceneName(int playerId)
+        {
+            if (playerId == _localPlayerId) return _localSceneName;
+            if (playerId == 0 && _role == NetworkRole.Client) return _hostSceneName;
+            string s;
+            return _peerScenes.TryGetValue(playerId, out s) ? s : "";
+        }
+
+        /// <summary>Round-trip ms to a remote peer (0 when unknown).</summary>
+        public int GetPeerPing(int playerId)
+        {
+            NetPeer peer;
+            return _peers.TryGetValue(playerId, out peer) && peer != null ? peer.Ping : 0;
+        }
+
+        /// <summary>Bytes available in one Sequenced packet (continuous state chunking). Fallback when no peer.</summary>
+        internal int StatePacketBudget()
+        {
+            foreach (var peer in ConnectedPeers())
+            {
+                if (peer != null && peer.ConnectionState == ConnectionState.Connected)
+                    return peer.GetMaxSinglePacketSize(DeliveryMethod.Sequenced) - 8;
+            }
+            return 1000;
+        }
 
         internal bool HandshakeComplete => _handshakeComplete;
 
@@ -128,40 +187,120 @@ namespace SyncRADation.Networking
 
         internal void NoteAvatarStateReceived() => _lastStateTime = Time.time;
 
+        /// <summary>Two channels (events 0 / continuous state 1). AutoRecycle: handlers only read inside the callback.</summary>
+        private NetManager NewNetManager()
+        {
+            return new NetManager(this)
+            {
+                UnconnectedMessagesEnabled = true,
+                DisconnectTimeout = 5000,
+                ChannelsCount = NetChannels.Count,
+                AutoRecycle = true
+            };
+        }
+
+        private void AbortNetwork(string status)
+        {
+            StopNetwork();
+            StatusText = status;
+            ModRuntime.Log?.Warning("[Network] " + status);
+        }
+
         public void StartHost(int port)
         {
             StopNetwork();
-            _role = NetworkRole.Host;
-            _localPlayerId = 0;
-            _net = new NetManager(this) { UnconnectedMessagesEnabled = true, DisconnectTimeout = 5000 };
-            if (!_net.Start(port))
+            if (port < 1 || port > 65535)
             {
-                StatusText = "Failed to bind port " + port;
+                StatusText = "Invalid port " + port;
+                ModRuntime.Log?.Warning("[Network] " + StatusText);
+                return;
+            }
+            try
+            {
+                _role = NetworkRole.Host;
+                _localPlayerId = 0;
+                _net = NewNetManager();
+                if (!_net.Start(port))
+                {
+                    _net = null;
+                    _role = NetworkRole.Offline;
+                    StatusText = "Failed to bind port " + port;
+                    ModRuntime.Log?.Warning("[Network] " + StatusText);
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                _net = null;
                 _role = NetworkRole.Offline;
+                StatusText = "Host failed: " + ex.Message;
+                ModRuntime.Log?.Error("[Network] StartHost failed: " + ex);
                 return;
             }
             _sessionPlayerIds.Add(0);
             _handshakeComplete = true;
-            StatusText = "Hosting on port " + port;
-            ModRuntime.Log?.Msg("[Network] Hosting on port " + port);
+            StatusText = "Hosting on port " + port + " (0/" + (PluginInfo.MaxPlayers - 1) + " clients)";
+            ModRuntime.Log?.Msg("[Network] Hosting on port " + port + " maxPlayers=" + PluginInfo.MaxPlayers
+                + " schema=" + NetSchema.Hash.ToString("X8"));
         }
 
         public void ConnectToHost(string address, int port)
         {
             StopNetwork();
-            _role = NetworkRole.Client;
-            _net = new NetManager(this) { UnconnectedMessagesEnabled = true, DisconnectTimeout = 5000 };
-            _net.Start();
-            var peer = _net.Connect(address, port, PluginInfo.ConnectionKey);
+            address = (address ?? "").Trim();
+            if (address.Length == 0 || port < 1 || port > 65535)
+            {
+                StatusText = "Invalid address or port";
+                ModRuntime.Log?.Warning("[Network] Connect refused: address='" + address + "' port=" + port);
+                return;
+            }
+            try
+            {
+                _role = NetworkRole.Client;
+                _net = NewNetManager();
+                if (!_net.Start())
+                {
+                    AbortNetwork("Connect failed: could not open UDP socket");
+                    return;
+                }
+                var peer = _net.Connect(address, port, PluginInfo.ConnectionKey);
+                if (peer == null)
+                {
+                    AbortNetwork("Connect failed: bad address " + address + ":" + port);
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Error("[Network] ConnectToHost failed: " + ex);
+                AbortNetwork("Connect failed: " + ex.Message);
+                return;
+            }
             // Client initially connects with unknown playerId; host will assign in handshake
             _peers.Clear();
             _peerToId.Clear();
+            _connectStartedAt = Time.realtimeSinceStartup;
             StatusText = "Connecting to " + address + ":" + port;
             ModRuntime.Log?.Msg("[Network] Connecting to " + address + ":" + port);
         }
 
+        /// <summary>Defer StopNetwork to Update (after PollEvents) so leftover events in the batch cannot hit a torn-down session.</summary>
+        private void RequestStop(string reason)
+        {
+            if (_stopPending) return;
+            _stopPending = true;
+            _stopReason = reason ?? "";
+        }
+
         public void StopNetwork()
         {
+            string stopReason = _stopReason;
+            _stopPending = false;
+            _stopReason = "";
+            _connectStartedAt = 0f;
+            _readyPeers.Clear();
+            _peerConnectedAt.Clear();
+            _loggedGateDrops.Clear();
             _localPlayer = null;
             _proxyManager.DestroyAll();
             DoorSyncService.Reset();
@@ -195,6 +334,7 @@ namespace SyncRADation.Networking
             _sessionPlayerIds.Clear();
             _peerScenes.Clear();
             _unicastPlayerId = -1;
+            _lastAssignedId = 0;
             _sendTimer = 0f;
             _sceneMismatch = false;
             _hostSceneName = "";
@@ -215,7 +355,7 @@ namespace SyncRADation.Networking
             }
 
             _role = NetworkRole.Offline;
-            StatusText = "Offline";
+            StatusText = string.IsNullOrEmpty(stopReason) ? "Offline" : "Offline - " + stopReason;
             RestoreLocalControl();
         }
 
@@ -248,20 +388,49 @@ namespace SyncRADation.Networking
 
         public void Update()
         {
-            _net?.PollEvents();
+            if (_net != null)
+            {
+                try { _net.PollEvents(); }
+                catch (Exception ex) { TickFailed("poll", ex); }
+            }
+
+            if (_stopPending)
+            {
+                string reason = _stopReason;
+                StopNetwork();
+                StatusText = string.IsNullOrEmpty(reason) ? "Offline" : "Offline - " + reason;
+                return;
+            }
+
+            TickConnectTimeout();
+            TickHandshakeTimeouts();
 
             if (!IsConnected || !_handshakeComplete)
                 return;
 
-            SessionHandlers.TickPendingDumps();
-            DoorSyncService.Tick();
-            _enemySync.TickHost(this);
+            // Native Interaction TAKE on cloned ItemPickups. No mod E bind.
+            if (Input.GetKeyDown(KeyCode.G))
+            {
+                try { DroppedItemHandlers.TryDropCurrentItem(); }
+                catch (Exception ex) { ModRuntime.Log?.Warning("[Drop] G crashed: " + ex.Message); }
+            }
+
+            // Solo host (no handshaken peer yet): nothing to sync, leave the game vanilla.
+            if (!HasReadyPeers)
+                return;
+
+            // Each domain tick is isolated: one throwing must not skip the others this frame.
+            try { SessionHandlers.TickPendingDumps(); } catch (Exception ex) { TickFailed("dumps", ex); }
+            try { DoorSyncService.Tick(); } catch (Exception ex) { TickFailed("door", ex); }
+            try { _enemySync.TickHost(this); } catch (Exception ex) { TickFailed("enemy", ex); }
             if (ModConfig.PuzzlesEnabled)
-                _puzzleSync.Tick(this);
-            _bossSync.TickHost(this);
-            _pickupSync.TickHost(this);
-            _storySync.TickHost(this);
-            _storageSync.TickHost(this);
+            {
+                try { _puzzleSync.Tick(this); } catch (Exception ex) { TickFailed("puzzle", ex); }
+            }
+            try { _bossSync.TickHost(this); } catch (Exception ex) { TickFailed("boss", ex); }
+            try { _pickupSync.TickHost(this); } catch (Exception ex) { TickFailed("pickup", ex); }
+            try { _storySync.TickHost(this); } catch (Exception ex) { TickFailed("story", ex); }
+            try { _storageSync.TickHost(this); } catch (Exception ex) { TickFailed("storage", ex); }
 
             // Vitals ~5 Hz for remote damage/death presentation
             if (ModConfig.SyncPlayerVitals?.Value == true)
@@ -270,15 +439,8 @@ namespace SyncRADation.Networking
                 if (_vitalTimer >= 0.2f)
                 {
                     _vitalTimer = 0f;
-                    AvatarHandlers.SendLocalVital();
+                    try { AvatarHandlers.SendLocalVital(); } catch (Exception ex) { TickFailed("vital", ex); }
                 }
-            }
-
-            // Native Interaction TAKE on cloned ItemPickups. No mod E bind.
-            if (Input.GetKeyDown(KeyCode.G))
-            {
-                try { DroppedItemHandlers.TryDropCurrentItem(); }
-                catch (Exception ex) { ModRuntime.Log?.Warning("[Drop] G crashed: " + ex.Message); }
             }
 
             _sendTimer += Mathf.Min(Time.deltaTime, 0.1f);
@@ -297,12 +459,77 @@ namespace SyncRADation.Networking
             if (player == null)
                 return;
 
-            var msg = AvatarHandlers.BuildPlayerStateMessage(player);
-            AvatarHandlers.SendPlayerState(msg);
-            HitchTrace.Send();
+            try
+            {
+                var msg = AvatarHandlers.BuildPlayerStateMessage(player);
+                AvatarHandlers.SendPlayerState(msg);
+                HitchTrace.Send();
+            }
+            catch (Exception ex) { TickFailed("avatar", ex); }
 
             // Host also needs to relay states it received from clients — but that's handled
             // in OnReceive: the host stores the state and re-sends to all other peers
+        }
+
+        /// <summary>Throttled per-domain failure log: first occurrence in full, then every 300th.</summary>
+        private void TickFailed(string name, Exception ex)
+        {
+            int n;
+            _tickFailures.TryGetValue(name, out n);
+            n++;
+            _tickFailures[name] = n;
+            if (n == 1 || n % 300 == 0)
+                ModRuntime.Log?.Error("[Network] tick '" + name + "' threw (x" + n + "): " + ex);
+        }
+
+        private void TickConnectTimeout()
+        {
+            if (_role != NetworkRole.Client || _handshakeComplete || _connectStartedAt <= 0f)
+                return;
+            if (Time.realtimeSinceStartup - _connectStartedAt < ConnectTimeoutSeconds)
+                return;
+            AbortNetwork("Connect timed out (no host answer / handshake)");
+        }
+
+        /// <summary>Host: a peer that never completes the handshake (old mod build, junk sender) is dropped.</summary>
+        private void TickHandshakeTimeouts()
+        {
+            if (_role != NetworkRole.Host || _peerConnectedAt.Count == 0) return;
+            float now = Time.realtimeSinceStartup;
+            _timedOutPeers.Clear();
+            foreach (var kvp in _peerConnectedAt)
+            {
+                if (now - kvp.Value >= HandshakeTimeoutSeconds)
+                    _timedOutPeers.Add(kvp.Key);
+            }
+            for (int i = 0; i < _timedOutPeers.Count; i++)
+            {
+                int pid = _timedOutPeers[i];
+                _peerConnectedAt.Remove(pid);
+                NetPeer peer;
+                if (_peers.TryGetValue(pid, out peer) && !_readyPeers.Contains(pid))
+                {
+                    ModRuntime.Log?.Warning("[Network] Player " + pid + " handshake timed out — disconnecting");
+                    RejectPeer(peer, "Handshake timed out (mod build mismatch?)");
+                }
+            }
+        }
+
+        /// <summary>Disconnect one peer with a reason string the remote shows in its UI (DisconnectInfo.AdditionalData).</summary>
+        private void RejectPeer(NetPeer peer, string reason)
+        {
+            try
+            {
+                var w = new NetDataWriter();
+                w.Put(reason ?? "");
+                peer.Disconnect(w);
+            }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[Network] reject send failed: " + ex.Message);
+                try { peer.Disconnect(); }
+                catch (Exception ex2) { ModRuntime.Log?.Warning("[Network] disconnect failed: " + ex2.Message); }
+            }
         }
 
         public void LateUpdate()
@@ -310,6 +537,25 @@ namespace SyncRADation.Networking
             _proxyManager.LateUpdate();
         }
 
+        private bool SendPeer(NetPeer peer, NetDataWriter writer, DeliveryMethod method, byte channel)
+        {
+            if (peer == null || peer.ConnectionState != ConnectionState.Connected) return false;
+            try
+            {
+                peer.Send(writer, channel, method);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                // e.g. TooBigPacketException on a Sequenced send: log once per method/channel, keep the rest of the fan-out.
+                string key = "send:" + method + ":" + channel;
+                if (_loggedGateDrops.Add(key))
+                    ModRuntime.Log?.Error("[Network] send failed (" + method + " ch" + channel + ", " + writer.Length + " bytes): " + ex.Message);
+                return false;
+            }
+        }
+
+        /// <summary>Host → every handshaken peer except excludePlayerId. Pre-handshake peers never receive relays.</summary>
         public void RelayRaw(NetDataWriter writer, DeliveryMethod method, int excludePlayerId)
         {
             if (_role != NetworkRole.Host) return;
@@ -317,17 +563,16 @@ namespace SyncRADation.Networking
             {
                 if (kvp.Key == excludePlayerId) continue;
                 if (kvp.Key == _localPlayerId) continue;
-                var peer = kvp.Value;
-                if (peer.ConnectionState != ConnectionState.Connected) continue;
-                peer.Send(writer, method);
+                if (!_readyPeers.Contains(kvp.Key)) continue;
+                SendPeer(kvp.Value, writer, method, NetChannels.Events);
             }
         }
 
         internal void SendToPlayer(int playerId, NetDataWriter writer, DeliveryMethod method)
         {
-            if (_peers.TryGetValue(playerId, out var peer)
-                && peer.ConnectionState == ConnectionState.Connected)
-                peer.Send(writer, method);
+            NetPeer peer;
+            if (_readyPeers.Contains(playerId) && _peers.TryGetValue(playerId, out peer))
+                SendPeer(peer, writer, method, NetChannels.Events);
         }
 
         internal void BroadcastRaw(NetDataWriter writer, DeliveryMethod method)
@@ -339,9 +584,28 @@ namespace SyncRADation.Networking
             }
             foreach (var kvp in _peers)
             {
-                var peer = kvp.Value;
-                if (peer.ConnectionState != ConnectionState.Connected) continue;
-                peer.Send(writer, method);
+                if (!_readyPeers.Contains(kvp.Key)) continue;
+                SendPeer(kvp.Value, writer, method, NetChannels.Events);
+            }
+        }
+
+        /// <summary>
+        /// Continuous state snapshots (enemy / boss): Sequenced on the State channel so a stall or loss there
+        /// never blocks the ReliableOrdered event stream. Payload must fit one packet (StatePacketBudget).
+        /// </summary>
+        internal void BroadcastState(NetDataWriter writer)
+        {
+            if (_unicastPlayerId >= 0)
+            {
+                NetPeer target;
+                if (_readyPeers.Contains(_unicastPlayerId) && _peers.TryGetValue(_unicastPlayerId, out target))
+                    SendPeer(target, writer, DeliveryMethod.Sequenced, NetChannels.State);
+                return;
+            }
+            foreach (var kvp in _peers)
+            {
+                if (!_readyPeers.Contains(kvp.Key)) continue;
+                SendPeer(kvp.Value, writer, DeliveryMethod.Sequenced, NetChannels.State);
             }
         }
 
@@ -356,9 +620,8 @@ namespace SyncRADation.Networking
             foreach (var kvp in _peers)
             {
                 if (kvp.Key == exceptPlayerId) continue;
-                var peer = kvp.Value;
-                if (peer.ConnectionState != ConnectionState.Connected) continue;
-                peer.Send(writer, method);
+                if (!_readyPeers.Contains(kvp.Key)) continue;
+                SendPeer(kvp.Value, writer, method, NetChannels.Events);
             }
         }
 
@@ -388,6 +651,7 @@ namespace SyncRADation.Networking
 
         void INetEventListener.OnPeerConnected(NetPeer peer)
         {
+            if (_stopPending || _net == null) return;
             int playerId;
             if (_role == NetworkRole.Host)
             {
@@ -395,20 +659,26 @@ namespace SyncRADation.Networking
                 if (playerId < 0)
                 {
                     ModRuntime.Log?.Warning("[Network] Rejecting peer: max players " + PluginInfo.MaxPlayers);
-                    peer.Disconnect();
+                    RejectPeer(peer, "Server full (" + PluginInfo.MaxPlayers + " players max)");
                     return;
                 }
 
+                // Not in the session/roster until its Handshake passes (pre-handshake gating).
                 _peers[playerId] = peer;
                 _peerToId[peer] = playerId;
-                RebuildHostSession();
-                ModRuntime.Log?.Msg("[Network] Client connected, assigned playerId=" + playerId);
+                _peerConnectedAt[playerId] = Time.realtimeSinceStartup;
+                ModRuntime.Log?.Msg("[Network] Peer connected, assigned playerId=" + playerId + " (awaiting handshake)");
 
                 var w = new NetDataWriter();
                 w.Put((byte)NetMessageType.Handshake);
-                new HandshakeMessage { ProtocolVersion = PluginInfo.ProtocolVersion, AssignedPlayerId = playerId }.Serialize(w);
-                peer.Send(w, DeliveryMethod.ReliableOrdered);
-                BroadcastPlayerRoster();
+                new HandshakeMessage
+                {
+                    ProtocolVersion = PluginInfo.ProtocolVersion,
+                    AssignedPlayerId = playerId,
+                    SchemaHash = NetSchema.Hash,
+                    ModVersion = NetSchema.ModVersion
+                }.Serialize(w);
+                SendPeer(peer, w, DeliveryMethod.ReliableOrdered, NetChannels.Events);
             }
             else
             {
@@ -420,16 +690,40 @@ namespace SyncRADation.Networking
                 // Send handshake to host
                 var w = new NetDataWriter();
                 w.Put((byte)NetMessageType.Handshake);
-                new HandshakeMessage { ProtocolVersion = PluginInfo.ProtocolVersion, AssignedPlayerId = -1 }.Serialize(w);
-                peer.Send(w, DeliveryMethod.ReliableOrdered);
+                new HandshakeMessage
+                {
+                    ProtocolVersion = PluginInfo.ProtocolVersion,
+                    AssignedPlayerId = -1,
+                    SchemaHash = NetSchema.Hash,
+                    ModVersion = NetSchema.ModVersion
+                }.Serialize(w);
+                SendPeer(peer, w, DeliveryMethod.ReliableOrdered, NetChannels.Events);
             }
         }
 
         void INetEventListener.OnPeerDisconnected(NetPeer peer, DisconnectInfo disconnectInfo)
         {
+            // Events queued behind a stop request belong to a dead session.
+            if (_stopPending || _role == NetworkRole.Offline) return;
+
+            string remoteReason = "";
+            try
+            {
+                var extra = disconnectInfo.AdditionalData;
+                if (extra != null && !extra.IsNull && extra.AvailableBytes > 0)
+                    remoteReason = extra.GetString();
+            }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[Network] disconnect reason unreadable: " + ex.Message);
+            }
+
             if (_peerToId.TryGetValue(peer, out int playerId))
             {
-                ModRuntime.Log?.Msg("[Network] Player " + playerId + " disconnected: " + disconnectInfo.Reason);
+                ModRuntime.Log?.Msg("[Network] Player " + playerId + " disconnected: " + disconnectInfo.Reason
+                    + (remoteReason.Length > 0 ? " (" + remoteReason + ")" : ""));
+                bool wasReady = _readyPeers.Remove(playerId);
+                _peerConnectedAt.Remove(playerId);
                 _proxyManager.DestroyProxy(playerId);
                 _peers.Remove(playerId);
                 _peerToId.Remove(peer);
@@ -438,13 +732,18 @@ namespace SyncRADation.Networking
                 {
                     SessionHandlers.NotePeerGone(playerId);
                     RebuildHostSession();
-                    BroadcastPlayerRoster();
+                    if (wasReady)
+                        BroadcastPlayerRoster();
+                    StatusText = "Hosting (" + (GetPlayerCount() - 1) + "/" + (PluginInfo.MaxPlayers - 1) + " clients)";
                 }
             }
 
             if (_role != NetworkRole.Host)
             {
-                StopNetwork();
+                // Deferred: StopNetwork tears down _net while PollEvents is still iterating this batch.
+                string reason = remoteReason.Length > 0 ? remoteReason
+                    : (_handshakeComplete ? "Host disconnected" : "Connection failed") + " (" + disconnectInfo.Reason + ")";
+                RequestStop(reason);
             }
         }
 
@@ -464,71 +763,130 @@ namespace SyncRADation.Networking
 
         void INetEventListener.OnConnectionRequest(ConnectionRequest request)
         {
-            if (_role == NetworkRole.Host)
+            if (_role == NetworkRole.Host && !_stopPending)
                 request.AcceptIfKey(PluginInfo.ConnectionKey);
             else
                 request.Reject();
         }
 
+        /// <summary>Null when compatible, otherwise a one-line reason naming both sides.</summary>
+        private static string DescribeHandshakeMismatch(HandshakeMessage hs, bool remoteIsHost)
+        {
+            string remote = remoteIsHost ? "host" : "client";
+            if (hs.ProtocolVersion != PluginInfo.ProtocolVersion)
+                return "Protocol mismatch: " + remote + " v" + hs.ProtocolVersion + " vs local v" + PluginInfo.ProtocolVersion;
+            if (hs.SchemaHash != NetSchema.Hash)
+                return "Mod build mismatch: " + remote + " " + (hs.ModVersion ?? "?") + " (#" + hs.SchemaHash.ToString("X8")
+                    + ") vs local " + NetSchema.ModVersion + " (#" + NetSchema.Hash.ToString("X8") + ")";
+            return null;
+        }
+
         private void HandleHandshake(HandshakeMessage handshake, int senderId)
         {
-            if (handshake.ProtocolVersion != PluginInfo.ProtocolVersion)
+            string mismatch = DescribeHandshakeMismatch(handshake, _role == NetworkRole.Client);
+            if (mismatch != null)
             {
-                ModRuntime.Log?.Error("[Network] Protocol mismatch: local=" + PluginInfo.ProtocolVersion + " remote=" + handshake.ProtocolVersion);
-                _handshakeComplete = false;
-                foreach (var kvp in _peers)
-                    kvp.Value.Disconnect();
+                ModRuntime.Log?.Error("[Network] " + mismatch);
+                if (_role == NetworkRole.Host)
+                {
+                    // Only the offending peer is dropped; the host session and other clients are untouched.
+                    NetPeer bad;
+                    if (senderId >= 1 && _peers.TryGetValue(senderId, out bad))
+                        RejectPeer(bad, mismatch);
+                }
+                else
+                {
+                    RequestStop(mismatch);
+                }
                 return;
             }
 
-            if (_role == NetworkRole.Client)
+            if (_role == NetworkRole.Host)
             {
-                _localPlayerId = handshake.AssignedPlayerId;
-                _sessionPlayerIds.Add(0);
-                _sessionPlayerIds.Add(_localPlayerId);
-                ModRuntime.Log?.Msg("[Network] Host assigned playerId=" + _localPlayerId);
+                if (senderId < 1) return;
+                if (!_readyPeers.Add(senderId))
+                {
+                    // A repeated Handshake must not retrigger roster/dump work.
+                    if (_loggedGateDrops.Add("hs:" + senderId))
+                        ModRuntime.Log?.Warning("[Network] duplicate Handshake from player " + senderId + " ignored");
+                    return;
+                }
+                _peerConnectedAt.Remove(senderId);
+                RebuildHostSession();
+                _lastStateTime = Time.time;
+                StatusText = "Hosting (" + (GetPlayerCount() - 1) + "/" + (PluginInfo.MaxPlayers - 1) + " clients)";
+                ModRuntime.Log?.Msg("[Network] Handshake OK, player " + senderId + " ready (" + GetPlayerCount() + " players)");
+                WorldRegistry.RebuildIfStale();
+                BroadcastSceneHello();
+
+                var hostConnected = _connected;
+                if (hostConnected != null) hostConnected();
+
+                BroadcastPlayerRoster();
+                SendFullWorldSnapshot(senderId);
+                PartySaveService.SendJoinToken(this, senderId);
+                return;
             }
 
+            // Client: only the host (peer 0) may complete the handshake, exactly once.
+            if (senderId != 0) return;
+            if (_handshakeComplete)
+            {
+                if (_loggedGateDrops.Add("hs:host"))
+                    ModRuntime.Log?.Warning("[Network] duplicate host Handshake ignored");
+                return;
+            }
+            int assigned = handshake.AssignedPlayerId;
+            if (assigned < 1 || assigned >= ModConfig.HardMaxPlayers)
+            {
+                ModRuntime.Log?.Error("[Network] Host assigned invalid playerId=" + assigned);
+                RequestStop("Host sent an invalid player id (" + assigned + ")");
+                return;
+            }
+            _localPlayerId = assigned;
+            _sessionPlayerIds.Add(0);
+            _sessionPlayerIds.Add(_localPlayerId);
+            ModRuntime.Log?.Msg("[Network] Host assigned playerId=" + _localPlayerId);
+
+            _readyPeers.Add(0);
             _handshakeComplete = true;
+            _connectStartedAt = 0f;
             _lastStateTime = Time.time;
-            StatusText = _role == NetworkRole.Host
-                ? "Clients connected (" + GetPlayerCount() + ")"
-                : "Connected to host";
+            StatusText = "Connected to host";
             ModRuntime.Log?.Msg("[Network] Handshake OK, local playerId=" + _localPlayerId);
-            WorldRegistry.Rebuild();
+            WorldRegistry.RebuildIfStale();
             BroadcastSceneHello();
 
             var connected = _connected;
             if (connected != null) connected();
 
-            if (_role == NetworkRole.Host)
-            {
-                BroadcastPlayerRoster();
-                if (senderId >= 1)
-                    SendFullWorldSnapshot(senderId);
-            }
-            else
-            {
-                _enemySync.PuppetAllNow();
-            }
+            _enemySync.PuppetAllNow();
         }
 
         private int AllocClientId()
         {
-            for (int i = 1; i < PluginInfo.MaxPlayers; i++)
+            // Round-robin over 1..MaxPlayers-1 (skipping live peers): a leaver's id is reused as late as possible,
+            // so ids baked into dropped-item keys / proxies / peer maps are not recycled while stale state may linger.
+            int slots = PluginInfo.MaxPlayers - 1;
+            for (int step = 1; step <= slots; step++)
             {
-                if (!_peers.ContainsKey(i))
-                    return i;
+                int id = ((_lastAssignedId - 1 + step) % slots) + 1;
+                if (!_peers.ContainsKey(id))
+                {
+                    _lastAssignedId = id;
+                    return id;
+                }
             }
             return -1;
         }
 
+        /// <summary>Host session = host + handshaken clients (a connected-but-unverified peer is not a player yet).</summary>
         private void RebuildHostSession()
         {
             _sessionPlayerIds.Clear();
             _sessionPlayerIds.Add(0);
-            foreach (var kvp in _peers)
-                _sessionPlayerIds.Add(kvp.Key);
+            foreach (int id in _readyPeers)
+                _sessionPlayerIds.Add(id);
         }
 
         private void BroadcastPlayerRoster()
@@ -587,7 +945,8 @@ namespace SyncRADation.Networking
             _proxyManager.DestroyAll();
             DroppedItemManager.ClearVisuals();
             DroppedItemManager.RespawnCurrentScene();
-            WorldRegistry.Rebuild();
+            // ModRuntime.OnSceneChanged just rebuilt the registry; only redo it when stale.
+            WorldRegistry.RebuildIfStale();
             DoorSyncService.RefreshScene();
             FmodEmitterSync.Reset();
             _enemySync.OnSceneChanged();
@@ -603,13 +962,16 @@ namespace SyncRADation.Networking
                 if (SceneFollowService.LocalIsTransient())
                 {
                     PlaytestLog.Verbose("Scene", "skip hello/dump (loading)");
-                    if (_role == NetworkRole.Host)
+                    if (_role == NetworkRole.Host && HasReadyPeers)
                         SessionHandlers.DeferDump(-1);
                     return;
                 }
                 BroadcastSceneHello();
                 if (_role == NetworkRole.Host)
-                    SendFullWorldSnapshot();
+                {
+                    if (HasReadyPeers)
+                        SendFullWorldSnapshot();
+                }
                 else if (AirlockCinematic.ShouldIgnoreHostFollow(_hostSceneName))
                     PlaytestLog.Event("Scene", "skip wreck dump (airlock split)");
                 else

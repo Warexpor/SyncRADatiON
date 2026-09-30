@@ -11,8 +11,12 @@ namespace SyncRADation.Networking
             switch (type)
             {
             case NetMessageType.DoorState:
-                DoorHandlers.HandleDoorState(DoorStateMessage.Deserialize(reader), senderId);
+            {
+                var door = DoorStateMessage.Deserialize(reader);
+                if (_role == NetworkRole.Host) door.SenderPlayerId = senderId;
+                DoorHandlers.HandleDoorState(door, senderId);
                 return true;
+            }
             case NetMessageType.EnemyState:
                 EnemyHandlers.HandleEnemyState(EnemyStateMessage.Deserialize(reader));
                 return true;
@@ -20,12 +24,22 @@ namespace SyncRADation.Networking
                 EnemyHandlers.HandleEnemySpawn(EnemySpawnMessage.Deserialize(reader));
                 return true;
             case NetMessageType.EnemyDamage:
-                EnemyHandlers.HandleEnemyDamage(EnemyDamageMessage.Deserialize(reader));
+            {
+                var dmg = EnemyDamageMessage.Deserialize(reader);
+                if (_role == NetworkRole.Host) dmg.AttackerPlayerId = senderId;
+                EnemyHandlers.HandleEnemyDamage(dmg);
                 return true;
+            }
             case NetMessageType.PuzzleState:
+            {
+                var puzzle = PuzzleStateMessage.Deserialize(reader);
                 if (ModConfig.PuzzlesEnabled)
-                    PuzzleHandlers.HandlePuzzleState(PuzzleStateMessage.Deserialize(reader));
+                {
+                    if (_role == NetworkRole.Host) puzzle.SenderPlayerId = senderId;
+                    PuzzleHandlers.HandlePuzzleState(puzzle);
+                }
                 return true;
+            }
             case NetMessageType.BossState:
                 BossHandlers.HandleBossState(BossStateMessage.Deserialize(reader));
                 return true;
@@ -33,8 +47,12 @@ namespace SyncRADation.Networking
                 WorldPickupHandlers.HandleWorldPickupState(WorldPickupStateMessage.Deserialize(reader));
                 return true;
             case NetMessageType.WorldPickupClaim:
-                WorldPickupHandlers.HandleWorldPickupClaim(WorldPickupClaimMessage.Deserialize(reader));
+            {
+                var claim = WorldPickupClaimMessage.Deserialize(reader);
+                if (_role == NetworkRole.Host) claim.ClaimerPlayerId = senderId;
+                WorldPickupHandlers.HandleWorldPickupClaim(claim);
                 return true;
+            }
             case NetMessageType.WorldPickupGrant:
                 WorldPickupHandlers.HandleWorldPickupGrant(WorldPickupGrantMessage.Deserialize(reader));
                 return true;

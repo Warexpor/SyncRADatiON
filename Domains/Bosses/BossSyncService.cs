@@ -85,7 +85,7 @@ namespace SyncRADation.Networking
             Transform best = null;
             float bestDist = 40f * 40f;
             var localPlayer = net.GetLocalPlayer();
-            if (localPlayer != null)
+            if (localPlayer != null && !NetworkDamageSystem.IsDead)
             {
                 float d = (localPlayer.transform.position - fromPos).sqrMagnitude;
                 if (d < bestDist) { bestDist = d; best = localPlayer.transform; }
@@ -94,6 +94,7 @@ namespace SyncRADation.Networking
             {
                 var proxy = pm.GetProxy(pid);
                 if (proxy == null || proxy.GameObject == null) continue;
+                if (PartyVitals.IsProxyDown(pid, proxy)) continue; // downed peers are not targets
                 float d = (proxy.GameObject.transform.position - fromPos).sqrMagnitude;
                 if (d < bestDist) { bestDist = d; best = proxy.GameObject.transform; }
             }

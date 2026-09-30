@@ -34,7 +34,8 @@ namespace SyncRADation
                 Log.Msg("=============================================");
                 Log.Msg("  " + PluginInfo.Name + " v" + PluginInfo.Version);
                 Log.Msg("  " + PluginInfo.Description);
-                Log.Msg("  Protocol v" + PluginInfo.ProtocolVersion + " | Port " + PluginInfo.DefaultPort);
+                Log.Msg("  Protocol v" + PluginInfo.ProtocolVersion + " | Port " + PluginInfo.DefaultPort
+                    + " | MaxPlayers " + PluginInfo.MaxPlayers + " | schema #" + NetSchema.Hash.ToString("X8"));
                 Log.Msg("  F2 menu | F3 quick connect | G/DROP drop | native TAKE pickup");
                 Log.Msg("  FriendlyFire=" + (ModConfig.FriendlyFire?.Value == true)
                     + " VerboseLogging=" + VerboseLogging);

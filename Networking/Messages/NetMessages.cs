@@ -38,7 +38,10 @@ namespace SyncRADation.Networking
         PlayerRoster = 33,
         BonePose = 34,
         EnemySpawn = 35,
-        _Highest = 36
+        PartyLife = 40,
+        PartySave = 41,
+        PartyRoom = 42,
+        _Highest = 42
     }
 
     public enum InteractionKind : byte
@@ -100,7 +103,7 @@ namespace SyncRADation.Networking
         public void Serialize(NetDataWriter w)
         {
             int n = PlayerIds != null ? PlayerIds.Length : 0;
-            if (n > 32) n = 32;
+            n = NetWire.ClampCount(n, NetWire.MaxRoster, "PlayerRoster");
             w.Put((byte)n);
             for (int i = 0; i < n; i++)
                 w.Put(PlayerIds[i]);
@@ -109,6 +112,8 @@ namespace SyncRADation.Networking
         public static PlayerRosterMessage Deserialize(NetDataReader r)
         {
             int n = r.GetByte();
+            if (n > NetWire.MaxRoster)
+                throw new System.IO.InvalidDataException("PlayerRoster count " + n);
             var ids = n > 0 ? new int[n] : Array.Empty<int>();
             for (int i = 0; i < n; i++)
                 ids[i] = r.GetInt();
@@ -159,6 +164,7 @@ namespace SyncRADation.Networking
             w.Put(SenderPlayerId);
             w.Put(FullRefresh);
             int n = Entries != null ? Entries.Length : 0;
+            n = NetWire.ClampCount(n, NetWire.MaxPickupEntries, "WorldPickupState");
             w.Put(n);
             for (int i = 0; i < n; i++)
                 Entries[i].Serialize(w);
@@ -171,8 +177,8 @@ namespace SyncRADation.Networking
                 SenderPlayerId = r.GetInt(),
                 FullRefresh = r.GetBool()
             };
-            int n = r.GetInt();
-            if (n > 0 && n < 8192)
+            int n = NetWire.ReadCount(r, NetWire.MaxPickupEntries, "WorldPickupState");
+            if (n > 0)
             {
                 msg.Entries = new WorldPickupEntry[n];
                 for (int i = 0; i < n; i++)
@@ -217,11 +223,16 @@ namespace SyncRADation.Networking
     {
         public int ProtocolVersion;
         public int AssignedPlayerId;
+        /// <summary>Build/schema fingerprint (assembly version + message/enum id lists). See NetSchema.</summary>
+        public uint SchemaHash;
+        public string ModVersion;
 
         public void Serialize(NetDataWriter w)
         {
             w.Put(ProtocolVersion);
             w.Put(AssignedPlayerId);
+            w.Put(SchemaHash);
+            NetWire.PutString(w, ModVersion);
         }
 
         public static HandshakeMessage Deserialize(NetDataReader r)
@@ -229,7 +240,9 @@ namespace SyncRADation.Networking
             return new HandshakeMessage
             {
                 ProtocolVersion = r.GetInt(),
-                AssignedPlayerId = r.GetInt()
+                AssignedPlayerId = r.GetInt(),
+                SchemaHash = r.GetUInt(),
+                ModVersion = r.GetString()
             };
         }
     }
@@ -381,6 +394,7 @@ namespace SyncRADation.Networking
             w.Put(RootX);
             w.Put(RootZ);
             int bc = (BoneRotations != null) ? BoneRotations.Length : 0;
+            bc = NetWire.ClampCount(bc, NetWire.MaxBones, "PlayerState bones");
             w.Put(bc);
             for (int i = 0; i < bc; i++)
                 w.Put(EncodeAngle(BoneRotations[i]));
@@ -419,8 +433,8 @@ namespace SyncRADation.Networking
                 RootX = r.GetFloat(),
                 RootZ = r.GetFloat()
             };
-            int bc = r.GetInt();
-            if (bc > 0 && bc < 4096)
+            int bc = NetWire.ReadCount(r, NetWire.MaxBones, "PlayerState bones");
+            if (bc > 0)
             {
                 msg.BoneRotations = new float[bc];
                 for (int i = 0; i < bc; i++)
@@ -538,6 +552,7 @@ namespace SyncRADation.Networking
         public void Serialize(NetDataWriter w)
         {
             int cnt = Enemies != null ? Enemies.Length : 0;
+            cnt = NetWire.ClampCount(cnt, NetWire.MaxEnemies, "EnemyState");
             w.Put(cnt);
             for (int i = 0; i < cnt; i++)
                 Enemies[i].Serialize(w);
@@ -545,8 +560,7 @@ namespace SyncRADation.Networking
 
         public static EnemyStateMessage Deserialize(NetDataReader r)
         {
-            int cnt = r.GetInt();
-            if (cnt < 0 || cnt > 512) cnt = 0;
+            int cnt = NetWire.ReadCount(r, NetWire.MaxEnemies, "EnemyState");
             var arr = cnt > 0 ? new EnemySnapshotNet[cnt] : System.Array.Empty<EnemySnapshotNet>();
             for (int i = 0; i < arr.Length; i++)
                 arr[i] = EnemySnapshotNet.Deserialize(r);
@@ -567,7 +581,7 @@ namespace SyncRADation.Networking
         public void Serialize(NetDataWriter w)
         {
             w.Put(Seq);
-            w.Put(TypeKey ?? "");
+            NetWire.PutString(w, TypeKey);
             w.Put(PosX);
             w.Put(PosY);
             w.Put(PosZ);
@@ -641,8 +655,8 @@ namespace SyncRADation.Networking
         public void Serialize(NetDataWriter w)
         {
             w.Put(SenderPlayerId);
-            w.Put(SceneName ?? "");
-            w.Put(RoomName ?? "");
+            NetWire.PutString(w, SceneName);
+            NetWire.PutString(w, RoomName);
         }
 
         public static SceneHelloMessage Deserialize(NetDataReader r)
@@ -999,6 +1013,7 @@ namespace SyncRADation.Networking
             w.Put(SenderPlayerId);
             w.Put(FullRefresh);
             int cnt = Entries != null ? Entries.Length : 0;
+            cnt = NetWire.ClampCount(cnt, NetWire.MaxPuzzleEntries, "PuzzleState");
             w.Put(cnt);
             for (int i = 0; i < cnt; i++)
                 Entries[i].Serialize(w);
@@ -1011,8 +1026,8 @@ namespace SyncRADation.Networking
                 SenderPlayerId = r.GetInt(),
                 FullRefresh = r.GetBool()
             };
-            int cnt = r.GetInt();
-            if (cnt > 0 && cnt < 8192)
+            int cnt = NetWire.ReadCount(r, NetWire.MaxPuzzleEntries, "PuzzleState");
+            if (cnt > 0)
             {
                 msg.Entries = new PuzzleStateEntry[cnt];
                 for (int i = 0; i < cnt; i++)
@@ -1095,6 +1110,7 @@ namespace SyncRADation.Networking
         public void Serialize(NetDataWriter w)
         {
             int cnt = Bosses != null ? Bosses.Length : 0;
+            cnt = NetWire.ClampCount(cnt, NetWire.MaxBosses, "BossState");
             w.Put(cnt);
             for (int i = 0; i < cnt; i++)
                 Bosses[i].Serialize(w);
@@ -1102,8 +1118,7 @@ namespace SyncRADation.Networking
 
         public static BossStateMessage Deserialize(NetDataReader r)
         {
-            int cnt = r.GetInt();
-            if (cnt < 0 || cnt > 64) cnt = 0;
+            int cnt = NetWire.ReadCount(r, NetWire.MaxBosses, "BossState");
             var arr = cnt > 0 ? new BossSnapshotNet[cnt] : System.Array.Empty<BossSnapshotNet>();
             for (int i = 0; i < arr.Length; i++)
                 arr[i] = BossSnapshotNet.Deserialize(r);
@@ -1120,7 +1135,7 @@ namespace SyncRADation.Networking
         public void Serialize(NetDataWriter w)
         {
             w.Put(SenderPlayerId);
-            w.Put(SceneName ?? "");
+            NetWire.PutString(w, SceneName);
             w.Put(IsRequest);
         }
 
@@ -1155,7 +1170,7 @@ namespace SyncRADation.Networking
             w.Put(Float0);
             w.Put(Float1);
             w.Put(Float2);
-            w.Put(Text ?? "");
+            NetWire.PutString(w, Text);
         }
 
         public static InteractionRequestMessage Deserialize(NetDataReader r) =>
@@ -1187,7 +1202,7 @@ namespace SyncRADation.Networking
             w.Put(WorldId);
             w.Put((byte)Kind);
             w.Put(Ok);
-            w.Put(Reason ?? "");
+            NetWire.PutString(w, Reason);
         }
 
         public static InteractionAckMessage Deserialize(NetDataReader r) =>
@@ -1215,11 +1230,11 @@ namespace SyncRADation.Networking
         public void Serialize(NetDataWriter w)
         {
             w.Put(Kind);
-            w.Put(Key ?? "");
+            NetWire.PutString(w, Key);
             w.Put(BoolVal);
             w.Put(IntVal);
             w.Put(FloatVal);
-            w.Put(StringVal ?? "");
+            NetWire.PutString(w, StringVal);
             w.Put(VecY);
             w.Put(VecZ);
         }
@@ -1261,7 +1276,7 @@ namespace SyncRADation.Networking
         public void Serialize(NetDataWriter w)
         {
             w.Put(FullRefresh);
-            w.Put(DialoguerXml ?? "");
+            NetWire.PutLongString(w, DialoguerXml);
             w.Put(EndCircle);
             w.Put(EndDeath);
             w.Put(EndGraves);
@@ -1273,6 +1288,7 @@ namespace SyncRADation.Networking
             w.Put(EndMemoryTime);
             w.Put(EndDoors);
             int n = Flags != null ? Flags.Length : 0;
+            n = NetWire.ClampCount(n, NetWire.MaxStoryFlags, "StoryCommit flags");
             w.Put(n);
             for (int i = 0; i < n; i++)
                 Flags[i].Serialize(w);
@@ -1286,7 +1302,7 @@ namespace SyncRADation.Networking
             var msg = new StoryCommitMessage
             {
                 FullRefresh = r.GetBool(),
-                DialoguerXml = r.GetString(),
+                DialoguerXml = NetWire.GetLongString(r),
                 EndCircle = r.GetInt(),
                 EndDeath = r.GetInt(),
                 EndGraves = r.GetInt(),
@@ -1298,8 +1314,8 @@ namespace SyncRADation.Networking
                 EndMemoryTime = r.GetFloat(),
                 EndDoors = r.GetInt()
             };
-            int n = r.GetInt();
-            if (n > 0 && n < 8192)
+            int n = NetWire.ReadCount(r, NetWire.MaxStoryFlags, "StoryCommit flags");
+            if (n > 0)
             {
                 msg.Flags = new StoryFlagEntry[n];
                 for (int i = 0; i < n; i++)
@@ -1324,7 +1340,7 @@ namespace SyncRADation.Networking
             w.Put(WorldId);
             w.Put((byte)Cmd);
             w.Put(Int0);
-            w.Put(Text ?? "");
+            NetWire.PutString(w, Text);
         }
 
         public static StoryPresentationMessage Deserialize(NetDataReader r) =>
@@ -1359,6 +1375,7 @@ namespace SyncRADation.Networking
         public void Serialize(NetDataWriter w)
         {
             int n = Items != null ? Items.Length : 0;
+            n = NetWire.ClampCount(n, NetWire.MaxStorageItems, "StorageBoxBlob");
             w.Put(n);
             for (int i = 0; i < n; i++)
                 Items[i].Serialize(w);
@@ -1366,8 +1383,8 @@ namespace SyncRADation.Networking
 
         public static StorageBoxBlobMessage Deserialize(NetDataReader r)
         {
-            int n = r.GetInt();
-            var items = n > 0 && n < 512 ? new StorageBoxItem[n] : new StorageBoxItem[0];
+            int n = NetWire.ReadCount(r, NetWire.MaxStorageItems, "StorageBoxBlob");
+            var items = n > 0 ? new StorageBoxItem[n] : new StorageBoxItem[0];
             for (int i = 0; i < items.Length; i++)
                 items[i] = StorageBoxItem.Deserialize(r);
             return new StorageBoxBlobMessage { Items = items };
@@ -1381,6 +1398,7 @@ namespace SyncRADation.Networking
         public void Serialize(NetDataWriter w)
         {
             int n = ItemEnums != null ? ItemEnums.Length : 0;
+            n = NetWire.ClampCount(n, NetWire.MaxKeyRing, "PartyKeyRing");
             w.Put(n);
             for (int i = 0; i < n; i++)
                 w.Put(ItemEnums[i]);
@@ -1388,8 +1406,8 @@ namespace SyncRADation.Networking
 
         public static PartyKeyRingMessage Deserialize(NetDataReader r)
         {
-            int n = r.GetInt();
-            var arr = n > 0 && n < 512 ? new ushort[n] : new ushort[0];
+            int n = NetWire.ReadCount(r, NetWire.MaxKeyRing, "PartyKeyRing");
+            var arr = n > 0 ? new ushort[n] : new ushort[0];
             for (int i = 0; i < arr.Length; i++)
                 arr[i] = r.GetUShort();
             return new PartyKeyRingMessage { ItemEnums = arr };
@@ -1431,7 +1449,7 @@ namespace SyncRADation.Networking
             w.Put(PosX);
             w.Put(PosY);
             w.Put(PosZ);
-            w.Put(Path ?? "");
+            NetWire.PutString(w, Path);
         }
 
         public static FmodEmitterMessage Deserialize(NetDataReader r) =>

@@ -98,12 +98,79 @@ namespace SyncRADation.Sync
                     var c = all[i];
                     if (c == null) continue;
                     ulong id = WorldId.FromGameObject(c.gameObject);
-                    if (id == 0 || map.ContainsKey(id)) continue;
+                    if (id == 0) continue;
+                    Component existing;
+                    if (map.TryGetValue(id, out existing) && existing != null)
+                    {
+                        NoteDuplicate(id, typeof(T).Name, c, existing);
+                        if (!PreferOver(c, existing)) continue;
+                    }
                     map[id] = c;
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[WorldLookup] BuildIdMap<" + typeof(T).Name + "> failed: " + ex.Message);
+            }
             return map;
+        }
+
+        static readonly HashSet<ulong> _loggedDuplicateIds = new HashSet<ulong>();
+
+        /// <summary>Log a WorldId collision once per id (Rebuild runs several times per scene load).</summary>
+        public static void NoteDuplicate(ulong id, string what, Component candidate, Component existing)
+        {
+            if (_loggedDuplicateIds.Count > 1024) _loggedDuplicateIds.Clear();
+            if (!_loggedDuplicateIds.Add(id)) return;
+            string a = "?", b = "?";
+            try { a = WorldId.GetHierarchyPath(candidate.transform); } catch { }
+            try { b = WorldId.GetHierarchyPath(existing.transform); } catch { }
+            ModRuntime.Log?.Warning("[WorldLookup] duplicate WorldId " + id.ToString("X16") + " (" + what
+                + "): '" + a + "' vs '" + b + "' — keeping the stable-order winner");
+        }
+
+        /// <summary>
+        /// Deterministic duplicate resolution so host and clients bind the same object no matter what
+        /// order FindObjectsOfType returns: lower hierarchy path, then lower component index, then lower position.
+        /// </summary>
+        public static bool PreferOver(Component candidate, Component current)
+        {
+            if (candidate == null) return false;
+            if (current == null) return true;
+            try
+            {
+                int c = string.CompareOrdinal(WorldId.GetHierarchyPath(candidate.transform),
+                    WorldId.GetHierarchyPath(current.transform));
+                if (c != 0) return c < 0;
+
+                if (candidate.gameObject == current.gameObject)
+                {
+                    var all = candidate.GetComponents<Component>(); // serialized order is identical on every peer
+                    int ci = -1, ei = -1;
+                    for (int i = 0; i < all.Length; i++)
+                    {
+                        if (all[i] == candidate) ci = i;
+                        if (all[i] == current) ei = i;
+                    }
+                    if (ci != ei) return ci >= 0 && (ei < 0 || ci < ei);
+                }
+
+                string sa = candidate.gameObject.scene.name ?? "";
+                string sb = current.gameObject.scene.name ?? "";
+                c = string.CompareOrdinal(sa, sb);
+                if (c != 0) return c < 0;
+
+                var pa = candidate.transform.position;
+                var pb = current.transform.position;
+                if (pa.x != pb.x) return pa.x < pb.x;
+                if (pa.y != pb.y) return pa.y < pb.y;
+                if (pa.z != pb.z) return pa.z < pb.z;
+            }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[WorldLookup] PreferOver failed: " + ex.Message);
+            }
+            return false;
         }
     }
 }

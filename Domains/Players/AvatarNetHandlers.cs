@@ -15,6 +15,7 @@ namespace SyncRADation.Networking
         private const int SequencedMtuFallback = 1020;
         private const int BonePoseHeaderBytes = 1 + 4 + 2 + 2 + 2; // type + sender + total + start + count
         private bool _loggedOversizedPose;
+        private bool _loggedVitalFail;
         private Vector3 _lastSentPosition;
         private float _lastSentTime;
 
@@ -42,7 +43,17 @@ namespace SyncRADation.Networking
                 charState = (byte)PlayerState.charState;
                 dead = PlayerState.charState == PlayerState.charStates.dead || hp <= 0;
             }
-            catch { }
+            catch (System.Exception ex)
+            {
+                if (!_loggedVitalFail)
+                {
+                    _loggedVitalFail = true;
+                    ModRuntime.Log?.Warning("[Net] vital read failed: " + ex.Message);
+                }
+            }
+            // Co-op: our own downed flag is authoritative (native hp regen / charState writes must not flip it).
+            if (NetworkDamageSystem.PartyLive)
+                dead = NetworkDamageSystem.IsDead;
 
             var msg = new PlayerVitalMessage
             {
@@ -245,6 +256,7 @@ namespace SyncRADation.Networking
         {
             if (msg.SenderPlayerId != _net.LocalPlayerId)
             {
+                PartyVitals.NoteVital(msg.SenderPlayerId, msg.Dead);
                 var proxy = _net.ProxyManager.GetProxy(msg.SenderPlayerId);
                 if (proxy != null)
                 {
@@ -271,6 +283,9 @@ namespace SyncRADation.Networking
                 state.SenderPlayerId = peerId;
             int senderId = state.SenderPlayerId;
             if (senderId == _net.LocalPlayerId) return;
+
+            // Host reads these for revive placement ("next to the nearest living teammate").
+            PartyVitals.NotePos(senderId, new Vector3(state.PosX, state.PosY, state.PosZ));
 
             if (_net.SceneMismatch)
             {

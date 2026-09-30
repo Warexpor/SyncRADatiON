@@ -17,14 +17,20 @@ namespace SyncRADation.Networking
         internal void SendWorldPickupState(IList<WorldPickupEntry> entries, bool fullRefresh)
         {
             if (entries == null || entries.Count == 0) return;
-            var writer = new NetDataWriter();
-            writer.Put((byte)NetMessageType.WorldPickupState);
-            writer.Put(_net.LocalPlayerId);
-            writer.Put(fullRefresh);
-            writer.Put(entries.Count);
-            for (int i = 0; i < entries.Count; i++)
-                entries[i].Serialize(writer);
-            _net.BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
+            const int chunk = 2048; // under the reader cap
+            for (int start = 0; start < entries.Count; start += chunk)
+            {
+                int n = entries.Count - start;
+                if (n > chunk) n = chunk;
+                var writer = new NetDataWriter();
+                writer.Put((byte)NetMessageType.WorldPickupState);
+                writer.Put(_net.LocalPlayerId);
+                writer.Put(fullRefresh);
+                writer.Put(n);
+                for (int i = 0; i < n; i++)
+                    entries[start + i].Serialize(writer);
+                _net.BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
+            }
         }
 
         internal void SendWorldPickupClaim(ulong worldId, Items.itemlist item = Items.itemlist.None, int count = 1)

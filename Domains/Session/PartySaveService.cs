@@ -1,0 +1,478 @@
+// Party save snapshots. The host stamps every native SaveManager.Save with a token
+// (slot + counter + host stamp) and snapshots the party key ring; every client snapshots its
+// own 6-slot bag under the same token. A party wipe (or a late join into the same save)
+// restores those snapshots instead of letting each peer load its own save slot.
+// Persisted as plain text under MelonLoader UserData/SyncRADation/.
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Text;
+using SyncRADation.Sync;
+
+namespace SyncRADation.Networking
+{
+    public struct PartySaveToken
+    {
+        public int Slot;
+        public int Counter;
+        public long Stamp;
+
+        public bool Valid => Counter > 0;
+
+        public string Key => Stamp.ToString("X", CultureInfo.InvariantCulture) + "-" + Slot + "-" + Counter;
+
+        public static bool TryParse(string key, out PartySaveToken token)
+        {
+            token = default(PartySaveToken);
+            if (string.IsNullOrEmpty(key)) return false;
+            var parts = key.Split('-');
+            if (parts.Length != 3) return false;
+            long stamp;
+            int slot, counter;
+            if (!long.TryParse(parts[0], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out stamp)) return false;
+            if (!int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out slot)) return false;
+            if (!int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out counter)) return false;
+            token = new PartySaveToken { Slot = slot, Counter = counter, Stamp = stamp };
+            return true;
+        }
+    }
+
+    public struct BagEntry
+    {
+        public ushort Item;
+        public int Count;
+    }
+
+    public static class PartySaveService
+    {
+        private const int MaxBagSnapshots = 24;
+        private const string HostFile = "host_saves.txt";
+        private const string BagFile = "bag_snapshots.txt";
+
+        private static bool _hostLoaded;
+        private static bool _bagsLoaded;
+        private static long _stamp;
+        private static int _next;
+        private static readonly Dictionary<int, PartySaveToken> _slotTokens = new Dictionary<int, PartySaveToken>();
+        private static readonly Dictionary<string, ushort[]> _rings = new Dictionary<string, ushort[]>();
+        private static readonly List<string> _bagOrder = new List<string>();
+        private static readonly Dictionary<string, BagEntry[]> _bags = new Dictionary<string, BagEntry[]>();
+        private static BagEntry[] _bagAtDeath;
+
+        /// <summary>Host: token of the save the session is running from (set by Save / Load). Unused on clients.</summary>
+        public static PartySaveToken Current;
+
+        // ------------------------------------------------------------------ persistence
+
+        private static string Dir()
+        {
+            string dir = Path.Combine(MelonLoader.MelonUtils.UserDataDirectory, "SyncRADation");
+            Directory.CreateDirectory(dir);
+            return dir;
+        }
+
+        private static void EnsureHostLoaded()
+        {
+            if (_hostLoaded) return;
+            _hostLoaded = true;
+            try
+            {
+                string path = Path.Combine(Dir(), HostFile);
+                if (File.Exists(path))
+                {
+                    foreach (string raw in File.ReadAllLines(path))
+                    {
+                        string line = raw.Trim();
+                        int eq = line.IndexOf('=');
+                        if (eq <= 0) continue;
+                        string k = line.Substring(0, eq);
+                        string v = line.Substring(eq + 1);
+                        if (k == "stamp")
+                            long.TryParse(v, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out _stamp);
+                        else if (k == "next")
+                            int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out _next);
+                        else if (k == "slot")
+                        {
+                            PartySaveToken t;
+                            if (PartySaveToken.TryParse(v, out t)) _slotTokens[t.Slot] = t;
+                        }
+                        else if (k == "ring")
+                        {
+                            int bar = v.IndexOf('|');
+                            if (bar > 0)
+                                _rings[v.Substring(0, bar)] = ParseRing(v.Substring(bar + 1));
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[PartySave] host file read failed: " + ex.Message);
+            }
+            if (_stamp == 0)
+            {
+                _stamp = (DateTime.UtcNow.Ticks ^ (long)Environment.TickCount * 7919L) & 0x7FFFFFFFFFFFL;
+                if (_stamp == 0) _stamp = 1;
+                SaveHostFile();
+            }
+        }
+
+        private static void SaveHostFile()
+        {
+            try
+            {
+                var sb = new StringBuilder();
+                sb.Append("stamp=").Append(_stamp.ToString("X", CultureInfo.InvariantCulture)).Append('\n');
+                sb.Append("next=").Append(_next).Append('\n');
+                foreach (var kvp in _slotTokens)
+                    sb.Append("slot=").Append(kvp.Value.Key).Append('\n');
+                foreach (var kvp in _rings)
+                    sb.Append("ring=").Append(kvp.Key).Append('|').Append(JoinRing(kvp.Value)).Append('\n');
+                File.WriteAllText(Path.Combine(Dir(), HostFile), sb.ToString());
+            }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[PartySave] host file write failed: " + ex.Message);
+            }
+        }
+
+        private static void EnsureBagsLoaded()
+        {
+            if (_bagsLoaded) return;
+            _bagsLoaded = true;
+            try
+            {
+                string path = Path.Combine(Dir(), BagFile);
+                if (!File.Exists(path)) return;
+                foreach (string raw in File.ReadAllLines(path))
+                {
+                    string line = raw.Trim();
+                    if (!line.StartsWith("bag=", StringComparison.Ordinal)) continue;
+                    string v = line.Substring(4);
+                    int bar = v.IndexOf('|');
+                    if (bar <= 0) continue;
+                    string key = v.Substring(0, bar);
+                    _bags[key] = ParseBag(v.Substring(bar + 1));
+                    _bagOrder.Remove(key);
+                    _bagOrder.Add(key);
+                }
+            }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[PartySave] bag file read failed: " + ex.Message);
+            }
+        }
+
+        private static void SaveBagFile()
+        {
+            try
+            {
+                var sb = new StringBuilder();
+                for (int i = 0; i < _bagOrder.Count; i++)
+                {
+                    BagEntry[] bag;
+                    if (!_bags.TryGetValue(_bagOrder[i], out bag)) continue;
+                    sb.Append("bag=").Append(_bagOrder[i]).Append('|').Append(JoinBag(bag)).Append('\n');
+                }
+                File.WriteAllText(Path.Combine(Dir(), BagFile), sb.ToString());
+            }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[PartySave] bag file write failed: " + ex.Message);
+            }
+        }
+
+        private static ushort[] ParseRing(string csv)
+        {
+            var list = new List<ushort>();
+            foreach (string part in csv.Split(','))
+            {
+                ushort u;
+                if (ushort.TryParse(part, NumberStyles.Integer, CultureInfo.InvariantCulture, out u))
+                    list.Add(u);
+            }
+            return list.ToArray();
+        }
+
+        private static string JoinRing(ushort[] ring)
+        {
+            var sb = new StringBuilder();
+            for (int i = 0; i < ring.Length; i++)
+            {
+                if (i > 0) sb.Append(',');
+                sb.Append(ring[i]);
+            }
+            return sb.ToString();
+        }
+
+        private static BagEntry[] ParseBag(string csv)
+        {
+            var list = new List<BagEntry>();
+            foreach (string part in csv.Split(','))
+            {
+                int colon = part.IndexOf(':');
+                if (colon <= 0) continue;
+                ushort item;
+                int count;
+                if (!ushort.TryParse(part.Substring(0, colon), NumberStyles.Integer, CultureInfo.InvariantCulture, out item)) continue;
+                if (!int.TryParse(part.Substring(colon + 1), NumberStyles.Integer, CultureInfo.InvariantCulture, out count)) continue;
+                if (count > 0) list.Add(new BagEntry { Item = item, Count = count });
+            }
+            return list.ToArray();
+        }
+
+        private static string JoinBag(BagEntry[] bag)
+        {
+            var sb = new StringBuilder();
+            for (int i = 0; i < bag.Length; i++)
+            {
+                if (i > 0) sb.Append(',');
+                sb.Append(bag[i].Item).Append(':').Append(bag[i].Count);
+            }
+            return sb.ToString();
+        }
+
+        // ------------------------------------------------------------------ host side
+
+        private static int CurrentSlot()
+        {
+            try { return SaveManager.slotID; }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[PartySave] slotID read failed: " + ex.Message);
+                return 1;
+            }
+        }
+
+        /// <summary>Host (or offline solo host): a native SaveManager.Save happened.</summary>
+        public static PartySaveToken OnHostSaved()
+        {
+            EnsureHostLoaded();
+            int slot = CurrentSlot();
+            var token = new PartySaveToken { Slot = slot, Counter = ++_next, Stamp = _stamp };
+            _slotTokens[slot] = token;
+            _rings[token.Key] = PartyKeyRing.Export();
+            PruneRings();
+            SaveHostFile();
+            Current = token;
+            PlaytestLog.Event("PartySave", "host saved token=" + token.Key + " ring=" + _rings[token.Key].Length);
+            return token;
+        }
+
+        /// <summary>Host: a native SaveManager.Load happened. Session now runs from that slot's last token.</summary>
+        public static void OnHostLoaded()
+        {
+            EnsureHostLoaded();
+            int slot = CurrentSlot();
+            PartySaveToken token;
+            if (!_slotTokens.TryGetValue(slot, out token))
+                token = default(PartySaveToken);
+            Current = token;
+            PlaytestLog.Event("PartySave", "host loaded slot=" + slot
+                + (token.Valid ? " token=" + token.Key : " (no party snapshot)"));
+        }
+
+        /// <summary>Key ring as captured at the last party save (empty when none).</summary>
+        public static ushort[] RingForCurrent()
+        {
+            EnsureHostLoaded();
+            ushort[] ring;
+            if (Current.Valid && _rings.TryGetValue(Current.Key, out ring))
+                return ring;
+            return new ushort[0];
+        }
+
+        private static void PruneRings()
+        {
+            var keep = new HashSet<string>();
+            foreach (var kvp in _slotTokens)
+                keep.Add(kvp.Value.Key);
+            var drop = new List<string>();
+            foreach (var kvp in _rings)
+            {
+                if (!keep.Contains(kvp.Key)) drop.Add(kvp.Key);
+            }
+            for (int i = 0; i < drop.Count; i++)
+                _rings.Remove(drop[i]);
+        }
+
+        /// <summary>Host: unicast the token the session runs from to a joining client.</summary>
+        public static void SendJoinToken(LanNetworkManager net, int targetPlayerId)
+        {
+            if (net == null || net.Role != NetworkRole.Host || targetPlayerId < 1) return;
+            EnsureHostLoaded();
+            if (!Current.Valid) return;
+            net.PartyHandlers.SendPartySave(Current, PartySaveMessage.FlagJoin, targetPlayerId);
+        }
+
+        // ------------------------------------------------------------------ client side
+
+        /// <summary>Client: host announced a save (snapshot bag) or the join token (restore if we have it).</summary>
+        public static void OnHostAnnounced(PartySaveMessage msg)
+        {
+            var token = new PartySaveToken { Slot = msg.Slot, Counter = msg.Counter, Stamp = msg.Stamp };
+            if (!token.Valid) return;
+            EnsureBagsLoaded();
+
+            if ((msg.Flags & PartySaveMessage.FlagJoin) != 0)
+            {
+                BagEntry[] bag;
+                if (_bags.TryGetValue(token.Key, out bag))
+                {
+                    PlaytestLog.Event("PartySave", "join: restoring bag snapshot " + token.Key + " items=" + bag.Length);
+                    RestoreBag(bag);
+                }
+                else
+                {
+                    PlaytestLog.Event("PartySave", "join: no bag snapshot for " + token.Key + " (keep bag)");
+                }
+                return;
+            }
+
+            SnapshotBag(token);
+        }
+
+        private static void SnapshotBag(PartySaveToken token)
+        {
+            // A downed peer already dropped its bag on the floor; the bag it held when it went
+            // down is the truthful "as of this save" content.
+            var bag = Players.NetworkDamageSystem.IsDead && _bagAtDeath != null ? _bagAtDeath : CaptureBag();
+            string key = token.Key;
+            _bags[key] = bag;
+            _bagOrder.Remove(key);
+            _bagOrder.Add(key);
+            while (_bagOrder.Count > MaxBagSnapshots)
+            {
+                _bags.Remove(_bagOrder[0]);
+                _bagOrder.RemoveAt(0);
+            }
+            SaveBagFile();
+            PlaytestLog.Event("PartySave", "bag snapshot " + key + " items=" + bag.Length);
+        }
+
+        /// <summary>Latest snapshot for the token, else the bag held when this peer went down, else null.</summary>
+        public static BagEntry[] ResolveWipeBag(PartySaveToken token, out string source)
+        {
+            EnsureBagsLoaded();
+            BagEntry[] bag;
+            if (token.Valid && _bags.TryGetValue(token.Key, out bag))
+            {
+                source = "snapshot " + token.Key;
+                return bag;
+            }
+            if (_bagAtDeath != null)
+            {
+                source = "bag at down";
+                return _bagAtDeath;
+            }
+            source = "none";
+            return null;
+        }
+
+        public static void NoteBagAtDown()
+        {
+            _bagAtDeath = CaptureBag();
+        }
+
+        public static void ClearBagAtDown()
+        {
+            _bagAtDeath = null;
+        }
+
+        /// <summary>Network stop: forget the downed-bag capture. Host token survives (set by offline Load too).</summary>
+        public static void Reset()
+        {
+            _bagAtDeath = null;
+        }
+
+        // ------------------------------------------------------------------ bag capture / restore
+
+        /// <summary>Bag contents minus Key/Object (the party ring is source of truth for uniques).</summary>
+        public static BagEntry[] CaptureBag()
+        {
+            var list = new List<BagEntry>(8);
+            try
+            {
+                var dict = InventoryManager.elsterItems;
+                if (dict == null) return list.ToArray();
+                var en = dict.GetEnumerator();
+                while (en.MoveNext())
+                {
+                    var item = en.Current.key;
+                    int count = en.Current.value;
+                    if (item == null || count <= 0) continue;
+                    Items.itemlist e;
+                    try { e = item._item; } catch { continue; }
+                    if (e == Items.itemlist.None) continue;
+                    if (PartyKeyRing.IsKeyOrObject(item)) continue;
+                    list.Add(new BagEntry { Item = (ushort)e, Count = count });
+                }
+                en.Dispose();
+            }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[PartySave] CaptureBag failed: " + ex.Message);
+            }
+            return list.ToArray();
+        }
+
+        /// <summary>Empty the local bag (keys too; the ring re-mirrors them) and refill from entries.</summary>
+        public static void RestoreBag(BagEntry[] entries)
+        {
+            if (entries == null) return;
+            NetGate.BeginApply();
+            try
+            {
+                var have = new List<AnItem>();
+                var counts = new List<int>();
+                var dict = InventoryManager.elsterItems;
+                if (dict != null)
+                {
+                    var en = dict.GetEnumerator();
+                    while (en.MoveNext())
+                    {
+                        var key = en.Current.key;
+                        int count = en.Current.value;
+                        if (key == null || count <= 0) continue;
+                        have.Add(key);
+                        counts.Add(count);
+                    }
+                    en.Dispose();
+                }
+                for (int i = 0; i < have.Count; i++)
+                {
+                    try { InventoryManager.RemoveItem(have[i], counts[i]); }
+                    catch (Exception ex) { ModRuntime.Log?.Warning("[PartySave] bag clear: " + ex.Message); }
+                }
+                try { InventoryManager.CurrentItem = null; }
+                catch (Exception ex) { ModRuntime.Log?.Warning("[PartySave] CurrentItem reset: " + ex.Message); }
+
+                int restored = 0;
+                for (int i = 0; i < entries.Length; i++)
+                {
+                    try
+                    {
+                        var cat = InventoryManager.getItem((Items.itemlist)entries[i].Item);
+                        if (cat == null) continue;
+                        InventoryManager.AddItem(cat, entries[i].Count);
+                        restored++;
+                    }
+                    catch (Exception ex)
+                    {
+                        ModRuntime.Log?.Warning("[PartySave] bag add " + entries[i].Item + ": " + ex.Message);
+                    }
+                }
+                PlaytestLog.Event("PartySave", "bag restored " + restored + "/" + entries.Length);
+            }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[PartySave] RestoreBag failed: " + ex.Message);
+            }
+            finally
+            {
+                NetGate.EndApply();
+            }
+        }
+    }
+}

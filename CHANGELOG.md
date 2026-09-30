@@ -1,3 +1,42 @@
+## 0.5.57 — 2026-10-01
+
+Protocol **v12**. Party death/revive/wipe + party save, and a network-core hardening / N-player pass (merged from two parallel workers). **Nothing in this release has been playtested** — compile-checked only (Release, 0 errors).
+
+### Added
+- **Party life (PartyLife/PartySave/PartyRoom = NetMessageType 40–42)** — `Networking/Messages/PartyMessages.cs`, dispatched from `TryDispatchPlayers`. `ModConfig.DownedRespawnDelay` (default 20 s).
+- **Downed / revive for everyone, host included** — `HurtElster` patches + hp poll detect death; native game-over is suppressed while a party (2+ live session players) exists. Downed = input off, dead charState, `cloaked` (enemies lose sight). Host timers revive at the nearest living teammate's position/room with `InjectorReviveHP` + brief invincibility. A solo host stays vanilla.
+- **Party wipe only when all are down** — 3 s after the last player falls the host broadcasts Wipe, clears drops/claims and calls `SaveManager.Load()`; clients restore their bag and follow the scene reload. Last player down skips the death bag.
+- **Party save** — `SaveManager.Save/Load` hooks: token (slot + counter + host stamp); host snapshots the key ring, clients snapshot their bag (Key/Object excluded). Persisted in `UserData/SyncRADation/host_saves.txt` and `bag_snapshots.txt`; join unicasts the token.
+- **Downed targeting filter** — enemies/bosses, enemy attack damage and friendly fire skip downed peers.
+- **Net core** — new `NetWire.cs` (`NetChannels`, size caps, guarded strings, `NetSchema` handshake hash). Handshake carries `SchemaHash` + `ModVersion`. `MaxPlayers` is a config entry (default 4, 2–8). F2 menu shows a per-player roster and a host Resync button.
+
+### Fixed
+- **One bad peer no longer tears down the session** — mismatch disconnects only that peer with a reason string shown in the client menu; every inbound dispatch and Tick is try/catch-wrapped; 12 s connect timeout; host drops peers that miss the handshake within 10 s.
+- **Client-spoofable sender ids** — `SenderPlayerId` / `ClaimerPlayerId` / `AttackerPlayerId` / drop `SenderID` stamped from the peer map; host-only message types from a client are dropped; client damage to players rejected unless friendly fire is on.
+- **Snapshot spam / late-join** — one snapshot request per 2 s per peer (coalesced), dump retries with backoff, dumps go to the requester only; sends/relays/dispatch are handshake-gated; repeated handshake ignored.
+- **Enemy/boss snapshots** — Sequenced on channel 1, chunked to one packet; discrete events stay ReliableOrdered on channel 0.
+- **Reader/writer cap mismatch** — writers clamp/chunk to reader caps; readers throw instead of misparsing.
+- **Duplicate WorldIds** logged once per id with a deterministic winner.
+- **Audit fixes** — host emit of FMOD no longer gated by `IsApplying` (host-applied client actions reach all clients); storage-box late-join dump now resets its signature; client ids assigned round-robin.
+
+### Changed
+- Protocol **11 → 12** (handshake wire gained SchemaHash/ModVersion). The schema hash includes the assembly version, so **any** patch-version mismatch is now rejected.
+- Sync ticks run only with ready peers (solo host stays vanilla).
+- Peer disconnect requests a stop after `PollEvents`; `DeathKind.HostWipeReload` is now a logged no-op; `NetMessageType._Highest` raised to 42.
+
+### Before → After (player)
+- **Before:** one death (client downed or host) resets/kicks the run for the party; a bad or mismatched peer can break the host; a client could forge ids; snapshot requests can flood; 3+ players were loosely supported.
+- **After:** a dead player is downed and revives near a teammate after ~20 s; only a full wipe reloads the party save; bag/key ring restore from snapshots; bad peers are dropped individually; up to 8 players by config (default 4).
+
+### Open risks / untested
+- **No dual-instance playtest.** Everything above is unverified in-game.
+- Native-to-native Harmony detours on `HurtElster`, `GameOverHandler.hurt`, `SaveManager.Load` are unproven; whether a direct `Load()` reloads the scene like the native game-over path is unverified.
+- Revive falls back to in-place if no teammate is in the same scene.
+- Bag snapshots cover items only (no per-weapon ammo).
+- `ItemPickedUp` has no owner field, so a client can still despawn other players' drops; dropped-item index allocation is not reseeded per session (recycled id collision possible); client-local world FMOD is still not relayed to other clients; enemy snapshots have no distance/change filtering.
+
+Protocol **12**. Product **0.5.57** (not 1.0).
+
 ## 0.5.56 — 2026-09-30
 
 Protocol **v11**. Batch 61 ship (Dig AK): close the three Dig AJ residuals that were durable after re-reading the decompile, plus biodome/MultiCondition mid-hold and PEN_Reaktor client Tick emit.

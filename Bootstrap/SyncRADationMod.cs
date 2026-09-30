@@ -67,13 +67,25 @@ namespace SyncRADation
                     if (net != null) net.StartHost(PluginInfo.DefaultPort);
                     return;
                 }
-                if (args[i] == "--sync-connect" && i + 2 < args.Length)
+                if (args[i] == "--sync-connect")
                 {
+                    int port;
+                    if (i + 2 >= args.Length || !int.TryParse(args[i + 2], out port) || port < 1 || port > 65535)
+                    {
+                        LoggerInstance.Warning("[Auto] --sync-connect needs <address> <port 1-65535>; ignored");
+                        return;
+                    }
                     string addr = args[i + 1];
-                    int port = int.Parse(args[i + 2]);
                     LoggerInstance.Msg("[Auto] Connecting to " + addr + ":" + port);
-                    var net = Networking.LanNetworkManager.Instance;
-                    if (net != null) net.ConnectToHost(addr, port);
+                    try
+                    {
+                        var net = Networking.LanNetworkManager.Instance;
+                        if (net != null) net.ConnectToHost(addr, port);
+                    }
+                    catch (System.Exception ex)
+                    {
+                        LoggerInstance.Error("[Auto] --sync-connect failed: " + ex.Message);
+                    }
                     return;
                 }
             }

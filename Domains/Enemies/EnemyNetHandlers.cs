@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using LiteNetLib;
 using LiteNetLib.Utils;
 using SyncRADation.Cheats;
+using SyncRADation.Config;
 using SyncRADation.Players;
 using SyncRADation.Sync;
 using UnityEngine;
@@ -18,15 +19,41 @@ namespace SyncRADation.Networking
             _net = net ?? throw new System.ArgumentNullException(nameof(net));
         }
 
+        private static int _snapBytes;
+
+        static int SnapshotBytes()
+        {
+            if (_snapBytes == 0)
+            {
+                var probe = new NetDataWriter();
+                new EnemySnapshotNet().Serialize(probe);
+                _snapBytes = probe.Length;
+            }
+            return _snapBytes;
+        }
+
+        /// <summary>
+        /// Continuous snapshot: Sequenced on the State channel, chunked to one packet each (Sequenced cannot
+        /// fragment), so a stall here never blocks the ReliableOrdered event stream. Full list re-sent at 15 Hz.
+        /// </summary>
         internal void SendEnemyState(IList<EnemySnapshotNet> snaps)
         {
             if (snaps == null || snaps.Count == 0) return;
-            var writer = new NetDataWriter();
-            writer.Put((byte)NetMessageType.EnemyState);
-            writer.Put(snaps.Count);
-            for (int i = 0; i < snaps.Count; i++)
-                snaps[i].Serialize(writer);
-            _net.BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
+            int perPacket = (_net.StatePacketBudget() - 1 - 4) / SnapshotBytes();
+            if (perPacket < 1) perPacket = 1;
+            if (perPacket > NetWire.MaxEnemies) perPacket = NetWire.MaxEnemies;
+            int total = NetWire.ClampCount(snaps.Count, 4096, "EnemyState send");
+            for (int start = 0; start < total; start += perPacket)
+            {
+                int n = total - start;
+                if (n > perPacket) n = perPacket;
+                var writer = new NetDataWriter();
+                writer.Put((byte)NetMessageType.EnemyState);
+                writer.Put(n);
+                for (int i = 0; i < n; i++)
+                    snaps[start + i].Serialize(writer);
+                _net.BroadcastState(writer);
+            }
         }
 
         internal void SendEnemySpawnRequest(string typeKey, Vector3 pos, float rotY)
@@ -126,6 +153,16 @@ namespace SyncRADation.Networking
         internal void HandleEnemyDamage(EnemyDamageMessage msg)
         {
             ulong enemyId = unchecked((ulong)msg.EnemyWorldId);
+
+            // Host receives only client-originated EnemyDamage (AttackerPlayerId stamped from the peer map by dispatch).
+            // A client may hit enemies (TargetPlayerId < 0); damaging a player is the FriendlyFire path, off by default.
+            // Enemy->player damage the host itself authors is sent host->client and handled on the client below.
+            if (_net.Role == NetworkRole.Host && msg.TargetPlayerId >= 0 && ModConfig.FriendlyFire?.Value != true)
+            {
+                PlaytestLog.Warn("Damage", "rejected client damage to player " + msg.TargetPlayerId
+                    + " from " + msg.AttackerPlayerId + " (FriendlyFire off)");
+                return;
+            }
 
             if (msg.TargetPlayerId == _net.LocalPlayerId)
             {

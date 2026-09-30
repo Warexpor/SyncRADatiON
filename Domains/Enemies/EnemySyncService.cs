@@ -152,7 +152,8 @@ namespace SyncRADation.Networking
                         if (targetPid < 0 && e.playerPos.gameObject == net.GetLocalPlayer())
                             targetPid = net.LocalPlayerId;
 
-                        if (targetPid >= 0 && targetPid != net.LocalPlayerId)
+                        if (targetPid >= 0 && targetPid != net.LocalPlayerId
+                            && !PartyVitals.IsDown(targetPid))
                         {
                             float now = Time.time;
                             float lastAtk;
@@ -489,7 +490,7 @@ namespace SyncRADation.Networking
             float bestDist = 30f * 30f;
 
             var localPlayer = net.GetLocalPlayer();
-            if (localPlayer != null)
+            if (localPlayer != null && !NetworkDamageSystem.IsDead)
             {
                 float d = (localPlayer.transform.position - fromPos).sqrMagnitude;
                 if (d < bestDist)
@@ -503,6 +504,7 @@ namespace SyncRADation.Networking
             {
                 var proxy = pm.GetProxy(pid);
                 if (proxy == null || proxy.GameObject == null) continue;
+                if (PartyVitals.IsProxyDown(pid, proxy)) continue; // downed peers are not targets
                 float d = (proxy.GameObject.transform.position - fromPos).sqrMagnitude;
                 if (d < bestDist)
                 {
