@@ -248,24 +248,24 @@ namespace SyncRADation.Cheats
 
             HarvestLoaded();
             string typeKey = TypeKeyOf(ec);
-            if (string.IsNullOrEmpty(typeKey))
+            // Bank THIS live native (and parent EnemySpawner.EnemyType) so peers can
+            // FinishSpawn the same SR_Spawn_* WorldId. Hierarchy-only ids miss when the
+            // Instantiated _Child exists only on the host.
+            if (!string.IsNullOrEmpty(typeKey) && !HasTemplate(typeKey))
             {
-                ulong hierId = WorldId.FromGameObject(ec.gameObject);
-                if (hierId != 0)
-                    WorldRegistry.RegisterEnemy(hierId, ec);
-                PlaytestLog.Event("Spawn", "native adopt: unknown type, hierarchy id="
-                    + hierId.ToString("X16") + " name=" + n);
-                LanNetworkManager.Instance?.EnemySync.RequestFullSend();
-                return;
+                Stash(ec, typeKey);
+                TryStashFromParentSpawner(ec, typeKey);
+                HarvestLoaded();
             }
 
-            if (!HasTemplate(typeKey))
+            if (string.IsNullOrEmpty(typeKey) || !HasTemplate(typeKey))
             {
                 ulong hierId = WorldId.FromGameObject(ec.gameObject);
                 if (hierId != 0)
                     WorldRegistry.RegisterEnemy(hierId, ec);
-                PlaytestLog.Event("Spawn", "native adopt: no template " + typeKey
-                    + " id=" + hierId.ToString("X16"));
+                PlaytestLog.Event("Spawn", "native adopt: hierarchy fallback"
+                    + (string.IsNullOrEmpty(typeKey) ? " unknown-type" : " no-template " + typeKey)
+                    + " id=" + hierId.ToString("X16") + " name=" + n);
                 LanNetworkManager.Instance?.EnemySync.RequestFullSend();
                 return;
             }
@@ -455,12 +455,17 @@ namespace SyncRADation.Cheats
 
         private static string TypeKeyOf(EnemyController e)
         {
+            // Prefer vanilla AnEnemyType string even outside the F11 TypeKeys menu —
+            // AdoptNativeSpawn must key the same SR_Spawn_* name on both peers.
             try
             {
                 if (e.Preset != null)
                 {
                     string t = e.Preset.Type.ToString();
-                    if (IsKnownType(t)) return t;
+                    if (!string.IsNullOrEmpty(t)
+                        && !string.Equals(t, "None", System.StringComparison.Ordinal)
+                        && t != "0")
+                        return t;
                 }
             }
             catch { }
@@ -480,11 +485,26 @@ namespace SyncRADation.Cheats
             return "";
         }
 
-        private static bool IsKnownType(string t)
+        static void TryStashFromParentSpawner(EnemyController ec, string typeKey)
         {
-            for (int i = 0; i < TypeKeys.Length; i++)
-                if (TypeKeys[i] == t) return true;
-            return false;
+            if (ec == null || string.IsNullOrEmpty(typeKey) || HasTemplate(typeKey)) return;
+            try
+            {
+                var sp = ec.GetComponentInParent<EnemySpawner>();
+                if (sp == null) return;
+                GameObject prefab = null;
+                try { prefab = sp.EnemyType; } catch { }
+                if (prefab == null) return;
+                EnemyController tmpl = null;
+                try { tmpl = prefab.GetComponent<EnemyController>(); } catch { }
+                if (tmpl == null)
+                {
+                    try { tmpl = prefab.GetComponentInChildren<EnemyController>(true); } catch { }
+                }
+                if (tmpl != null)
+                    Stash(tmpl, typeKey);
+            }
+            catch { }
         }
 
         private static Vector3 SpawnPos()

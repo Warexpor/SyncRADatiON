@@ -159,9 +159,22 @@ namespace SyncRADation.Networking
         public static void ApplyCode(DET_RadioCodeLock x, PuzzleStateEntry e)
         {
             if (x == null) return;
-            x.frequency = e.Int0;
-            x.code = e.Int1;
-            x.hintStation = e.Int2;
+            // Peer unsolved packets are dropped before apply. A peer SOLVE still
+            // arrives here on the host — do not replace the host-generated code.
+            // Remount / host broadcast / late-join copy the ints and the keypad
+            // solution so Start()'s local roll does not stick.
+            if (!PuzzleSyncService.ApplyingPeerPacket)
+            {
+                x.frequency = e.Int0;
+                x.code = e.Int1;
+                x.hintStation = e.Int2;
+                try
+                {
+                    if (x.keypad != null && e.Int1 != 0)
+                        x.keypad.solution = e.Int1.ToString();
+                }
+                catch { }
+            }
             if (!e.Bool0) return;
             try
             {

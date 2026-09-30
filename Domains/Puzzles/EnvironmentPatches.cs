@@ -135,6 +135,36 @@ namespace SyncRADation.Patches
                 else Read(PuzzleType.PEN_Reaktor, x);
             }
 
+            public static void MultiKey(MultiKeyLock x)
+            {
+                if (x == null) return;
+                bool unlocked = false;
+                try
+                {
+                    var keys = x.keys;
+                    if (keys != null && keys.Length > 0)
+                    {
+                        unlocked = true;
+                        for (int i = 0; i < keys.Length; i++)
+                        {
+                            if (!keys[i]) { unlocked = false; break; }
+                        }
+                    }
+                }
+                catch { }
+                if (unlocked) Progressed(PuzzleType.MultiKeyLock, x);
+                else Read(PuzzleType.MultiKeyLock, x);
+            }
+
+            public static void MusicBox(RES_MusicBox x)
+            {
+                if (x == null) return;
+                bool opened = false;
+                try { opened = x.opened; } catch { }
+                if (opened) Progressed(PuzzleType.RES_MusicBox, x);
+                else Read(PuzzleType.RES_MusicBox, x);
+            }
+
             public static void CardWriter(MED_CardWriter x)
             {
                 if (x == null) return;
@@ -142,6 +172,40 @@ namespace SyncRADation.Patches
                 try { ok = x.solved; } catch { }
                 if (ok) Progressed(PuzzleType.MED_CardWriter, x);
                 else Read(PuzzleType.MED_CardWriter, x);
+            }
+
+            /// <summary>
+            /// OpenDoors/CloseDoors start a lerp — TryRead at postfix still sees the
+            /// start pose. Project the durable end local X (±Distance on X) and emit.
+            /// </summary>
+            public static void AdlerEvDoors(MED_Adler_EVdoors x, bool open)
+            {
+                if (x == null || NetGate.IsApplying) return;
+                var net = LanNetworkManager.Instance;
+                if (net == null || !net.IsConnected) return;
+                float dist = 20f;
+                try { dist = x.Distance; } catch { }
+                if (dist < 0.01f) dist = 20f;
+                float lx = 0f, rx = 0f;
+                try { if (x.DoorL != null) lx = x.DoorL.localPosition.x; } catch { }
+                try { if (x.DoorR != null) rx = x.DoorR.localPosition.x; } catch { }
+                bool looksOpen = Mathf.Abs(lx) + Mathf.Abs(rx) >= dist * 0.5f;
+                if (open && !looksOpen)
+                {
+                    lx -= dist;
+                    rx += dist;
+                }
+                else if (!open && looksOpen)
+                {
+                    lx += dist;
+                    rx -= dist;
+                }
+                ulong id = WorldId.FromGameObject(x.gameObject);
+                if (id == 0) return;
+                var entry = PuzzleDomainUtil.Mk(
+                    PuzzleType.MED_Adler_EVdoors, unchecked((long)id),
+                    open, false, false, 0, 0, 0, 0, lx, rx);
+                net.PuzzleSync.EmitEntry(entry);
             }
 
             static void Send(PuzzleType type, Component c, bool progressed)
@@ -548,6 +612,71 @@ namespace SyncRADation.Patches
         public static void Postfix(ROT_Mural __instance) => EnvEmit.Mural(__instance);
     }
 
+    // MultiKeyLock.Update writes keys[] from inserts. Emit mid-pack (Int0) without
+    // waiting for the 0.5s poll. IsProgressed holds Bool0 || Int0!=0.
+    [HarmonyPatch(typeof(MultiKeyLock), "Update")]
+    public static class MultiKeyLockUpdatePatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(MultiKeyLock __instance)
+        {
+            if (__instance == null || NetGate.IsApplying) return;
+            var net = LanNetworkManager.Instance;
+            if (net == null || !net.IsConnected) return;
+            EnvEmit.MultiKey(__instance);
+        }
+    }
+
+    [HarmonyPatch(typeof(RES_MusicBox), nameof(RES_MusicBox.LoadCassette))]
+    public static class MusicBoxCassettePatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(RES_MusicBox __instance)
+        {
+            if (__instance == null || NetGate.IsApplying) return;
+            EnvEmit.MusicBox(__instance);
+        }
+    }
+
+    // LibraryPC maze robot moves mutate robotPos. Emit mid pack without waiting
+    // for the 0.5s poll. IsProgressed holds Bool0 || Bool1.
+    [HarmonyPatch(typeof(RES_LibraryPC), nameof(RES_LibraryPC.moveRight))]
+    [HarmonyPatch(typeof(RES_LibraryPC), nameof(RES_LibraryPC.moveLeft))]
+    [HarmonyPatch(typeof(RES_LibraryPC), nameof(RES_LibraryPC.moveUp))]
+    [HarmonyPatch(typeof(RES_LibraryPC), nameof(RES_LibraryPC.moveDown))]
+    public static class LibraryPcMovePatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(RES_LibraryPC __instance)
+        {
+            if (__instance == null || NetGate.IsApplying) return;
+            var net = LanNetworkManager.Instance;
+            if (net == null || !net.IsConnected) return;
+            bool solved = false;
+            try { solved = __instance.solved; } catch { }
+            if (solved) EnvEmit.Progressed(PuzzleType.RES_LibraryPC, __instance);
+            else EnvEmit.Read(PuzzleType.RES_LibraryPC, __instance);
+        }
+    }
+
+    // Host Start() rolls frequency/code/hint. Push that roll immediately.
+    // Client Start() then re-applies the held host roll so the local roll does not stick.
+    [HarmonyPatch(typeof(DET_RadioCodeLock), "Start")]
+    public static class RadioCodeStartPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(DET_RadioCodeLock __instance)
+        {
+            if (__instance == null || NetGate.IsApplying) return;
+            var net = LanNetworkManager.Instance;
+            if (net == null || !net.IsConnected) return;
+            if (net.Role == NetworkRole.Host)
+                EnvEmit.Read(PuzzleType.DET_RadioCodeLock, __instance);
+            else
+                net.PuzzleSync.QueueReapply();
+        }
+    }
+
     [HarmonyPatch(typeof(ROT_MeatBlocker), nameof(ROT_MeatBlocker.pickup))]
     public static class RotMeatPatch
     {
@@ -600,11 +729,19 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(BiodomeDoorLock __instance)
         {
+            // Dig AK: KeyLevel mid-hold — ReadOnce only fired once so remount /
+            // late-join dropped Int0 until !hasLock. Emit on every KeyLevel /
+            // unlocked change (ChangedOrFirst dedupes).
             if (__instance == null || NetGate.IsApplying) return;
             try
             {
                 if (__instance.KeyLevel > 0 || !__instance.hasLock)
-                    EnvEmit.ReadOnce(PuzzleType.BiodomeDoorLock, __instance);
+                {
+                    if (!__instance.hasLock)
+                        EnvEmit.Progressed(PuzzleType.BiodomeDoorLock, __instance);
+                    else
+                        EnvEmit.Read(PuzzleType.BiodomeDoorLock, __instance);
+                }
             }
             catch { }
         }
@@ -620,6 +757,43 @@ namespace SyncRADation.Patches
         public static void Postfix(LAB_Waage __instance)
         {
             EnvEmit.Progressed(PuzzleType.LAB_Waage, __instance);
+        }
+    }
+
+    // setButtonState is where states[,] actually flips (toggleButton yields first).
+    [HarmonyPatch(typeof(LAB_PatternLock), nameof(LAB_PatternLock.setButtonState))]
+    public static class PatternLockSetStatePatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(LAB_PatternLock __instance)
+        {
+            if (__instance == null || NetGate.IsApplying) return;
+            try
+            {
+                if (__instance.solved)
+                    EnvEmit.Progressed(PuzzleType.PatternLock, __instance);
+                else
+                    EnvEmit.Read(PuzzleType.PatternLock, __instance);
+            }
+            catch { }
+        }
+    }
+
+    [HarmonyPatch(typeof(ROT_Tarot), nameof(ROT_Tarot.flip))]
+    [HarmonyPatch(typeof(ROT_Tarot), nameof(ROT_Tarot.PlaceCardBuyan))]
+    [HarmonyPatch(typeof(ROT_Tarot), nameof(ROT_Tarot.PlaceCardVineta))]
+    [HarmonyPatch(typeof(ROT_Tarot), nameof(ROT_Tarot.PlaceCardHeimat))]
+    [HarmonyPatch(typeof(ROT_Tarot), nameof(ROT_Tarot.PlaceCardKitezh))]
+    [HarmonyPatch(typeof(ROT_Tarot), nameof(ROT_Tarot.PlaceCardLeng))]
+    [HarmonyPatch(typeof(ROT_Tarot), nameof(ROT_Tarot.PlaceCardRotfront))]
+    [HarmonyPatch(typeof(ROT_Tarot), nameof(ROT_Tarot.TakeCard))]
+    public static class RotTarotCardPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(ROT_Tarot __instance)
+        {
+            if (__instance == null || NetGate.IsApplying) return;
+            EnvEmit.Read(PuzzleType.ROT_Tarot, __instance);
         }
     }
 
@@ -646,8 +820,36 @@ namespace SyncRADation.Patches
             {
                 if (__instance.solved)
                     EnvEmit.Progressed(PuzzleType.PatternLock, __instance);
+                else
+                    EnvEmit.Read(PuzzleType.PatternLock, __instance);
             }
             catch { }
+        }
+    }
+
+    // MED_Adler_EVdoors: cutscene UnityEvents call OpenDoors/CloseDoors which lerp
+    // DoorL/DoorR local X by ±Distance (Melon; dump.cs TypeDef 9811). No open bool —
+    // durable state is the transform pose. Postfix projects end pose (lerp has not
+    // moved yet) and emits; Apply snaps X. Both arrows + late-join dump.
+    [HarmonyPatch(typeof(MED_Adler_EVdoors), nameof(MED_Adler_EVdoors.OpenDoors))]
+    public static class MedAdlerEvDoorsOpenPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(MED_Adler_EVdoors __instance)
+        {
+            if (__instance == null || NetGate.IsApplying) return;
+            EnvEmit.AdlerEvDoors(__instance, open: true);
+        }
+    }
+
+    [HarmonyPatch(typeof(MED_Adler_EVdoors), nameof(MED_Adler_EVdoors.CloseDoors))]
+    public static class MedAdlerEvDoorsClosePatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(MED_Adler_EVdoors __instance)
+        {
+            if (__instance == null || NetGate.IsApplying) return;
+            EnvEmit.AdlerEvDoors(__instance, open: false);
         }
     }
 }

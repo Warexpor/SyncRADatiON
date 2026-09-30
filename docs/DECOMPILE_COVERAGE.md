@@ -1,4 +1,4 @@
-# Decompile coverage (protocol 10)
+# Decompile coverage (protocol 11)
 
 Decompile root: `~/Archive/Windows-Desktop/Dev/SIGNALIS DECOMPILED`
 (`~/Omarchy_Backup/Desktop/Dev/SIGNALIS DECOMPILED` is **gone** on this machine — Archive path is canonical.)
@@ -7,25 +7,22 @@ Prefer `05_CSharp_source/Assembly-CSharp_MelonLoader/` + `00_CODE_VIEW/dump.cs`.
 
 **Rules:** no invented sync. New `PuzzleType` / Boss / StoryCommit fields = protocol bump. **No park tables** — close gaps or classify intentional local.
 
-Last loop: 2026-09-20 (protocol 10). Shipped in product **0.5.1**.
+Last loop: 2026-09-30 (protocol 11). Shipped in product **0.5.56**.
 
-## Implemented this loop (protocol 10)
+## Implemented this loop (protocol 11)
 
 | Fix | Reverse-check | Citation |
 |-----|---------------|----------|
-| `MultiKeyLock` Apply → `checkLock` + `TryUnlockDoors` | Client keys → host unlock; host → client | `MultiKeyLock.checkLock` |
-| `ROT_DialLock` Apply unlocks `Door` / disables `lockObject` | Both arrows | `ROT_DialLock.Door` / `lockObject` |
-| `NumberLockNew` / `DoorLockPuzzle` Apply unseals `door` when unlocked | Both arrows | `door.locked` + UnlockDoorObject |
-| `MED_MultiLock` / `LAB_MultiLock` Apply → `TryUnlockDoors` | Both arrows | `unlocked` |
-| `MED_VentPuzzle` Magpie cover snap + disable itemInter | Both arrows | `uncovered` / covers / `RemoveCover` |
-| `EvidenceLockerLogicPuzzle` snaps sibling `EvidenceLockerDoor` | Host solve → client doors | `EvidenceLockerDoor.done` |
-| Client emit: `SwingDoor` / `DoorwaySimple` / `StorageBox` | Client open → host relay | existing Apply |
-| Client emit globals: `MED_KeyGrid` / `ArianePhotoCode` | Client solve → host → peers | statics WorldId 0 |
-| `GunCase` opened snap (lid / pickup / inter) | Both arrows + late-join | MelonLoader `GunCase` |
-| `AraNest` triggered/activated/dead + `TriggerTrap` | Both arrows | `AraNest` |
-| `LAB_RifleQuest` awake/gone/rifle GO pose | Both arrows | `LAB_RifleQuest` |
-| `LOV_Microfiche` hasFiche/IsaVisited/IsaGone | Both arrows | `LOV_Microfiche` |
-| `PuzzleStateEntry` change-detect includes `Float1` | Kolibri/Adler incremental | entry wire |
+| `MED_Adler_EVdoors` PuzzleType 77 — DoorL/DoorR local X (Float0/Float1) + Bool0 open; Open/Close emit projected end pose; Apply StopAllCoroutines + snap X | Both arrows + late-join dump | Melon `DoorL`/`DoorR`/`Distance`; dump.cs TypeDef 9811; RES_School closed (0,0,0) → open ±20 |
+| `AdoptNativeSpawn` banks live/`EnemySpawner.EnemyType` via Stash; `TypeKeyOf` uses vanilla `Preset.Type` (not F11 TypeKeys-only); SR_Spawn_* + EnemySpawn when template exists | Host Instantiates → client FinishSpawn same WorldId | `EnemySpawner._Child`; `EntitySpawner.AdoptNativeSpawn` |
+| Death bag: all Key/Object Note onto party ring, never floor (closes bag-not-on-ring race) | Host wipe + client downed | `PartyKeyRing.Note` / `OfferToHost`; `NetworkDamageSystem.DropInventoryOnDeath` |
+| `BiodomeDoorLock` IsProgressed Bool0\|\|Int0; Update emit Read/Progressed (not ReadOnce) | Partial KeyLevel remount + late-join | Melon `KeyLevel` / `hasLock` |
+| `MultiConditionEvent` IsProgressed Bool0\|\|Int0 (`tried`) | Partial tries remount + late-join | Melon `tried` / `triedOnce` |
+| `PEN_Reaktor` added to ClientEmitTypes | Client rod mid → host Tick | Dig AG positions pack |
+
+## Still implemented (protocol 10 — prior loop)
+
+GunCase / AraNest / RifleQuest / Microfiche; PatternLock grid; Tarot cards; mural Blocker+useRing FullRefresh; RES_Power OnSuccess both-path; DoorLockEvent Door.SetActive; LibraryPC robotPos; SafeDoor onSolved dimPOI; SceneFollow RestorePlay; HideClaimed→EnsurePartyOnPickup. See CHANGELOG 0.5.55 / 0.5.54.
 
 ## Still implemented (protocol 9 — prior loop)
 
@@ -33,7 +30,7 @@ PuzzleType 64–72 residency/key/safe/drawer; CentralElevator `targetFloor`; mur
 
 ## Intentional local (design — not deferred)
 
-Books / EventScreen / EventOnlyRoom / lock-flavor Dialoguer (0,6,17,20–27,+13 Airlock) / PEN_Titles airlock / wreck↔hole SceneFollow / Music·Cutscenes·Ambience beds / Elster+radio UI emitters / ConnectedDoors traverse / ladders / radio tuner frequency / flavor `DialoguePlayedOnce` / BookScreen UI / SanctuaryFinale·ShootingScene presentation zones / `Interaction.triggered` poll (teleports) / UncoverDelayed cosmetic fog covers.
+Books / EventScreen / EventOnlyRoom / lock-flavor Dialoguer (0,6,17,20–27,+13 Airlock) / PEN_Titles airlock / wreck↔hole SceneFollow / Music·Cutscenes·Ambience beds / Elster+radio UI emitters / ConnectedDoors traverse / ladders / radio tuner frequency / flavor `DialoguePlayedOnce` / BookScreen UI / SanctuaryFinale·ShootingScene presentation zones / `Interaction.triggered` poll (teleports) / UncoverDelayed cosmetic fog covers / PatternLock FullRefresh `onSolved` exitEvent (EventScreen local; pad+doors still snap) / `LAB_Waage.content` (independent bags) / FakeWall·continuum·nowhere·Gestalt (no durable bool puzzle state).
 
 ## How to re-run
 

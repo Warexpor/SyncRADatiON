@@ -1,4 +1,5 @@
 // Host commands chapter loads; clients apply the same AsyncLoader.LoadLevel.
+using SyncRADation.ItemSystem;
 using SyncRADation.Patches;
 using SyncRADation.Sync;
 using UnityEngine;
@@ -300,6 +301,9 @@ namespace SyncRADation.Networking
 
             NoteGoingTo(sceneName);
             PlaytestLog.Event("Scene", "follow load '" + sceneName + "' (was '" + cur + "')");
+            // Mid-inventory / menu / dialogue sticky: unload alone does not always
+            // restore play before AsyncLoader. Mirror disconnect restore (Dig AJ).
+            try { DroppedItemManager.RestorePlay(); } catch { }
             NetGate.BeginApply();
             try
             {

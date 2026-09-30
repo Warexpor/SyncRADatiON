@@ -20,6 +20,12 @@ namespace SyncRADation.Networking
         private bool _scanned;
         private bool _needFullSend = true;
 
+        /// <summary>
+        /// Host is applying a packet from a peer. DET_RadioCodeLock keeps the host's
+        /// generated frequency/code/hint; peers still copy those ints.
+        /// </summary>
+        internal static bool ApplyingPeerPacket;
+
         // Type → (WorldId → component)
         private readonly Dictionary<PuzzleType, Dictionary<ulong, Component>> _maps
             = new Dictionary<PuzzleType, Dictionary<ulong, Component>>();
@@ -448,6 +454,42 @@ namespace SyncRADation.Networking
             // — intentional FullRefresh carry (Dig AG).
             if (e.Type == PuzzleType.PEN_Reaktor)
                 return e.Bool0 || e.Bool1 || e.Int0 != 0 || e.Int1 != 0;
+            // MultiKeyLock: hold partial keys[] pack (Int0) so remount / late-join
+            // re-snaps inserted keys, not only final Bool0 (every key true).
+            if (e.Type == PuzzleType.MultiKeyLock)
+                return e.Bool0 || e.Int0 != 0;
+            // RES_MusicBox: hold inserted cassette (Bool1) before the lid opens.
+            if (e.Type == PuzzleType.RES_MusicBox)
+                return e.Bool0 || e.Bool1;
+            // ROT_MeatBlocker: hold mid pickup count (Int0) before the seal drops.
+            if (e.Type == PuzzleType.ROT_MeatBlocker)
+                return e.Bool0 || e.Int0 != 0;
+            // DET_RadioCodeLock: hold host-generated frequency/code/hint (Int0–2)
+            // so remount does not Start() a second local code. 0/0/0 is pre-Start.
+            if (e.Type == PuzzleType.DET_RadioCodeLock)
+                return e.Bool0 || e.Int0 != 0 || e.Int1 != 0 || e.Int2 != 0;
+            // PatternLock: hold the button grid (Int3 = cell count, including all-off)
+            // so remount / the other peer keep mid-presses, not only Bool0 solved.
+            if (e.Type == PuzzleType.PatternLock)
+                return e.Bool0 || e.Int3 != 0;
+            // ROT_Tarot: hold the card pack (Int3 = slot count, empty coded 0xFF)
+            // plus darkmode. Int3 != 0 from the first successful read.
+            if (e.Type == PuzzleType.ROT_Tarot)
+                return e.Bool0 || e.Int3 != 0;
+            // RES_LibraryPC: hold mid-maze robotPos (Bool1 = pack valid from TryRead).
+            if (e.Type == PuzzleType.RES_LibraryPC)
+                return e.Bool0 || e.Bool1;
+            // MED_Adler_EVdoors: hold DoorL/DoorR local X (Float0/Float1) + open Bool0.
+            if (e.Type == PuzzleType.MED_Adler_EVdoors)
+                return e.Bool0
+                    || !Mathf.Approximately(e.Float0, 0f)
+                    || !Mathf.Approximately(e.Float1, 0f);
+            // BiodomeDoorLock: hold partial KeyLevel (Int0) before !hasLock.
+            if (e.Type == PuzzleType.BiodomeDoorLock)
+                return e.Bool0 || e.Int0 != 0;
+            // MultiConditionEvent: hold partial tried (Int0) before triedOnce.
+            if (e.Type == PuzzleType.MultiConditionEvent)
+                return e.Bool0 || e.Int0 != 0;
             return ProgressedBool0.Contains(e.Type) && e.Bool0;
         }
 
@@ -471,14 +513,28 @@ namespace SyncRADation.Networking
             bool cinematic = !msg.FullRefresh;
             bool prevMutate = _mutateWorld;
             _mutateWorld = cinematic;
+            bool hostFromPeer = net != null && net.Role == NetworkRole.Host
+                && msg.SenderPlayerId != net.LocalPlayerId;
+            int relayCount = 0;
             NetGate.BeginApply();
+            ApplyingPeerPacket = hostFromPeer;
             try
             {
                 for (int i = 0; i < msg.Entries.Length; i++)
-                    ApplyEntry(msg.Entries[i], cinematic);
+                {
+                    var entry = msg.Entries[i];
+                    // Client Start() generates its own radio code. Applying that
+                    // unsolved payload would replace the host's frequency/code/hint.
+                    if (hostFromPeer && entry.Type == PuzzleType.DET_RadioCodeLock && !entry.Bool0)
+                        continue;
+                    ApplyEntry(entry, cinematic);
+                    if (hostFromPeer)
+                        msg.Entries[relayCount++] = entry;
+                }
             }
             finally
             {
+                ApplyingPeerPacket = false;
                 _mutateWorld = prevMutate;
                 NetGate.EndApply();
             }
@@ -488,8 +544,16 @@ namespace SyncRADation.Networking
                 try { DoorNative.ReassertLockVisuals(); } catch { }
             }
 
-            if (net != null && net.Role == NetworkRole.Host && msg.SenderPlayerId != net.LocalPlayerId)
-                net.SendPuzzleState(msg.Entries, false, msg.SenderPlayerId);
+            if (hostFromPeer && relayCount > 0)
+            {
+                PuzzleStateEntry[] relay = msg.Entries;
+                if (relayCount != msg.Entries.Length)
+                {
+                    relay = new PuzzleStateEntry[relayCount];
+                    System.Array.Copy(msg.Entries, relay, relayCount);
+                }
+                net.SendPuzzleState(relay, false, msg.SenderPlayerId);
+            }
         }
 
         public void QueueReapply()
@@ -615,6 +679,20 @@ namespace SyncRADation.Networking
             if (!ChangedOrFirst(entry, false)) return;
             HoldIfProgressed(entry);
             PlaytestLog.Event("Puzzle", "emit " + type + " id=" + worldId.ToString("X16"));
+            _emitScratch[0] = entry;
+            net.SendPuzzleState(_emitScratch, false);
+        }
+
+        /// <summary>Emit a pre-built entry (Adler EV projected end pose, etc.).</summary>
+        public void EmitEntry(PuzzleStateEntry entry)
+        {
+            if (NetGate.IsApplying) return;
+            var net = LanNetworkManager.Instance;
+            if (net == null || !net.IsConnected) return;
+            if (!ChangedOrFirst(entry, false)) return;
+            HoldIfProgressed(entry);
+            PlaytestLog.Event("Puzzle", "emit entry " + entry.Type
+                + " id=" + unchecked((ulong)entry.WorldId).ToString("X16"));
             _emitScratch[0] = entry;
             net.SendPuzzleState(_emitScratch, false);
         }

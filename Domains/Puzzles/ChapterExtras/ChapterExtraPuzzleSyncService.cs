@@ -3,8 +3,8 @@ using UnityEngine;
 namespace SyncRADation.Networking
 {
     /// <summary>
-    /// Protocol 10 chapter extras: GunCase, AraNest, LAB_RifleQuest, LOV_Microfiche.
-    /// Magpie-style final-pose snaps; host + client emit; late-join via full dump.
+    /// Protocol 10–11 chapter extras: GunCase, AraNest, LAB_RifleQuest, LOV_Microfiche,
+    /// MED_Adler_EVdoors. Magpie-style final-pose snaps; host + client emit; late-join dump.
     /// </summary>
     public sealed class ChapterExtraPuzzleSyncService
     {
@@ -35,6 +35,21 @@ namespace SyncRADation.Networking
                 {
                     var x = (LOV_Microfiche)c;
                     entry = PuzzleDomainUtil.Mk(type, wid, x.hasFiche, x.IsaVisited, x.IsaGone, 0, 0, 0, 0, 0);
+                    return true;
+                }
+                case PuzzleType.MED_Adler_EVdoors:
+                {
+                    var x = (MED_Adler_EVdoors)c;
+                    float lx = 0f, rx = 0f;
+                    try { if (x.DoorL != null) lx = x.DoorL.localPosition.x; } catch { }
+                    try { if (x.DoorR != null) rx = x.DoorR.localPosition.x; } catch { }
+                    float dist = 20f;
+                    try { dist = x.Distance; } catch { }
+                    if (dist < 0.01f) dist = 20f;
+                    // Durable pose is DoorL/DoorR localPosition (OpenDoors/CloseDoors
+                    // coroutines lerp X by ±Distance; Melon has no open/solved bool).
+                    bool open = Mathf.Abs(lx) + Mathf.Abs(rx) >= dist * 0.5f;
+                    entry = PuzzleDomainUtil.Mk(type, wid, open, false, false, 0, 0, 0, 0, lx, rx);
                     return true;
                 }
                 default:
@@ -116,6 +131,31 @@ namespace SyncRADation.Networking
             SetGo(x.Isa, e.Bool1 && !e.Bool2);
             SetGo(x.IsaNote, e.Bool2);
             SetGo(x.IsaCutscene, !e.Bool1 && !e.Bool2);
+        }
+
+        /// <summary>
+        /// Snap DoorL/DoorR local X from the wire (Float0/Float1). Stop open/close
+        /// coroutines so late-join / remount land on the durable pose without a
+        /// second Distance lerp (calling OpenDoors again would overshoot).
+        /// </summary>
+        public static void ApplyAdlerEvDoors(MED_Adler_EVdoors x, PuzzleStateEntry e)
+        {
+            if (x == null) return;
+            try { x.StopAllCoroutines(); } catch { }
+            SnapAdlerDoorX(x.DoorL, e.Float0);
+            SnapAdlerDoorX(x.DoorR, e.Float1);
+        }
+
+        static void SnapAdlerDoorX(Transform door, float localX)
+        {
+            if (door == null) return;
+            try
+            {
+                var p = door.localPosition;
+                p.x = localX;
+                door.localPosition = p;
+            }
+            catch { }
         }
 
         static bool IsGunCaseOpened(GunCase x)

@@ -1,6 +1,6 @@
 # SyncRADation — SIGNALIS Multiplayer Mod
 
-**Status:** v0.5.20 — protocol **v10**. Host-authoritative world/story + native presentation/FMOD. Dual-instance playtest required. Decompile: `~/Archive/Windows-Desktop/Dev/SIGNALIS DECOMPILED` (`~/Omarchy_Backup/Desktop/Dev/...` is gone on this machine).
+**Status:** v0.5.56 — protocol **v11**. Host-authoritative world/story + native presentation/FMOD. Dual-instance playtest required. Decompile: `~/Archive/Windows-Desktop/Dev/SIGNALIS DECOMPILED` (`~/Omarchy_Backup/Desktop/Dev/...` is gone on this machine).
 
 ## Product
 
@@ -17,7 +17,7 @@ LAN multiplayer MelonLoader mod for SIGNALIS (Unity IL2CPP / Unhollower-style Ma
 
 Walk up to a dropped prop for the native TAKE prompt (yes/no inspect, ammo count). There is no extra pickup key.
 
-## What is synced (0.5.20)
+## What is synced (0.5.56)
 
 | Area | Authority | Notes |
 |------|-----------|--------|
@@ -26,14 +26,14 @@ Walk up to a dropped prop for the native TAKE prompt (yes/no inspect, ammo count
 | Doors (double / sliding) | Any peer emit, host relay | Visual open/close via native methods |
 | ConnectedDoors (room links) | Lock only | **Never** sync traverse / StartA/B — room entry is local. Unique key doors: one solve (party key ring **Key/Object only**), both walk |
 | Ladders | Local traverse | Climb is per-player; other peer only hears proxy SFX (no `Interaction.trigger`) |
-| Chapter / scene load | Host | SceneFollow via `AsyncLoader` / `SceneHelper` / `LoadLevelZone` — int and string loads both gate. **Wreck↔hole never follows** (each Elster loads `PEN_Hole` when they finish the airlock). Host leaving Penrose still follows. Client F7 is a host load + follow, not `BeginApply` |
+| Chapter / scene load | Host | SceneFollow via `AsyncLoader` / `SceneHelper` / `LoadLevelZone` — int and string loads both gate. **Wreck↔hole never follows** (each Elster loads `PEN_Hole` when they finish the airlock). Host leaving Penrose still follows. Client F7 is a host load + follow, not `BeginApply`. Follow calls RestorePlay (clears inventory/menu sticky) before load |
 | Story (SProgress, Dialoguer, cutscenes, END_Manager) | Host | Full slot dump on join; **books / notes / EventScreen / EventOnlyRoom / airlock (`PEN_Titles`) / lock-flavor lines stay local**. Story Dialoguer Start (all overloads) is client→host then presentation replay; Continue/End apply on clients. **Other-room cutscenes / EventZones do not Start/Invoke** on the observer |
 | World FMOD | Host Play/Stop | StudioEventEmitter by WorldId; skip Elster + radio UI + **Music/Cutscenes/Ambience beds**; **far non-door Play** distance-gated like doors; tuner freq local |
-| Puzzles / locks / elevators / radio module / storage / event zones / alert | Host + client emit | **WorldId-keyed**; client emits puzzle/lock types only (not `Interaction.trigger` / EventZone / combat); apply **snaps flags + doors**, never EventScreen / `trigger()`; cryo/codepad/pump/pipes/hatch live-apply native Open/Drain/TurnValve; unlocked location doors stay open for the party; **GunCase / AraNest / LAB_RifleQuest / LOV_Microfiche** (protocol 10) |
+| Puzzles / locks / elevators / radio module / storage / event zones / alert | Host + client emit | **WorldId-keyed**; client emits puzzle/lock types only (not `Interaction.trigger` / EventZone / combat); apply **snaps flags + doors**, never EventScreen / `trigger()`; cryo/codepad/pump/pipes/hatch live-apply native Open/Drain/TurnValve; unlocked location doors stay open for the party; **GunCase / AraNest / LAB_RifleQuest / LOV_Microfiche** (protocol 10); **MED_Adler_EVdoors** DoorL/R local X (protocol 11); PatternLock grid + Tarot cards + LibraryPC robotPos mid-hold; mural late-join Blocker snap (no cutscene replay); biodome KeyLevel + MultiCondition tried mid-hold |
 | Host disconnect | Client goes offline | Restores play + input; clears enemy/boss puppets, EventZone/cutscene/airlock/SceneFollow/Dialoguer sticky |
 | World ItemPickups | Host claim/grant | Claimer gets item; unique **Key/Object** go on the **party key ring**; ammo/docs do not. Client bag keys still unlock UseItem (hatch card). **TarotDeath** held while live unclaimed **KeyOfSacrifice** (NG+ Artifact softlock). Peer-gone mid-claim releases non-unique orphans |
 | Player-dropped items | Peer + relay | G or inventory **DROP**; floor snap; native TAKE inspect (yes/no + count) then grant; join dump; bag-full reject; **peer-gone mid DroppedPickup / StorageTake rejected** (floor/box kept; Put still applies) |
-| Death | Asymmetric | Client downed (ammo/docs floor bag; **party-ring Key/Object stay on ring**, no ghost unique); native `HurtElster` HP; host death `SaveManager.Load` for both |
+| Death | Asymmetric | Client downed (ammo/docs floor bag; **all Key/Object Note onto party ring, never floor** — bag-only race closed); native `HurtElster` HP; host death `SaveManager.Load` for both |
 | Bosses (END / Chimera / Mynah / Kolibri / Adler) | Host | `END_Boss.Elster` / `BOS_Adler.Elster`; Kolibri dead/intensity; **join dump ForceFull**; client skips apply while transient + refreshes empty boss cache; Kolibri/Adler Update **Prefix+Postfix** Hold; Falke `Arenas`/shields/corrupt/`SetBodySpearStates` from snap stage/corrupt; END/Chimera/Mynah HaltBossController (StopAllCoroutines) |
 | Friendly fire | Opt-in | Default OFF |
 | Inventories | Independent | 6-slot bags stay personal; box + key ring are shared |
@@ -49,7 +49,7 @@ Bootstrap/                 # SyncRADationMod, ModRuntime, PluginInfo
 Networking/
   LanNetworkManager*.cs    # thin transport + HandlerRegistry + PublicApi
   Dispatch/                # TryDispatch* → domain NetHandlers
-  Messages/                # NetMessages (protocol 10)
+  Messages/                # NetMessages (protocol 11)
 Domains/
   Doors/ Enemies/ Bosses/ Story/ Scene/ Audio/
   Pickups/ Inventory/ Players/ Combat/ Puzzles/ Session/
@@ -66,13 +66,14 @@ UI/ Config/ Cheats/
 
 ## Protocol
 
-- **ProtocolVersion = 10** (PuzzleType 73–76 GunCase/AraNest/RifleQuest/Microfiche; v9 fields retained)
+- **ProtocolVersion = 11** (PuzzleType 77 MED_Adler_EVdoors DoorL/DoorR local X; v10 retained)
 - Port default `7777`, key `SyncRADation`
 - v6: full SProgress dump, UnityEvent presentation, FmodEmitter Play/Stop
 - v7: `PlayerRoster` (3+ peers), recycled client ids, join/resync dump to the requester only
 - v8: host-authored `EnemySpawn` (F11 templates by `AnEnemyType` from in-memory prefabs; does **not** additive-load chapters)
 - v9: PuzzleType 64–72 (MusicBox…OpenableDrawer), `PuzzleStateEntry.Float1`, BossSnapshotNet Hp/Corrupt, END playstyle on StoryCommit, FMOD Guid/Attached/`fmod` one-shots, SceneManager.LoadScene gate
 - v10: PuzzleType 73–76 (GunCase, AraNest, LAB_RifleQuest, LOV_Microfiche) + client emit for SwingDoor/DoorwaySimple/StorageBox/KeyGrid/ArianePhotoCode
+- v11: PuzzleType 77 (`MED_Adler_EVdoors` DoorL/DoorR local X pose) + AdoptNativeSpawn template bank + death-bag ring Note
 
 ## This machine (dual-instance, Linux + Proton)
 

@@ -4,11 +4,11 @@ namespace SyncRADation
     public static class PluginInfo
     {
         public const string Name = "SyncRADation";
-        public const string Version = "0.5.52";
+        public const string Version = "0.5.56";
         public const string Author = "Warexpor";
         public const string Description = "LAN multiplayer mod for SIGNALIS — host-authoritative world/story, native client UX";
-        /// <summary>Protocol v10: v9 + GunCase/AraNest/RifleQuest/Microfiche + Apply unlock fixes.</summary>
-        public const int ProtocolVersion = 10;
+        /// <summary>Protocol v11: v10 + MED_Adler_EVdoors (PuzzleType 77 DoorL/DoorR local X).</summary>
+        public const int ProtocolVersion = 11;
         public const int DefaultPort = 7777;
         public const int MaxPlayers = 4;
         public const float SendInterval = 1f / 30f;

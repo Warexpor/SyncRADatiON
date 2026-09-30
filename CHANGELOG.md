@@ -1,3 +1,95 @@
+## 0.5.56 — 2026-09-30
+
+Protocol **v11**. Batch 61 ship (Dig AK): close the three Dig AJ residuals that were durable after re-reading the decompile, plus biodome/MultiCondition mid-hold and PEN_Reaktor client Tick emit.
+
+### Fixed
+- **MED_Adler_EVdoors unsynced** — Melon has no open/solved bool, but `DoorL`/`DoorR` localPosition is durable (OpenDoors/CloseDoors lerp X by ±`Distance`; dump.cs TypeDef 9811; RES_School closed 0 → open ±20). PuzzleType **77** packs Bool0 + Float0/Float1; Open/Close postfix projects end pose (lerp has not moved yet) via `EmitEntry`; Apply `StopAllCoroutines` + snap X. IsProgressed holds pose. Protocol **11**.
+- **AdoptNativeSpawn hierarchy-only miss** — Unknown/no-template path registered hierarchy WorldId only; host Instantiated `_Child` never existed on client → ApplyEnemyState map miss. Now `TypeKeyOf` uses vanilla `Preset.Type` (not F11 TypeKeys-only), Stash live + parent `EnemySpawner.EnemyType`, then SR_Spawn_* rename + `EnemySpawn` broadcast when template exists. Hierarchy fallback only when type/template still missing (shared scene instances).
+- **Death bag unique Key/Object not on ring** — Skip-floor gated on `Has(ring)` so bag-only uniques still floored + DetachDroppedKey race. All Key/Object now `Note`/`OfferToHost` then bag-strip only — never floor on death (both host wipe + client downed).
+- **BiodomeDoorLock KeyLevel mid dropped** — TryRead already packed Int0; IsProgressed was Bool0-only; Update used ReadOnce. IsProgressed Bool0\|\|Int0; Update emits Read/Progressed every change.
+- **MultiConditionEvent tried mid dropped** — Apply wrote Int0; IsProgressed Bool0-only. Hold Bool0\|\|Int0.
+- **PEN_Reaktor missing from ClientEmitTypes** — Client rod mid relied on Update patch alone; add type to client Tick emit set.
+
+### Before → After (player)
+- **Before:** Adler EV doors stay shut for the peer / late joiner; native EnemySpawner children can miss on the client; dying with a bag-only unique can ghost-floor it off the ring; biodome partial keys and multi-condition try counts reset on remount; client reactor rods may not poll-emit.
+- **After:** Adler door X pose syncs (protocol 11); native spawns share SR_Spawn WorldIds when a template can be banked; death never floors uniques; biodome/MultiCondition mid-hold survives remount; client PEN_Reaktor Tick emit matches Dig AG.
+
+### Dig AK residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| Adler EV DoorL/R pose; AdoptNativeSpawn; death bag-not-on-ring; biodome KeyLevel; MultiCondition tried; PEN_Reaktor client emit | Dig AK: Melon DoorL/R/Distance; EnemySpawner._Child; PartyKeyRing SoT; Biodome KeyLevel; MultiCondition tried; ClientEmitTypes | **SHIPPED** (protocol 11) |
+| PatternLock FullRefresh skips onSolved | exitEvent → EventScreen | **INTENTIONAL LOCAL** |
+
+Protocol **11**. Product **0.5.56** (not 1.0). Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.55 — 2026-09-30
+
+Protocol **v10**. Batch 60 ship (Dig AJ): late-join / remount softlocks that Dig J skipped (mural Blocker, power OnSuccess), Dig L's deferred Door reveal, LibraryPC mid-maze robot, SafeDoor dimPOI, SceneFollow mid-inventory sticky, and Dig H chunk-wake onPickup.
+
+### Fixed
+- **ROT_Mural FullRefresh skipped onSolved and useRing** — Live MutateWorld Invoked onSolved (Blocker Entry SetActive false + StartCutscene). FullRefresh / remount latched finished only → Blocker stayed, ring prop wrong. Fix: live keeps onSolved; FullRefresh snaps GameObject named `Blocker Entry` under mural parent + always `useRing` (no StartCutscene replay). Protocol 10 unchanged.
+- **RES_Power FullRefresh skipped OnSuccess** — Live Invoked SetSpeed/setPower×3/dimPOI. Late-join left paternoster / power targets cold. Both-path OnSuccess like PEN_Reaktor Dig Q. Protocol 10 unchanged.
+- **DoorLockEvent Door.SetActive(true) deferred** — Dig L Invoked onSolved (hides lock GO) but never revealed Melon `Door`. Rising-edge Door.SetActive(true) + UnlockDoorObject + TryUnlockDoors. Protocol 10 unchanged.
+- **RES_LibraryPC robotPos unsynced** — TryRead Bool0 solved only. Pack robotPos → Float0/Float1 + Bool1 pack-valid; Apply writes mid; IsProgressed Bool0\|\|Bool1; moveRight/Left/Up/Down EnvEmit; rising-edge onSuccess (Play). Protocol 10 unchanged.
+- **SafeDoorSmall Snap never Invoked onSolved** — Asset onSolved → dimPOI. Rising-edge both-path like MusicBox Dig R. Protocol 10 unchanged.
+- **SceneFollow mid-inventory sticky** — Apply only LoadLevel; RestorePlay skipped inventory/menu. RestorePlay now clears inventoryOpen/intMenu + inventory/menu gameStates; SceneFollow.Apply calls it before load.
+- **HideClaimed never EnsurePartyOnPickup** — Chunk wake hid claimed props without Dig H party onPickup (takeSpear / StartOutro / MeatBlocker). HideClaimed now Ensures; Ensure marks fired only after successful Invoke.
+
+### Before → After (player)
+- **Before:** Late joiner / remount keeps mural Blocker Entry, cold residency power, closed DoorLockEvent door, LibraryPC robot at spawn, bright safe POI; SceneFollow mid-bag can stick; chunk wake misses train outro / Falke spear listeners.
+- **After:** Those final poses and mid states apply on live + FullRefresh / remount; SceneFollow restores play; chunk-wake onPickup fires once.
+
+### Dig AJ residual (superseded by 0.5.56)
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| Mural/Power FullRefresh skips; Door SetActive deferred; LibraryPC robotPos; SafeDoor onSolved; SceneFollow RestorePlay; HideClaimed no Ensure | Dig AJ | **SHIPPED** (0.5.55 / protocol 10) |
+| PatternLock FullRefresh skips onSolved | exitEvent → EventScreen | **INTENTIONAL LOCAL** |
+| MED_Adler_EVdoors Open/CloseDoors | DoorL/DoorR local X durable | **SHIPPED** in 0.5.56 (protocol 11) — prior “no durable field” claim was wrong |
+
+Protocol stays **10** for this tag. Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.54 — 2026-09-30
+
+Protocol **v10**. Batch 59 ship (Dig AI): pattern-lock button grid and tarot card slots travel with the existing puzzle entry so the other peer and a late joiner see the same board before the final flag.
+
+### Fixed
+- **LAB_PatternLock only synced `solved`** — `states` is a rank-2 bool array (Melon `Il2CppObjectBase`, dump `bool[,]`). `toggleButton` / `setButtonState` (RVA 0x59D2D0 / 0x59D0B0) mutate it with no LoadState. Peers kept their own lights, so two people on one pad diverged until Bool0. TryRead now packs up to 8×8 into Int0/Int1, dims in Int2, cell count in Int3. IsProgressed holds Int3 != 0 (all-off included). Apply calls `setButtonState` only for cells that differ, and only while unsolved. `setButtonState` emits immediately. Protocol 10 unchanged.
+- **ROT_Tarot cards[] were not on the wire** — darkmode and FlipSwitchPos were. The six `AnItem` slots (Buyan…Rotfront) are the puzzle. Item enums are 0..115 (`None` = 102); empty is 0xFF because `AirlockKey` is 0. Int0 = slots 0–3, Int1 = slots 4–5, Int3 = slot count. Apply writes `cards[]`, shows `Placers`, and calls `SetMoons` (no inventory remove). `flip` / `PlaceCard*` / `TakeCard` emit. IsProgressed holds darkmode or Int3. Protocol 10 unchanged.
+
+### Before → After (player)
+- **Before:** One player lights pattern-lock buttons; the other pad stays dark and can be solved differently. Tarot cards placed on one board are missing on the other after a room change.
+- **After:** Button lights and the six card slots match on live peers and after remount / late join.
+
+### Dig AI residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| PatternLock states unsynced; Tarot cards unsynced | Dig AI: dump states bool[,]; setButtonState RVA 0x59D0B0; ROT_Tarot.cards AnItem[]; itemlist max 115; UseItem PlaceCard does not cover TakeCard or remount | **SHIPPED** (Int0–Int3 reuse; protocol 10) |
+
+Protocol stays **10**. Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.53 — 2026-09-30
+
+Protocol **v10**. Batch 58 ship (Dig AH): hold mid-state that was already on the wire for MultiKeyLock, RES_MusicBox, ROT_MeatBlocker, and DET_RadioCodeLock, and stop a peer's locally rolled radio code from replacing the host's.
+
+### Fixed
+- **MultiKeyLock / RES_MusicBox / ROT_MeatBlocker IsProgressed Bool0-only** — TryRead already packed `keys[]` → Int0, `hasCassette` → Bool1, and `pickups` → Int0. Apply already wrote those fields before the solved/opened/unblocked snap. IsProgressed fell through ProgressedBool0, so Room.EnterRoom / late-join dropped partial keys, an inserted cassette, and a mid pickup count. Fix: IsProgressed holds those fields (MultiKeyLock Bool0\|\|Int0!=0, MusicBox Bool0\|\|Bool1, MeatBlocker Bool0\|\|Int0!=0). MultiKeyLock.Update and RES_MusicBox.LoadCassette emit immediately. MeatBlocker.pickup already emitted. Protocol 10 unchanged.
+- **DET_RadioCodeLock peer Start() clobber** — Each instance rolls `frequency` / `code` / `hintStation` in Start (RVA 0x84C1C0 / generateFiveCode 0x84CA80). Those ints were already on the wire, but IsProgressed ignored them until the keypad solved, and a client's unsolved emit was applied and relayed onto the host. Host now drops unsolved peer radio-code entries (no apply, no relay). A peer solve still snaps the keypad without replacing the host roll. Peers copy the host ints and `keypad.solution`. Host Start emits the roll; client Start queues reapply so the local roll does not stick. IsProgressed holds Int0–2. Protocol 10 unchanged.
+
+### Before → After (player)
+- **Before:** Host inserts some but not all multi-keys, loads the music-box cassette, or picks up part of a meat-blocker set. Live peers may see the poll, but leaving the room and coming back (or a late joiner) snaps back to empty until the final flag. A client entering the detention radio room can overwrite the host's rolled code.
+- **After:** Those mid states stay held and reapply. The detention keypad and frequency stay on the host's roll for every peer.
+
+### Dig AH residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| MultiKeyLock / MusicBox / MeatBlocker / RadioCode IsProgressed Bool0-only; peer radio Start clobber | Dig AH: TryRead Int0/Bool1 already; Apply writes them pre-return; ProgressedBool0 fallthrough; DET_RadioCodeLock Start RVA 0x84C1C0; ClientEmit includes the type | **SHIPPED** (IsProgressed mid-hold; host drops unsolved peer radio; solution string on peer apply; protocol 10) |
+
+Protocol stays **10**. Host-authoritative; N-peer live + late-join Apply path.
+
 ## 0.5.52 — 2026-09-27
 
 Protocol **v10**. Batch 57 ship (Dig AG): PEN_Reaktor sync mid-rod positions via Int0 4×3-bit pack so N-peer remount / late-join keep unsolved rod moves, not only final Bool0 solved.

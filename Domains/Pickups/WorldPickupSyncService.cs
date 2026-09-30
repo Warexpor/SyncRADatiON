@@ -240,12 +240,17 @@ namespace SyncRADation.Networking
                         ulong id = WorldId.FromGameObject(p.gameObject);
                         if (id != 0 && _claimed.Contains(id))
                         {
+                            // Dig H: chunk wake HideClaimed used to Hide only — never
+                            // EnsurePartyOnPickup. takeSpear / StartOutro / MeatBlocker
+                            // onPickup stayed silent if claim/state hide ran before scan.
+                            EnsurePartyOnPickup(id, p);
                             HidePickup(p);
                             continue;
                         }
                         if (IsClaimedPickup(p))
                         {
                             if (id != 0) _claimed.Add(id);
+                            if (id != 0) EnsurePartyOnPickup(id, p);
                             HidePickup(p);
                         }
                     }
@@ -756,17 +761,27 @@ namespace SyncRADation.Networking
         public bool EnsurePartyOnPickup(ulong worldId, ItemPickup p)
         {
             if (worldId == 0 || p == null) return false;
-            if (!_partyOnPickupFired.Add(worldId)) return false;
+            if (_partyOnPickupFired.Contains(worldId)) return false;
+            bool ok = false;
             NetGate.BeginApply();
             try
             {
                 InvokeOnPickup(p);
+                ok = true;
+            }
+            catch (System.Exception ex)
+            {
+                ModRuntime.Log?.Warning("[WorldPickup] onPickup Ensure: " + ex.Message);
             }
             finally
             {
                 NetGate.EndApply();
             }
-            return true;
+            // Mark only after a successful Invoke so a multi-call UnityEvent
+            // (StartOutro+UnJam) can retry if the first attempt threw (Dig AJ).
+            if (ok)
+                _partyOnPickupFired.Add(worldId);
+            return ok;
         }
 
         /// <summary>

@@ -161,13 +161,20 @@ namespace SyncRADation.Players
                 int n = 0;
                 foreach (var entry in itemsToDrop)
                 {
-                    // Party-ring Key/Object in bag are EnsureInBag / grant mirrors, not
-                    // sole ownership. Floor-dropping them DetachDroppedKey-clears the ring
-                    // for every peer (HandleDropItemSpawn) while the shared box / claimed
-                    // WorldId may still hold the real unique → ghost floor + UseItem softlock.
-                    // Clear the bag mirror only; ring stays party-shared (G-drop still transfers).
-                    if (PartyKeyRing.IsKeyOrObject(entry.enumVal) && PartyKeyRing.Has(entry.enumVal))
+                    // Party ring is SoT for unique Key/Object. Bag copies are EnsureInBag /
+                    // grant mirrors. Floor-dropping them DetachDroppedKey-clears the ring
+                    // for every peer while box / WorldId claim may still hold the real unique
+                    // → ghost floor + UseItem softlock. Never floor uniques on death: Note
+                    // onto the ring if the bag somehow held one the ring missed (race), then
+                    // strip the bag mirror only. G-drop still transfers ownership.
+                    if (PartyKeyRing.IsKeyOrObject(entry.enumVal))
                     {
+                        if (!PartyKeyRing.Has(entry.enumVal))
+                        {
+                            PartyKeyRing.Note(entry.enumVal);
+                            PartyKeyRing.OfferToHost(entry.item);
+                            PlaytestLog.Event("Damage", "death note ring unique " + entry.enumVal);
+                        }
                         try { InventoryManager.RemoveItem(entry.item, entry.count); } catch { }
                         PlaytestLog.Event("Damage", "death skip floor unique " + entry.enumVal);
                         continue;

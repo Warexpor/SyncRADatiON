@@ -1,3 +1,4 @@
+using UnhollowerBaseLib;
 using SyncRADation.Patches;
 using SyncRADation.Sync;
 using UnityEngine;
@@ -99,7 +100,12 @@ namespace SyncRADation.Networking
                 case PuzzleType.ROT_Tarot:
                 {
                     var x = (ROT_Tarot)c;
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.darkmode, false, false, 0, 0, 0, 0, x.FlipSwitchPos);
+                    // Six tarot slots. Item enums are 0..115; empty slot is 0xFF
+                    // (AirlockKey is 0, so 0 cannot mean empty). Int0 = slots 0–3,
+                    // Int1 = slots 4–5, Int3 = slot count. darkmode stays Bool0.
+                    int lo = 0, hi = 0, n = 0;
+                    try { PackTarotCards(x, out lo, out hi, out n); } catch { }
+                    entry = PuzzleDomainUtil.Mk(type, wid, x.darkmode, false, false, lo, hi, 0, n, x.FlipSwitchPos);
                     return true;
                 }
                 case PuzzleType.ROT_Mural:
@@ -151,15 +157,18 @@ namespace SyncRADation.Networking
             // latches solved=1 @ +0x91. Asset OnSuccess → SetSpeed (Paternoster)
             // + setPower×3 + SetActive + dimPOI + Play. Prior Apply flags-only
             // → peer residency power softlock / paternoster not driven. Melon
-            // field OnSuccess (PascalCase). No onLoad UnityEvent — FullRefresh
-            // (!MutateWorld) keeps skip (thin; Dig J #2 — late-join remount
-            // of setPower/SetSpeed unwanted unless soak asks).
+            // field OnSuccess (PascalCase). No onLoad — Dig J #2 skipped
+            // FullRefresh; late-join / remount then left setPower targets and
+            // Paternoster SetSpeed un-driven (RES_Paternoster Bool0 alone is
+            // not the same wire as OnSuccess's SetSpeed(2) + three setPower).
+            // Both-path like PEN_Reaktor Dig Q: idempotent SetActive/setPower/
+            // dimPOI / SetSpeed final-pose.
             bool was = x.solved;
             x.solved = e.Bool0;
             x.powered = e.Bool1;
             UnpackBoolBits(x.states, e.Int0);
             if (!e.Bool0) return;
-            if (PuzzleSyncService.MutateWorld && !was)
+            if (!was)
             {
                 NetGate.BeginApply();
                 try
@@ -299,6 +308,71 @@ namespace SyncRADation.Networking
             if (x == null) return;
             x.darkmode = e.Bool0;
             x.FlipSwitchPos = e.Float0;
+            if (e.Int3 <= 0) return;
+            ApplyTarotCards(x, e.Int0, e.Int1, e.Int3);
+        }
+
+        const int TarotEmpty = 0xFF;
+
+        static void PackTarotCards(ROT_Tarot x, out int lo, out int hi, out int n)
+        {
+            lo = 0;
+            hi = 0;
+            n = 0;
+            if (x == null) return;
+            var cards = x.cards;
+            if (cards == null) return;
+            n = cards.Length;
+            if (n > 6) n = 6;
+            for (int i = 0; i < n; i++)
+            {
+                int code = TarotEmpty;
+                try
+                {
+                    var card = cards[i];
+                    if (card != null)
+                    {
+                        int id = (int)card._item;
+                        if (id >= 0 && id < TarotEmpty) code = id;
+                    }
+                }
+                catch { }
+                if (i < 4) lo |= code << (i * 8);
+                else hi |= code << ((i - 4) * 8);
+            }
+        }
+
+        static void ApplyTarotCards(ROT_Tarot x, int lo, int hi, int n)
+        {
+            if (x == null || n <= 0) return;
+            if (n > 6) n = 6;
+            Il2CppReferenceArray<AnItem> cards = null;
+            Il2CppReferenceArray<GameObject> placers = null;
+            try { cards = x.cards; } catch { }
+            try { placers = x.Placers; } catch { }
+            for (int i = 0; i < n; i++)
+            {
+                int code = i < 4 ? (lo >> (i * 8)) & 0xFF : (hi >> ((i - 4) * 8)) & 0xFF;
+                AnItem item = null;
+                if (code != TarotEmpty)
+                {
+                    try { item = InventoryManager.getItem((Items.itemlist)code); } catch { }
+                }
+                try
+                {
+                    if (cards != null && i < cards.Length)
+                        cards[i] = item;
+                }
+                catch { }
+                try
+                {
+                    if (placers != null && i < placers.Length && placers[i] != null)
+                        placers[i].SetActive(item != null);
+                }
+                catch { }
+            }
+            // Moon readout follows cards[]. Load/place path; no inventory remove.
+            try { x.SetMoons(); } catch { }
         }
 
         public static void ApplyCardWriter(MED_CardWriter x, PuzzleStateEntry e)
@@ -802,12 +876,12 @@ namespace SyncRADation.Networking
             // Rising-edge onSolved: native Update only Invokes when finished was false,
             // then latches finished=1. Asset onSolved → goBack / SetActive(false) Blocker
             // Entry / setUnleavable / StartCutscene / FMOD. useRing only toggles
-            // RingInter/MissingRing — does NOT fire onSolved. Prior park that latched
-            // finished then useRing() only skipped the peer Update rising-edge → no
-            // cutscene, Blocker Entry stayed. Mirror ApplyRotKeypad live path:
-            // MutateWorld && !was → BeginApply + onSolved, then useRing for ring prop.
-            // FullRefresh (!MutateWorld): keep skip for now (Dig J — no mural onLoad
-            // soak yet; cutscene replay unwanted unless soak asks).
+            // RingInter/MissingRing — does NOT fire onSolved. Live MutateWorld:
+            // BeginApply + onSolved (CutsceneStartPatch allows StartCutscene while
+            // IsApplying) + useRing. FullRefresh / remount: do NOT Invoke onSolved
+            // (StartCutscene / goBack / EventScreen-adjacent presentation replay).
+            // Instead snap Blocker Entry SetActive(false) + useRing so the door
+            // blocker clears without replaying the mural cutscene (Dig AJ).
             bool was = x.finished;
             x.finished = e.Bool0; x.busy = e.Bool1;
             try { x.MoonTurnSpeed = e.Float0; } catch { }
@@ -823,9 +897,50 @@ namespace SyncRADation.Networking
                 }
                 catch { }
                 finally { NetGate.EndApply(); }
-                try { x.useRing(); } catch { }
             }
+            else if (!was)
+            {
+                SnapMuralBlockerEntry(x);
+            }
+            try { x.useRing(); } catch { }
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
+        }
+
+        /// <summary>
+        /// ROT_Rotfront has exactly one GameObject named "Blocker Entry" wired from
+        /// ROT_Mural.onSolved SetActive(false). FullRefresh cannot Invoke onSolved
+        /// (StartCutscene), so clear that blocker by name under the mural root.
+        /// </summary>
+        static void SnapMuralBlockerEntry(ROT_Mural x)
+        {
+            if (x == null) return;
+            Transform root = null;
+            try { root = x.transform; } catch { }
+            if (root == null) return;
+            try
+            {
+                var parent = root.parent;
+                if (parent != null) root = parent;
+            }
+            catch { }
+            try
+            {
+                var trs = root.GetComponentsInChildren<Transform>(true);
+                if (trs == null) return;
+                for (int i = 0; i < trs.Length; i++)
+                {
+                    var t = trs[i];
+                    if (t == null) continue;
+                    string n = null;
+                    try { n = t.name; } catch { }
+                    if (n == null) continue;
+                    if (!string.Equals(n, "Blocker Entry", System.StringComparison.Ordinal))
+                        continue;
+                    try { t.gameObject.SetActive(false); } catch { }
+                    return;
+                }
+            }
+            catch { }
         }
 
         static int PackMoonPair(ROT_Mural.Moon a, ROT_Mural.Moon b)

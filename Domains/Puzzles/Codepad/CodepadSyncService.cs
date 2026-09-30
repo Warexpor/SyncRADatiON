@@ -1,3 +1,4 @@
+using UnhollowerBaseLib;
 using SyncRADation.ItemSystem;
 using SyncRADation.Patches;
 using SyncRADation.Sync;
@@ -135,7 +136,12 @@ namespace SyncRADation.Networking
                 case PuzzleType.PatternLock:
                 {
                     var x = (LAB_PatternLock)c;
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.solved, false, false, 0, 0, 0, 0, 0);
+                    // states is bool[,] (Il2Cpp rank-2). Pack up to 8×8 into Int0/Int1.
+                    // Int2 = rows<<8 | cols (dim0 = column). Int3 = cell count so an all-off grid still
+                    // holds across remount (Dig AI). Solved stays Bool0.
+                    int bits0 = 0, bits1 = 0, dims = 0, count = 0;
+                    try { PackPatternStates(x, out bits0, out bits1, out dims, out count); } catch { }
+                    entry = PuzzleDomainUtil.Mk(type, wid, x.solved, false, false, bits0, bits1, dims, count, 0);
                     return true;
                 }
                 default:
@@ -172,7 +178,11 @@ namespace SyncRADation.Networking
             bool was = false;
             try { was = x.solved; } catch { }
             x.solved = e.Bool0;
-            if (!e.Bool0) return;
+            if (!e.Bool0)
+            {
+                ApplyPatternButtons(x, e);
+                return;
+            }
             DisablePatternLock(x);
             if (PuzzleSyncService.MutateWorld && !was)
             {
@@ -215,6 +225,78 @@ namespace SyncRADation.Networking
                 }
             }
             catch { }
+        }
+
+        /// <summary>
+        /// Mid-pattern lights. setButtonState is the native writer (column, row, on)
+        /// so materials match. Only cells that differ are written. No-op when Int3
+        /// is 0 (older payload / unreadable array).
+        /// </summary>
+        static void ApplyPatternButtons(LAB_PatternLock x, PuzzleStateEntry e)
+        {
+            if (x == null || e.Int3 <= 0) return;
+            // Int2 low = dim0 (setButtonState column), high = dim1 (row).
+            int cols = e.Int2 & 0xFF;
+            int rows = (e.Int2 >> 8) & 0xFF;
+            if (rows <= 0 || cols <= 0 || rows > 8 || cols > 8) return;
+            int n = rows * cols;
+            if (n > 64) n = 64;
+            for (int i = 0; i < n; i++)
+            {
+                int row = i / cols;
+                int col = i % cols;
+                bool on = i < 32
+                    ? (e.Int0 & (1 << i)) != 0
+                    : (e.Int1 & (1 << (i - 32))) != 0;
+                bool cur = false;
+                try { cur = ReadPatternCell(x, col, row); } catch { }
+                if (cur == on) continue;
+                try { x.setButtonState(col, row, on); } catch { }
+            }
+        }
+
+        static void PackPatternStates(LAB_PatternLock x, out int bits0, out int bits1, out int dims, out int count)
+        {
+            bits0 = 0;
+            bits1 = 0;
+            dims = 0;
+            count = 0;
+            if (x == null || x.states == null) return;
+            var arr = new Il2CppSystem.Array(x.states.Pointer);
+            if (arr == null || arr.Rank != 2) return;
+            // dim0 is setButtonState's column; dim1 is the row.
+            int cols = arr.GetLength(0);
+            int rows = arr.GetLength(1);
+            if (rows <= 0 || cols <= 0) return;
+            if (rows > 8) rows = 8;
+            if (cols > 8) cols = 8;
+            count = rows * cols;
+            dims = (rows << 8) | cols;
+            for (int row = 0; row < rows; row++)
+            {
+                for (int col = 0; col < cols; col++)
+                {
+                    if (!ReadArrayBool(arr, col, row)) continue;
+                    int i = row * cols + col;
+                    if (i < 32) bits0 |= 1 << i;
+                    else bits1 |= 1 << (i - 32);
+                }
+            }
+        }
+
+        static bool ReadPatternCell(LAB_PatternLock x, int col, int row)
+        {
+            if (x == null || x.states == null) return false;
+            var arr = new Il2CppSystem.Array(x.states.Pointer);
+            return ReadArrayBool(arr, col, row);
+        }
+
+        static bool ReadArrayBool(Il2CppSystem.Array arr, int i0, int i1)
+        {
+            if (arr == null) return false;
+            var boxed = arr.GetValue(i0, i1);
+            if (boxed == null) return false;
+            return boxed.Unbox<bool>();
         }
 
         public static void DisablePatternLock(LAB_PatternLock pad)

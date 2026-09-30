@@ -1,5 +1,6 @@
 // Dropped-item world registry + claim/inspect helpers (Domains peel from DroppedItemManager).
 using System.Collections.Generic;
+using SyncRADation.Sync;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -223,11 +224,38 @@ namespace SyncRADation.ItemSystem
             try { PlayerState.suspendInput = false; } catch { }
             try
             {
+                var all = WorldLookup.All<InventoryBase>();
+                if (all != null)
+                {
+                    for (int i = 0; i < all.Length; i++)
+                    {
+                        var inv = all[i];
+                        if (inv == null) continue;
+                        try
+                        {
+                            if (inv.inventoryOpen)
+                                inv.inventoryOpen = false;
+                        }
+                        catch { }
+                        try
+                        {
+                            if (inv.intMenuOn)
+                                inv.ToggleInteractMenu();
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
+            try
+            {
                 var gs = PlayerState.gameState;
                 if (gs == PlayerState.gameStates.dialogue
                     || gs == PlayerState.gameStates.eventScreen
                     || gs == PlayerState.gameStates.book
-                    || gs == PlayerState.gameStates.paused)
+                    || gs == PlayerState.gameStates.paused
+                    || gs == PlayerState.gameStates.inventory
+                    || gs == PlayerState.gameStates.menu)
                     PlayerState.gameState = PlayerState.gameStates.play;
             }
             catch { }

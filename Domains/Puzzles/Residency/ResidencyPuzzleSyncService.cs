@@ -24,7 +24,18 @@ namespace SyncRADation.Networking
                 case PuzzleType.RES_LibraryPC:
                 {
                     var x = (RES_LibraryPC)c;
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.solved, false, false, 0, 0, 0, 0, 0);
+                    // Dig AJ: mid-maze robotPos (AssetStudio initial 9,5; Victory 10,1).
+                    // Float0/Float1 = x/y. Bool0=solved. Bool1 marks a valid robot pack
+                    // so spawn (9,5) still holds across remount (Float alone can be 0).
+                    float rx = 0f, ry = 0f;
+                    try
+                    {
+                        var p = x.robotPos;
+                        rx = p.x;
+                        ry = p.y;
+                    }
+                    catch { }
+                    entry = PuzzleDomainUtil.Mk(type, wid, x.solved, true, false, 0, 0, 0, 0, rx, ry);
                     return true;
                 }
                 case PuzzleType.RES_Paternoster:
@@ -165,8 +176,28 @@ namespace SyncRADation.Networking
 
         public static void ApplyLibraryPc(RES_LibraryPC x, PuzzleStateEntry e)
         {
-            if (x != null && e.Bool0)
-                SnapLibraryPc(x);
+            if (x == null) return;
+            // Mid robotPos always (live + FullRefresh). Bool1 = pack valid.
+            if (e.Bool1)
+            {
+                try { x.robotPos = new Vector2(e.Float0, e.Float1); } catch { }
+            }
+            if (!e.Bool0) return;
+            bool was = false;
+            try { was = x.solved; } catch { }
+            SnapLibraryPc(x);
+            // Asset onSuccess → Play (FMOD one-shot). Rising-edge both paths like MusicBox.
+            if (!was)
+            {
+                NetGate.BeginApply();
+                try
+                {
+                    if (x.onSuccess != null)
+                        x.onSuccess.Invoke();
+                }
+                catch { }
+                finally { NetGate.EndApply(); }
+            }
         }
 
         public static void ApplyPaternoster(RES_Paternoster x, PuzzleStateEntry e)
@@ -293,8 +324,23 @@ namespace SyncRADation.Networking
 
         public static void ApplySafeDoorSmall(SafeDoorSmall x, PuzzleStateEntry e)
         {
-            if (x != null && e.Bool0)
-                SnapSafeDoorSmall(x);
+            if (x == null || !e.Bool0) return;
+            // Rising-edge onSolved: Asset → dimPOI. Snap opens keys/keypad/doors but
+            // never Invoked onSolved (Dig AJ, mirror MusicBox Dig R both-path).
+            bool was = false;
+            try { was = x.open; } catch { }
+            SnapSafeDoorSmall(x);
+            if (!was)
+            {
+                NetGate.BeginApply();
+                try
+                {
+                    if (x.onSolved != null)
+                        x.onSolved.Invoke();
+                }
+                catch { }
+                finally { NetGate.EndApply(); }
+            }
         }
 
         public static void ApplyMultiKeyLock(MultiKeyLock x, PuzzleStateEntry e)

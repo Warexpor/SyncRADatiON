@@ -98,6 +98,7 @@ namespace SyncRADation.Networking
             d[PuzzleType.AraNest] = chapterExtra;
             d[PuzzleType.LAB_RifleQuest] = chapterExtra;
             d[PuzzleType.LOV_Microfiche] = chapterExtra;
+            d[PuzzleType.MED_Adler_EVdoors] = chapterExtra;
             return d;
         }
 
@@ -263,6 +264,8 @@ namespace SyncRADation.Networking
                 ChapterExtraPuzzleSyncService.ApplyRifleQuest(s.Get<LAB_RifleQuest>(e.Type, e.WorldId), e);
             d[PuzzleType.LOV_Microfiche] = (s, e, _) =>
                 ChapterExtraPuzzleSyncService.ApplyMicrofiche(s.Get<LOV_Microfiche>(e.Type, e.WorldId), e);
+            d[PuzzleType.MED_Adler_EVdoors] = (s, e, _) =>
+                ChapterExtraPuzzleSyncService.ApplyAdlerEvDoors(s.Get<MED_Adler_EVdoors>(e.Type, e.WorldId), e);
             return d;
         }
 
@@ -302,7 +305,9 @@ namespace SyncRADation.Networking
                 PuzzleType.RES_Shutters,
                 PuzzleType.ROT_Pipes,
                 PuzzleType.ROT_Magpie,
-                // PEN_Reaktor: Dig AG — IsProgressed Bool0||Bool1||Int0!=0||Int1!=0
+                // PEN_Reaktor: Dig AG mid rods — also client Tick emit (Update patch alone
+                // can miss if client Filter skips the type).
+                PuzzleType.PEN_Reaktor,
                 PuzzleType.DET_ServiceLock,
                 PuzzleType.EXC_Seilbahn,
                 PuzzleType.EXC_Hatch,
@@ -336,6 +341,7 @@ namespace SyncRADation.Networking
                 PuzzleType.AraNest,
                 PuzzleType.LAB_RifleQuest,
                 PuzzleType.LOV_Microfiche,
+                PuzzleType.MED_Adler_EVdoors,
             };
         }
 
@@ -351,7 +357,6 @@ namespace SyncRADation.Networking
                 PuzzleType.CryoDoorLock,
                 PuzzleType.PEN_Cryo,
                 PuzzleType.CryoDoorController,
-                PuzzleType.PatternLock,
                 PuzzleType.MED_Pump,
                 PuzzleType.MED_FloodedBathroom,
                 PuzzleType.MED_CardWriter,
@@ -364,20 +369,15 @@ namespace SyncRADation.Networking
                 PuzzleType.EXC_Hatch,
                 PuzzleType.LAB_Rings,
                 PuzzleType.BiodomeDoorLock,
-                PuzzleType.ROT_MeatBlocker,
                 PuzzleType.FlipSwitch,
                 PuzzleType.FloodControls,
                 PuzzleType.StorageBox,
-                PuzzleType.RES_MusicBox,
-                PuzzleType.RES_LibraryPC,
                 PuzzleType.RES_Paternoster,
                 PuzzleType.MED_KeyGrid,
                 PuzzleType.ArianePhotoCode,
                 PuzzleType.DET_ServiceLock_Key,
                 PuzzleType.SafeDoorSmall,
-                PuzzleType.MultiKeyLock,
                 PuzzleType.OpenableDrawer,
-                PuzzleType.DET_RadioCodeLock,
                 PuzzleType.SaveRoomEvent,
                 PuzzleType.DialoguePlayedOnce,
                 PuzzleType.GunCase,
@@ -393,7 +393,6 @@ namespace SyncRADation.Networking
                 PuzzleType.RadioStationTutorial,
                 PuzzleType.RES_Power,
                 PuzzleType.MED_Incinerator,
-                PuzzleType.ROT_Tarot,
                 PuzzleType.MultiConditionEvent,
                 PuzzleType.CutsceneCompleted,
             };
@@ -479,6 +478,7 @@ namespace SyncRADation.Networking
                 s => s.RegisterAll<AraNest>(PuzzleType.AraNest),
                 s => s.RegisterAll<LAB_RifleQuest>(PuzzleType.LAB_RifleQuest),
                 s => s.RegisterAll<LOV_Microfiche>(PuzzleType.LOV_Microfiche),
+                s => s.RegisterAll<MED_Adler_EVdoors>(PuzzleType.MED_Adler_EVdoors),
             };
         }
     }

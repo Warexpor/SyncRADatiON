@@ -884,6 +884,8 @@ namespace SyncRADation.Networking
         AraNest = 74,
         LAB_RifleQuest = 75,
         LOV_Microfiche = 76,
+        // v11 — MED_Adler_EVdoors DoorL/DoorR local X pose
+        MED_Adler_EVdoors = 77,
     }
 
     public struct PuzzleStateEntry

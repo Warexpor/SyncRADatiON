@@ -411,14 +411,12 @@ namespace SyncRADation.Networking
             if (x == null) return;
             // Rising-edge onSolved: Melon done + onSolved (no onLoad). Native LoadState
             // and solved path both Invoke onSolved. Asset DET: onSolved → SetActive(false)
-            // on DoorLockEvent GO. Prior ApplyDoorLockEvent (~406–409) only latched done
-            // — never Invoked onSolved → host solves, peer done=true but DoorLockEvent GO
-            // stays active (softlock). Dig L: LoadState ≡ onSolved — both live MutateWorld
-            // and FullRefresh use onSolved (no separate onLoad soak). Optional
-            // Door.SetActive(true) deferred (Dig L optional soak). Mirror ApplyPatternLock
-            // 0.5.30 / ApplyMural 0.5.26 rising-edge, but Invoke on BOTH paths:
-            // capture was=done; latch done; if !e.Bool0 return; if !was → BeginApply +
-            // onSolved.Invoke(). Protocol 10 unchanged (reuse DoorLockEvent Bool0 done).
+            // on DoorLockEvent GO. Dig L: both live + FullRefresh Invoke onSolved.
+            // Melon field Door (GameObject) — native solved path reveals the door props
+            // after the lock UI dismisses. Dig L deferred Door.SetActive(true); peers /
+            // late-join can keep Door inactive after onSolved hides the lock GO.
+            // Mirror CryoSyncService Door.SetActive(true): rising-edge activate Door
+            // + TryUnlockDoors / UnlockDoorObject (Dig AJ).
             bool was = false;
             try { was = x.done; } catch { }
             x.done = e.Bool0;
@@ -434,6 +432,16 @@ namespace SyncRADation.Networking
                 catch { }
                 finally { NetGate.EndApply(); }
             }
+            try
+            {
+                if (x.Door != null)
+                {
+                    x.Door.SetActive(true);
+                    PuzzleSyncService.UnlockDoorObject(x.Door);
+                }
+            }
+            catch { }
+            try { PuzzleSyncService.TryUnlockDoors(x.gameObject); } catch { }
         }
 
         public static void ApplyBiodome(BiodomeDoorLock x, PuzzleStateEntry e)
