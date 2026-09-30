@@ -162,3 +162,19 @@ secondsignalis
 4. Claims of “works” need dual-instance playtest
 5. Reverse-check both arrows (and late-join) before calling a sync path fixed
 6. **No park / no defer** — implementable coverage is finished in-place; bump protocol when wire requires it (`.cursor/rules/no-park-no-defer.mdc`). Intentional locals in the sync table stay local by design.
+
+## Release / scripts
+
+**Single-source version:** `Bootstrap/PluginInfo.cs` `Version` is the only place to bump. `SyncRADation.csproj` reads it at build time (regex over the file) and sets `Version`/`AssemblyVersion`/`FileVersion`/`InformationalVersion` (assembly info is SDK-generated; `Properties/AssemblyInfo.cs` only keeps `ComVisible`/`Guid`). `MelonInfo` in `Bootstrap/SyncRADationMod.cs` reads `PluginInfo.Version` directly. The build errors if the constant cannot be parsed. Still bump `CHANGELOG.md` and `README.md` status line by hand; bump `ProtocolVersion` only when the wire changes.
+
+| Script | What it does |
+|--------|--------------|
+| `scripts/build.sh` | Pins `DOTNET_ROOT` to the Unity SDK, Release build to `bin/stage/Release`, **no deploy** (`-p:NoDeploy=true` skips the csproj `CopyToMods` target). `--debug` = Debug config, `--deploy` = default csproj copy into `SignalisDir/Mods` + `ClientSignalisDir/Mods`. Prints DLL path + version and warns if the DLL file version differs from `PluginInfo.Version`. Env: `UNITY_DOTNET_SDK`, `MELONLOADER_DIR`, `OUT_DIR` |
+| `scripts/test.sh` | `dotnet test tests/SyncRADation.Tests` (prints a note and exits 0 if the folder does not exist) |
+| `scripts/package.sh` | Release build (no deploy) then `dist/SyncRADation-<ver>.zip`: `Mods/SyncRADation.dll`, `Mods/LiteNetLib.dll`, `INSTALL.md`, `LICENSE`, `CHANGELOG.md`, `LiteNetLib.LICENSE.txt`. `dist/` is gitignored |
+
+`LiteNetLib.dll` is **not** merged into the mod DLL; it is a separate reference (`Private=true`, from `lib/`) that ships next to it in `Mods/`.
+
+Player docs: `README.md`, `INSTALL.md`. Soak checklist: `docs/PLAYTEST.md` (run it on two or three instances before any public release). Publish path stays a GitHub zip until a full playtest pass is enjoyable; Nexus waits on that.
+
+Old README playtest-gate list (protocol 10 era, superseded by `docs/PLAYTEST.md`): Penrose photo inspect local / cryo pattern / BrokenKey; key door one key both traverse; ammo pickup partner `hasItem` false; enemy HP not doubled; client downed then disconnect restores control; notes/books local; int + string chapter loads; elevator flags, radio lock, FMOD loop on late join; then Chapter 1 (Reeducation to Mines elevator) with damage, door, Dialoguer, cutscene and storage box checks.

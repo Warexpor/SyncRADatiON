@@ -5,7 +5,7 @@
     <AssemblyName>SyncRADation</AssemblyName>
     <RootNamespace>SyncRADation</RootNamespace>
     <OutputType>Library</OutputType>
-    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <OutputPath>bin/$(Configuration)/</OutputPath>
     <DebugType>portable</DebugType>
@@ -13,6 +13,27 @@
     <Deterministic>true</Deterministic>
     <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
   </PropertyGroup>
+
+  <!-- Single-source version: Bootstrap/PluginInfo.cs `Version` is the only place to bump.
+       Everything below (AssemblyVersion / FileVersion / InformationalVersion) is derived from it at build time.
+       MelonInfo in Bootstrap/SyncRADationMod.cs already reads PluginInfo.Version directly. -->
+  <PropertyGroup>
+    <PluginInfoFile>$(MSBuildProjectDirectory)/Bootstrap/PluginInfo.cs</PluginInfoFile>
+    <PluginVersion Condition="Exists('$(PluginInfoFile)')">$([System.Text.RegularExpressions.Regex]::Match($([System.IO.File]::ReadAllText($(PluginInfoFile))), 'const\s+string\s+Version\s*=\s*"(\d+\.\d+\.\d+(?:\.\d+)?)"').Groups[1].Value)</PluginVersion>
+    <Version>$(PluginVersion)</Version>
+    <AssemblyVersion>$(PluginVersion).0</AssemblyVersion>
+    <FileVersion>$(PluginVersion).0</FileVersion>
+    <InformationalVersion>$(PluginVersion)</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <AssemblyTitle>SyncRADation</AssemblyTitle>
+    <Description>SIGNALIS Multiplayer Mod</Description>
+    <Product>SyncRADation</Product>
+    <Company></Company>
+    <Copyright>Copyright (C) 2026 Warexpor</Copyright>
+  </PropertyGroup>
+  <Target Name="CheckPluginVersion" BeforeTargets="BeforeBuild;GenerateAssemblyInfo;CoreCompile">
+    <Error Condition="'$(PluginVersion)' == ''" Text="Could not read 'const string Version' from Bootstrap/PluginInfo.cs" />
+  </Target>
 
   <!-- SignalisDir = second-box copy (client). ClientSignalisDir = Steam (host). Override with -p: if needed. -->
   <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
@@ -121,9 +142,14 @@
     <None Remove="_tmp_ref\**" />
     <Compile Remove="third_party\**" />
     <None Remove="third_party\**" />
+    <!-- Test project lives in tests/ with its own csproj; never compile it (or its obj/bin) into the mod. -->
+    <Compile Remove="tests\**" />
+    <EmbeddedResource Remove="tests\**" />
+    <None Remove="tests\**" />
   </ItemGroup>
 
-  <Target Name="CopyToMods" AfterTargets="Build">
+  <!-- Deploys into the game Mods folders after every build. scripts/build.sh sets the NoDeploy property unless deploy is requested. -->
+  <Target Name="CopyToMods" AfterTargets="Build" Condition="'$(NoDeploy)' != 'true'">
     <MakeDir Directories="$(SignalisDir)/Mods" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(SignalisDir)/Mods" />
     <Copy SourceFiles="$(TargetDir)LiteNetLib.dll" DestinationFolder="$(SignalisDir)/Mods" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)LiteNetLib.dll')" />

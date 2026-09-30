@@ -1,8 +1,8 @@
-# Domains — where to fix what (0.5.13)
+# Domains — where to fix what (0.5.58 / protocol 13)
 
 Composed `*SyncService` / `*NetHandlers` / `Patches/`. Namespaces stay `SyncRADation.Networking` / `.Patches` / `.Players` / `.ItemSystem`.
 
-Authority + reverse-check: repo root `AGENTS.md`. Protocol **10** wire in `Networking/Messages/NetMessages.cs` (+ PluginInfo).
+Authority + reverse-check: repo root `AGENTS.md`. Protocol **13** wire in `Networking/Messages/NetMessages.cs` + `PartyMessages.cs` + `NetWire.cs` (schema hash). Version/protocol constants: `Bootstrap/PluginInfo.cs` (version is single-sourced from there).
 
 ## Symptom → path
 
@@ -19,7 +19,8 @@ Authority + reverse-check: repo root `AGENTS.md`. Protocol **10** wire in `Netwo
 | Chapter machines (card writer, shutters, magpie, …) | `Puzzles/Machines/ChapterMachineSyncService` | |
 | Residency / key grid / photo / safe / drawer (64–72) | `Puzzles/Residency/ResidencyPuzzleSyncService` | |
 | GunCase / AraNest / RifleQuest / Microfiche (73–76) | `Puzzles/ChapterExtras/ChapterExtraPuzzleSyncService` | Protocol 10 |
-| Chapter extras GunCase / AraNest / RifleQuest / Microfiche (73–76) | `Puzzles/ChapterExtras/ChapterExtraPuzzleSyncService` | Protocol 10 |
+| World-object puzzles (ROT_DiskManager, DET_WallCreature, MapReveal, MEM_ChecklistLogic; 78–81) | `Puzzles/ChapterExtras/WorldObjectPuzzleSyncService` | Protocol 13; `Seq`/`Mask` cell merge |
+| Solved-edge rule (live rising edge vs join dump / held re-snap) | `Puzzles/PuzzleEdge` | Live runs native onSolved; dump/held runs idempotent durable form |
 | Storage **lid** open | `Puzzles/Storage/StorageLidSyncService` | Host poll + client emit |
 | Storage **box items** blob | `Inventory/StorageBoxSyncService` | Shared box |
 | UseItem world unlock / airlock card | `Puzzles/UseItem/` + `Inventory/Patches/UseItem*` | Party ring + PerPlayerUse |
@@ -30,12 +31,18 @@ Authority + reverse-check: repo root `AGENTS.md`. Protocol **10** wire in `Netwo
 | World authored pickup claim | `Pickups/WorldPickupSyncService` + `WorldPickupNetHandlers` | Host claim/grant; WorldId |
 | Player-dropped prop (G / TAKE) | `Pickups/DroppedItem*` (Registry, Spawner, NetHandlers; Manager = call-site façade) | Peer spawn + host claim |
 | Party key ring names / hasItem | `Inventory/PartyKeyRing` + `Inventory/Patches/PartyKeyRingPatches` | Key/Object only |
+| Client enemy actions (stomp Kill/KillSilent, Knockback, GetPushed, Burndown, WakeUp) | `Enemies/Patches/EnemyActionPatches` + `Enemies/EnemyNetHandlers` | `EnemyAction` (63); host sim applies |
 | Enemies / alert bits | `Enemies/` (+ `Patches/EnemySpawnerPatches`) | WorldId; wake sleeping chunks; **client never EnemySpawner.FixedUpdate**; host adopts `_Child` → `SR_Spawn_*` + `EnemySpawn` |
 | Bosses (END/Chimera/Mynah/Kolibri/Adler) | `Bosses/` (+ `Patches/KolibriAdlerAuthPatches`) | Kolibri/Adler Prefix+Postfix Hold; Falke snap stage/corrupt + SetBodySpearStates; HaltBossController StopAllCoroutines |
+| Client boss hits (Falke Stab / TakeSpear, boss HP, Chimera rifle shot) | `Bosses/Patches/BossActionPatches` + `Bosses/BossNetHandlers` | `BossHit` (62) |
 | Avatar / bones / weapons | `Players/` + `AvatarNetHandlers` | Peer-authored |
+| Party vitals: downed / revive / wipe, party-life state | `Players/PartyVitals` + `Combat/PartyNetHandlers` + `Combat/Patches/DeathPatches` | `PartyLife`/`PartyRoom` (40, 42); `DownedRespawnDelay` |
+| Party save token / key-ring + bag snapshots (host_saves.txt, bag_snapshots.txt) | `Session/PartySaveService` + `Combat/PartyNetHandlers` | `PartySave` (41); `SaveManager.Save/Load` hooks |
+| Client → player/enemy damage checks (hurtbox / melee vs proxies) | `Combat/ClientDamageService` | Host-side; skips downed peers; friendly fire opt-in |
 | Friendly fire / death bag | `Combat/CombatNetHandlers` + `Combat/Patches` | Opt-in FF |
 | FMOD world emitters | `Audio/` | Skip Music/Cutscenes/Ambience beds |
 | Gunshot wake | `Combat/Patches/GunshotWakePatch` | Host wakes near shot |
+| Swallowed exceptions / `[Guard]` log lines | `Sync/Guard.cs` | Throttled per tag (first hit, then one line / 30 s with count) |
 | Handshake / roster | `Networking/LanNetworkManager` + `Dispatch/` | Peer map |
 | Join / resync dump | `Session/SessionNetHandlers` | `_unicastPlayerId` via BeginUnicast/EndUnicast; **Puzzle ForceFullSend** + **Boss RequestFullSend** so mid-join unicast is complete |
 | SceneHello / SceneFollow | `Scene/SceneNetHandlers` + `SceneFollowService` | |
@@ -55,4 +62,4 @@ Authority + reverse-check: repo root `AGENTS.md`. Protocol **10** wire in `Netwo
 ## Empty / incomplete (do not assume)
 
 - No empty `Networking/Session` or `Transport` dirs — session dump lives in `Domains/Session/SessionNetHandlers`.
-- Wire ownership: check `Networking/LanNetworkManager.HandlerRegistry.cs` for the full handler list (Door, Avatar, Enemy, Boss, Fmod, Story, Interaction, Dropped, WorldPickup, Puzzle, Combat, Scene, Inventory, Session).
+- Wire ownership: check `Networking/LanNetworkManager.HandlerRegistry.cs` for the full handler list (Door, Avatar, Enemy, Boss, Fmod, Story, Interaction, Dropped, WorldPickup, Puzzle, Combat, Party, Scene, Inventory, Session).

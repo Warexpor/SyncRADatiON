@@ -1,143 +1,141 @@
 # SyncRADation
 
-LAN multiplayer MelonLoader mod for **SIGNALIS**.  
-**v0.5.1** — protocol **v10**. Host owns world and story; the client is a real Elster whose interactions go to the host and apply via native game methods (including UnityEvents and world FMOD).
+LAN/VPN co-op for **SIGNALIS**, for **2 to 8 players** (default 4). One player hosts and owns the world and story. Everyone else plays as a real Elster and their actions go through the host.
 
-Formerly labeled `1.2.x-dev`. That was optimistic. This is still early co-op.
+**Status: 0.5.58, protocol 13, pre-release.** This build is in the playtest phase. Nothing in it is proven in a real multi-player session yet, so expect bugs. Back up your saves before you try it.
 
 ## Requirements
 
-- SIGNALIS (Steam or a second install)
-- MelonLoader with Managed assemblies (`MelonLoader\Managed`, Unhollower-style)
-- Same chapter/scene on every peer
-- Same mod DLL on every peer (protocol **10**)
+- SIGNALIS (Steam, Windows build; Linux via Proton works, see below).
+- **MelonLoader 0.5.7, exactly.** Newer or older versions do not work. The mod is built against the Unhollower assembly layout that 0.5.7 generates, and later MelonLoader versions changed it.
+- **Every player runs the exact same mod build.** The connection handshake rejects any version or protocol mismatch, even a patch-level one (for example 0.5.57 vs 0.5.58).
+- A network path between players: same LAN, or a VPN (see Hosting and joining).
 
 ## Install
 
-1. Install MelonLoader in the SIGNALIS folder.
-2. Build or copy `SyncRADation.dll` + `LiteNetLib.dll` → `SIGNALIS/Mods/`.
-3. Launch once so assemblies generate if needed.
+The short version is in [INSTALL.md](INSTALL.md) (it ships inside the release zip).
 
-### Build
+1. Install **MelonLoader 0.5.7** into your SIGNALIS folder (the one with `SIGNALIS.exe`). Start the game once so MelonLoader generates its assemblies, then quit.
+2. Copy `SyncRADation.dll` and `LiteNetLib.dll` into `SIGNALIS/Mods/`.
+3. Start the game. Press **F2** in a chapter: the multiplayer menu should open.
 
-```bash
-export DOTNET_ROOT="$HOME/Unity/Hub/Editor/6000.6.0f1/Editor/Data/DotNetSdk"
-export PATH="$DOTNET_ROOT:$PATH"
-cd "$HOME/Work/MyProjects/SyncRADation (SIGNALIS MP REMAKE)"
-dotnet build SyncRADation.csproj -c Debug
+### Linux / Proton
+
+MelonLoader's `version.dll` is ignored by Proton unless the native one wins over Wine's built-in. Set the Steam launch options to:
+
+```
+WINEDLLOVERRIDES="version=n,b" %command%
 ```
 
-Override install paths:
+### Two copies on one PC (testing)
 
-```bash
-dotnet build -p:SignalisDir="$HOME/Work/MyProjects/SIGNALIS" \
-  -p:ClientSignalisDir="$HOME/.local/share/Steam/steamapps/common/SIGNALIS"
-```
+Set `single-instance=0` in `boot.config` of both installs and use `127.0.0.1` as the address.
 
-Debug builds copy into both `$(SignalisDir)/Mods` (client copy) and `$(ClientSignalisDir)/Mods` (Steam host) when those dirs exist.
+## Hosting and joining
 
-### Dual-instance (this machine)
+1. Everyone loads the same chapter. (Clients follow the host's chapter automatically if it differs; if it gets stuck, load the same chapter by hand.)
+2. **Host:** F2, then **Host Game**. The game listens on **UDP 7777**. Forward/allow that port if you are behind a firewall.
+3. **Clients:** F2, type the host address, **Connect**. Or press **F3** to reconnect to the saved address.
+4. The host sends the current world state to each joiner. If doors or pickups look wrong, press **Resync world** in the F2 menu.
+5. For play over the internet use a VPN that gives everyone a shared virtual LAN: **Tailscale**, **ZeroTier** or **Radmin VPN**. Clients connect to the host's VPN address. There is no relay server and no direct internet hosting support.
 
-- **Host:** Steam SIGNALIS (Proton) — MelonLoader 0.5.7 under `steamapps/common/SIGNALIS`. Launch options: `WINEDLLOVERRIDES="version=n,b" %command% -screen-fullscreen 0 -screen-width 2560 -screen-height 720`
-- **Client:** `secondsignalis` → `~/Work/MyProjects/SIGNALIS` (same windowed half-height; separate Proton prefix `compatdata/syncradation-client`)
-- Hyprland stacks them: **host top half**, **client bottom half** (same workspace)
-- Both need `boot.config` `single-instance=0`
-
-## Play (up to 4 players)
-
-1. Everyone loads the **same chapter scene**.
-2. Host: **F2 → Host Game** (UDP `7777`, key `SyncRADation`).
-3. Each client: **F2 → IP → Connect**, or **F3** with the saved address.
-4. Host dumps world state **to that joiner**. If doors/pickups look wrong → **Resync world**.
-5. **SCENE MISMATCH** means the client is loading the host chapter automatically (SceneFollow). If it sticks, load the same chapter manually.
+The F2 menu shows a roster of everyone connected. The host can cap the session with `MaxPlayers` (applies the next time you press Host Game).
 
 ## Controls
 
-| Key | Action                                                      |
-| --- | ----------------------------------------------------------- |
-| F2  | Multiplayer menu (Host / Connect / Resync / status)         |
-| F3  | Quick connect (saved IP/port)                               |
-| G   | Drop highlighted inventory slot (or DROP in the item command list) |
-| F6  | Item giver                                                  |
-| F7  | Location teleporter (chapters + rooms in the current level) |
-| F11 | Entity spawner (any replika type; host-authoritative)       |
+| Key | Action |
+| --- | --- |
+| F2 | Multiplayer menu (Host, Connect, Disconnect, Resync world, roster, status) |
+| F3 | Quick connect to the saved address |
+| G | Drop the highlighted inventory slot (or DROP in the item command list) |
+| F6 | Item giver (cheat tool) |
+| F7 | Location teleporter: chapters and rooms in the current level. As a client this loads the chapter on the host and everyone follows |
+| F11 | Entity spawner (cheat tool, host-authoritative) |
 
-Walk up to a player-dropped prop for the native TAKE prompt (yes/no inspect, ammo count). No extra pickup key.
+To pick up something another player dropped, walk up to it and use the normal TAKE prompt. There is no extra pickup key.
 
-## What is synced
+## What is shared and what stays personal
 
-| Area                                                               | Authority                 | Notes                                                                                                                          |
-| ------------------------------------------------------------------ | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Avatar proxy, anim, bones, weapons                                 | Peer                      | State + bones ~30 Hz                                                                                                           |
-| Enemies                                                            | Host                      | WorldId snaps; native `TakeDamage`; client hits Harmony → host                                                                 |
-| Doors (double / sliding)                                           | Any peer emit, host relay | Visual open/close via native methods                                                                                           |
-| ConnectedDoors (room links)                                        | Lock only                 | **Never** sync traverse / `StartA`/`StartB` — room entry is local                                                              |
-| Story (Dialoguer, cutscenes, SProgress)                            | Host                      | Flags commit; books/notes/EventScreen inspect stay local; story Dialoguer Start/Continue/End from the client plays on the host |
-| Puzzles / locks / elevators / radio module / storage / event zones | Host + client emit        | WorldId-keyed; storage **contents** shared; protocol-10 GunCase/AraNest/RifleQuest/Microfiche                                  |
-| World ItemPickups                                                  | Host claim/grant          | Claimer gets the item; unique **Key/Object** go on the **party key ring**                                                      |
-| Player-dropped items                                               | Peer + relay              | G / inventory DROP; sits on the floor; native TAKE inspect (yes/no + count); join dump                                         |
-| Death                                                              | Asymmetric                | Native `HurtElster`; client downed (drops bag); host death reloads last save for both                                          |
-| Bosses (END / Chimera / Mynah / Kolibri / Adler)                   | Host                      | Light-field sync                                                                                                               |
-| Friendly fire                                                      | Opt-in                    | Default off                                                                                                                    |
-| Inventories                                                        | Independent               | By design                                                                                                                      |
+**Shared (the host decides, everyone sees the same result):**
 
-World objects are identified by `hash(scene + hierarchy path)` — never `GetInstanceID()`. Layout: `Domains/` (see `Domains/README.md`); agent rules in `AGENTS.md`.
+- Enemies and bosses: one set of enemies, hits from any player count on the same enemy.
+- Story progress, dialogue, cutscenes, endings.
+- Chapter loads (everyone follows the host).
+- Doors, locks and puzzles. A door or lock solved by one player is open for everyone, including people who join later.
+- Elevators, radio, pumps and pipes, storage boxes (box contents are shared).
+- Items lying in the world. Each one exists once: whoever picks it up gets it. Unique keys and key objects go onto a **party key ring**, so one key opens the door for the whole party.
+- Sounds from world objects.
+- Death and revive (see below).
 
-## Still unverified
+**Personal (intentionally local):**
 
-Dual-instance soak is **your** gate. Code for protocol **10** is in this build. Do not treat any of this as proven until you play it.
+- Your 6-slot inventory, ammo and health items.
+- Books, notes, photos and other pure reading or inspect screens.
+- Walking through room-to-room doors and climbing ladders (each player does their own).
+- Airlock and wreck/hole entry in Penrose: each player loads the next area when they finish it.
+- Cutscenes and event zones in a room you are not in do not play for you.
+- Radio tuner frequency while you turn it.
 
-## Diagnosis (dual-box)
+**Death:** a dead player is **downed**, not game over. They revive next to the nearest living teammate after `DownedRespawnDelay` seconds (default 20). The party only loses when **everyone is down at once**: the host then reloads its last save and clients get their bag back from the last save snapshot. Friendly fire is off by default.
 
-| Role | Install | MelonLoader log |
-|------|---------|-----------------|
-| **Host** | Steam SIGNALIS | `~/.local/share/Steam/steamapps/common/SIGNALIS/MelonLoader/Latest.log` |
-| **Client** | `~/Work/MyProjects/SIGNALIS` | `~/Work/MyProjects/SIGNALIS/MelonLoader/Latest.log` |
+A solo game (no session running) behaves like vanilla SIGNALIS.
 
-Prefs (each): `.../SIGNALIS/UserData/MelonPreferences.cfg` → `[SyncRADation] VerboseLogging`.
+## Known limitations
 
-- **Always-on:** `[Story]` `[Interact]` `[KeyRing]` `[Scene]` `[Door]` `[Puzzle]` `[Pickup]` `[Hitch]` `[Enemy]` … (boot banner lists all). Lines prefixed `H `/`C ` when connected.
-- **VerboseLogging:** leave **false** for soak; set **true** on **both** installs only when hunting FMOD / proxy clone / puzzle diffs; restart or re-Host after flip.
-- **Hitch** (spike-only): `frame` / `send gap` / `recv` / Cost tags `puzzle` `enemy` `boss` `pickup` `weaponClone` / `5s` summary. Full table in `AGENTS.md` → Diagnosis.
-- Look for `Handshake OK`, `[Harmony] patched`, `WorldRegistry`, `full world snapshot`. Identical lines collapse for 3s.
+- Pre-release: the whole 0.5.57 and 0.5.58 feature set (death/revive, party save, 3+ players, boss and enemy client hits, puzzle merging) has been compile-checked only.
+- A client's "quit to menu" is blocked silently.
+- If a client joins while loading, it may wait up to 6 seconds for the host's state and then start from local defaults. Use **Resync world**.
+- A Falke spear held only by a client may not count as held for the Falke fight.
+- Bag snapshots restore items but not per-weapon ammo.
+- Revive falls back to in-place if no teammate is in the same scene.
+- Another player's dropped items can still be despawned by a client in some edge cases.
+- World sounds triggered locally by a client are not always relayed to other clients.
+- The mod keeps party-save bookkeeping in `UserData/SyncRADation/` (`host_saves.txt`, `bag_snapshots.txt`). Delete those files if a restore after a wipe behaves strangely.
 
-## Config (`MelonPreferences`)
+## Configuration
 
-| Key              | Default   | Meaning                            |
-| ---------------- | --------- | ---------------------------------- |
-| ConnectAddress   | 127.0.0.1 | F3 IP                              |
-| ConnectPort      | 7777      | UDP                                |
-| FriendlyFire     | false     | PvP damage                         |
-| SyncPuzzles      | true      | Puzzles / radio / elevators / etc. |
-| SyncWorldPickups | true      | Scene ItemPickup                   |
-| SyncPlayerVitals | true      | HP / death packets                 |
-| VerboseLogging   | false     | OFF unless diagnosing (FMOD/proxy/puzzle diffs); both installs |
+Edited in `SIGNALIS/UserData/MelonPreferences.cfg` under `[SyncRADation]` (created on first launch). Restart the game after changing anything except where noted.
 
-## Playtest gate (before Nexus)
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `ConnectAddress` | `127.0.0.1` | Address used by F3 quick connect |
+| `ConnectPort` | `7777` | UDP port |
+| `MaxPlayers` | `4` | Host only. Session size including the host, 2 to 8. Applies the next time you Host Game |
+| `DownedRespawnDelay` | `20` | Seconds a downed player waits before reviving next to a teammate (1 to 600) |
+| `FriendlyFire` | `false` | Allow players to damage each other |
+| `SyncPuzzles` | `true` | Sync puzzles, locks, elevators, radio, storage, interactions |
+| `SyncWorldPickups` | `true` | Sync items lying in the world |
+| `SyncPlayerVitals` | `true` | Share HP, death and game state for remote player display |
+| `VerboseLogging` | `false` | Extra log noise for diagnosing sound, player-model and puzzle issues. Turn on for **both** installs only when hunting a bug |
+| `ExperimentalPuzzles` | `true` | Deprecated alias of `SyncPuzzles`, kept for old config files |
 
-Dual-instance LAN, same protocol-10 build. Steam host + copy client, same chapter. **This is the remaining work.** Do not treat any of this as proven until you play it.
+## Troubleshooting
 
-After this correctness pass:
+**Logs:** `SIGNALIS/MelonLoader/Latest.log`. When connected, lines are prefixed `H ` (host) or `C ` (client). When reporting a bug, send both players' logs.
 
-1. Penrose: photo inspect local; cryo pattern; BrokenKey does not hide photo; Tape+BrokenKey on **client**; both walk airlock independently; host staying in wreck does not yank
-2. Key door: one unique key, both traverse; no-key locked links stay red NO ENTRY
-3. Ammo/health pickup: partner `hasItem` stays false
-4. Enemy: host HP not double; client hit registers on host; host death reloads both
-5. Client downed → disconnect → can move and take damage again
-6. Notes/books stay local; a real story Dialoguer line started by the client plays on host
-7. Chapter load via int and string; LoadingScreen does not dump
-8. Elevator flags (no remote ride cinematic); radio lock frequency; FMOD loop present on late join
+- The mod loaded if you see `[Harmony] patched` lines and a boot banner with the version.
+- `Handshake OK` means the connection was accepted. A rejection shows a reason in the client's F2 menu (version, protocol or schema mismatch: everyone needs the same build).
+- `[Guard]` lines are errors the mod caught and swallowed so the game keeps running. A few are harmless; the same tag repeating every 30 seconds with a growing count is worth reporting.
+- `[Harmony]` lines about a failed patch usually mean a wrong MelonLoader or game version.
+- `[Hitch]` lines appear only on a real stutter (frame time spikes, send or receive gaps, slow sync ticks). Include them if the game stutters in multiplayer.
 
-Then Chapter 1 (Reeducation → Mines elevator) notepad: both deal damage; neither yanked through doors; one Dialoguer with VO; one cutscene with audio; storage box host-put / client-take.
+**Common problems**
 
-GitHub zip is the publish path until that run is enjoyable. Nexus waits on that approval.
+| Problem | Fix |
+| --- | --- |
+| No F2 menu | MelonLoader is not loading. Check it is 0.5.7 and the DLLs are in `Mods/`. On Proton set `WINEDLLOVERRIDES="version=n,b"` |
+| Cannot connect | Host pressed Host Game? UDP 7777 open on the host? Correct VPN address? |
+| Connect is rejected | Different mod builds. Install the same zip on every machine |
+| Doors or pickups look wrong after joining | Press **Resync world** in the F2 menu |
+| "SCENE MISMATCH" in the menu | Your game is following the host chapter. Wait, or load the same chapter manually |
+| Stuck after a disconnect | The client goes offline and restores play on its own. If input is stuck, open F2 and Disconnect |
 
-## License
+## Building from source
 
-Copyright (C) 2026 Warexpor.
+See `AGENTS.md` (Release / scripts section). Short form: `scripts/build.sh` builds without deploying, `scripts/package.sh` makes the release zip.
 
-This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, version 3.
+## Credits and license
 
-This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+By **Warexpor**. Networking by [LiteNetLib](https://github.com/RevenantX/LiteNetLib) (MIT, see `lib/LiteNetLib.LICENSE.txt`). Built on MelonLoader and Harmony. SIGNALIS is by rose-engine; this is an unofficial fan mod and is not affiliated with them.
 
-The full license text is in [LICENSE](LICENSE).
+Copyright (C) 2026 Warexpor. Licensed under the GNU General Public License v3 only, without any warranty. The full text is in [LICENSE](LICENSE).
