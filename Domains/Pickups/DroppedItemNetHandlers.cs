@@ -24,6 +24,8 @@ namespace SyncRADation.Networking
             _nextItemIndex = 1;
             // Player ids + local indices recycle; stale FinishDroppedNative dedupe soft-locks take.
             try { SyncRADation.Patches.ItemPickupPatches.ResetDropClaims(); } catch { }
+            // Session end: an in-flight storage ack will never arrive.
+            StorageTxn.Reset();
         }
 
         internal void SendDropItem(DropItemSpawnMessage msg)

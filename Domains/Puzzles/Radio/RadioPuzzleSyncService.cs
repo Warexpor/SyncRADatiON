@@ -84,7 +84,7 @@ namespace SyncRADation.Networking
                 NetGate.BeginApply();
                 try
                 {
-                    if (PuzzleSyncService.MutateWorld)
+                    if (PuzzleSyncService.LiveEdge)
                     {
                         try
                         {

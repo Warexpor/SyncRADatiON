@@ -48,17 +48,18 @@ namespace SyncRADation.Patches
             try { if (__instance.completed) return false; } catch { }
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             if (InteractionSyncService.WasSkipped(id)) return false;
-            InteractionSyncService.RememberStart(id);
-            // Host runs native + broadcasts. Client must NOT run local StartCutscene:
-            // SProgress.Set* is client-blocked, so a client-only cut leaves flags unauthored
-            // (decompile CutsceneManager.StartCutscene → UnityEvents often write SProgress).
-            // Reverse: client request → host ApplyCutsceneStart → presentation replay.
+            // Host runs native + broadcasts. A client does not start it from here: it asks the host, and the
+            // host's CutsceneStart presentation replay starts it on the requester like every other peer.
+            // The client must NOT stamp "started" here (RememberStart): that made the replay look like a
+            // duplicate, so the requester never played it and repeatable cutscenes stayed dead.
             if (NetGate.Host)
             {
+                InteractionSyncService.RememberStart(id);
                 LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.CutsceneStart, id, 0, "");
                 return true;
             }
-            LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.CutsceneStart);
+            if (InteractionSyncService.ShouldRequestStart(id))
+                LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.CutsceneStart);
             return false;
         }
 

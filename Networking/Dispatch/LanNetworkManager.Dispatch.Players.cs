@@ -16,6 +16,9 @@ namespace SyncRADation.Networking
             case NetMessageType.BonePose:
                 AvatarHandlers.HandleBonePose(BonePoseMessage.Deserialize(reader), senderId);
                 return true;
+            case NetMessageType.AvatarOneShot:
+                AvatarHandlers.HandleAvatarOneShot(AvatarOneShotMessage.Deserialize(reader), senderId);
+                return true;
             case NetMessageType.PlayerVital:
             {
                 var vital = PlayerVitalMessage.Deserialize(reader);

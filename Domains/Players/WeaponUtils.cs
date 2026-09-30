@@ -61,5 +61,27 @@ namespace SyncRADation.Networking
             "Weapon/Flare",
             "CAR"
         };
+
+        /// <summary>Cached Animator.StringToHash of <see cref="AnimatorBoolNames"/> (same order).</summary>
+        public static readonly int[] AnimatorBoolHashes = HashAll();
+
+        static int[] HashAll()
+        {
+            var names = AnimatorBoolNames;
+            var ids = new int[names.Length];
+            for (int i = 0; i < ids.Length; i++)
+                ids[i] = UnityEngine.Animator.StringToHash(names[i]);
+            return ids;
+        }
+
+        /// <summary>Animator bool hash for the weapon, or 0 for none (matches AnimatorBoolName).</summary>
+        public static int AnimatorBoolHash(WeaponType weapon)
+        {
+            string n = AnimatorBoolName(weapon);
+            if (n == null) return 0;
+            for (int i = 0; i < AnimatorBoolNames.Length; i++)
+                if (AnimatorBoolNames[i] == n) return AnimatorBoolHashes[i];
+            return 0;
+        }
     }
 }

@@ -436,6 +436,17 @@ namespace SyncRADation.Patches
         }
     }
 
+    // Interact deactivates the component itself, so the activeOnly poll never sees the edge.
+    [HarmonyPatch(typeof(MapRevealInteraction), nameof(MapRevealInteraction.Interact))]
+    public static class MapRevealInteractPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(MapRevealInteraction __instance)
+        {
+            EnvEmit.Progressed(PuzzleType.MapReveal, __instance);
+        }
+    }
+
     [HarmonyPatch(typeof(LAB_Rings), nameof(LAB_Rings.checkSolution))]
     public static class LabRingsPatch
     {

@@ -24,6 +24,7 @@ namespace SyncRADation.Networking
             PuzzleReader boss = BossSyncService.TryReadPuzzle;
             PuzzleReader residency = ResidencyPuzzleSyncService.TryRead;
             PuzzleReader chapterExtra = ChapterExtraPuzzleSyncService.TryRead;
+            PuzzleReader worldObject = WorldObjectPuzzleSyncService.TryRead;
 
             d[PuzzleType.PuzzleStatus] = doors;
             d[PuzzleType.InteractiveLock] = locks;
@@ -99,6 +100,10 @@ namespace SyncRADation.Networking
             d[PuzzleType.LAB_RifleQuest] = chapterExtra;
             d[PuzzleType.LOV_Microfiche] = chapterExtra;
             d[PuzzleType.MED_Adler_EVdoors] = chapterExtra;
+            d[PuzzleType.ROT_DiskManager] = worldObject;
+            d[PuzzleType.DET_WallCreature] = worldObject;
+            d[PuzzleType.MapReveal] = worldObject;
+            d[PuzzleType.MEM_ChecklistLogic] = worldObject;
             return d;
         }
 
@@ -266,6 +271,14 @@ namespace SyncRADation.Networking
                 ChapterExtraPuzzleSyncService.ApplyMicrofiche(s.Get<LOV_Microfiche>(e.Type, e.WorldId), e);
             d[PuzzleType.MED_Adler_EVdoors] = (s, e, _) =>
                 ChapterExtraPuzzleSyncService.ApplyAdlerEvDoors(s.Get<MED_Adler_EVdoors>(e.Type, e.WorldId), e);
+            d[PuzzleType.ROT_DiskManager] = (s, e, _) =>
+                WorldObjectPuzzleSyncService.ApplyDiskManager(s.Get<ROT_DiskManager>(e.Type, e.WorldId), e);
+            d[PuzzleType.DET_WallCreature] = (s, e, _) =>
+                WorldObjectPuzzleSyncService.ApplyWallCreature(s.Get<DET_WallCreature>(e.Type, e.WorldId), e);
+            d[PuzzleType.MapReveal] = (s, e, _) =>
+                WorldObjectPuzzleSyncService.ApplyMapReveal(s.Get<MapRevealInteraction>(e.Type, e.WorldId), e);
+            d[PuzzleType.MEM_ChecklistLogic] = (s, e, _) =>
+                WorldObjectPuzzleSyncService.ApplyChecklist(s.Get<MEM_ChecklistLogic>(e.Type, e.WorldId), e);
             return d;
         }
 
@@ -342,6 +355,10 @@ namespace SyncRADation.Networking
                 PuzzleType.LAB_RifleQuest,
                 PuzzleType.LOV_Microfiche,
                 PuzzleType.MED_Adler_EVdoors,
+                PuzzleType.ROT_DiskManager,
+                PuzzleType.DET_WallCreature,
+                PuzzleType.MapReveal,
+                PuzzleType.MEM_ChecklistLogic,
             };
         }
 
@@ -395,6 +412,8 @@ namespace SyncRADation.Networking
                 PuzzleType.MED_Incinerator,
                 PuzzleType.MultiConditionEvent,
                 PuzzleType.CutsceneCompleted,
+                PuzzleType.DET_WallCreature,
+                PuzzleType.MapReveal,
             };
         }
 
@@ -479,6 +498,10 @@ namespace SyncRADation.Networking
                 s => s.RegisterAll<LAB_RifleQuest>(PuzzleType.LAB_RifleQuest),
                 s => s.RegisterAll<LOV_Microfiche>(PuzzleType.LOV_Microfiche),
                 s => s.RegisterAll<MED_Adler_EVdoors>(PuzzleType.MED_Adler_EVdoors),
+                s => s.RegisterAll<ROT_DiskManager>(PuzzleType.ROT_DiskManager),
+                s => s.RegisterAll<DET_WallCreature>(PuzzleType.DET_WallCreature),
+                s => s.RegisterAll<MapRevealInteraction>(PuzzleType.MapReveal),
+                s => s.RegisterAll<MEM_ChecklistLogic>(PuzzleType.MEM_ChecklistLogic),
             };
         }
     }

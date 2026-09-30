@@ -183,18 +183,22 @@ namespace SyncRADation.Networking
                 ApplyPatternButtons(x, e);
                 return;
             }
-            DisablePatternLock(x);
-            if (PuzzleSyncService.MutateWorld && !was)
-            {
-                NetGate.BeginApply();
-                try
+            // Shared edge rule (PuzzleEdge): the latch above used to make every later apply (join dump,
+            // held re-snap) look "already solved" and skip the consequence. Live rising edge = native
+            // onSolved; everything else = the idempotent durable form (pad off, _event off, _door on).
+            PuzzleEdge.Solved("PatternLock", was, true,
+                durable: () => DisablePatternLock(x),
+                onLive: () =>
                 {
-                    if (x.onSolved != null)
-                        x.onSolved.Invoke();
-                }
-                catch { }
-                finally { NetGate.EndApply(); }
-            }
+                    DisablePatternLock(x);
+                    NetGate.BeginApply();
+                    try
+                    {
+                        if (x.onSolved != null)
+                            x.onSolved.Invoke();
+                    }
+                    finally { NetGate.EndApply(); }
+                });
             PuzzleDoorFlagsSyncService.TryUnlockDoors(x.gameObject);
         }
 
@@ -322,9 +326,35 @@ namespace SyncRADation.Networking
                         }
                     }
                     catch { }
+                    SnapPatternDoor(ctrl);
                 }
             }
             catch { }
+        }
+
+        /// <summary>
+        /// Decompile Lab_PatternLockControl.CheckState (solved branch): _event off, _door on, DoorL z=120, DoorR z=60.
+        /// Applied directly so a late joiner / remounted room is open without waiting for the control's Update.
+        /// </summary>
+        static void SnapPatternDoor(Lab_PatternLockControl ctrl)
+        {
+            if (ctrl == null) return;
+            try
+            {
+                if (ctrl._door != null) ctrl._door.SetActive(true);
+                var l = ctrl.L;
+                l.z = 120f;
+                ctrl.L = l;
+                if (ctrl.DoorL != null) ctrl.DoorL.localRotation = Quaternion.Euler(l);
+                var r = ctrl.R;
+                r.z = 60f;
+                ctrl.R = r;
+                if (ctrl.DoorR != null) ctrl.DoorR.localRotation = Quaternion.Euler(r);
+            }
+            catch (System.Exception ex)
+            {
+                PuzzleSyncService.WarnOnce("pattern-door", ex.Message);
+            }
         }
 
         public static void DisablePad(PEN_Codepad pad)

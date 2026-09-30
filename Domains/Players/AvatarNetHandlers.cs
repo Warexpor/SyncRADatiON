@@ -158,8 +158,54 @@ namespace SyncRADation.Networking
             return msg;
         }
 
+        /// <summary>
+        /// One-shot triggers (Fire/Hurt/Die/Reload...) are edge events. The sequenced 30 Hz pose drops
+        /// packets by design, so they ride a small reliable message instead and are stripped from the pose.
+        /// </summary>
+        internal void SendOneShot(AnimTriggers triggers)
+        {
+            if (triggers == AnimTriggers.None) return;
+            var msg = new AvatarOneShotMessage { SenderPlayerId = _net.LocalPlayerId, Triggers = triggers };
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.AvatarOneShot);
+            msg.Serialize(writer);
+            _net.BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        internal void HandleAvatarOneShot(AvatarOneShotMessage msg, int peerId)
+        {
+            // Host: identity is the LiteNetLib peer map (same rule as PlayerState).
+            if (_net.Role == NetworkRole.Host && peerId >= 0)
+                msg.SenderPlayerId = peerId;
+            int senderId = msg.SenderPlayerId;
+            if (senderId == _net.LocalPlayerId) return;
+
+            if (!_net.SceneMismatch)
+            {
+                var proxy = _net.ProxyManager.GetProxy(senderId);
+                if (proxy != null)
+                {
+                    try { proxy.ApplyOneShot(msg.Triggers); }
+                    catch (System.Exception ex) { ModRuntime.Log?.Warning("[Proxy] one-shot: " + ex.Message); }
+                }
+            }
+
+            if (_net.Role == NetworkRole.Host)
+            {
+                var w = new NetDataWriter();
+                w.Put((byte)NetMessageType.AvatarOneShot);
+                msg.Serialize(w);
+                _net.RelayRaw(w, DeliveryMethod.ReliableOrdered, senderId);
+            }
+        }
+
         internal void SendPlayerState(PlayerStateMessage msg)
         {
+            if (msg.AnimTriggers != AnimTriggers.None)
+            {
+                SendOneShot(msg.AnimTriggers);
+                msg.AnimTriggers = AnimTriggers.None;
+            }
             float[] bones = msg.BoneRotations;
             msg.BoneRotations = null;
             var poseWriter = new NetDataWriter();

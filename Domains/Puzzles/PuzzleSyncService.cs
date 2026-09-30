@@ -45,6 +45,38 @@ namespace SyncRADation.Networking
         private readonly PuzzleStateEntry[] _emitScratch = new PuzzleStateEntry[1];
 
         private bool _pendingReapply;
+
+        // Client seeding gate: the host is the only source of initial state. A client stays silent
+        // (no seed, no diffs) until the host's full dump for this scene is applied, then snapshots
+        // a baseline and only emits real local changes. Timeout covers scenes the host never dumps
+        // (airlock split, SceneMismatch).
+        private bool _hostDumpApplied;
+        private bool _clientLive;
+        private float _clientWaitSince = -1f;
+        private const float ClientDumpWait = 6f;
+
+        // Per type+WorldId version. Host: current stamp (bumped per accepted change). Client: highest seen.
+        private readonly Dictionary<string, int> _seq = new Dictionary<string, int>();
+        private readonly List<PuzzleStateEntry> _relayAll = new List<PuzzleStateEntry>(8);
+        private readonly List<PuzzleStateEntry> _relayExcept = new List<PuzzleStateEntry>(8);
+        private readonly List<PuzzleStateEntry> _applyScratch = new List<PuzzleStateEntry>(64);
+
+        // Door / lock solves survive scene reloads within the session (WorldId already hashes the scene).
+        // Seeded back into _held on RefreshScene so the solve re-snaps for everyone after a reload.
+        private struct DurableMemory
+        {
+            public string Scene;
+            public PuzzleStateEntry Entry;
+        }
+        private static readonly Dictionary<string, DurableMemory> _memory
+            = new Dictionary<string, DurableMemory>();
+        private string _sceneName = "";
+
+        private static bool _liveEdge;
+        /// <summary>True while applying a live (non-full-refresh, non-reapply) entry: the rising edge may run native consequences.</summary>
+        internal static bool LiveEdge => _liveEdge;
+
+        private static readonly HashSet<string> _warnedSites = new HashSet<string>();
         private static readonly HashSet<string> _worldAnimStarted = new HashSet<string>();
         // Join/resync dumps are a settled snapshot. Replaying native transitions
         // (EventZone.Invoke, openDoor, delayedOpen, slaveInteraction.enable)
@@ -87,7 +119,240 @@ namespace SyncRADation.Networking
             _held.Clear();
             _worldAnimStarted.Clear();
             _maps.Clear();
-            ModRuntime.Log?.Msg("[PuzzleSync] Scene refreshed");
+            _seq.Clear();
+            _hostDumpApplied = false;
+            _clientLive = false;
+            _clientWaitSince = -1f;
+            try { _sceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name ?? ""; }
+            catch (Exception ex) { _sceneName = ""; WarnOnce("scene-name", ex.Message); }
+            int restored = 0;
+            foreach (var kvp in _memory)
+            {
+                if (kvp.Value.Scene != _sceneName) continue;
+                _held.Add(kvp.Value.Entry);
+                restored++;
+            }
+            if (restored > 0) _pendingReapply = true;
+            ModRuntime.Log?.Msg("[PuzzleSync] Scene refreshed (durable restored=" + restored + ")");
+        }
+
+        /// <summary>Log a swallowed apply/read failure once per call site.</summary>
+        internal static void WarnOnce(string site, string msg)
+        {
+            if (_warnedSites.Add(site))
+                PlaytestLog.Warn("Puzzle", site + ": " + msg);
+        }
+
+        static string Key(PuzzleStateEntry e) => (byte)e.Type + "_" + e.WorldId.ToString("X");
+
+        static bool IsDurableMemoryType(PuzzleType t)
+        {
+            switch (t)
+            {
+                case PuzzleType.InteractiveLock:
+                case PuzzleType.InteractiveLockSingle:
+                case PuzzleType.Keypad3D:
+                case PuzzleType.ROT_Keypad:
+                case PuzzleType.PEN_Codepad:
+                case PuzzleType.PatternLock:
+                case PuzzleType.DialLock:
+                case PuzzleType.NumberLockNew:
+                case PuzzleType.DoorLockPuzzle:
+                case PuzzleType.MultiLock:
+                case PuzzleType.DoorLockControl:
+                case PuzzleType.DoorwaySimple:
+                case PuzzleType.SwingDoor:
+                case PuzzleType.DoorLockEventInteraction:
+                case PuzzleType.BiodomeDoorLock:
+                case PuzzleType.DET_ServiceLock:
+                case PuzzleType.DET_ServiceLock_Key:
+                case PuzzleType.SafeDoorSmall:
+                case PuzzleType.MultiKeyLock:
+                case PuzzleType.UseItemInteraction:
+                case PuzzleType.DET_RadioCodeLock:
+                case PuzzleType.ROT_DiskManager:
+                case PuzzleType.MEM_ChecklistLogic:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        // Types where the host merges only the cells a client actually changed (see PuzzleStateEntry.Mask).
+        static bool IsMergeType(PuzzleType t)
+        {
+            switch (t)
+            {
+                case PuzzleType.DialLock:
+                case PuzzleType.MED_Incinerator:
+                case PuzzleType.RES_Shrine:
+                case PuzzleType.PEN_Reaktor:
+                case PuzzleType.ROT_Mural:
+                case PuzzleType.ROT_RadioAlignment:
+                case PuzzleType.DET_RadioCodeLock:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        // Mural packs two 16-bit moons per Int: merge at half granularity.
+        static bool IsHalfMergeType(PuzzleType t) => t == PuzzleType.ROT_Mural;
+
+        static int DiffMask(PuzzleStateEntry a, PuzzleStateEntry b)
+        {
+            int m = 0;
+            if (a.Bool0 != b.Bool0) m |= 1;
+            if (a.Bool1 != b.Bool1) m |= 2;
+            if (a.Bool2 != b.Bool2) m |= 4;
+            if (a.Int0 != b.Int0) m |= 8;
+            if (a.Int1 != b.Int1) m |= 16;
+            if (a.Int2 != b.Int2) m |= 32;
+            if (a.Int3 != b.Int3) m |= 64;
+            if (!Mathf.Approximately(a.Float0, b.Float0)) m |= 128;
+            if (!Mathf.Approximately(a.Float1, b.Float1)) m |= 256;
+            if (IsHalfMergeType(b.Type))
+            {
+                for (int k = 0; k < 4; k++)
+                {
+                    int x = GetInt(a, k) ^ GetInt(b, k);
+                    if ((x & 0xFFFF) != 0) m |= 1 << (16 + 2 * k);
+                    if ((x & unchecked((int)0xFFFF0000)) != 0) m |= 1 << (17 + 2 * k);
+                }
+            }
+            return m;
+        }
+
+        static int GetInt(PuzzleStateEntry e, int k)
+        {
+            switch (k)
+            {
+                case 0: return e.Int0;
+                case 1: return e.Int1;
+                case 2: return e.Int2;
+                default: return e.Int3;
+            }
+        }
+
+        static void SetInt(ref PuzzleStateEntry e, int k, int v)
+        {
+            switch (k)
+            {
+                case 0: e.Int0 = v; break;
+                case 1: e.Int1 = v; break;
+                case 2: e.Int2 = v; break;
+                default: e.Int3 = v; break;
+            }
+        }
+
+        /// <summary>Overlay only the cells named by inc.Mask onto the host's current state.</summary>
+        static PuzzleStateEntry MergeEdit(PuzzleStateEntry cur, PuzzleStateEntry inc)
+        {
+            int m = inc.Mask;
+            var r = cur;
+            if ((m & 1) != 0) r.Bool0 = inc.Bool0;
+            if ((m & 2) != 0) r.Bool1 = inc.Bool1;
+            if ((m & 4) != 0) r.Bool2 = inc.Bool2;
+            bool half = IsHalfMergeType(inc.Type);
+            for (int k = 0; k < 4; k++)
+            {
+                if ((m & (8 << k)) == 0) continue;
+                if (!half)
+                {
+                    SetInt(ref r, k, GetInt(inc, k));
+                    continue;
+                }
+                int v = GetInt(cur, k);
+                int n = GetInt(inc, k);
+                if ((m & (1 << (16 + 2 * k))) != 0) v = (v & unchecked((int)0xFFFF0000)) | (n & 0xFFFF);
+                if ((m & (1 << (17 + 2 * k))) != 0) v = (v & 0xFFFF) | (n & unchecked((int)0xFFFF0000));
+                SetInt(ref r, k, v);
+            }
+            if ((m & 128) != 0) r.Float0 = inc.Float0;
+            if ((m & 256) != 0) r.Float1 = inc.Float1;
+            r.Seq = inc.Seq;
+            r.Mask = 0;
+            return r;
+        }
+
+        int CurSeq(string key)
+        {
+            int s;
+            return _seq.TryGetValue(key, out s) ? s : 0;
+        }
+
+        /// <summary>Host: bump (live edit) or reuse (full dump) the entry version. Client: carry the base version.</summary>
+        void StampOutgoing(ref PuzzleStateEntry e, bool host, bool full)
+        {
+            string key = Key(e);
+            if (!host)
+            {
+                e.Seq = CurSeq(key);
+                return;
+            }
+            int s = CurSeq(key);
+            if (!full || s == 0) s++;
+            _seq[key] = s;
+            e.Seq = s;
+            e.Mask = 0;
+        }
+
+        void StampOutgoing(List<PuzzleStateEntry> list, bool host, bool full)
+        {
+            for (int i = 0; i < list.Count; i++)
+            {
+                var e = list[i];
+                StampOutgoing(ref e, host, full);
+                list[i] = e;
+            }
+        }
+
+        /// <summary>Client: drop a host entry older than one already applied.</summary>
+        bool IsStaleFromHost(PuzzleStateEntry e)
+        {
+            if (e.Seq == 0) return false;
+            int s;
+            return _seq.TryGetValue(Key(e), out s) && e.Seq < s;
+        }
+
+        /// <summary>
+        /// Host: resolve a client-authored entry against the current state in arrival order.
+        /// Returns false when dropped (stale regress). merged = true when only the client's cells were overlaid.
+        /// </summary>
+        bool ResolveClientEntry(ref PuzzleStateEntry e, out bool merged)
+        {
+            merged = false;
+            string key = Key(e);
+            PuzzleStateEntry cur;
+            bool hasCur = _lastSent.TryGetValue(key, out cur);
+            int curSeq = CurSeq(key);
+            if (hasCur && e.Seq != 0 && e.Seq < curSeq && !IsProgressed(e) && IsProgressed(cur))
+            {
+                PlaytestLog.Event("Puzzle", "drop stale " + e.Type + " id=" + unchecked((ulong)e.WorldId).ToString("X16")
+                    + " seq=" + e.Seq + "<" + curSeq);
+                return false;
+            }
+            // Checklist only grows: two players ticking different items concurrently keep both.
+            if (hasCur && e.Type == PuzzleType.MEM_ChecklistLogic)
+            {
+                int orInt = e.Int0 | cur.Int0;
+                bool orDone = e.Bool0 || cur.Bool0;
+                merged = orInt != e.Int0 || orDone != e.Bool0;
+                e.Int0 = orInt;
+                e.Bool0 = orDone;
+            }
+            else if (hasCur && e.Mask != 0 && IsMergeType(e.Type))
+            {
+                e = MergeEdit(cur, e);
+                merged = true;
+            }
+            e.Mask = 0;
+            curSeq++;
+            _seq[key] = curSeq;
+            e.Seq = curSeq;
+            // The resolved entry is the host's new current state even when this peer cannot apply it now.
+            _lastSent[key] = e;
+            return true;
         }
 
         public void RequestFullSend() => _needFullSend = true;
@@ -105,6 +370,8 @@ namespace SyncRADation.Networking
 
         public void Reset()
         {
+            _memory.Clear();
+            WorldObjectPuzzleSyncService.Reset();
             RefreshScene();
             _sendTimer = 0f;
         }
@@ -179,31 +446,21 @@ namespace SyncRADation.Networking
             // runs native trigger()/EventScreen on the other Elster.
             if (net.Role != NetworkRole.Host)
             {
-                if (_needFullSend)
+                if (!_clientLive)
                 {
-                    _tickSeed.Clear();
-                    ReadAll(_tickSeed, true, clientFilter: true, activeOnly: false);
-                    _needFullSend = false;
-                    _tickProgressed.Clear();
-                    for (int i = 0; i < _tickSeed.Count; i++)
-                    {
-                        if (IsProgressed(_tickSeed[i]))
-                            _tickProgressed.Add(_tickSeed[i]);
-                    }
-                    if (_tickProgressed.Count > 0)
-                    {
-                        for (int i = 0; i < _tickProgressed.Count; i++)
-                            HoldIfProgressed(_tickProgressed[i]);
-                        PlaytestLog.Event("Puzzle", "client seed " + _tickProgressed.Count
-                            + " " + Describe(_tickProgressed));
-                        net.SendPuzzleState(_tickProgressed, false);
-                    }
+                    // No seed: default-true IsProgressed rules (elevator, mural, reactor…) would
+                    // overwrite the host. Wait for the host dump (ApplyPuzzleState primes + goes live).
+                    if (_clientWaitSince < 0f) _clientWaitSince = Time.unscaledTime;
+                    if (!_hostDumpApplied && Time.unscaledTime - _clientWaitSince < ClientDumpWait)
+                        return;
+                    PrimeClientBaseline("no host dump within " + ClientDumpWait.ToString("0") + "s");
                     return;
                 }
                 _tickLocal.Clear();
-                ReadAll(_tickLocal, false, clientFilter: true, activeOnly: true);
+                ReadAll(_tickLocal, false, clientFilter: true, activeOnly: true, firstIsBaseline: true);
                 if (_tickLocal.Count > 0)
                 {
+                    StampOutgoing(_tickLocal, host: false, full: false);
                     for (int i = 0; i < _tickLocal.Count; i++)
                         HoldIfProgressed(_tickLocal[i]);
                     PlaytestLog.Verbose("Puzzle", "client diff " + _tickLocal.Count
@@ -220,6 +477,7 @@ namespace SyncRADation.Networking
             // dropped join/resync full state when MinFullSendInterval still blocked.
             if (full)
                 _needFullSend = false;
+            StampOutgoing(_tickEntries, host: true, full: full);
             for (int i = 0; i < _tickEntries.Count; i++)
                 HoldIfProgressed(_tickEntries[i]);
             if (_tickEntries.Count == 0) return;
@@ -231,7 +489,20 @@ namespace SyncRADation.Networking
             }
         }
 
-        private void ReadAll(List<PuzzleStateEntry> entries, bool full, bool clientFilter, bool activeOnly)
+        /// <summary>Client: snapshot current state as the baseline (nothing is sent) and start emitting real local diffs.</summary>
+        private void PrimeClientBaseline(string why)
+        {
+            EnsureScanned();
+            _tickSeed.Clear();
+            ReadAll(_tickSeed, true, clientFilter: true, activeOnly: false);
+            _tickSeed.Clear();
+            _needFullSend = false;
+            _clientLive = true;
+            PlaytestLog.Event("Puzzle", "client live (" + why + ")");
+        }
+
+        private void ReadAll(List<PuzzleStateEntry> entries, bool full, bool clientFilter, bool activeOnly,
+            bool firstIsBaseline = false)
         {
             bool emittedMultiBlocked = false;
             foreach (var typeMap in _maps)
@@ -252,7 +523,7 @@ namespace SyncRADation.Networking
                         continue;
                     PuzzleStateEntry entry;
                     if (!TryRead(type, kvp.Key, kvp.Value, out entry)) continue;
-                    if (ChangedOrFirst(entry, full)) entries.Add(entry);
+                    if (ChangedOrFirst(ref entry, full, firstIsBaseline)) entries.Add(entry);
                 }
             }
 
@@ -262,25 +533,25 @@ namespace SyncRADation.Networking
             if (!clientFilter)
             {
                 var alarm = EnemySyncService.ReadGlobalAlert();
-                if (ChangedOrFirst(alarm, full)) entries.Add(alarm);
+                if (ChangedOrFirst(ref alarm, full, firstIsBaseline)) entries.Add(alarm);
             }
             if (!clientFilter || ClientMayEmit(PuzzleType.RadioManagerState))
             {
                 var radio = RadioPuzzleSyncService.ReadManagerState();
                 // Client must not emit false — would race host latch before acquire.
                 if (!(clientFilter && (radio.Int0 & 1) == 0)
-                    && ChangedOrFirst(radio, full))
+                    && ChangedOrFirst(ref radio, full, firstIsBaseline))
                     entries.Add(radio);
             }
             if (!clientFilter || ClientMayEmit(PuzzleType.MED_KeyGrid))
             {
                 var keyGrid = ResidencyPuzzleSyncService.ReadKeyGridGlobal();
-                if (ChangedOrFirst(keyGrid, full)) entries.Add(keyGrid);
+                if (ChangedOrFirst(ref keyGrid, full, firstIsBaseline)) entries.Add(keyGrid);
             }
             if (!clientFilter || ClientMayEmit(PuzzleType.ArianePhotoCode))
             {
                 var ariane = ResidencyPuzzleSyncService.ReadArianePhotoCodeGlobal();
-                if (ChangedOrFirst(ariane, full)) entries.Add(ariane);
+                if (ChangedOrFirst(ref ariane, full, firstIsBaseline)) entries.Add(ariane);
             }
         }
 
@@ -314,9 +585,14 @@ namespace SyncRADation.Networking
         private static PuzzleStateEntry Mk(PuzzleType type, long worldId, bool b0, bool b1, bool b2, int i0, int i1, int i2, int i3, float f0)
             => PuzzleDomainUtil.Mk(type, worldId, b0, b1, b2, i0, i1, i2, i3, f0);
 
-        private bool ChangedOrFirst(PuzzleStateEntry entry, bool fullRefresh)
+        /// <summary>
+        /// Change detect vs the last sent/applied state. A real change also fills entry.Mask (cells that differ
+        /// from that previous state) so the host can merge concurrent edits. firstIsBaseline: a never-seen key is
+        /// recorded as the baseline and not reported (client diff path).
+        /// </summary>
+        private bool ChangedOrFirst(ref PuzzleStateEntry entry, bool fullRefresh, bool firstIsBaseline = false)
         {
-            string key = (byte)entry.Type + "_" + entry.WorldId.ToString("X");
+            string key = Key(entry);
             if (fullRefresh)
             {
                 _lastSent[key] = entry;
@@ -330,6 +606,12 @@ namespace SyncRADation.Networking
                     && Mathf.Approximately(prev.Float0, entry.Float0)
                     && Mathf.Approximately(prev.Float1, entry.Float1))
                     return false;
+                entry.Mask = DiffMask(prev, entry);
+            }
+            else if (firstIsBaseline)
+            {
+                _lastSent[key] = entry;
+                return false;
             }
             _lastSent[key] = entry;
             return true;
@@ -358,8 +640,11 @@ namespace SyncRADation.Networking
 
         private void NoteApplied(PuzzleStateEntry entry)
         {
-            string key = (byte)entry.Type + "_" + entry.WorldId.ToString("X");
+            string key = Key(entry);
             _lastSent[key] = entry;
+            var net = LanNetworkManager.Instance;
+            if (net != null && net.Role != NetworkRole.Host && entry.Seq != 0 && entry.Seq > CurSeq(key))
+                _seq[key] = entry.Seq;
         }
 
         private static bool IsProgressed(PuzzleStateEntry e)
@@ -490,6 +775,12 @@ namespace SyncRADation.Networking
             // MultiConditionEvent: hold partial tried (Int0) before triedOnce.
             if (e.Type == PuzzleType.MultiConditionEvent)
                 return e.Bool0 || e.Int0 != 0;
+            // MEM_ChecklistLogic: any item checked (Int0 bitmask) or complete.
+            if (e.Type == PuzzleType.MEM_ChecklistLogic)
+                return e.Int0 != 0 || e.Bool0;
+            // ROT_DiskManager: either disk inserted.
+            if (e.Type == PuzzleType.ROT_DiskManager)
+                return e.Bool0 || e.Bool1;
             return ProgressedBool0.Contains(e.Type) && e.Bool0;
         }
 
@@ -499,60 +790,88 @@ namespace SyncRADation.Networking
             if (msg.Entries == null || msg.Entries.Length == 0) return;
             if (net != null && msg.SenderPlayerId == net.LocalPlayerId)
                 return;
-            if (SceneFollowService.LocalIsTransient())
-                return;
-            if (net != null && net.SceneMismatch)
-                return;
+            bool isHost = net != null && net.Role == NetworkRole.Host;
+            bool canApply = !SceneFollowService.LocalIsTransient()
+                && !(net != null && net.SceneMismatch);
 
-            string applyLine = "apply n=" + msg.Entries.Length
-                + " from=" + msg.SenderPlayerId + (msg.FullRefresh ? " full" : "")
-                + " " + Describe(msg.Entries);
-            if (msg.FullRefresh) PlaytestLog.Event("Puzzle", applyLine);
-            else PlaytestLog.Verbose("Puzzle", applyLine);
-            EnsureScanned();
-            bool cinematic = !msg.FullRefresh;
-            bool prevMutate = _mutateWorld;
-            _mutateWorld = cinematic;
-            bool hostFromPeer = net != null && net.Role == NetworkRole.Host
-                && msg.SenderPlayerId != net.LocalPlayerId;
-            int relayCount = 0;
-            NetGate.BeginApply();
-            ApplyingPeerPacket = hostFromPeer;
-            try
+            _applyScratch.Clear();
+            _relayAll.Clear();
+            _relayExcept.Clear();
+            if (isHost)
             {
+                // Arrival order wins: each client entry is resolved against the host's current state
+                // (only the cells that client changed are overlaid) and stamped with a new version.
+                // The host relays even when it cannot apply (loading / other scene) so 3+ peers stay in sync.
                 for (int i = 0; i < msg.Entries.Length; i++)
                 {
-                    var entry = msg.Entries[i];
+                    var e = msg.Entries[i];
                     // Client Start() generates its own radio code. Applying that
                     // unsolved payload would replace the host's frequency/code/hint.
-                    if (hostFromPeer && entry.Type == PuzzleType.DET_RadioCodeLock && !entry.Bool0)
+                    if (e.Type == PuzzleType.DET_RadioCodeLock && !e.Bool0)
                         continue;
-                    ApplyEntry(entry, cinematic);
-                    if (hostFromPeer)
-                        msg.Entries[relayCount++] = entry;
+                    bool merged;
+                    if (!ResolveClientEntry(ref e, out merged)) continue;
+                    _applyScratch.Add(e);
+                    if (merged) _relayAll.Add(e);
+                    else _relayExcept.Add(e);
                 }
             }
-            finally
+            else
             {
-                ApplyingPeerPacket = false;
-                _mutateWorld = prevMutate;
-                NetGate.EndApply();
-            }
-
-            if (cinematic)
-            {
-                try { DoorNative.ReassertLockVisuals(); } catch { }
-            }
-
-            if (hostFromPeer && relayCount > 0)
-            {
-                PuzzleStateEntry[] relay = msg.Entries;
-                if (relayCount != msg.Entries.Length)
+                if (!canApply) return;
+                for (int i = 0; i < msg.Entries.Length; i++)
                 {
-                    relay = new PuzzleStateEntry[relayCount];
-                    System.Array.Copy(msg.Entries, relay, relayCount);
+                    if (IsStaleFromHost(msg.Entries[i])) continue;
+                    _applyScratch.Add(msg.Entries[i]);
                 }
-                net.SendPuzzleState(relay, false, msg.SenderPlayerId);
+            }
+            if (_applyScratch.Count == 0) return;
+
+            if (canApply)
+            {
+                string applyLine = "apply n=" + _applyScratch.Count
+                    + " from=" + msg.SenderPlayerId + (msg.FullRefresh ? " full" : "")
+                    + " " + Describe(_applyScratch);
+                if (msg.FullRefresh) PlaytestLog.Event("Puzzle", applyLine);
+                else PlaytestLog.Verbose("Puzzle", applyLine);
+                EnsureScanned();
+                bool cinematic = !msg.FullRefresh;
+                bool prevMutate = _mutateWorld;
+                _mutateWorld = cinematic;
+                NetGate.BeginApply();
+                ApplyingPeerPacket = isHost;
+                try
+                {
+                    for (int i = 0; i < _applyScratch.Count; i++)
+                        ApplyEntry(_applyScratch[i], cinematic);
+                }
+                finally
+                {
+                    ApplyingPeerPacket = false;
+                    _mutateWorld = prevMutate;
+                    NetGate.EndApply();
+                }
+
+                if (cinematic)
+                {
+                    try { DoorNative.ReassertLockVisuals(); }
+                    catch (Exception ex) { WarnOnce("reassert-locks", ex.Message); }
+                }
+            }
+
+            if (isHost)
+            {
+                if (_relayExcept.Count > 0)
+                    net.SendPuzzleState(_relayExcept, false, msg.SenderPlayerId);
+                if (_relayAll.Count > 0)
+                    net.SendPuzzleState(_relayAll, false);
+            }
+            else if (msg.FullRefresh && !_hostDumpApplied)
+            {
+                // The host dump is now the baseline: from here on only real local changes are emitted.
+                _hostDumpApplied = true;
+                if (!_clientLive)
+                    PrimeClientBaseline("host dump applied");
             }
         }
 
@@ -624,7 +943,11 @@ namespace SyncRADation.Networking
 
         public void ReapplyHeld()
         {
-            if (_held.Count == 0) return;
+            if (_held.Count == 0)
+            {
+                try { DoorSyncService.ReapplyHeldDoors(); } catch (Exception ex) { WarnOnce("reapply-doors", ex.Message); }
+                return;
+            }
             PlaytestLog.Event("Puzzle", "reapply held " + _held.Count + " " + Describe(_held));
             bool prevMutate = _mutateWorld;
             _mutateWorld = true;
@@ -645,28 +968,49 @@ namespace SyncRADation.Networking
                 _mutateWorld = prevMutate;
                 NetGate.EndApply();
             }
-            try { DoorNative.ReassertLockVisuals(); } catch { }
+            try { DoorNative.ReassertLockVisuals(); } catch (Exception ex) { WarnOnce("reapply-locks", ex.Message); }
+            try { DoorSyncService.ReapplyHeldDoors(); } catch (Exception ex) { WarnOnce("reapply-doors", ex.Message); }
             try
             {
                 var net = LanNetworkManager.Instance;
                 if (net != null)
                     net.PickupSync.HideClaimed(null);
             }
-            catch { }
+            catch (Exception ex) { WarnOnce("reapply-pickups", ex.Message); }
         }
 
+        /// <summary>
+        /// Track the latest state per entry: progressed entries replace the held one, a falling edge drops it
+        /// (ReapplyHeld must never re-snap a state the puzzle has since left).
+        /// </summary>
         private void HoldIfProgressed(PuzzleStateEntry e)
         {
-            if (!IsProgressed(e)) return;
+            bool progressed = IsProgressed(e);
+            int found = -1;
             for (int i = 0; i < _held.Count; i++)
             {
                 if (_held[i].Type == e.Type && _held[i].WorldId == e.WorldId)
                 {
-                    _held[i] = e;
-                    return;
+                    found = i;
+                    break;
                 }
             }
-            _held.Add(e);
+            if (progressed)
+            {
+                if (found >= 0) _held[found] = e;
+                else _held.Add(e);
+            }
+            else if (found >= 0)
+                _held.RemoveAt(found);
+
+            if (IsDurableMemoryType(e.Type) && e.WorldId != 0)
+            {
+                string key = Key(e);
+                if (progressed)
+                    _memory[key] = new DurableMemory { Scene = _sceneName, Entry = e };
+                else
+                    _memory.Remove(key);
+            }
         }
 
         public void Emit(PuzzleType type, ulong worldId, Component c)
@@ -676,7 +1020,8 @@ namespace SyncRADation.Networking
             if (net == null || !net.IsConnected) return;
             PuzzleStateEntry entry;
             if (!TryRead(type, worldId, c, out entry)) return;
-            if (!ChangedOrFirst(entry, false)) return;
+            if (!ChangedOrFirst(ref entry, false)) return;
+            StampOutgoing(ref entry, net.Role == NetworkRole.Host, false);
             HoldIfProgressed(entry);
             PlaytestLog.Event("Puzzle", "emit " + type + " id=" + worldId.ToString("X16"));
             _emitScratch[0] = entry;
@@ -689,7 +1034,8 @@ namespace SyncRADation.Networking
             if (NetGate.IsApplying) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
-            if (!ChangedOrFirst(entry, false)) return;
+            if (!ChangedOrFirst(ref entry, false)) return;
+            StampOutgoing(ref entry, net.Role == NetworkRole.Host, false);
             HoldIfProgressed(entry);
             PlaytestLog.Event("Puzzle", "emit entry " + entry.Type
                 + " id=" + unchecked((ulong)entry.WorldId).ToString("X16"));
@@ -722,7 +1068,8 @@ namespace SyncRADation.Networking
                 entry.Bool0 = true;
             else
                 entry = Mk(type, unchecked((long)worldId), true, false, false, 0, 0, 0, 0, 0f);
-            if (!ChangedOrFirst(entry, false)) return;
+            if (!ChangedOrFirst(ref entry, false)) return;
+            StampOutgoing(ref entry, net.Role == NetworkRole.Host, false);
             HoldIfProgressed(entry);
             PlaytestLog.Event("Puzzle", "emit progressed " + type + " id=" + worldId.ToString("X16"));
             _emitScratch[0] = entry;
@@ -753,6 +1100,8 @@ namespace SyncRADation.Networking
         {
             HoldIfProgressed(e);
             NoteApplied(e);
+            bool prevLive = _liveEdge;
+            _liveEdge = cinematic;
             try
             {
                 PuzzleApplier apply;
@@ -767,6 +1116,10 @@ namespace SyncRADation.Networking
             catch (Exception ex)
             {
                 PlaytestLog.Warn("Puzzle", "apply " + e.Type + ": " + ex.Message);
+            }
+            finally
+            {
+                _liveEdge = prevLive;
             }
         }
 

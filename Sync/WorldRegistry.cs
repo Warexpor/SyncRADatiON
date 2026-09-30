@@ -8,6 +8,9 @@ namespace SyncRADation.Sync
     public static class WorldRegistry
     {
         private static readonly Dictionary<ulong, EnemyController> Enemies = new Dictionary<ulong, EnemyController>();
+        // Reverse map enemy -> WorldId (local GetInstanceID key, never sent). Hit-time lookup must not
+        // recompute WorldId from the hierarchy: sibling order shifts when spawns/dupes are added.
+        private static readonly Dictionary<int, ulong> EnemyIds = new Dictionary<int, ulong>();
         private static readonly Dictionary<ulong, Doorway_Double> DoubleDoors = new Dictionary<ulong, Doorway_Double>();
         private static readonly Dictionary<ulong, ConnectedDoors> ConnectedDoorMap = new Dictionary<ulong, ConnectedDoors>();
         private static readonly Dictionary<ulong, EventSlidingDoor> SlidingDoors = new Dictionary<ulong, EventSlidingDoor>();
@@ -53,6 +56,7 @@ namespace SyncRADation.Sync
         {
             WorldLookup.Invalidate();
             Enemies.Clear();
+            EnemyIds.Clear();
             DoubleDoors.Clear();
             ConnectedDoorMap.Clear();
             SlidingDoors.Clear();
@@ -74,6 +78,9 @@ namespace SyncRADation.Sync
                         ulong id = WorldId.FromGameObject(e.gameObject);
                         if (id == 0) continue;
                         Register(Enemies, id, e, "EnemyController");
+                        EnemyController winner;
+                        if (Enemies.TryGetValue(id, out winner) && winner == e)
+                            EnemyIds[e.GetInstanceID()] = id;
                     }
                 }
 
@@ -130,6 +137,7 @@ namespace SyncRADation.Sync
         {
             WorldLookup.Invalidate();
             Enemies.Clear();
+            EnemyIds.Clear();
             DoubleDoors.Clear();
             ConnectedDoorMap.Clear();
             SlidingDoors.Clear();
@@ -141,6 +149,16 @@ namespace SyncRADation.Sync
         {
             if (id == 0 || enemy == null) return;
             Enemies[id] = enemy;
+            EnemyIds[enemy.GetInstanceID()] = id;
+        }
+
+        /// <summary>WorldId cached at Rebuild/Register time. False for enemies the registry never saw.</summary>
+        public static bool TryGetEnemyId(EnemyController enemy, out ulong id)
+        {
+            id = 0;
+            if (enemy == null) return false;
+            try { return EnemyIds.TryGetValue(enemy.GetInstanceID(), out id); }
+            catch { return false; }
         }
 
         public static bool TryGetEnemy(ulong id, out EnemyController enemy) => Enemies.TryGetValue(id, out enemy);
@@ -148,11 +166,8 @@ namespace SyncRADation.Sync
         public static bool TryGetConnectedDoor(ulong id, out ConnectedDoors door) => ConnectedDoorMap.TryGetValue(id, out door);
         public static bool TryGetSlidingDoor(ulong id, out EventSlidingDoor door) => SlidingDoors.TryGetValue(id, out door);
 
-        public static IEnumerable<KeyValuePair<ulong, EnemyController>> AllEnemies()
-        {
-            foreach (var kvp in Enemies)
-                yield return kvp;
-        }
+        /// <summary>Live map — iterate with foreach (struct enumerator, no per-call iterator garbage).</summary>
+        public static Dictionary<ulong, EnemyController> AllEnemies() => Enemies;
 
         public static IEnumerable<KeyValuePair<ulong, Doorway_Double>> AllDoubleDoors()
         {

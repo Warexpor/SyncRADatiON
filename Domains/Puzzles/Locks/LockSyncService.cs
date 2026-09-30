@@ -116,14 +116,15 @@ namespace SyncRADation.Networking
             if (x == null) return;
             bool was = x.locked;
             x.locked = e.Bool0;
-            if (was && !e.Bool0)
+            // Decompile InteractiveLock: Update copies locked -> door.locked every frame and <delayedOpen> only
+            // sets door.open (door visuals ride DoorState). delayedOpen() returns an IEnumerator, so the bare
+            // call that used to live here never ran. Durable consequence = unlocked door, on every apply.
+            PuzzleEdge.Solved("InteractiveLock", was == false, !e.Bool0, () =>
             {
-                if (mutateWorld)
-                {
-                    try { x.delayedOpen(); } catch { }
-                }
+                if (x.door != null)
+                    PuzzleSyncService.UnlockDoorObject(x.door.gameObject);
                 PuzzleSyncService.TryUnlockDoors(x.gameObject);
-            }
+            });
         }
 
         public static void ApplyInteractiveSingle(InteractiveLockSingle x, PuzzleStateEntry e, bool mutateWorld)
@@ -161,11 +162,22 @@ namespace SyncRADation.Networking
         public static void ApplyKeypad3D(Keypad3D x, PuzzleStateEntry e, bool mutateWorld)
         {
             if (x == null) return;
-            bool was = x.solved;
+            bool wasOpening = x.opening;
             x.solved = e.Bool0; x.opening = e.Bool1; x.blocked = e.Bool2;
             if (!e.Bool0) return;
-            if (mutateWorld && !was) { try { x.openDoor(); } catch { } }
+            // Decompile Keypad3D: the wheel turn sets opening and <openDoor> lerps Door to Euler(0,-100,0)
+            // (and locks the local player's input). openDoor() returns an IEnumerator, so the bare call
+            // never ran — with opening latched the wheel is dead and the door stayed shut. Peers snap the
+            // pose (what LoadState does) on live edge, join dump and held re-apply alike.
+            if (e.Bool1)
+                PuzzleEdge.Solved("Keypad3D", wasOpening, true, () => SnapKeypad3DDoor(x));
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
+        }
+
+        static void SnapKeypad3DDoor(Keypad3D x)
+        {
+            if (x == null || x.Door == null) return;
+            x.Door.localRotation = Quaternion.Euler(0f, -100f, 0f);
         }
 
         public static void ApplyRotKeypad(ROT_Keypad x, PuzzleStateEntry e, bool mutateWorld)
@@ -183,29 +195,22 @@ namespace SyncRADation.Networking
             // skipped → late joiner kept Door Connection locked. Native LoadState
             // fires onLoad (Unlock + SetActive + dimPOI; omits exitEvent) — mirror that
             // for !mutateWorld && !was. Keep latching solved (do not UseItem-style delay).
-            if (mutateWorld && !was)
-            {
-                NetGate.BeginApply();
-                try
-                {
-                    if (x.onSuccess != null)
-                        x.onSuccess.Invoke();
-                }
-                catch { }
-                finally { NetGate.EndApply(); }
-            }
-            else if (!mutateWorld && !was)
-            {
-                NetGate.BeginApply();
-                try
-                {
-                    if (x.onLoad != null)
-                        x.onLoad.Invoke();
-                }
-                catch { }
-                finally { NetGate.EndApply(); }
-            }
+            // Shared edge rule (PuzzleEdge): a live rising edge runs onSuccess; join dump AND held re-snap
+            // (a remounted room resets solved, so !was again) run the durable onLoad. Before, ReapplyHeld
+            // (mutateWorld=true) replayed onSuccess incl. exitEvent on a player who was not in the screen.
+            PuzzleEdge.Solved("ROT_Keypad", was, true,
+                durable: () => { if (!was) InvokeApplying(x.onLoad); },
+                onLive: () => InvokeApplying(x.onSuccess));
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
+        }
+
+        /// <summary>UnityEvent.Invoke under NetGate.BeginApply so native handlers do not re-emit.</summary>
+        internal static void InvokeApplying(UnityEngine.Events.UnityEvent ev)
+        {
+            if (ev == null) return;
+            NetGate.BeginApply();
+            try { ev.Invoke(); }
+            finally { NetGate.EndApply(); }
         }
 
         public static void ApplyDial(ROT_DialLock x, PuzzleStateEntry e)
@@ -293,30 +298,15 @@ namespace SyncRADation.Networking
                 med.unlocked = e.Bool0;
                 UnpackMedBits(med, e.Int0);
                 if (!e.Bool0) return;
-                if (PuzzleSyncService.MutateWorld && !was)
-                {
-                    NetGate.BeginApply();
-                    try
+                // Shared edge rule (PuzzleEdge): live rising edge = onUnlocked + onUnlockedLate; join dump and
+                // held re-snap (ReapplyHeld used to count as live) = onLoadUnlocked only, once.
+                PuzzleEdge.Solved("MED_MultiLock", was, true,
+                    durable: () => { if (!was) InvokeApplying(med.onLoadUnlocked); },
+                    onLive: () =>
                     {
-                        if (med.onUnlocked != null)
-                            med.onUnlocked.Invoke();
-                        if (med.onUnlockedLate != null)
-                            med.onUnlockedLate.Invoke();
-                    }
-                    catch { }
-                    finally { NetGate.EndApply(); }
-                }
-                else if (!PuzzleSyncService.MutateWorld && !was)
-                {
-                    NetGate.BeginApply();
-                    try
-                    {
-                        if (med.onLoadUnlocked != null)
-                            med.onLoadUnlocked.Invoke();
-                    }
-                    catch { }
-                    finally { NetGate.EndApply(); }
-                }
+                        InvokeApplying(med.onUnlocked);
+                        InvokeApplying(med.onUnlockedLate);
+                    });
                 PuzzleSyncService.TryUnlockDoors(med.gameObject);
                 return;
             }
@@ -328,30 +318,15 @@ namespace SyncRADation.Networking
                 lab.unlocked = e.Bool0;
                 UnpackLabBits(lab, e.Int0);
                 if (!e.Bool0) return;
-                if (PuzzleSyncService.MutateWorld && !was)
-                {
-                    NetGate.BeginApply();
-                    try
+                // Shared edge rule (PuzzleEdge): live rising edge = onUnlocked + onUnlockedLate; join dump and
+                // held re-snap (ReapplyHeld used to count as live) = onLoadUnlocked only, once.
+                PuzzleEdge.Solved("LAB_MultiLock", was, true,
+                    durable: () => { if (!was) InvokeApplying(lab.onLoadUnlocked); },
+                    onLive: () =>
                     {
-                        if (lab.onUnlocked != null)
-                            lab.onUnlocked.Invoke();
-                        if (lab.onUnlockedLate != null)
-                            lab.onUnlockedLate.Invoke();
-                    }
-                    catch { }
-                    finally { NetGate.EndApply(); }
-                }
-                else if (!PuzzleSyncService.MutateWorld && !was)
-                {
-                    NetGate.BeginApply();
-                    try
-                    {
-                        if (lab.onLoadUnlocked != null)
-                            lab.onLoadUnlocked.Invoke();
-                    }
-                    catch { }
-                    finally { NetGate.EndApply(); }
-                }
+                        InvokeApplying(lab.onUnlocked);
+                        InvokeApplying(lab.onUnlockedLate);
+                    });
                 PuzzleSyncService.TryUnlockDoors(lab.gameObject);
             }
         }

@@ -119,6 +119,53 @@ namespace SyncRADation.Networking
             return false;
         }
 
+        /// <summary>
+        /// Decompile InteractiveLock.Update copies locked -> door.locked every frame, so a door governed by a
+        /// still-locked InteractiveLock cannot legitimately be open/unlocked.
+        /// </summary>
+        public static bool HasUnsolvedLock(Doorway_Double d)
+        {
+            bool any; bool solved;
+            ScanGoverningLocks(d, out any, out solved);
+            if (any && !solved) return true;
+            try
+            {
+                var dlc = DoorLockOn(d.gameObject);
+                if (dlc != null && dlc.locked) return true;
+            }
+            catch (System.Exception ex) { PuzzleSyncService.WarnOnce("door-dlc-read", ex.Message); }
+            return false;
+        }
+
+        /// <summary>True when a key/code lock governs this door and every such lock is solved (host truth).</summary>
+        public static bool LockSolvedFor(Doorway_Double d)
+        {
+            if (d == null) return false;
+            bool any; bool solved;
+            ScanGoverningLocks(d, out any, out solved);
+            return any && solved;
+        }
+
+        static void ScanGoverningLocks(Doorway_Double d, out bool any, out bool solved)
+        {
+            any = false; solved = true;
+            if (d == null) return;
+            try
+            {
+                var locks = WorldLookup.All<InteractiveLock>();
+                if (locks == null) return;
+                for (int i = 0; i < locks.Length; i++)
+                {
+                    var l = locks[i];
+                    if (l == null || l.door != d) continue;
+                    // Key-less locks are flavor seals: never solvable.
+                    any = true;
+                    if (l.locked || l.key == null) solved = false;
+                }
+            }
+            catch (System.Exception ex) { PuzzleSyncService.WarnOnce("door-scan-locks", ex.Message); }
+        }
+
         static DoorLockControl DoorLockOn(GameObject go)
         {
             if (go == null) return null;

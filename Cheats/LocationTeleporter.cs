@@ -35,6 +35,7 @@ namespace SyncRADation.Cheats
             new LocationEntry("Memory", "MEM_Memory"),
             new LocationEntry("Memory Gestade", "MEM_Gestade"),
             new LocationEntry("Boss Adler", "BOS_Adler"),
+            new LocationEntry("Dead menu (Memory retry)", "DeadMenu"),
         };
 
         public static void OnGUI()

@@ -9,22 +9,45 @@ namespace SyncRADation.Networking
     {
         static readonly System.Collections.Generic.Dictionary<ulong, bool> _sentPlaying
             = new System.Collections.Generic.Dictionary<ulong, bool>();
+        static readonly System.Collections.Generic.Dictionary<ulong, float> _lastPlayAt
+            = new System.Collections.Generic.Dictionary<ulong, float>();
+        static readonly System.Collections.Generic.HashSet<ulong> _skipIds
+            = new System.Collections.Generic.HashSet<ulong>();
         static readonly System.Collections.Generic.Dictionary<ulong, StudioEventEmitter> _byId
             = new System.Collections.Generic.Dictionary<ulong, StudioEventEmitter>();
+
+        // Misses are remembered so a Play/Stop for an emitter that is not in this scene
+        // (or a cold cache) does not FindObjectsOfType the whole scene on every message.
+        static readonly System.Collections.Generic.Dictionary<ulong, float> _missUntil
+            = new System.Collections.Generic.Dictionary<ulong, float>();
+        static float _lastRebuildAt = -999f;
+        const float RebuildMinInterval = 1f;
+        const float MissTtl = 3f;
 
         static StudioEventEmitter FindCached(ulong id)
         {
             StudioEventEmitter e;
             if (_byId.TryGetValue(id, out e) && e != null)
                 return e;
+            float now = Time.unscaledTime;
+            float until;
+            if (_missUntil.TryGetValue(id, out until) && now < until)
+                return null;
+            // Throttled: a burst of unknown ids shares one rebuild.
+            if (now - _lastRebuildAt < RebuildMinInterval)
+                return null;
             RebuildCache();
-            _byId.TryGetValue(id, out e);
-            return e;
+            if (_byId.TryGetValue(id, out e) && e != null)
+                return e;
+            _missUntil[id] = now + MissTtl;
+            return null;
         }
 
         static void RebuildCache()
         {
             _byId.Clear();
+            _missUntil.Clear();
+            _lastRebuildAt = Time.unscaledTime;
             var all = WorldLookup.All<StudioEventEmitter>();
             if (all == null) return;
             for (int i = 0; i < all.Length; i++)
@@ -109,16 +132,28 @@ namespace SyncRADation.Networking
             ulong id = WorldId.FromGameObject(emitter.gameObject);
             if (id == 0) return;
             bool was;
-            if (_sentPlaying.TryGetValue(id, out was) && was == play) return;
-            if (!play && !was) return;
+            bool known = _sentPlaying.TryGetValue(id, out was);
+            // Repeat Stop is redundant. Repeat Play is not: one-shot emitters must replay on clients.
+            if (!play && !(known && was)) return;
+            float now = Time.unscaledTime;
+            if (play)
+            {
+                float last;
+                // Same-frame duplicate Play (prefix/postfix re-entry) only.
+                if (_lastPlayAt.TryGetValue(id, out last) && now - last < 0.05f) return;
+                _lastPlayAt[id] = now;
+                // Local/door/bed emitters stay local: skip the hierarchy walk on repeat Play.
+                if (known && was && _skipIds.Contains(id)) return;
+            }
             string path = "";
             try { path = emitter.Event; } catch { }
-            // Local/door/bed: remember state so repeat Play/Stop skips hierarchy walks.
             if (IsLocalOnly(emitter.transform) || IsDoorEmitter(emitter) || IsSceneBed(path))
             {
+                _skipIds.Add(id);
                 _sentPlaying[id] = play;
                 return;
             }
+            _skipIds.Remove(id);
             _sentPlaying[id] = play;
             PlaytestLog.Verbose("FMOD", (play ? "Play" : "Stop")
                 + (string.IsNullOrEmpty(path) ? "" : " " + path)
@@ -292,7 +327,11 @@ namespace SyncRADation.Networking
         public static void Reset()
         {
             _sentPlaying.Clear();
+            _lastPlayAt.Clear();
+            _skipIds.Clear();
             _byId.Clear();
+            _missUntil.Clear();
+            _lastRebuildAt = -999f;
         }
 
         public static void DumpPlaying()

@@ -81,28 +81,11 @@ namespace SyncRADation.Networking
             try { x.a = e.Int0; x.b = e.Int1; x.c = e.Int2; } catch { }
             if (!e.Bool0) return;
             SnapMedPump(x, cinematic);
-            if (PuzzleSyncService.MutateWorld && !was)
-            {
-                NetGate.BeginApply();
-                try
-                {
-                    if (x.onSolved != null)
-                        x.onSolved.Invoke();
-                }
-                catch { }
-                finally { NetGate.EndApply(); }
-            }
-            else if (!PuzzleSyncService.MutateWorld && !was)
-            {
-                NetGate.BeginApply();
-                try
-                {
-                    if (x.onLoad != null)
-                        x.onLoad.Invoke();
-                }
-                catch { }
-                finally { NetGate.EndApply(); }
-            }
+            // Shared edge rule (PuzzleEdge): live rising edge = onSolved (dimPOI + StartCutscene + RecordSplit);
+            // join dump / held re-snap = onLoad (dimPOI only), once. ReapplyHeld used to count as live.
+            PuzzleEdge.Solved("MED_Pump", was, true,
+                durable: () => { if (!was) LockSyncService.InvokeApplying(x.onLoad); },
+                onLive: () => LockSyncService.InvokeApplying(x.onSolved));
         }
 
         public static void ApplyFlood(MED_FloodedBathroom x, PuzzleStateEntry e, bool cinematic)
@@ -157,8 +140,8 @@ namespace SyncRADation.Networking
             if (!e.Bool0) return;
             // dlc.locked is a flag snap — apply on join FullRefresh too.
             try { if (x.dlc != null) x.dlc.locked = false; } catch { }
-            if (mutateWorld)
-                PuzzleSyncService.TryUnlockDoors(x.gameObject);
+            // TryUnlockDoors is a lock-flag snap (flavor seals gated by AllowUnlock): join dump needs it too.
+            PuzzleSyncService.TryUnlockDoors(x.gameObject);
         }
 
         public static void SnapMedPump(MED_Pump x, bool play)

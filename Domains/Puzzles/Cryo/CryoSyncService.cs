@@ -154,8 +154,9 @@ namespace SyncRADation.Networking
             {
                 if (c.Door != null)
                 {
-                    if (PuzzleSyncService.MutateWorld)
-                        c.Door.SetActive(true);
+                    // Decompile CryoDoorLock.LoadState (done): Door.SetActive(true). Durable object state, so it
+                    // runs on the join dump too (was gated on MutateWorld and left late joiners without the door).
+                    c.Door.SetActive(true);
                     PuzzleSyncService.UnlockDoorObject(c.Door);
                     TryOpenCryoController(c.Door, animate: playAnim);
                 }

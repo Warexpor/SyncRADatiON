@@ -84,12 +84,13 @@ namespace SyncRADation.Networking
                 }
             }
             catch { }
-            if (!PuzzleSyncService.MutateWorld)
+            // Durable consequence (door unlock / follow-up interaction) runs on every apply, including the
+            // join dump: gating it on MutateWorld left late joiners with the flag set and the door locked.
+            // All of it is flag/enable state (flavor seals are filtered inside the helpers), no cutscene.
+            // Per-player uses (airlock card) keep the old rule: only a live apply touches the world.
+            if (localUse && !PuzzleSyncService.MutateWorld)
             {
-                if (localUse)
-                {
-                    try { AirlockCinematic.NoteRemoteUnlock(x); } catch { }
-                }
+                try { AirlockCinematic.NoteRemoteUnlock(x); } catch { }
                 try
                 {
                     string n = "?";
@@ -127,7 +128,7 @@ namespace SyncRADation.Networking
             try
             {
                 var lockComp = x.GetComponent<InteractiveLock>();
-                if (lockComp != null) lockComp.locked = false;
+                if (lockComp != null && lockComp.key != null) lockComp.locked = false;
             }
             catch { }
             try

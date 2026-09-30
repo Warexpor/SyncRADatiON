@@ -27,6 +27,17 @@ namespace SyncRADation.Networking
         private MED_MynahBoss[] _mynahs = Array.Empty<MED_MynahBoss>();
         private bool _bossCacheReady;
         private readonly List<BossSnapshotNet> _tickList = new List<BossSnapshotNet>(8);
+        // Client: last host-confirmed Falke HP per WorldId. PlayerAttack mutates Hitbox.HP directly
+        // (Ghidra PlayerAttack.c: Hitbox.HP -= dmg, no method to hook), so a drop below this value is
+        // a local hit that must be forwarded to the host and rolled back.
+        private readonly Dictionary<long, int> _lastHp = new Dictionary<long, int>();
+        private readonly HashSet<string> _warned = new HashSet<string>();
+
+        void WarnOnce(string key, Exception ex)
+        {
+            if (_warned.Add(key))
+                ModRuntime.Log?.Warning("[BossSync] " + key + ": " + ex.Message);
+        }
 
         void EnsureBossCache()
         {
@@ -101,8 +112,124 @@ namespace SyncRADation.Networking
             return best;
         }
 
+        /// <summary>Client per-frame: forward local hits on puppeted bosses to the host.</summary>
+        private void TickClient(LanNetworkManager net)
+        {
+            if (!_clientDisabled || net.SceneMismatch || _hostToLocal.Count == 0) return;
+            foreach (var kvp in _hostToLocal)
+            {
+                if (kvp.Value.type != BossType.END_Boss) continue;
+                ForwardLocalBossDamage(net, kvp.Key, kvp.Value.comp as END_Boss);
+            }
+        }
+
+        private void ForwardLocalBossDamage(LanNetworkManager net, long wid, END_Boss b)
+        {
+            if (b == null) return;
+            int last;
+            if (!_lastHp.TryGetValue(wid, out last)) return;
+            try
+            {
+                var hb = b.hitbox;
+                if (hb == null) return;
+                int cur = hb.HP;
+                if (cur >= last) return;
+                hb.HP = last;
+                net.BossHandlers.SendBossHitToHost(wid, BossHitKind.Damage, last - cur);
+            }
+            catch (Exception ex) { WarnOnce("forward boss damage", ex); }
+        }
+
+        /// <summary>
+        /// Host: a client's boss request. Damage lowers the real Hitbox.HP (END_Boss.Update reacts to the
+        /// change exactly as for a local hit); Stab/takeSpear run the native methods on the host sim.
+        /// </summary>
+        public void ApplyHitOnHost(BossHitMessage msg, int senderId)
+        {
+            BossType type;
+            var comp = FindLocalBossByWorldId(msg.WorldId, out type);
+            var b = comp as END_Boss;
+            if (b == null || b.gameObject == null)
+            {
+                PlaytestLog.Event("Boss", "hit MISS " + msg.Kind + " wid=" + msg.WorldId.ToString("X16") + " from=" + senderId);
+                return;
+            }
+            try
+            {
+                NetGate.BeginApply();
+                try
+                {
+                    switch (msg.Kind)
+                    {
+                        case BossHitKind.Damage:
+                            if (msg.Amount > 0 && msg.Amount <= 2000 && b.hitbox != null && b.state != END_Boss.states.dead)
+                                b.hitbox.HP -= msg.Amount;
+                            break;
+                        case BossHitKind.Stab:
+                            if (b.state == END_Boss.states.downed)
+                                b.Stab();
+                            break;
+                        case BossHitKind.TakeSpear:
+                        {
+                            var spears = b.PickupSpears;
+                            int idx = msg.Amount;
+                            if (spears != null && idx >= 0 && idx < spears.Length
+                                && spears[idx] != null && spears[idx].activeSelf)
+                                b.takeSpear(spears[idx]); // host postfix relays the hide to every client
+                            break;
+                        }
+                    }
+                }
+                finally { NetGate.EndApply(); }
+                _forceSend = true;
+                PlaytestLog.Event("Boss", "hit " + msg.Kind + " amt=" + msg.Amount + " from=" + senderId);
+            }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[BossSync] host hit " + msg.Kind + ": " + ex.Message);
+            }
+        }
+
+        /// <summary>Client: host presentation event (Falke spear taken, Chimera rifle shot).</summary>
+        public void ApplyBossEventOnClient(BossHitMessage msg)
+        {
+            var net = LanNetworkManager.Instance;
+            if (net == null || net.Role == NetworkRole.Host || net.SceneMismatch) return;
+            if (SceneFollowService.LocalIsTransient()) return;
+            BossType type;
+            var comp = FindLocalBossByWorldId(msg.WorldId, out type);
+            if (comp == null) return;
+            try
+            {
+                switch (msg.Kind)
+                {
+                    case BossHitKind.TakeSpear:
+                    {
+                        var b = comp as END_Boss;
+                        var spears = b != null ? b.PickupSpears : null;
+                        int idx = msg.Amount;
+                        if (spears != null && idx >= 0 && idx < spears.Length && spears[idx] != null)
+                            spears[idx].SetActive(false);
+                        break;
+                    }
+                    case BossHitKind.ChimeraShot:
+                    {
+                        var lab = comp as LAB_ChimeraBoss;
+                        if (lab != null) lab.gunShot = true; // native LateUpdate plays flash/projectile/SFX
+                        break;
+                    }
+                }
+            }
+            catch (Exception ex) { WarnOnce("client boss event " + msg.Kind, ex); }
+        }
+
         public void TickHost(LanNetworkManager net)
         {
+            if (net.Role == NetworkRole.Client)
+            {
+                TickClient(net);
+                return;
+            }
             if (net.Role != NetworkRole.Host) return;
             if (!net.IsConnected) return;
 
@@ -186,7 +313,7 @@ namespace SyncRADation.Networking
                     WorldId = unchecked((long)Sync.WorldId.FromGameObject(b.gameObject)),
                     Alive = b.inOperation && !b.done,
                     StateEnum = 0,
-                    Bool0 = b.inOperation, Bool1 = b.done,
+                    Bool0 = b.inOperation, Bool1 = b.done, Bool2 = b.isaUp,
                     Float0 = b.remainingBossTime
                 });
             }
@@ -280,8 +407,14 @@ namespace SyncRADation.Networking
                 switch ((BossType)snap.BossType)
                 {
                     case BossType.END_Boss:
+                    {
+                        // A hit landed since the last snap would be overwritten below: forward it first.
+                        var net = LanNetworkManager.Instance;
+                        if (net != null) ForwardLocalBossDamage(net, hostID, (END_Boss)comp);
                         ApplyEND((END_Boss)comp, snap);
+                        _lastHp[hostID] = snap.Hp;
                         break;
+                    }
                     case BossType.LAB_ChimeraBoss:
                         ApplyLAB((LAB_ChimeraBoss)comp, snap);
                         break;
@@ -343,6 +476,32 @@ namespace SyncRADation.Networking
             // corrupt toggle cannot leave arenas/shields/meshes on a stale combo.
             // (GameAssembly END_Boss.Start + <Stabbed>d__129.MoveNext + Update).
             SnapFalkePresentation(b, snap.Int0, snap.Corrupt);
+            SnapStabPrompt(b);
+        }
+
+        /// <summary>
+        /// Falke downed: native CheckDowned (host only, controller halted here) activates StabInteraction
+        /// when the party holds the spear. Mirror it so a client can press the prompt; the press is
+        /// forwarded to the host (BossActionPatches) which runs Stab().
+        /// </summary>
+        private static void SnapStabPrompt(END_Boss b)
+        {
+            try
+            {
+                var go = b.StabInteraction;
+                if (go == null) return;
+                bool want = false;
+                if (b.state == END_Boss.states.downed)
+                {
+                    try { want = b.deployed || (b.SpearItem != null && InventoryManager.hasItem(b.SpearItem)); }
+                    catch { want = true; }
+                }
+                if (go.activeSelf != want) go.SetActive(want);
+            }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[BossSync] stab prompt: " + ex.Message);
+            }
         }
 
         /// <summary>
@@ -450,6 +609,21 @@ namespace SyncRADation.Networking
             try { b.inOperation = snap.Bool0; } catch { }
             try { b.done = snap.Bool1; } catch { }
             try { b.remainingBossTime = snap.Float0; } catch { }
+            // Bossfight coroutine is host-only: mirror the Isa stand-up (GetUp trigger) on the edge.
+            try
+            {
+                if (snap.Bool2 && !b.isaUp)
+                {
+                    b.isaUp = true;
+                    if (b.IsaAnim != null) b.IsaAnim.SetTrigger(b.anim_GetUp);
+                }
+                else if (!snap.Bool2 && b.isaUp)
+                    b.isaUp = false;
+            }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[BossSync] chimera isa: " + ex.Message);
+            }
         }
 
         private static void ApplyMED(MED_MynahBoss b, BossSnapshotNet snap)
@@ -553,7 +727,7 @@ namespace SyncRADation.Networking
 
             var labs = _chimeras;
             for (int i = 0; i < labs.Length; i++)
-                if (HaltBossController(labs[i])) n++;
+                if (HaltBossController(labs[i], keepEnabled: true)) n++;
 
             var meds = _mynahs;
             for (int i = 0; i < meds.Length; i++)
@@ -567,10 +741,17 @@ namespace SyncRADation.Networking
         /// Stabbed / Airstrike). StopAllCoroutines first so mid-fight clients cannot keep
         /// advancing phase/nests locally while host snaps.
         /// </summary>
-        private static bool HaltBossController(MonoBehaviour b)
+        /// <summary>
+        /// keepEnabled (LAB Chimera): LateUpdate is the only thing besides Start/Bossfight and it plays the
+        /// Isa rifle muzzle flash / projectile / SFX off the private gunShot flag, which the host relays
+        /// (BossHit ChimeraShot). Disabling the component would leave clients with a silent, flash-less Isa
+        /// (Ghidra LAB_ChimeraBoss.c LateUpdate). Coroutines still stop so only the host runs the fight.
+        /// </summary>
+        private static bool HaltBossController(MonoBehaviour b, bool keepEnabled = false)
         {
             if (b == null) return false;
             try { b.StopAllCoroutines(); } catch { }
+            if (keepEnabled) return true;
             try { b.enabled = false; } catch { return false; }
             return true;
         }
@@ -597,6 +778,7 @@ namespace SyncRADation.Networking
         {
             _clientDisabled = false;
             _hostToLocal.Clear();
+            _lastHp.Clear();
             _bossCacheReady = false;
             _endBosses = Array.Empty<END_Boss>();
             _adlers = Array.Empty<BOS_Adler>();

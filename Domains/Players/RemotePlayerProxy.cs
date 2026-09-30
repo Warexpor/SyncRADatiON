@@ -19,6 +19,7 @@ namespace SyncRADation.Players
         private PlayerStateMessage _fxState;
         private AnimTriggers _fxTriggers;
         private bool _fxPending;
+        private bool _hasFxState;
 
         public bool LastDead { get; private set; }
 
@@ -99,6 +100,7 @@ namespace SyncRADation.Players
             AnimDriver.ApplyState(state);
             AudioSync.Tick(state, state.AnimBools, state.AnimTriggers);
             _fxState = state;
+            _hasFxState = true;
             _fxTriggers |= state.AnimTriggers;
             _fxPending = true;
 
@@ -107,6 +109,24 @@ namespace SyncRADation.Players
                 ApplyModel(state.ModelState, state.WearHat);
                 _lastModelState = state.ModelState;
                 _lastWearHat = state.WearHat;
+            }
+        }
+
+        /// <summary>Reliable one-shot triggers (AvatarOneShot): same consumers as the pose-carried flags.</summary>
+        public void ApplyOneShot(AnimTriggers triggers)
+        {
+            if (triggers == AnimTriggers.None) return;
+            AnimDriver.AddOneShot(triggers);
+            _fxTriggers |= triggers;
+            _fxPending = true;
+            if (_hasFxState)
+            {
+                // Audio keys off the triggers; clear the per-tick edge flags of the cached pose so a
+                // footstep / ladder loop is not replayed.
+                var s = _fxState;
+                s.StepHappened = false;
+                s.Climbing = false;
+                AudioSync.Tick(s, s.AnimBools, triggers);
             }
         }
 

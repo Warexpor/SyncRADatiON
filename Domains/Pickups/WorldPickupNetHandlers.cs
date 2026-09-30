@@ -71,6 +71,29 @@ namespace SyncRADation.Networking
                 _net.PickupSync.ApplyGrant(msg);
         }
 
+        internal void SendWorldPickupDeny(int targetPlayerId, ulong worldId, Items.itemlist item, int count)
+        {
+            if (targetPlayerId == _net.LocalPlayerId) return;
+            var msg = new WorldPickupDenyMessage
+            {
+                TargetPlayerId = targetPlayerId,
+                WorldId = unchecked((long)worldId),
+                ItemEnum = (ushort)item,
+                Count = count > 0 ? count : 1
+            };
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.WorldPickupDeny);
+            msg.Serialize(writer);
+            if (_net.TryGetPeer(targetPlayerId, out var peer)
+                && peer.ConnectionState == ConnectionState.Connected)
+                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        internal void HandleWorldPickupDeny(WorldPickupDenyMessage deny)
+        {
+            _net.PickupSync.ApplyDeny(deny);
+        }
+
         internal void HandleWorldPickupState(WorldPickupStateMessage pickMsg)
         {
             if (_net.Role == NetworkRole.Host)
@@ -100,6 +123,8 @@ namespace SyncRADation.Networking
             {
                 ModRuntime.Log?.Msg("[WorldPickup] Claim denied id=" + id.ToString("X16")
                     + " by " + claim.ClaimerPlayerId);
+                // Inspect-path claimers already ran native pickUp: tell them to take the item back.
+                SendWorldPickupDeny(claim.ClaimerPlayerId, id, item, count);
                 return;
             }
 

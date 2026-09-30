@@ -24,6 +24,170 @@ namespace SyncRADation.Networking
         private bool _scanned;
         private readonly List<WorldPickupEntry> _tickList = new List<WorldPickupEntry>(32);
 
+        /// <summary>
+        /// Inspect-path claims: native pickUp/release already adds (or is about to add) the item to
+        /// this peer's bag. ApplyGrant must skip AddItem for these ids; a host deny must take it back.
+        /// Non-inspect claims never appear here (client Prefix blocks native pickUp), so their grant
+        /// always AddItems even when the bag already holds a stack (ammo/health/batteries).
+        /// </summary>
+        private struct NativePending
+        {
+            public Items.itemlist Item;
+            public int Count;
+            public int BagBefore;
+            public float Time;
+        }
+
+        private struct PendingRevert
+        {
+            public Items.itemlist Item;
+            public int Count;
+            public int BagBefore;
+            public float Deadline;
+            public ItemPickup Prop;
+        }
+
+        private readonly Dictionary<ulong, NativePending> _nativePending = new Dictionary<ulong, NativePending>();
+        private readonly List<PendingRevert> _reverts = new List<PendingRevert>(2);
+        private const float RevertWindow = 4f;
+
+        /// <summary>
+        /// Native release runs ~0.1s after dialoguerCallback. Record the bag count now so a later
+        /// deny can tell whether (and how much) native already added.
+        /// </summary>
+        public void NoteNativeGrantExpected(ulong worldId, Items.itemlist item, int count)
+        {
+            if (worldId == 0 || item == Items.itemlist.None) return;
+            int before = DroppedItemManager.CountInBag(item);
+            _nativePending[worldId] = new NativePending
+            {
+                Item = item,
+                Count = count > 0 ? count : 1,
+                BagBefore = before,
+                Time = Time.unscaledTime
+            };
+        }
+
+        /// <summary>
+        /// Take back a native bag add after the claim lost (host deny, or claimed while the
+        /// yes/no dialogue was open). Safe to call before native release has run.
+        /// </summary>
+        public void RevertNativeGrant(Items.itemlist item, int count, int bagBefore, ItemPickup prop)
+        {
+            if (item == Items.itemlist.None) return;
+            var r = new PendingRevert
+            {
+                Item = item,
+                Count = count > 0 ? count : 1,
+                BagBefore = bagBefore,
+                Deadline = Time.unscaledTime + RevertWindow,
+                Prop = prop
+            };
+            if (TryRevert(ref r)) return;
+            _reverts.Add(r);
+        }
+
+        /// <summary>Convenience: measure the bag now (callback time, before native release).</summary>
+        public void RevertNativeGrantNow(Items.itemlist item, int count, ItemPickup prop)
+        {
+            int before = DroppedItemManager.CountInBag(item);
+            RevertNativeGrant(item, count, before, prop);
+        }
+
+        bool TryRevert(ref PendingRevert r)
+        {
+            int have = DroppedItemManager.CountInBag(r.Item);
+            int gained = have - r.BagBefore;
+            if (gained <= 0) return false;
+            int take = gained < r.Count ? gained : r.Count;
+            NetGate.BeginApply();
+            try
+            {
+                var an = InventoryManager.getItem(r.Item);
+                if (an != null) InventoryManager.RemoveItem(an, take);
+            }
+            catch (System.Exception ex)
+            {
+                ModRuntime.Log?.Warning("[WorldPickup] revert native grant: " + ex.Message);
+            }
+            finally { NetGate.EndApply(); }
+            PlaytestLog.Event("Pickup", "reverted native grant " + r.Item + " x" + take + " (claimed by another player)");
+            NotifyGone(r.Item, r.Prop);
+            return true;
+        }
+
+        static void NotifyGone(Items.itemlist item, ItemPickup prop)
+        {
+            // Native "cannot carry" line is the closest existing message; the item is gone for this peer.
+            if (prop == null) return;
+            try
+            {
+                if (prop.gameObject == null) return;
+                if (PlayerState.gameState != PlayerState.gameStates.play) return;
+                var an = InventoryManager.getItem(item);
+                if (an != null) PartyKeyRing.BindUseDialogue(an);
+                NetGate.BeginApply();
+                try { Dialoguer.StartDialogue((int)prop._cannotDialogue); }
+                finally { NetGate.EndApply(); }
+            }
+            catch (System.Exception ex)
+            {
+                ModRuntime.Log?.Warning("[WorldPickup] gone message: " + ex.Message);
+            }
+        }
+
+        /// <summary>Per-frame (both roles): finish deferred reverts once native release has added the item.</summary>
+        void TickPendingReverts()
+        {
+            if (_reverts.Count > 0)
+            {
+                float now = Time.unscaledTime;
+                for (int i = _reverts.Count - 1; i >= 0; i--)
+                {
+                    var r = _reverts[i];
+                    if (TryRevert(ref r) || now > r.Deadline)
+                        _reverts.RemoveAt(i);
+                }
+            }
+            if (_nativePending.Count > 0)
+            {
+                float now = Time.unscaledTime;
+                List<ulong> stale = null;
+                foreach (var kvp in _nativePending)
+                {
+                    if (now - kvp.Value.Time > 30f)
+                    {
+                        if (stale == null) stale = new List<ulong>(2);
+                        stale.Add(kvp.Key);
+                    }
+                }
+                if (stale != null)
+                    for (int i = 0; i < stale.Count; i++) _nativePending.Remove(stale[i]);
+            }
+        }
+
+        /// <summary>Client: host refused the claim — someone else owns the prop; undo the native add.</summary>
+        public void ApplyDeny(WorldPickupDenyMessage msg)
+        {
+            var net = LanNetworkManager.Instance;
+            if (net == null || msg.TargetPlayerId != net.LocalPlayerId) return;
+            ulong id = unchecked((ulong)msg.WorldId);
+            EnsureScanned();
+            ItemPickup p;
+            _byId.TryGetValue(id, out p);
+            try { if (p != null && p.gameObject == null) p = null; } catch { p = null; }
+
+            NativePending np;
+            if (!_nativePending.TryGetValue(id, out np))
+            {
+                PlaytestLog.Event("Pickup", "deny id=" + id.ToString("X16") + " (no native add to undo)");
+                return;
+            }
+            _nativePending.Remove(id);
+            PlaytestLog.Event("Pickup", "deny id=" + id.ToString("X16") + " undo native " + np.Item);
+            RevertNativeGrant(np.Item, np.Count, np.BagBefore, p);
+        }
+
         public void RefreshScene()
         {
             _keepItemsScratch.Clear();
@@ -292,6 +456,8 @@ namespace SyncRADation.Networking
 
         public void TickHost(LanNetworkManager net)
         {
+            // Runs for every role (LanNetworkManager.Update): client deny reverts live here too.
+            TickPendingReverts();
             if (net == null || net.Role != NetworkRole.Host || !net.IsConnected) return;
             if (Config.ModConfig.SyncWorldPickups?.Value != true) return;
 
@@ -712,9 +878,12 @@ namespace SyncRADation.Networking
                         ModRuntime.Log?.Warning("[WorldPickup] Grant unknown item " + msg.ItemEnum);
                         return;
                     }
-                    // hasItem includes the party key ring — that skipped bag AddItem so
-                    // keys worked on doors but never appeared in the 6-slot UI.
-                    if (!PartyKeyRing.InLocalBag(item))
+                    // Inspect-path claims: native pickUp/release already added (or is about to add)
+                    // the item — AddItem here would double it. Every other claim (client Prefix blocked
+                    // native pickUp) must AddItem even if the bag already holds a stack of it, otherwise
+                    // ammo/health/batteries are hidden for all peers and granted to nobody.
+                    bool nativeAdds = _nativePending.Remove(id);
+                    if (!nativeAdds)
                         InventoryManager.AddItem(item, msg.Count > 0 ? msg.Count : 1);
                     PartyKeyRing.Note(item);
                     PartyKeyRing.BindUseDialogue(item);

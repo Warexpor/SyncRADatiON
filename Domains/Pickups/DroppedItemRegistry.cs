@@ -261,6 +261,36 @@ namespace SyncRADation.ItemSystem
             catch { }
         }
 
+        /// <summary>
+        /// RestorePlay + story state, for a follow load / disconnect: a peer that was mid-cutscene or mid-Dialoguer
+        /// when the host loaded another scene kept gameStates.cutscene / PlayerState.cutscene / dialogue sticky
+        /// (the coroutine that would clear them dies with the unloaded scene). Not used by pickup inspect paths.
+        /// </summary>
+        public static void RestorePlayForLoad()
+        {
+            RestorePlay();
+            try
+            {
+                if (PlayerState.gameState == PlayerState.gameStates.dialogue)
+                {
+                    SyncRADation.Sync.NetGate.BeginApply();
+                    try { Dialoguer.EndDialogue(); }
+                    finally { SyncRADation.Sync.NetGate.EndApply(); }
+                }
+            }
+            catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] RestorePlayForLoad dialogue: " + ex.Message); }
+            try { SyncRADation.Patches.DialoguerGate.ClearFlavor(); }
+            catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] RestorePlayForLoad flavor: " + ex.Message); }
+            try { PlayerState.cutscene = false; } catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] RestorePlayForLoad cutscene: " + ex.Message); }
+            try
+            {
+                if (PlayerState.gameState == PlayerState.gameStates.cutscene)
+                    PlayerState.gameState = PlayerState.gameStates.play;
+            }
+            catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] RestorePlayForLoad gameState: " + ex.Message); }
+            try { CutsceneSkippingUI.skippableCutscene = false; } catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] RestorePlayForLoad skippable: " + ex.Message); }
+        }
+
         public static void HideForClaim(int netID)
         {
             var go = GetItem(netID);

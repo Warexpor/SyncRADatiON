@@ -38,10 +38,25 @@ namespace SyncRADation.Players
         public bool HasProxy(int playerId) => _proxies.ContainsKey(playerId);
         public RemotePlayerProxy GetProxy(int playerId) => _proxies.TryGetValue(playerId, out var p) ? p : null;
 
-        public IEnumerable<int> GetProxyPlayerIds()
+        private int[] _idCache = System.Array.Empty<int>();
+        private bool _idDirty;
+
+        /// <summary>
+        /// Cached snapshot (rebuilt only when a proxy is added/removed) — callers iterate this per
+        /// enemy/boss per frame, so no iterator allocation, and it is safe against DestroyProxy mid-loop.
+        /// </summary>
+        public int[] GetProxyPlayerIds()
         {
-            foreach (var kvp in _proxies)
-                yield return kvp.Key;
+            if (_idDirty)
+            {
+                var ids = new int[_proxies.Count];
+                int i = 0;
+                foreach (var kvp in _proxies)
+                    ids[i++] = kvp.Key;
+                _idCache = ids;
+                _idDirty = false;
+            }
+            return _idCache;
         }
 
         public int GetPlayerIdByGameObject(GameObject go)
@@ -97,6 +112,7 @@ namespace SyncRADation.Players
 
             var proxy = new RemotePlayerProxy(clone, playerId);
             _proxies[playerId] = proxy;
+            _idDirty = true;
             _proxyObjects[playerId] = clone;
             var capCol = clone.GetComponent<Collider>();
             if (capCol != null)
@@ -120,6 +136,7 @@ namespace SyncRADation.Players
                     Object.Destroy(go);
                 }
                 _proxies.Remove(playerId);
+                _idDirty = true;
                 _proxyObjects.Remove(playerId);
                 _interp.Remove(playerId);
                 PlaytestLog.Event("Proxy", "destroyed p" + playerId);

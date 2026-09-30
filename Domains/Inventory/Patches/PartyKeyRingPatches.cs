@@ -136,6 +136,7 @@ namespace SyncRADation.Patches
 
         internal static void Bind(UseItemInteraction u)
         {
+            if (!NetGate.Live) return;
             AnItem key = null;
             if (u != null)
             {
@@ -157,7 +158,7 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static bool Prefix(AnItem __instance, ref string __result)
         {
-            if (_resolving || __instance == null) return true;
+            if (_resolving || __instance == null || !NetGate.Live) return true;
             var cat = PartyKeyRing.CatalogOf(__instance);
             if (cat == null) return true;
             _resolving = true;
@@ -182,7 +183,7 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static bool Prefix(AnItem item, ref string __result)
         {
-            if (_resolving || item == null) return true;
+            if (_resolving || item == null || !NetGate.Live) return true;
             var cat = PartyKeyRing.CatalogOf(item);
             if (cat == null) return true;
             _resolving = true;

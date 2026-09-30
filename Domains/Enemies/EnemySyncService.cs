@@ -12,7 +12,18 @@ namespace SyncRADation.Networking
         private float _sendTimer;
         private bool _forceSend;
         private readonly HashSet<ulong> _clientPuppeted = new HashSet<ulong>();
-        private readonly Dictionary<ulong, float> _lastAttackTime = new Dictionary<ulong, float>();
+        /// <summary>Client puppet pose smoothing target per enemy (snapshots arrive at 15 Hz).</summary>
+        private struct PoseInterp
+        {
+            public Vector3 From;
+            public Vector3 To;
+            public float FromRot;
+            public float ToRot;
+            public float Start;
+        }
+        private readonly Dictionary<ulong, PoseInterp> _interp = new Dictionary<ulong, PoseInterp>();
+        private readonly List<ulong> _interpDead = new List<ulong>(4);
+        private const float TeleportDist = 8f;
         private int _mapMisses;
         private int _mapHits;
         private float _lastDiag;
@@ -26,6 +37,11 @@ namespace SyncRADation.Networking
 
         public void TickHost(LanNetworkManager net)
         {
+            if (net.Role == NetworkRole.Client)
+            {
+                TickClientInterp();
+                return;
+            }
             if (net.Role != NetworkRole.Host) return;
             if (!net.IsConnected) return;
 
@@ -143,36 +159,14 @@ namespace SyncRADation.Networking
                     snap.TargetPlayerId = (sbyte)Mathf.Clamp(tid, -1, 127);
                     _snapList[_snapList.Count - 1] = snap;
                 }
-
-                if (e.state == EnemyController.enemystate.attack && e.playerPos != null)
-                {
-                    try
-                    {
-                        int targetPid = pm.GetPlayerIdByGameObject(e.playerPos.gameObject);
-                        if (targetPid < 0 && e.playerPos.gameObject == net.GetLocalPlayer())
-                            targetPid = net.LocalPlayerId;
-
-                        if (targetPid >= 0 && targetPid != net.LocalPlayerId
-                            && !PartyVitals.IsDown(targetPid))
-                        {
-                            float now = Time.time;
-                            float lastAtk;
-                            _lastAttackTime.TryGetValue(id, out lastAtk);
-                            float cooldown = e.attackCooldown > 0f ? e.attackCooldown : 1.5f;
-                            if (now - lastAtk >= cooldown)
-                            {
-                                _lastAttackTime[id] = now;
-                                float dmg = e.Preset != null ? e.Preset.damage : 20f;
-                                net.SendEnemyDamage(targetPid, id, dmg, true);
-                            }
-                        }
-                    }
-                    catch { }
-                }
             }
 
             if (_snapList.Count > 0)
                 net.SendEnemyState(_snapList);
+
+            // Enemy/boss weapon hurtboxes vs remote proxies (proxies have no colliders, so the
+            // native Hurtbox.OnTriggerEnter never fires for them). Host-authoritative.
+            ClientDamageService.TickHurtboxes(net);
 
             RetargetAltAi(net, pm);
             }
@@ -301,6 +295,128 @@ namespace SyncRADation.Networking
             catch { }
         }
 
+        /// <summary>
+        /// Puppet clients never run the Critical coroutine that enables the stomp prompt
+        /// (EnemyController.Critical -> stompInter.SetActive(true), Ghidra EnemyController.c), so a client
+        /// could never finish a downed enemy. Mirror it from the host's critical stagger state.
+        /// </summary>
+        static void ApplyStompPrompt(EnemyController enemy, bool dead, EnemyController.hurtState stagger)
+        {
+            try
+            {
+                var si = enemy.stompInter;
+                if (si == null) return;
+                var go = si.gameObject;
+                if (go == null) return;
+                bool want = !dead && stagger == EnemyController.hurtState.critical;
+                if (want)
+                {
+                    // Never re-arm a prompt this client already triggered (host Kill is on the way).
+                    if (si.triggered) return;
+                    if (!go.activeSelf) go.SetActive(true);
+                    try
+                    {
+                        // Native keeps the prompt on the enemy's AimPoint (x, y, 0).
+                        var aim = enemy.AimPoint;
+                        if (aim != null)
+                        {
+                            var ap = aim.position;
+                            go.transform.position = new Vector3(ap.x, ap.y, 0f);
+                        }
+                    }
+                    catch (System.Exception ex) { WarnStompOnce(ex); }
+                }
+                else if (go.activeSelf)
+                    go.SetActive(false);
+            }
+            catch (System.Exception ex) { WarnStompOnce(ex); }
+        }
+
+        static bool _stompWarned;
+
+        static void WarnStompOnce(System.Exception ex)
+        {
+            if (_stompWarned) return;
+            _stompWarned = true;
+            ModRuntime.Log?.Warning("[EnemySync] stomp prompt: " + ex.Message);
+        }
+
+        /// <summary>Client per-frame: advance puppet poses toward the latest snapshot.</summary>
+        private void TickClientInterp()
+        {
+            if (_interp.Count == 0) return;
+            float now = Time.time;
+            float dur = PluginInfo.EntitySendInterval;
+            _interpDead.Clear();
+            foreach (var kvp in _interp)
+            {
+                EnemyController e;
+                if (!WorldRegistry.TryGetEnemy(kvp.Key, out e) || e == null)
+                {
+                    _interpDead.Add(kvp.Key);
+                    continue;
+                }
+                var pi = kvp.Value;
+                float k = dur > 0f ? Mathf.Clamp01((now - pi.Start) / dur) : 1f;
+                try
+                {
+                    var tr = e.transform;
+                    if (tr == null || !e.gameObject.activeInHierarchy) continue;
+                    tr.position = Vector3.Lerp(pi.From, pi.To, k);
+                    var rot = tr.eulerAngles;
+                    rot.y = Mathf.LerpAngle(pi.FromRot, pi.ToRot, k);
+                    tr.eulerAngles = rot;
+                }
+                catch { _interpDead.Add(kvp.Key); }
+            }
+            for (int i = 0; i < _interpDead.Count; i++)
+                _interp.Remove(_interpDead[i]);
+        }
+
+        /// <summary>
+        /// Host: side effects a puppeted client triggered on its local copy (stomp Kill, push/knockback,
+        /// fusee burn, wake). Runs the native method on the real sim so the result is shared.
+        /// </summary>
+        public void ApplyActionOnHost(ulong enemyId, EnemyActionKind action, int fromPlayer)
+        {
+            EnemyController enemy;
+            if (!WorldRegistry.TryGetEnemy(enemyId, out enemy) || enemy == null || enemy.gameObject == null)
+            {
+                PlaytestLog.Event("Enemy", "action MISS " + action + " id=" + enemyId.ToString("X16"));
+                return;
+            }
+            try
+            {
+                if (action != EnemyActionKind.WakeUp && enemy.state == EnemyController.enemystate.dead) return;
+                WakeForCombat(enemy);
+                if (enemy == null || enemy.gameObject == null) return;
+                NetGate.BeginApply();
+                try
+                {
+                    switch (action)
+                    {
+                        case EnemyActionKind.Kill: enemy.Kill(); break;
+                        case EnemyActionKind.KillSilent: enemy.KillSilent(); break;
+                        case EnemyActionKind.Knockback: enemy.Knockback(); break;
+                        case EnemyActionKind.GetPushed: enemy.GetPushed(); break;
+                        case EnemyActionKind.Burndown:
+                            if (enemy.BurnEffect != null) enemy.BurnEffect.Burn();
+                            enemy.burndown();
+                            break;
+                        case EnemyActionKind.WakeUp: break; // WakeForCombat above already woke it
+                    }
+                }
+                finally { NetGate.EndApply(); }
+                _forceSend = true;
+                PlaytestLog.Event("Enemy", "action " + action + " id=" + enemyId.ToString("X16")
+                    + " from=" + fromPlayer + " state=" + enemy.state);
+            }
+            catch (System.Exception ex)
+            {
+                ModRuntime.Log?.Warning("[EnemySync] action " + action + ": " + ex.Message);
+            }
+        }
+
         private void ApplyEnemyState(EnemySnapshotNet snap)
         {
             ulong id = unchecked((ulong)snap.WorldId);
@@ -353,10 +469,30 @@ namespace SyncRADation.Networking
                 if (t == null) return;
                 try
                 {
-                    t.position = new Vector3(snap.PosX, snap.PosY, snap.PosZ);
-                    var rot = t.eulerAngles;
-                    rot.y = snap.RotY;
-                    t.eulerAngles = rot;
+                    // Smooth toward the snapshot instead of teleporting (15 Hz feed): TickClientInterp
+                    // moves the puppet each frame. First sight / big jump / freshly woken chunk snaps.
+                    var target = new Vector3(snap.PosX, snap.PosY, snap.PosZ);
+                    var cur = t.position;
+                    PoseInterp pi;
+                    bool have = _interp.TryGetValue(id, out pi);
+                    if (!have || (cur - target).sqrMagnitude > TeleportDist * TeleportDist)
+                    {
+                        t.position = target;
+                        var rot0 = t.eulerAngles;
+                        rot0.y = snap.RotY;
+                        t.eulerAngles = rot0;
+                        pi.From = target;
+                        pi.FromRot = snap.RotY;
+                    }
+                    else
+                    {
+                        pi.From = cur;
+                        pi.FromRot = t.eulerAngles.y;
+                    }
+                    pi.To = target;
+                    pi.ToRot = snap.RotY;
+                    pi.Start = Time.time;
+                    _interp[id] = pi;
                 }
                 catch { return; }
 
@@ -370,6 +506,7 @@ namespace SyncRADation.Networking
                         || snap.State == (byte)EnemyController.enemystate.dead;
                     var stagger = (EnemyController.hurtState)snap.HurtState;
                     ApplyHurtboxActive(enemy, dead, stagger);
+                    ApplyStompPrompt(enemy, dead, stagger);
                 }
 
                 try
@@ -390,12 +527,11 @@ namespace SyncRADation.Networking
                 {
                     try
                     {
+                        // Re-Play only when the host moved to a different state. Comparing
+                        // normalizedTime restarted short one-shot clips every snapshot (stutter).
                         var stateInfo = anim.GetCurrentAnimatorStateInfo(0);
-                        if (stateInfo.fullPathHash != snap.AnimHash
-                            || Mathf.Abs(stateInfo.normalizedTime - snap.AnimTime) > 0.15f)
-                        {
+                        if (stateInfo.fullPathHash != snap.AnimHash)
                             anim.Play(snap.AnimHash, 0, snap.AnimTime);
-                        }
                     }
                     catch { }
                 }
@@ -576,7 +712,9 @@ namespace SyncRADation.Networking
         public void OnSceneChanged()
         {
             _clientPuppeted.Clear();
-            _lastAttackTime.Clear();
+            _interp.Clear();
+            SyncRADation.Patches.EnemySpawnerPatches.ClearAdopted();
+            ClientDamageService.OnSceneChanged();
             _mapHits = 0;
             _mapMisses = 0;
             _sendTimer = 0f;

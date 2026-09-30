@@ -141,6 +141,8 @@ namespace SyncRADation.Networking
             h = MixEnum(h, typeof(DoorType));
             h = MixEnum(h, typeof(PuzzleType));
             h = MixEnum(h, typeof(BossType));
+            h = MixEnum(h, typeof(EnemyActionKind));
+            h = MixEnum(h, typeof(BossHitKind));
             return h;
         }
 

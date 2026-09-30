@@ -66,10 +66,18 @@ namespace SyncRADation.Networking
                         }
                         if (id == 0 && msg.Int0 != 0)
                         {
+                            // Two players can trigger the same story dialogue at once: first Start wins.
+                            if (!net.StorySync.HostDialogueStart(msg.Int0))
+                            {
+                                reason = "dup-start";
+                                ok = true;
+                                break;
+                            }
                             NetGate.BeginApply();
                             try { Dialoguer.StartDialogue(msg.Int0); }
                             finally { NetGate.EndApply(); }
-                            net.StorySync.BroadcastPresentation(StoryCmd.DialoguerStartId, 0, msg.Int0, "");
+                            net.StorySync.BroadcastPresentation(StoryCmd.DialoguerStartId, 0, msg.Int0,
+                                net.StorySync.DialogueTag());
                             ok = true;
                         }
                         else
@@ -88,6 +96,21 @@ namespace SyncRADation.Networking
                         ok = ApplyCutsceneSkip(id, net);
                         break;
                     case InteractionKind.DialogueContinue:
+                    {
+                        // Text = "dialogueId:step" the sender was on. Any player may advance; only the
+                        // first request for a given step is applied, the other N-1 are stale and dropped.
+                        int reqId, reqStep;
+                        if (!StorySyncService.TryParseTag(msg.Text, out reqId, out reqStep))
+                        {
+                            reqId = -1;
+                            reqStep = 0;
+                        }
+                        if (!net.StorySync.HostDialogueAdvance(reqId, reqStep, false))
+                        {
+                            reason = "stale";
+                            ok = true;
+                            break;
+                        }
                         NetGate.BeginApply();
                         try
                         {
@@ -95,16 +118,32 @@ namespace SyncRADation.Networking
                             else Dialoguer.ContinueDialogue();
                         }
                         finally { NetGate.EndApply(); }
-                        net.StorySync.BroadcastPresentation(StoryCmd.DialogueContinue, 0, msg.Int0, "");
+                        net.StorySync.BroadcastPresentation(StoryCmd.DialogueContinue, 0, msg.Int0,
+                            net.StorySync.DialogueTag());
                         ok = true;
                         break;
+                    }
                     case InteractionKind.DialogueEnd:
+                    {
+                        int reqId, reqStep;
+                        if (!StorySyncService.TryParseTag(msg.Text, out reqId, out reqStep))
+                        {
+                            reqId = -1;
+                            reqStep = 0;
+                        }
+                        if (!net.StorySync.HostDialogueAdvance(reqId, reqStep, true))
+                        {
+                            reason = "stale";
+                            ok = true;
+                            break;
+                        }
                         NetGate.BeginApply();
                         try { Dialoguer.EndDialogue(); }
                         finally { NetGate.EndApply(); }
-                        net.StorySync.BroadcastPresentation(StoryCmd.DialogueEnd, 0, 0, "");
+                        net.StorySync.BroadcastPresentation(StoryCmd.DialogueEnd, 0, 0, net.StorySync.DialogueTag());
                         ok = true;
                         break;
+                    }
                     case InteractionKind.StoragePut:
                         ok = ApplyStorage(msg, put: true, out reason);
                         break;
@@ -528,7 +567,13 @@ namespace SyncRADation.Networking
             if (c == null) return true;
             if (LocalInspect.AirlockCinematic(c.gameObject))
                 return true;
-            InteractionSyncService.RememberStart(id);
+            // N players can request the same cutscene at once (or the host just started it natively): the first
+            // start inside the window wins, the rest are duplicates and must not restart / rebroadcast it.
+            if (!InteractionSyncService.RememberStart(id))
+            {
+                PlaytestLog.Event("Interact", "CutsceneStart dup id=" + id.ToString("X16"));
+                return true;
+            }
             if (LocalInspect.InLocalRoom(c.gameObject))
             {
                 NetGate.BeginApply();
@@ -547,15 +592,24 @@ namespace SyncRADation.Networking
             return true;
         }
 
-        private static readonly System.Collections.Generic.HashSet<ulong> _skippedCuts
-            = new System.Collections.Generic.HashSet<ulong>();
-        private static readonly System.Collections.Generic.HashSet<ulong> _startedCuts
-            = new System.Collections.Generic.HashSet<ulong>();
+        // Time-windowed stamps (not permanent sets): a repeatable cutscene must be able to start / skip
+        // again, while duplicates of one trigger (N players, relay echo, resync replay) inside the window drop.
+        private static readonly System.Collections.Generic.Dictionary<ulong, float> _skipStamp
+            = new System.Collections.Generic.Dictionary<ulong, float>();
+        private static readonly System.Collections.Generic.Dictionary<ulong, float> _startStamp
+            = new System.Collections.Generic.Dictionary<ulong, float>();
+        private static readonly System.Collections.Generic.Dictionary<ulong, float> _requestStamp
+            = new System.Collections.Generic.Dictionary<ulong, float>();
+        const float StartDedupeSeconds = 4f;
+        const float SkipDedupeSeconds = 3f;
+        const float SkipBlocksStartSeconds = 30f;
+        const float RequestThrottleSeconds = 2f;
 
         public static void OnSceneChanged()
         {
-            _skippedCuts.Clear();
-            _startedCuts.Clear();
+            _skipStamp.Clear();
+            _startStamp.Clear();
+            _requestStamp.Clear();
         }
 
         private static bool ApplyCutsceneSkip(ulong id, LanNetworkManager net)
@@ -569,23 +623,78 @@ namespace SyncRADation.Networking
                 return true;
             }
             net.StorySync.BroadcastPresentation(StoryCmd.CutsceneSkip, id, 0, "");
-            NativeSkip(c);
+            // Same gate as Start: a host that is not in the room / never started it does not run the skip events.
+            if (c != null && SkipApplicable(c, id))
+            {
+                StorySyncService.BeginAuthorScope();
+                try { NativeSkip(c); }
+                finally { StorySyncService.EndAuthorScope(); }
+            }
+            else
+                PlaytestLog.Event("Interact", "CutsceneSkip other-room / never-started id=" + id.ToString("X16"));
             return true;
         }
 
         internal static bool RememberSkip(ulong id)
         {
-            return id == 0 || _skippedCuts.Add(id);
+            if (id == 0) return true;
+            float now = Time.unscaledTime, last;
+            if (_skipStamp.TryGetValue(id, out last) && now - last < SkipDedupeSeconds)
+                return false;
+            _skipStamp[id] = now;
+            return true;
         }
 
         internal static bool WasSkipped(ulong id)
         {
-            return id != 0 && _skippedCuts.Contains(id);
+            if (id == 0) return false;
+            float last;
+            return _skipStamp.TryGetValue(id, out last) && Time.unscaledTime - last < SkipBlocksStartSeconds;
         }
 
+        /// <summary>True the first time a start for this id is seen inside the dedupe window.</summary>
         internal static bool RememberStart(ulong id)
         {
-            return id == 0 || _startedCuts.Add(id);
+            if (id == 0) return true;
+            float now = Time.unscaledTime, last;
+            if (_startStamp.TryGetValue(id, out last) && now - last < StartDedupeSeconds)
+                return false;
+            _startStamp[id] = now;
+            return true;
+        }
+
+        /// <summary>
+        /// Client: throttle repeat CutsceneStart *requests* only. Must not touch the start stamp, otherwise the
+        /// host's presentation replay looks like a duplicate and the requester never plays the cutscene.
+        /// </summary>
+        internal static bool ShouldRequestStart(ulong id)
+        {
+            if (id == 0) return true;
+            float now = Time.unscaledTime, last;
+            if (_requestStamp.TryGetValue(id, out last) && now - last < RequestThrottleSeconds)
+                return false;
+            _requestStamp[id] = now;
+            return true;
+        }
+
+        /// <summary>This peer's coroutine for the cutscene is live (started here, not completed).</summary>
+        internal static bool StartedHere(CutsceneManager c)
+        {
+            if (c == null) return false;
+            try { return c.cutscene != null && !c.completed; }
+            catch (System.Exception ex) { StorySyncService.WarnOnce("StartedHere", ex); }
+            return false;
+        }
+
+        /// <summary>A skip only means something on a peer that is in the room and started (or just started) the cutscene.</summary>
+        internal static bool SkipApplicable(CutsceneManager c, ulong id)
+        {
+            if (c == null) return false;
+            try { if (!LocalInspect.InLocalRoom(c.gameObject)) return false; }
+            catch (System.Exception ex) { StorySyncService.WarnOnce("SkipApplicable room", ex); return false; }
+            if (StartedHere(c)) return true;
+            float last;
+            return id != 0 && _startStamp.TryGetValue(id, out last) && Time.unscaledTime - last < StartDedupeSeconds * 4f;
         }
 
         internal static void NativeSkip(CutsceneManager c)
@@ -633,21 +742,24 @@ namespace SyncRADation.Networking
             try { enumVal = (int)item._item; } catch { }
             bool unique = PartyKeyRing.IsKeyOrObject(item);
             if (unique && n > 1) n = 1;
+            var net = LanNetworkManager.Instance;
 
-            // Host-authoritative stock: dual take of the same unique must not both grant.
+            // Host-authoritative stock. The client already reserved (put) or clamped (take) against
+            // its own bag before sending, so put acks carry no consume — only take grants items.
             if (!put)
             {
-                if (have < n)
+                if (have <= 0)
                 {
                     reasonOut = "empty";
                     PlaytestLog.Event("StorageBox", "take FAIL have=" + have + " need=" + n
                         + " item=" + msg.Int0 + " from=" + msg.SenderPlayerId);
                     // Refresh loser's LWW view so UI does not keep a ghost stack.
-                    var netFail = LanNetworkManager.Instance;
-                    netFail?.StorageSync.RequestSend();
-                    netFail?.StorageSync.SendNow(netFail);
+                    net?.StorageSync.RequestSend();
+                    net?.StorageSync.SendNow(net);
                     return false;
                 }
+                // Partial take like native retrieveItem (clamps to the box stack).
+                if (n > have) n = have;
             }
             else if (unique && have >= 1)
             {
@@ -655,32 +767,75 @@ namespace SyncRADation.Networking
                 // re-seeding a bag copy). Absorb sender bag; do not stack the box.
                 PlaytestLog.Event("StorageBox", "put absorb unique have=" + have
                     + " item=" + msg.Int0 + " from=" + msg.SenderPlayerId);
-                var netAbs = LanNetworkManager.Instance;
-                netAbs?.StorageSync.RequestSend();
-                netAbs?.StorageSync.SendNow(netAbs);
-                reasonOut = "consume:" + enumVal + ":" + n;
+                net?.StorageSync.RequestSend();
+                net?.StorageSync.SendNow(net);
                 return true;
             }
 
             NetGate.BeginApply();
             try
             {
-                // Box only — never host Elster bag. Sender bag is adjusted via ack.
+                // Box only — never host Elster bag. Sender bag was adjusted client-side.
                 if (put) InventoryManager.boxItem(item, n);
-                else
-                {
-                    for (int i = 0; i < n; i++)
-                        InventoryManager.unboxItem(item);
-                }
+                else n = TakeFromBox(item, n);
             }
             finally { NetGate.EndApply(); }
-            var net = LanNetworkManager.Instance;
             net?.StorageSync.RequestSend();
             net?.StorageSync.SendNow(net);
-            reasonOut = put
-                ? "consume:" + enumVal + ":" + n
-                : "grant:" + enumVal + ":" + n;
+            if (!put)
+            {
+                if (n <= 0)
+                {
+                    reasonOut = "empty";
+                    return false;
+                }
+                reasonOut = "grant:" + enumVal + ":" + n;
+            }
             return true;
+        }
+
+        /// <summary>
+        /// Remove n from the box stack (native unboxItem drops the whole entry, retrieveItem would
+        /// AddItem to the host bag — neither is right for a remote taker). Returns units removed.
+        /// </summary>
+        static int TakeFromBox(AnItem item, int n)
+        {
+            try
+            {
+                var dict = InventoryManager.boxItems;
+                if (dict != null)
+                {
+                    AnItem key = null;
+                    int cur = 0;
+                    var en = dict.GetEnumerator();
+                    while (en.MoveNext())
+                    {
+                        var k = en.Current.key;
+                        if (k != null && k._item == item._item)
+                        {
+                            key = k;
+                            cur = en.Current.value;
+                            break;
+                        }
+                    }
+                    en.Dispose();
+                    if (key != null && cur > 0)
+                    {
+                        int take = n < cur ? n : cur;
+                        if (cur - take <= 0) dict.Remove(key);
+                        else dict[key] = cur - take;
+                        return take;
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                ModRuntime.Log?.Warning("[StorageBox] take dict: " + ex.Message);
+            }
+            int have = BoxStock(item);
+            if (have <= 0) return 0;
+            try { InventoryManager.unboxItem(item); } catch { return 0; }
+            return have < n ? have : n;
         }
 
         static int BoxStock(AnItem item)
@@ -768,8 +923,78 @@ namespace SyncRADation.Networking
             return true;
         }
 
+        /// <summary>InspectFlag Int0 &gt;= 100 carries a story request (100 + StoryCmd) on the same wire kind.</summary>
+        private static bool ApplyStoryRequest(InteractionRequestMessage msg)
+        {
+            var net = LanNetworkManager.Instance;
+            var story = net.StorySync;
+            var cmd = (StoryCmd)(msg.Int0 - 100);
+            switch (cmd)
+            {
+                case StoryCmd.EndDelta:
+                    story.HostApplyEndDelta(msg.Text, msg.SenderPlayerId);
+                    return true;
+                case StoryCmd.PartyCheat:
+                    story.HostPartyCheat(msg.Text, msg.SenderPlayerId);
+                    return true;
+                case StoryCmd.EndGraves:
+                    // END_Graves.Graves() writes END_Manager.Ending = 1 directly (secret ending).
+                    END_Manager.Ending = 1;
+                    story.MarkDirty();
+                    return true;
+                case StoryCmd.DetermineEnding:
+                    HostDetermineEnding(net);
+                    return true;
+                case StoryCmd.GoToPenny:
+                    HostGoToPenny(net);
+                    return true;
+            }
+            return false;
+        }
+
+        static Finale FirstFinale()
+        {
+            try
+            {
+                var finales = WorldLookup.All<Finale>();
+                if (finales == null) return null;
+                for (int i = 0; i < finales.Length; i++)
+                {
+                    if (finales[i] != null) return finales[i];
+                }
+            }
+            catch (System.Exception ex) { StorySyncService.WarnOnce("FirstFinale", ex); }
+            return null;
+        }
+
+        internal static void HostDetermineEnding(LanNetworkManager net)
+        {
+            // Finale.determineEnding has a per-object `once`; the broadcast has the same once-per-scene guard,
+            // so two players reaching the finale at once start the ending a single time for everyone.
+            if (!net.StorySync.HostBroadcastEnding(net)) return;
+            var f = FirstFinale();
+            if (f == null) return;
+            NetGate.BeginApply();
+            try { f.determineEnding(); }
+            catch (System.Exception ex) { StorySyncService.WarnOnce("Host determineEnding", ex); }
+            finally { NetGate.EndApply(); }
+        }
+
+        internal static void HostGoToPenny(LanNetworkManager net)
+        {
+            if (net.StorySync.Throttled("@goToPenny", 5f)) return;
+            net.StorySync.BroadcastPresentation(StoryCmd.GoToPenny, 0, 0, "");
+            var f = FirstFinale();
+            if (f == null) return;
+            NetGate.BeginApply();
+            try { f.goToPenny(); }
+            catch (System.Exception ex) { StorySyncService.WarnOnce("Host goToPenny", ex); }
+            finally { NetGate.EndApply(); }
+        }
+
         private static bool ApplyInspectFlag(InteractionRequestMessage msg)
         {
+            if (msg.Int0 >= 100) return ApplyStoryRequest(msg);
             string key = msg.Text;
             string strVal = "";
             if (msg.Int0 == 3)
@@ -783,6 +1008,19 @@ namespace SyncRADation.Networking
             }
             if (string.IsNullOrEmpty(key)) return false;
             var story = LanNetworkManager.Instance.StorySync;
+            // N clients forwarding the same consequence: apply/commit only when it changes the host value.
+            var probe = new StoryFlagEntry
+            {
+                Kind = (byte)msg.Int0,
+                Key = key,
+                BoolVal = msg.Int1 != 0,
+                IntVal = msg.Int1,
+                FloatVal = msg.Float0,
+                VecY = msg.Float1,
+                VecZ = msg.Float2,
+                StringVal = strVal
+            };
+            if (StorySyncService.SameAsLocal(probe)) return true;
             NetGate.BeginApply();
             try
             {

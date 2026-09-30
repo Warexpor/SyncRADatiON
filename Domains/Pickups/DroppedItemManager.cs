@@ -54,6 +54,7 @@ namespace SyncRADation.ItemSystem
         public static void SetHighlight(GameObject go, bool on) => DroppedItemRegistry.SetHighlight(go, on);
         public static bool InspectLocked() => DroppedItemRegistry.InspectLocked();
         public static void RestorePlay() => DroppedItemRegistry.RestorePlay();
+        public static void RestorePlayForLoad() => DroppedItemRegistry.RestorePlayForLoad();
         public static void HideForClaim(int netID) => DroppedItemRegistry.HideForClaim(netID);
         public static void DespawnWhenIdle(int netID) => DroppedItemRegistry.DespawnWhenIdle(netID);
         public static void TickDeferred() => DroppedItemRegistry.TickDeferred();

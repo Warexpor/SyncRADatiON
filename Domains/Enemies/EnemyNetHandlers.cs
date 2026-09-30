@@ -150,6 +150,29 @@ namespace SyncRADation.Networking
             }
         }
 
+        /// <summary>Client → host: stomp/push/burn/wake side effects the puppeted client cannot run itself.</summary>
+        internal void SendEnemyAction(ulong enemyWorldId, EnemyActionKind action)
+        {
+            if (_net.Role != NetworkRole.Client) return;
+            var msg = new EnemyActionMessage
+            {
+                SenderPlayerId = _net.LocalPlayerId,
+                EnemyWorldId = unchecked((long)enemyWorldId),
+                Action = action
+            };
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.EnemyAction);
+            msg.Serialize(writer);
+            if (_net.TryGetPeer(0, out var peer) && peer.ConnectionState == ConnectionState.Connected)
+                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        internal void HandleEnemyAction(EnemyActionMessage msg, int senderId)
+        {
+            if (_net.Role != NetworkRole.Host) return;
+            _net.EnemySync.ApplyActionOnHost(unchecked((ulong)msg.EnemyWorldId), msg.Action, senderId);
+        }
+
         internal void HandleEnemyDamage(EnemyDamageMessage msg)
         {
             ulong enemyId = unchecked((ulong)msg.EnemyWorldId);

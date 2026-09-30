@@ -1,3 +1,40 @@
+## 0.5.58 — 2026-10-01
+
+Protocol **v13**. Three parallel workers merged on top of 0.5.57: story/cutscenes/scene flow, puzzles/doors/audio, and pickups/combat/enemies/bosses. **Nothing in this release has been playtested** — compile-checked only (Release, 0 errors, 0 warnings). Each area was finished (resumed after a session-limit interruption) and compile-checked on its own before the merge.
+
+### Added
+- **New messages (NetMessageType 60–63)** — `WorldPickupDeny` (host → claimer, roll back a lost claim), `AvatarOneShot` (peer → all via host relay; Fire/Hurt/Die one-shots on a reliable channel instead of the lossy pose), `BossHit` (client → host boss damage / Falke Stab / TakeSpear; host → clients spear taken / Chimera rifle shot), `EnemyAction` (client → host stomp Kill / KillSilent / Knockback / GetPushed / Burndown / WakeUp). Host handlers take the real `senderId` from dispatch. `NetMessageType._Highest` = 63; `EnemyActionKind` and `BossHitKind` joined the schema hash.
+- **New StoryCmds 20–23** — `GoToPenny`, `PartyCheat`, `EndDelta`, `EndGraves`. No new message type: requests ride `InteractionKind.InspectFlag` with `Int0 = 100 + StoryCmd`.
+- **New PuzzleTypes 78–81** — `ROT_DiskManager` (red/blue disks), `DET_WallCreature` (HP, merged as min), `MapReveal`, `MEM_ChecklistLogic` (checked-item bitmask, host ORs concurrent edits).
+- **`PuzzleStateEntry.Seq` + `Mask`** — host-stamped per-type+WorldId version and a client edit mask; the host merges only the changed cells instead of last-writer-wins.
+- **`ClientDamageService`** — host-side hurtbox/melee checks against remote proxies (proxies have no colliders), replacing the fixed-timer enemy attack loop; downed peers are skipped.
+- **`PuzzleEdge`** — one rule for solved applies: a live rising edge runs the native onSolved, join dump / held re-snap run only the idempotent durable form.
+
+### Fixed
+- **Story / scene** — first Dialoguer Start/Continue per step wins (N players); duplicate cutscene starts/skips dedupe within a time window; client SProgress writes outside an apply scope are coalesced and forwarded to the host; END_Manager counters send deltas and the host commits one tally; scripted `goto`/`sethp` cutscene cheats relay so the party is gathered; follow loads now cover MainMenu/DeadMenu/EndCredits and a second different-scene request queues instead of double-loading; a client cannot cut the host's credits short.
+- **Puzzles / doors / audio** — held door unlocks survive scene reloads (unlock edge held, relock drops); client door opens are rejected unless a real key/code lock is solved on the host; flavor seals stay sealed; Keypad3D/InteractiveLock coroutines that were bare calls now run; late joiners get cryo door / pattern-lock door durably; FMOD emitter cache has a miss negative-cache and throttled rebuild, repeat Stop is dropped, repeat Play is kept (one-shots replay) with a same-frame dedupe. 0.5.57's removal of the `IsApplying` relay gate is kept.
+- **Pickups / combat / bosses** — Falke Stab/spear, Chimera rifle presentation and boss HP hits forward to the host; enemy stomp/push/burn/wake run on the host sim; puppet enemies interpolate between 15 Hz snapshots and stop restarting one-shot clips; personal scenes (wreck/hole, airlock) run enemies natively; inspect-path pickup claims claim on confirm and lost claims are rolled back via `WorldPickupDeny`; drop interact uses the Use action, not Fire1.
+
+### Changed
+- Protocol **12 → 13** (`PuzzleStateEntry` wire gained Seq/Mask; message types 60–63). `GetRemotePlayerIds()` now returns a cached `int[]`.
+- Merge notes: `Register` dedupe (0.5.57) and the `EnemyIds` cache are combined in `WorldRegistry`; story/scene-follow client ticks run inside the per-domain try/catch.
+
+### Before → After (player)
+- **Before:** a client could not finish a downed enemy, hit a boss, take a Falke spear or see the Chimera shoot; two players on one dialogue/cutscene/ending doubled it; solved doors re-sealed after a reload; concurrent puzzle edits overwrote each other; fast snapshot streams stuttered enemies.
+- **After:** those actions go through the host; duplicates collapse to one; solved doors stay open for the party; puzzle cells merge per edit; enemies move smoothly.
+
+### Open risks / untested
+- **No dual-instance playtest.** Tuning (timeouts, radii, throttles) is untested in game.
+- Late dump during client load: client waits up to 6 s, then seeds from local defaults.
+- Falke `CheckDowned` checks the host bag for the spear; a spear held only by a client may not count.
+- A client's "quit to menu" (`SceneHelper.resetGame`) is still blocked silently.
+- Client-authored puzzle `Mask`/`Seq` merge, `EnemyAction`/`BossHit` semantics, and hurtbox overlap tuning (radius slack, pulse timing) are unproven in game.
+- Client hits on Falke rely on rolling back `Hitbox.HP` after a local drop (no method to hook).
+- Native-to-native Harmony detours added on `EnemyController.Hit`, `END_Graves`, `SceneHelper`/`CreditsEnd` are unverified.
+- 0.5.57 open risks (HurtElster/Load detours, bag snapshots without ammo, etc.) still stand.
+
+Protocol **13**. Product **0.5.58** (not 1.0).
+
 ## 0.5.57 — 2026-10-01
 
 Protocol **v12**. Party death/revive/wipe + party save, and a network-core hardening / N-player pass (merged from two parallel workers). **Nothing in this release has been playtested** — compile-checked only (Release, 0 errors).

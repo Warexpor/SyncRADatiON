@@ -170,6 +170,15 @@ namespace SyncRADation.Networking
 
         internal void NotePeerScene(int playerId, string scene) => _peerScenes[playerId] = scene ?? "";
 
+        /// <summary>Host: peer reported the same active scene as the host (unknown/transient = assume yes).</summary>
+        internal bool PeerInHostScene(int playerId)
+        {
+            string theirs;
+            if (!_peerScenes.TryGetValue(playerId, out theirs) || string.IsNullOrEmpty(theirs)) return true;
+            string mine = SceneManager.GetActiveScene().name ?? "";
+            return string.IsNullOrEmpty(mine) || string.Equals(theirs, mine, StringComparison.Ordinal);
+        }
+
         internal void NoteLocalSceneForHello(string scene)
         {
             _localSceneName = scene ?? "";
@@ -430,6 +439,11 @@ namespace SyncRADation.Networking
             try { _bossSync.TickHost(this); } catch (Exception ex) { TickFailed("boss", ex); }
             try { _pickupSync.TickHost(this); } catch (Exception ex) { TickFailed("pickup", ex); }
             try { _storySync.TickHost(this); } catch (Exception ex) { TickFailed("story", ex); }
+            try { _storySync.TickClient(this); } catch (Exception ex) { TickFailed("story-client", ex); }
+            if (_role == NetworkRole.Host)
+            {
+                try { SceneFollowService.Tick(); } catch (Exception ex) { TickFailed("scenefollow", ex); }
+            }
             try { _storageSync.TickHost(this); } catch (Exception ex) { TickFailed("storage", ex); }
 
             // Vitals ~5 Hz for remote damage/death presentation
@@ -632,13 +646,33 @@ namespace SyncRADation.Networking
             return 1;
         }
 
-        public IEnumerable<int> GetRemotePlayerIds()
+        private int[] _remoteIdsCache = Array.Empty<int>();
+        private int _remoteIdsSig = int.MinValue;
+
+        /// <summary>
+        /// Remote session ids as a cached array (called per enemy/boss per frame — no iterator garbage).
+        /// Rebuilt when the roster or local id changes; safe to iterate while the roster mutates.
+        /// </summary>
+        public int[] GetRemotePlayerIds()
         {
+            int sig = _localPlayerId * 31 + _sessionPlayerIds.Count;
             foreach (int id in _sessionPlayerIds)
+                sig = unchecked(sig * 16777619 ^ id);
+            if (sig != _remoteIdsSig)
             {
-                if (id != _localPlayerId)
-                    yield return id;
+                var ids = new int[_sessionPlayerIds.Count];
+                int n = 0;
+                foreach (int id in _sessionPlayerIds)
+                {
+                    if (id != _localPlayerId)
+                        ids[n++] = id;
+                }
+                if (n != ids.Length)
+                    Array.Resize(ref ids, n);
+                _remoteIdsCache = ids;
+                _remoteIdsSig = sig;
             }
+            return _remoteIdsCache;
         }
 
         public NetPeer GetPeer(int playerId)

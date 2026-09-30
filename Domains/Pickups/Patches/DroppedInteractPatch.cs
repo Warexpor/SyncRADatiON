@@ -83,10 +83,18 @@ namespace SyncRADation.Patches
 
         internal static bool InteractPressed()
         {
+            // The game's interact is Rewired CharacterAction.Use (Interactor.Update reads
+            // input.Use.WasPressed, Ghidra Interactor.c). Fire1 is the shoot button — never use it,
+            // or shooting near a drop auto-takes it.
             try
             {
-                if (Input.GetButtonDown("Submit")) return true;
-                if (Input.GetButtonDown("Fire1")) return true;
+                var input = PlayerState.input;
+                if (input != null && input.Use != null)
+                    return input.Use.WasPressed;
+            }
+            catch (System.Exception ex) { ModRuntime.Log?.Warning("[DroppedInteract] input: " + ex.Message); }
+            try
+            {
                 if (Input.GetButtonDown("Interact")) return true;
                 if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
                     return true;

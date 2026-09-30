@@ -13,6 +13,10 @@ namespace SyncRADation.Patches
     [HarmonyPatch(typeof(EnemyController))]
     public static class EnemyTakeDamagePatches
     {
+        // One warning per enemy instead of one per shot.
+        private static readonly System.Collections.Generic.HashSet<int> _warnedUnmapped
+            = new System.Collections.Generic.HashSet<int>();
+
         [HarmonyPrefix]
         [HarmonyPatch(nameof(EnemyController.TakeDamage), new[] { typeof(float), typeof(float), typeof(float), typeof(bool) })]
         public static bool PrefixChanced(EnemyController __instance, float _fireChance, float _criticalChance, float _hurtChance, bool noSneak)
@@ -49,12 +53,23 @@ namespace SyncRADation.Patches
             if (net.Role == NetworkRole.Host)
                 return true;
 
-            ulong id = WorldId.FromGameObject(enemy.gameObject);
-            if (id == 0)
+            // Personal scene (wreck/hole, airlock): this client's enemies are not host puppets, so
+            // the host cannot resolve their WorldIds. Run native TakeDamage or they are invulnerable.
+            if (net.SceneMismatch)
+                return true;
+
+            // WorldId cached at WorldRegistry.Rebuild/Register: the hierarchy hash is sibling-index
+            // based and shifts when spawns/adoptions reorder children, so never recompute per hit.
+            ulong id;
+            if (!WorldRegistry.TryGetEnemyId(enemy, out id))
             {
-                ModRuntime.Log?.Warning("[Damage] Client hit with WorldId 0: " + enemy.gameObject.name);
-                return false;
+                id = WorldId.FromGameObject(enemy.gameObject);
+                int key = enemy.GetInstanceID();
+                if (id == 0 && _warnedUnmapped.Add(key))
+                    ModRuntime.Log?.Warning("[Damage] Client hit with WorldId 0: " + enemy.gameObject.name);
             }
+            if (id == 0)
+                return false;
 
             net.SendNativeEnemyHit(id, fire, crit, hurt, noSneak);
             return false;

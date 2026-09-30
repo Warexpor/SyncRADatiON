@@ -26,7 +26,8 @@ namespace SyncRADation.Networking
             if (!(e.Bool0 && !was)) return;
 
             SyncRADation.Patches.EventZonePatch.MarkFired(unchecked((ulong)e.WorldId));
-            if (mutateWorld && LocalInspect.InLocalRoom(x.gameObject))
+            // LiveEdge, not mutateWorld: ReapplyHeld runs with mutateWorld=true and must not replay the zone event.
+            if (PuzzleSyncService.LiveEdge && LocalInspect.InLocalRoom(x.gameObject))
             {
                 try { if (x.onInRange != null) x.onInRange.Invoke(); } catch { }
             }

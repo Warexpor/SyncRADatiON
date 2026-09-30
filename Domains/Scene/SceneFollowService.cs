@@ -45,6 +45,13 @@ namespace SyncRADation.Networking
                 }
             }
             catch { }
+            if (HostStillInCredits(sceneName))
+            {
+                // CreditsEnd runs ResetGame + LoadLevel(MainMenu) on every peer when *its* credits finish. A
+                // client that is faster must not cut the host's credits short: the host's own load follows.
+                PlaytestLog.Event("Scene", "ignore peer '" + sceneName + "' (host still in credits)");
+                return true;
+            }
             try
             {
                 string cur = SceneManager.GetActiveScene().name ?? "";
@@ -70,6 +77,15 @@ namespace SyncRADation.Networking
                 catch { }
                 return true;
             }
+            string busy = HostBusyReason(sceneName);
+            if (busy != null)
+            {
+                // A different-scene request while the host is mid-load / loading / dying must not start a second
+                // load on top of the first (two peers taking two different doors). Keep only the newest request
+                // and run it once the host has arrived and is alive again (Tick).
+                QueueRequest(sceneName, busy);
+                return true;
+            }
             try
             {
                 AsyncLoader.LoadLevel(sceneName);
@@ -88,6 +104,96 @@ namespace SyncRADation.Networking
             }
             catch { }
             return true;
+        }
+
+        // --- Non-level scenes (Pregame): MainMenu / DeadMenu / EndCredits -------------------------
+        // They are in build settings, so IsKnownScene accepts them and every load path (AsyncLoader,
+        // SceneHelper.LoadScene/LoadSceneDirect, NewApplication.LoadLevel, SceneManager.LoadScene) is gated:
+        // DeadMenu (LAB_Emptiness cutscene -> LoadSceneDirect) and its buttons (LoadScene MEM_Memory), and the
+        // post-credits CreditsEnd (ResetGame.ResetNow + LoadLevel MainMenu) follow the host like a chapter load.
+        public const string MainMenuScene = "MainMenu";
+        public const string DeadMenuScene = "DeadMenu";
+        public const string EndCreditsScene = "EndCredits";
+
+        public static bool IsMenuScene(string sceneName)
+        {
+            return string.Equals(sceneName, MainMenuScene, System.StringComparison.Ordinal)
+                || string.Equals(sceneName, DeadMenuScene, System.StringComparison.Ordinal)
+                || string.Equals(sceneName, EndCreditsScene, System.StringComparison.Ordinal)
+                || string.Equals(sceneName, "Credits", System.StringComparison.Ordinal);
+        }
+
+        static string HostSceneNow()
+        {
+            try { return SceneManager.GetActiveScene().name ?? ""; }
+            catch (System.Exception ex) { PlaytestLog.Warn("Scene", "active scene: " + ex.Message); return ""; }
+        }
+
+        static bool HostStillInCredits(string requested)
+        {
+            return string.Equals(requested, MainMenuScene, System.StringComparison.Ordinal)
+                && string.Equals(HostSceneNow(), EndCreditsScene, System.StringComparison.Ordinal);
+        }
+
+        static bool HostDead()
+        {
+            // Menu scenes keep the last hp / charState statics: a dead hp there is not "the host is dying".
+            if (IsMenuScene(HostSceneNow())) return false;
+            try { if (PlayerState.charState == PlayerState.charStates.dead) return true; }
+            catch (System.Exception ex) { PlaytestLog.Warn("Scene", "charState: " + ex.Message); }
+            try { if (PlayerState.hp <= 0) return true; }
+            catch (System.Exception ex) { PlaytestLog.Warn("Scene", "hp: " + ex.Message); }
+            return false;
+        }
+
+        static bool LoadInFlight(string exceptScene)
+        {
+            return !string.IsNullOrEmpty(_pending)
+                && !string.Equals(_pending, exceptScene, System.StringComparison.Ordinal)
+                && Time.unscaledTime - _pendingAt < InflightWindow;
+        }
+
+        /// <summary>Why the host cannot start a load for a peer request right now, or null when it can.</summary>
+        static string HostBusyReason(string sceneName)
+        {
+            if (LocalIsTransient()) return "host loading";
+            if (LoadInFlight(sceneName)) return "host load in flight to '" + _pending + "'";
+            if (HostDead()) return "host dead";
+            return null;
+        }
+
+        static string _queued;
+        static float _queuedAt;
+        const float QueueTtl = 20f;
+
+        static void QueueRequest(string sceneName, string reason)
+        {
+            PlaytestLog.Event("Scene", "queue peer '" + sceneName + "' (" + reason + ")");
+            _queued = sceneName;
+            _queuedAt = Time.unscaledTime;
+        }
+
+        /// <summary>Host tick: run the queued peer request once the host is arrived / alive.</summary>
+        public static void Tick()
+        {
+            if (string.IsNullOrEmpty(_queued)) return;
+            var net = LanNetworkManager.Instance;
+            if (net == null || net.Role != NetworkRole.Host || !net.IsConnected)
+            {
+                _queued = null;
+                return;
+            }
+            if (Time.unscaledTime - _queuedAt > QueueTtl)
+            {
+                PlaytestLog.Event("Scene", "drop stale queued peer '" + _queued + "'");
+                _queued = null;
+                return;
+            }
+            if (HostBusyReason(_queued) != null) return;
+            string q = _queued;
+            _queued = null;
+            PlaytestLog.Event("Scene", "run queued peer '" + q + "'");
+            TryApplyRequest(q);
         }
 
         public static bool LocalIsTransient()
@@ -226,6 +332,8 @@ namespace SyncRADation.Networking
             _pendingAt = 0f;
             _requested = null;
             _requestedAt = 0f;
+            _queued = null;
+            _queuedAt = 0f;
         }
 
         public static bool IsTransient(string sceneName)
@@ -303,7 +411,19 @@ namespace SyncRADation.Networking
             PlaytestLog.Event("Scene", "follow load '" + sceneName + "' (was '" + cur + "')");
             // Mid-inventory / menu / dialogue sticky: unload alone does not always
             // restore play before AsyncLoader. Mirror disconnect restore (Dig AJ).
-            try { DroppedItemManager.RestorePlay(); } catch { }
+            // Also ends an active cutscene / Dialoguer: their coroutines die with the unloaded scene and left
+            // gameStates.cutscene / PlayerState.cutscene / dialogue sticky on the follower.
+            try { DroppedItemManager.RestorePlayForLoad(); }
+            catch (System.Exception ex) { PlaytestLog.Warn("Scene", "RestorePlayForLoad: " + ex.Message); }
+            if (string.Equals(sceneName, MainMenuScene, System.StringComparison.Ordinal))
+            {
+                // SceneHelper.resetGame / CreditsEnd run ResetNow before the menu load; a peer that is dragged
+                // there by the host never ran it.
+                NetGate.BeginApply();
+                try { ResetGame.ResetNow(); }
+                catch (System.Exception ex) { PlaytestLog.Warn("Scene", "ResetGame.ResetNow: " + ex.Message); }
+                finally { NetGate.EndApply(); }
+            }
             NetGate.BeginApply();
             try
             {

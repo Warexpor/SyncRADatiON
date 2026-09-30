@@ -56,6 +56,15 @@ namespace SyncRADation.Networking
             case NetMessageType.WorldPickupGrant:
                 WorldPickupHandlers.HandleWorldPickupGrant(WorldPickupGrantMessage.Deserialize(reader));
                 return true;
+            case NetMessageType.WorldPickupDeny:
+                WorldPickupHandlers.HandleWorldPickupDeny(WorldPickupDenyMessage.Deserialize(reader));
+                return true;
+            case NetMessageType.EnemyAction:
+                EnemyHandlers.HandleEnemyAction(EnemyActionMessage.Deserialize(reader), senderId);
+                return true;
+            case NetMessageType.BossHit:
+                BossHandlers.HandleBossHit(BossHitMessage.Deserialize(reader), senderId);
+                return true;
             case NetMessageType.StorageBoxBlob:
                 InventoryHandlers.HandleStorageBoxBlob(StorageBoxBlobMessage.Deserialize(reader));
                 return true;

@@ -25,8 +25,14 @@ namespace SyncRADation.Patches
             if (!NetGate.Live) return true;
 
             // Client must not spawn — dual Instantiates yield divergent WorldIds / map misses.
+            // Exception: personal scene (wreck/hole, airlock). Host snapshots never map there, so the
+            // client's spawners must run natively or the room stays empty.
             if (NetGate.Client)
+            {
+                var clientNet = LanNetworkManager.Instance;
+                if (clientNet != null && clientNet.SceneMismatch) return true;
                 return false;
+            }
 
             // Host FixedUpdate distances against Player (local Elster). When only a peer is
             // in radius, point Player at that proxy for this tick so the spawner still fires.
@@ -107,11 +113,22 @@ namespace SyncRADation.Patches
             }
         }
 
+        // FixedUpdate runs this per spawner per physics tick: remember which _Child was already
+        // adopted so the steady state is one field read + one int compare (no GetComponent / name).
+        static readonly System.Collections.Generic.HashSet<int> _adoptedChildren
+            = new System.Collections.Generic.HashSet<int>();
+
+        internal static void ClearAdopted() => _adoptedChildren.Clear();
+
         static void TryAdoptNativeChild(EnemySpawner spawner)
         {
             GameObject child = null;
             try { child = spawner._Child; } catch { }
             if (child == null) return;
+
+            int cid;
+            try { cid = child.GetInstanceID(); } catch { return; }
+            if (_adoptedChildren.Contains(cid)) return;
 
             EnemyController ec = null;
             try { ec = child.GetComponent<EnemyController>(); } catch { }
@@ -121,6 +138,7 @@ namespace SyncRADation.Patches
             }
             if (ec == null) return;
 
+            _adoptedChildren.Add(cid);
             EntitySpawner.AdoptNativeSpawn(ec, broadcast: true);
         }
     }

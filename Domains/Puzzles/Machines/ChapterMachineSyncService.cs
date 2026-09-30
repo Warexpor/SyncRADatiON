@@ -887,22 +887,21 @@ namespace SyncRADation.Networking
             try { x.MoonTurnSpeed = e.Float0; } catch { }
             try { UnpackMuralMoons(x.moons, e.Int0, e.Int1, e.Int2, e.Int3); } catch { }
             if (!e.Bool0) return;
-            if (PuzzleSyncService.MutateWorld && !was)
-            {
-                NetGate.BeginApply();
-                try
+            // Shared edge rule (PuzzleEdge): live rising edge = onSolved (cutscene) + native useRing; join dump /
+            // held re-snap = Blocker Entry off + ring objects only. ReapplyHeld used to count as live, and
+            // useRing replayed its insert SFX on every re-apply.
+            PuzzleEdge.Solved("ROT_Mural", was, true,
+                durable: () =>
                 {
-                    if (x.onSolved != null)
-                        x.onSolved.Invoke();
-                }
-                catch { }
-                finally { NetGate.EndApply(); }
-            }
-            else if (!was)
-            {
-                SnapMuralBlockerEntry(x);
-            }
-            try { x.useRing(); } catch { }
+                    if (!was) SnapMuralBlockerEntry(x);
+                    if (x.RingInter != null) x.RingInter.SetActive(false);
+                    if (x.MissingRing != null) x.MissingRing.SetActive(true);
+                },
+                onLive: () =>
+                {
+                    LockSyncService.InvokeApplying(x.onSolved);
+                    x.useRing();
+                });
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
         }
 

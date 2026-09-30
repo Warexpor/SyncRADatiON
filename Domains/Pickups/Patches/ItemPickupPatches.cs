@@ -135,7 +135,7 @@ namespace SyncRADation.Patches
 
         static void BindPickupName(ItemPickup p)
         {
-            if (p == null) return;
+            if (p == null || !NetGate.Live) return;
             try
             {
                 var kind = WorldPickupSyncService.ResolveItem(p);
@@ -326,6 +326,9 @@ namespace SyncRADation.Patches
             }
 
             if (!inBag && __instance != null) return;
+            // Inspect yes/no is still open here (native release runs after the answer). Claim on
+            // confirm (NoteTaken) so declining never hides the prop for everyone.
+            if (__instance != null && IsInspect(__instance)) return;
             if (net.PickupSync.IsClaimed(id)) return;
             if (WorldClaimNeedsBagRoom(_pendingItem) && !BagHasRoomForWorld(_pendingItem))
             {
@@ -334,6 +337,7 @@ namespace SyncRADation.Patches
             }
             PlaytestLog.Event("Pickup", "claim after inspect " + (__instance != null ? __instance.gameObject.name : "gone")
                 + " id=" + id.ToString("X16"));
+            net.PickupSync.NoteNativeGrantExpected(id, _pendingItem, CountOf(__instance));
             net.SendWorldPickupClaim(id, _pendingItem, CountOf(__instance));
         }
 
@@ -360,11 +364,25 @@ namespace SyncRADation.Patches
             }
             catch { }
 
+            // Native release only adds when the yes/no answer (Dialoguer global bool 1) was yes
+            // (ItemPickup.release, Ghidra ItemPickup.c: GetGlobalBoolean(1) gate before AddItemToMax).
+            bool accepted = true;
+            try { accepted = Dialoguer.GetGlobalBoolean(1); }
+            catch (System.Exception ex) { ModRuntime.Log?.Warning("[Pickup] yes/no answer unreadable: " + ex.Message); }
+            if (!accepted)
+            {
+                PlaytestLog.Verbose("Pickup", "declined id=" + id.ToString("X16"));
+                return;
+            }
+            int takeCount = CountOf(p);
+
             if (net.Role == NetworkRole.Host)
             {
                 if (!net.PickupSync.TryClaimOnHost(id, net.LocalPlayerId, out _, out _, hideNow: true, hintItem: item))
                 {
                     PlaytestLog.Event("Pickup", "host note deny id=" + id.ToString("X16"));
+                    // Another peer claimed while our yes/no was open; native release still adds.
+                    net.PickupSync.RevertNativeGrantNow(item, takeCount, p);
                     return;
                 }
                 // Inspect/confirm path: native already Invoked — Note before Broadcast (Dig H).
@@ -382,14 +400,21 @@ namespace SyncRADation.Patches
                 return;
             }
 
-            if (net.PickupSync.IsClaimed(id)) return;
+            if (net.PickupSync.IsClaimed(id))
+            {
+                // Claimed by another peer while our yes/no was open; native release still adds.
+                PlaytestLog.Event("Pickup", "confirm lost id=" + id.ToString("X16") + " item=" + item);
+                net.PickupSync.RevertNativeGrantNow(item, takeCount, p);
+                return;
+            }
             if (WorldClaimNeedsBagRoom(item) && !BagHasRoomForWorld(item))
             {
                 PlaytestLog.Event("Pickup", "deny bag full confirm item=" + item);
                 return;
             }
             PlaytestLog.Event("Pickup", "claim confirm id=" + id.ToString("X16") + " item=" + item);
-            net.SendWorldPickupClaim(id, item, CountOf(p));
+            net.PickupSync.NoteNativeGrantExpected(id, item, takeCount);
+            net.SendWorldPickupClaim(id, item, takeCount);
         }
 
         static int CountOf(ItemPickup p)

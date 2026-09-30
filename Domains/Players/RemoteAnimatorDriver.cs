@@ -139,6 +139,12 @@ namespace SyncRADation.Players
             }
         }
 
+        /// <summary>Reliable one-shot triggers; consumed by the next Tick.</summary>
+        public void AddOneShot(AnimTriggers triggers)
+        {
+            _pendingTriggers |= triggers;
+        }
+
         public void ApplyBoneChunk(ushort totalBones, ushort startBone, float[] eulers)
         {
             if (eulers == null || eulers.Length < 3 || totalBones == 0) return;
@@ -163,11 +169,20 @@ namespace SyncRADation.Players
         private void CommitBoneSnapshot(float[] data)
         {
             if (data == null || data.Length < 3) return;
-            var copy = new float[data.Length];
+            // Ring of pooled buffers: the oldest snapshot's array is recycled instead of a new float[]
+            // every pose (30 Hz x every remote player).
+            float[] copy;
+            if (_boneSnaps.Count >= BoneSnapCap)
+            {
+                copy = _boneSnaps[0].Eulers;
+                _boneSnaps.RemoveAt(0);
+                if (copy == null || copy.Length != data.Length)
+                    copy = new float[data.Length];
+            }
+            else
+                copy = new float[data.Length];
             System.Array.Copy(data, copy, data.Length);
             _boneSnaps.Add(new BoneSnap { Time = Time.time, Eulers = copy });
-            while (_boneSnaps.Count > BoneSnapCap)
-                _boneSnaps.RemoveAt(0);
             if (!_snappedToFirst && _boneSync != null)
                 _boneSync.ApplyRotationsSnap(copy);
         }
@@ -232,71 +247,121 @@ namespace SyncRADation.Players
             _pendingTriggers = 0;
         }
 
+        // Animator.StringToHash once: string-keyed SetBool/SetFloat hashes the name on every call.
+        private static class P
+        {
+            public static readonly int Forward = Animator.StringToHash("Forward");
+            public static readonly int Turn = Animator.StringToHash("Turn");
+            public static readonly int AimingTime = Animator.StringToHash("AimingTime");
+            public static readonly int Stamina = Animator.StringToHash("Stamina");
+            public static readonly int Blend = Animator.StringToHash("Blend");
+            public static readonly int IKwalk = Animator.StringToHash("IKwalk");
+            public static readonly int X = Animator.StringToHash("X");
+            public static readonly int Y = Animator.StringToHash("Y");
+            public static readonly int HurtTime = Animator.StringToHash("HurtTime");
+
+            public static readonly int Aiming = Animator.StringToHash("Aiming");
+            public static readonly int Shooting = Animator.StringToHash("Shooting");
+            public static readonly int Running = Animator.StringToHash("Running");
+            public static readonly int Grounded = Animator.StringToHash("Grounded");
+            public static readonly int Crouch = Animator.StringToHash("Crouch");
+            public static readonly int Blocked = Animator.StringToHash("Blocked");
+            public static readonly int Dead = Animator.StringToHash("Dead");
+            public static readonly int Inventory = Animator.StringToHash("Inventory");
+            public static readonly int Attack = Animator.StringToHash("Attack");
+            public static readonly int Injured = Animator.StringToHash("Injured");
+            public static readonly int Stomp = Animator.StringToHash("Stomp");
+            public static readonly int Push = Animator.StringToHash("Push");
+            public static readonly int Melee = Animator.StringToHash("Melee");
+            public static readonly int Snap = Animator.StringToHash("Snap");
+            public static readonly int Reload = Animator.StringToHash("Reload");
+            public static readonly int Swap = Animator.StringToHash("Swap");
+            public static readonly int Burst = Animator.StringToHash("Burst");
+            public static readonly int Taser = Animator.StringToHash("Taser");
+            public static readonly int Random = Animator.StringToHash("Random");
+            public static readonly int Hugged = Animator.StringToHash("Hugged");
+            public static readonly int ReloadRounds = Animator.StringToHash("ReloadRounds");
+            public static readonly int ReloadChamber = Animator.StringToHash("ReloadChamber");
+            public static readonly int Climbing = Animator.StringToHash("Climbing");
+            public static readonly int Crawl = Animator.StringToHash("Crawl");
+
+            public static readonly int Hurt = Animator.StringToHash("Hurt");
+            public static readonly int Die = Animator.StringToHash("Die");
+            public static readonly int Fire = Animator.StringToHash("Fire");
+            public static readonly int Pickup = Animator.StringToHash("Pickup");
+            public static readonly int Radio = Animator.StringToHash("Radio");
+            public static readonly int Drop = Animator.StringToHash("Drop");
+            public static readonly int Sleep = Animator.StringToHash("Sleep");
+            public static readonly int Injector = Animator.StringToHash("Injector");
+            public static readonly int InjectorCancel = Animator.StringToHash("InjectorCancel");
+        }
+
         private static void ApplyAnimParams(Animator anim, float forward, float turn, float aimingTime, float stamina, float blend, float ikWalk, float inputX, float inputY, float hurtTime, AnimBools bools, bool climbing)
         {
-            anim.SetFloat("Forward", forward);
-            anim.SetFloat("Turn", turn);
-            anim.SetFloat("AimingTime", aimingTime);
-            anim.SetFloat("Stamina", stamina);
-            anim.SetFloat("Blend", blend);
-            anim.SetFloat("IKwalk", ikWalk);
-            anim.SetFloat("X", inputX);
-            anim.SetFloat("Y", inputY);
-            anim.SetFloat("HurtTime", hurtTime);
+            anim.SetFloat(P.Forward, forward);
+            anim.SetFloat(P.Turn, turn);
+            anim.SetFloat(P.AimingTime, aimingTime);
+            anim.SetFloat(P.Stamina, stamina);
+            anim.SetFloat(P.Blend, blend);
+            anim.SetFloat(P.IKwalk, ikWalk);
+            anim.SetFloat(P.X, inputX);
+            anim.SetFloat(P.Y, inputY);
+            anim.SetFloat(P.HurtTime, hurtTime);
 
-            anim.SetBool("Aiming", bools.HasFlag(AnimBools.Aiming));
-            anim.SetBool("Shooting", bools.HasFlag(AnimBools.Shooting));
-            anim.SetBool("Running", bools.HasFlag(AnimBools.Running));
-            anim.SetBool("Grounded", bools.HasFlag(AnimBools.Grounded));
-            anim.SetBool("Crouch", bools.HasFlag(AnimBools.Crouch) || climbing);
-            anim.SetBool("Blocked", bools.HasFlag(AnimBools.Blocked));
-            anim.SetBool("Dead", bools.HasFlag(AnimBools.Dead));
-            anim.SetBool("Inventory", bools.HasFlag(AnimBools.Inventory));
-            anim.SetBool("Attack", bools.HasFlag(AnimBools.Attack));
-            anim.SetBool("Injured", bools.HasFlag(AnimBools.Injured));
-            anim.SetBool("Stomp", bools.HasFlag(AnimBools.Stomp));
-            anim.SetBool("Push", bools.HasFlag(AnimBools.Push));
-            anim.SetBool("Melee", bools.HasFlag(AnimBools.Melee));
-            anim.SetBool("Snap", bools.HasFlag(AnimBools.Snap));
-            anim.SetBool("Reload", bools.HasFlag(AnimBools.Reload));
-            anim.SetBool("Swap", bools.HasFlag(AnimBools.Swap));
-            anim.SetBool("Burst", bools.HasFlag(AnimBools.Burst));
-            anim.SetBool("Taser", bools.HasFlag(AnimBools.Taser));
-            anim.SetBool("Random", bools.HasFlag(AnimBools.Random));
-            anim.SetBool("Hugged", bools.HasFlag(AnimBools.Hugged));
-            anim.SetBool("ReloadRounds", bools.HasFlag(AnimBools.ReloadRounds));
-            anim.SetBool("ReloadChamber", bools.HasFlag(AnimBools.ReloadChamber));
-            try { anim.SetBool("Climbing", climbing); } catch { }
-            try { anim.SetBool("Crawl", climbing); } catch { }
+            anim.SetBool(P.Aiming, bools.HasFlag(AnimBools.Aiming));
+            anim.SetBool(P.Shooting, bools.HasFlag(AnimBools.Shooting));
+            anim.SetBool(P.Running, bools.HasFlag(AnimBools.Running));
+            anim.SetBool(P.Grounded, bools.HasFlag(AnimBools.Grounded));
+            anim.SetBool(P.Crouch, bools.HasFlag(AnimBools.Crouch) || climbing);
+            anim.SetBool(P.Blocked, bools.HasFlag(AnimBools.Blocked));
+            anim.SetBool(P.Dead, bools.HasFlag(AnimBools.Dead));
+            anim.SetBool(P.Inventory, bools.HasFlag(AnimBools.Inventory));
+            anim.SetBool(P.Attack, bools.HasFlag(AnimBools.Attack));
+            anim.SetBool(P.Injured, bools.HasFlag(AnimBools.Injured));
+            anim.SetBool(P.Stomp, bools.HasFlag(AnimBools.Stomp));
+            anim.SetBool(P.Push, bools.HasFlag(AnimBools.Push));
+            anim.SetBool(P.Melee, bools.HasFlag(AnimBools.Melee));
+            anim.SetBool(P.Snap, bools.HasFlag(AnimBools.Snap));
+            anim.SetBool(P.Reload, bools.HasFlag(AnimBools.Reload));
+            anim.SetBool(P.Swap, bools.HasFlag(AnimBools.Swap));
+            anim.SetBool(P.Burst, bools.HasFlag(AnimBools.Burst));
+            anim.SetBool(P.Taser, bools.HasFlag(AnimBools.Taser));
+            anim.SetBool(P.Random, bools.HasFlag(AnimBools.Random));
+            anim.SetBool(P.Hugged, bools.HasFlag(AnimBools.Hugged));
+            anim.SetBool(P.ReloadRounds, bools.HasFlag(AnimBools.ReloadRounds));
+            anim.SetBool(P.ReloadChamber, bools.HasFlag(AnimBools.ReloadChamber));
+            anim.SetBool(P.Climbing, climbing);
+            anim.SetBool(P.Crawl, climbing);
         }
 
         private void ApplyWeaponParams(Animator anim)
         {
-            string activeName = WeaponUtils.AnimatorBoolName(_weapon);
-            var names = WeaponUtils.AnimatorBoolNames;
-            for (int i = 0; i < names.Length; i++)
-                anim.SetBool(names[i], names[i] == activeName);
+            int active = WeaponUtils.AnimatorBoolHash(_weapon);
+            var ids = WeaponUtils.AnimatorBoolHashes;
+            for (int i = 0; i < ids.Length; i++)
+                anim.SetBool(ids[i], ids[i] == active);
         }
 
         private void ApplyPendingTriggers(Animator anim)
         {
-            if (_pendingTriggers == 0) return;
-            if (_pendingTriggers.HasFlag(AnimTriggers.Hurt)) anim.SetTrigger("Hurt");
-            if (_pendingTriggers.HasFlag(AnimTriggers.Die)) anim.SetTrigger("Die");
-            if (_pendingTriggers.HasFlag(AnimTriggers.Fire)) anim.SetTrigger("Fire");
-            if (_pendingTriggers.HasFlag(AnimTriggers.Pickup)) anim.SetTrigger("Pickup");
-            if (_pendingTriggers.HasFlag(AnimTriggers.Radio)) anim.SetTrigger("Radio");
-            if (_pendingTriggers.HasFlag(AnimTriggers.Drop)) anim.SetTrigger("Drop");
-            if (_pendingTriggers.HasFlag(AnimTriggers.Sleep)) anim.SetTrigger("Sleep");
-            if (_pendingTriggers.HasFlag(AnimTriggers.Injector)) anim.SetTrigger("Injector");
-            if (_pendingTriggers.HasFlag(AnimTriggers.InjectorCancel)) anim.SetTrigger("InjectorCancel");
-            if (_pendingTriggers.HasFlag(AnimTriggers.ReloadTrigger)) anim.SetTrigger("Reload");
-            if (_pendingTriggers.HasFlag(AnimTriggers.AttackTrigger)) anim.SetTrigger("Attack");
-            if (_pendingTriggers.HasFlag(AnimTriggers.SwapTrigger)) anim.SetTrigger("Swap");
-            if (_pendingTriggers.HasFlag(AnimTriggers.BurstTrigger)) anim.SetTrigger("Burst");
-            if (_pendingTriggers.HasFlag(AnimTriggers.StompTrigger)) anim.SetTrigger("Stomp");
-            if (_pendingTriggers.HasFlag(AnimTriggers.PushTrigger)) anim.SetTrigger("Push");
-            if (_pendingTriggers.HasFlag(AnimTriggers.SnapTrigger)) anim.SetTrigger("Snap");
+            var t = _pendingTriggers;
+            if (t == 0) return;
+            if (t.HasFlag(AnimTriggers.Hurt)) anim.SetTrigger(P.Hurt);
+            if (t.HasFlag(AnimTriggers.Die)) anim.SetTrigger(P.Die);
+            if (t.HasFlag(AnimTriggers.Fire)) anim.SetTrigger(P.Fire);
+            if (t.HasFlag(AnimTriggers.Pickup)) anim.SetTrigger(P.Pickup);
+            if (t.HasFlag(AnimTriggers.Radio)) anim.SetTrigger(P.Radio);
+            if (t.HasFlag(AnimTriggers.Drop)) anim.SetTrigger(P.Drop);
+            if (t.HasFlag(AnimTriggers.Sleep)) anim.SetTrigger(P.Sleep);
+            if (t.HasFlag(AnimTriggers.Injector)) anim.SetTrigger(P.Injector);
+            if (t.HasFlag(AnimTriggers.InjectorCancel)) anim.SetTrigger(P.InjectorCancel);
+            if (t.HasFlag(AnimTriggers.ReloadTrigger)) anim.SetTrigger(P.Reload);
+            if (t.HasFlag(AnimTriggers.AttackTrigger)) anim.SetTrigger(P.Attack);
+            if (t.HasFlag(AnimTriggers.SwapTrigger)) anim.SetTrigger(P.Swap);
+            if (t.HasFlag(AnimTriggers.BurstTrigger)) anim.SetTrigger(P.Burst);
+            if (t.HasFlag(AnimTriggers.StompTrigger)) anim.SetTrigger(P.Stomp);
+            if (t.HasFlag(AnimTriggers.PushTrigger)) anim.SetTrigger(P.Push);
+            if (t.HasFlag(AnimTriggers.SnapTrigger)) anim.SetTrigger(P.Snap);
         }
 
         private void ApplyFacing()

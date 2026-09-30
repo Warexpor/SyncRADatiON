@@ -1,6 +1,6 @@
 # SyncRADation — SIGNALIS Multiplayer Mod
 
-**Status:** v0.5.57 — protocol **v12**. Host-authoritative world/story + native presentation/FMOD. Dual-instance playtest required. Decompile: `~/Archive/Windows-Desktop/Dev/SIGNALIS DECOMPILED` (`~/Omarchy_Backup/Desktop/Dev/...` is gone on this machine).
+**Status:** v0.5.58 — protocol **v13**. Host-authoritative world/story + native presentation/FMOD. Dual-instance playtest required. Decompile: `~/Archive/Windows-Desktop/Dev/SIGNALIS DECOMPILED` (`~/Omarchy_Backup/Desktop/Dev/...` is gone on this machine).
 
 ## Product
 
@@ -17,7 +17,7 @@ LAN multiplayer MelonLoader mod for SIGNALIS (Unity IL2CPP / Unhollower-style Ma
 
 Walk up to a dropped prop for the native TAKE prompt (yes/no inspect, ammo count). There is no extra pickup key.
 
-## What is synced (0.5.57)
+## What is synced (0.5.58)
 
 | Area | Authority | Notes |
 |------|-----------|--------|
@@ -49,7 +49,7 @@ Bootstrap/                 # SyncRADationMod, ModRuntime, PluginInfo
 Networking/
   LanNetworkManager*.cs    # thin transport + HandlerRegistry + PublicApi
   Dispatch/                # TryDispatch* → domain NetHandlers
-  Messages/                # NetMessages (protocol 12)
+  Messages/                # NetMessages (protocol 13)
 Domains/
   Doors/ Enemies/ Bosses/ Story/ Scene/ Audio/
   Pickups/ Inventory/ Players/ Combat/ Puzzles/ Session/
@@ -66,7 +66,7 @@ UI/ Config/ Cheats/
 
 ## Protocol
 
-- **ProtocolVersion = 12** (handshake SchemaHash/ModVersion, PartyLife/PartySave/PartyRoom 40–42; v11 retained)
+- **ProtocolVersion = 13** (PuzzleStateEntry Seq/Mask, PuzzleType 78–81, StoryCmd 20–23, NetMessageType 60–63; v12 retained)
 - Port default `7777`, key `SyncRADation`
 - v6: full SProgress dump, UnityEvent presentation, FmodEmitter Play/Stop
 - v7: `PlayerRoster` (3+ peers), recycled client ids, join/resync dump to the requester only
@@ -75,6 +75,7 @@ UI/ Config/ Cheats/
 - v10: PuzzleType 73–76 (GunCase, AraNest, LAB_RifleQuest, LOV_Microfiche) + client emit for SwingDoor/DoorwaySimple/StorageBox/KeyGrid/ArianePhotoCode
 - v11: PuzzleType 77 (`MED_Adler_EVdoors` DoorL/DoorR local X pose) + AdoptNativeSpawn template bank + death-bag ring Note
 - v12: handshake gains `SchemaHash` + `ModVersion`; `PartyLife`/`PartySave`/`PartyRoom` (NetMessageType 40–42): downed/revive/wipe + party-save snapshots; N-player hardening (Sequenced channel 1 for enemy/boss snapshots, handshake-gated sends)
+- v13: `PuzzleStateEntry` gains `Seq` + `Mask` (host-stamped version / client edit mask, cell-wise merge); PuzzleType 78–81 (`ROT_DiskManager`, `DET_WallCreature`, `MapReveal`, `MEM_ChecklistLogic`); StoryCmd 20–23 (`GoToPenny`, `PartyCheat`, `EndDelta`, `EndGraves`; requests ride `InspectFlag` Int0 = 100 + cmd); `WorldPickupDeny` 60, `AvatarOneShot` 61, `BossHit` 62, `EnemyAction` 63
 
 ## This machine (dual-instance, Linux + Proton)
 

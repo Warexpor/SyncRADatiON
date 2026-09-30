@@ -1,4 +1,4 @@
-// Host writes SProgress; clients only apply via StoryCommit.
+// Host writes SProgress directly; client writes are forwarded to the host (host applies + commits).
 using System;
 using HarmonyLib;
 using SyncRADation.Networking;
@@ -14,68 +14,73 @@ namespace SyncRADation.Patches
         [HarmonyPatch(nameof(SProgress.SetBool))]
         public static bool PrefixBool(string key, bool val)
         {
-            return GateSet(key, 0, val ? 1 : 0, 0f, 0f, 0f);
+            return GateSet(new StoryFlagEntry { Kind = 0, Key = key, BoolVal = val });
         }
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(SProgress.SetInt))]
         public static bool PrefixInt(string key, int val)
         {
-            return GateSet(key, 1, val, 0f, 0f, 0f);
+            return GateSet(new StoryFlagEntry { Kind = 1, Key = key, IntVal = val });
         }
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(SProgress.SetFloat))]
         public static bool PrefixFloat(string key, float val)
         {
-            return GateSet(key, 2, 0, val, 0f, 0f);
+            return GateSet(new StoryFlagEntry { Kind = 2, Key = key, FloatVal = val });
         }
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(SProgress.SetString))]
         public static bool PrefixString(string key, string val)
         {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
-            if (NetGate.Host)
-            {
-                LanNetworkManager.Instance.StorySync.NoteString(key, val);
-                return true;
-            }
-            if (IsInspectOrigin())
-            {
-                LanNetworkManager.Instance.SendInteractionRequest(
-                    0, InteractionKind.InspectFlag, 3, 0, 0f, 0f, 0f, (key ?? "") + "\n" + (val ?? ""));
-                return true;
-            }
-            return false;
+            return GateSet(new StoryFlagEntry { Kind = 3, Key = key, StringVal = val ?? "" });
         }
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(SProgress.SetVector))]
         public static bool PrefixVector(string key, Vector3 val)
         {
-            return GateSet(key, 4, 0, val.x, val.y, val.z);
+            return GateSet(new StoryFlagEntry { Kind = 4, Key = key, FloatVal = val.x, VecY = val.y, VecZ = val.z });
         }
 
-        static bool GateSet(string key, int kind, int int1, float f0, float f1, float f2)
+        static bool GateSet(StoryFlagEntry e)
         {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
+            if (!NetGate.Live) return true;
+            var story = LanNetworkManager.Instance.StorySync;
+            if (NetGate.IsApplying)
+            {
+                // ApplyCommit writes must never echo back. A client-applied presentation (cutscene skip,
+                // EventZone / MultiCondition / Proceed UnityEvents) is the one apply scope whose writes are
+                // *consequences* the host may not have run (host in another room): author them on the host.
+                if (NetGate.Client && StorySyncService.ClientAuthorScope)
+                    story.ClientForward(e);
+                return true;
+            }
             if (NetGate.Host)
             {
-                var story = LanNetworkManager.Instance.StorySync;
-                if (kind == 0) story.NoteBool(key, int1 != 0);
-                else if (kind == 1) story.NoteInt(key, int1);
-                else if (kind == 2) story.NoteFloat(key, f0);
-                else story.NoteVector(key, new Vector3(f0, f1, f2));
+                switch (e.Kind)
+                {
+                    case 0: story.NoteBool(e.Key, e.BoolVal); break;
+                    case 1: story.NoteInt(e.Key, e.IntVal); break;
+                    case 2: story.NoteFloat(e.Key, e.FloatVal); break;
+                    case 3: story.NoteString(e.Key, e.StringVal); break;
+                    default: story.NoteVector(e.Key, new Vector3(e.FloatVal, e.VecY, e.VecZ)); break;
+                }
                 return true;
             }
+            // Client write outside an apply scope. Book / EventScreen flags keep their immediate request;
+            // everything else (Interaction.trigger UnityEvents, cutscene coroutines, NPC / pickup flags) is
+            // coalesced and forwarded so it is no longer silently dropped. Local write always happens.
             if (IsInspectOrigin())
             {
-                LanNetworkManager.Instance.SendInteractionRequest(
-                    0, InteractionKind.InspectFlag, kind, int1, f0, f1, f2, key ?? "");
+                if (!StorySyncService.ForwardSuppressed && !StorySyncService.SameAsLocal(e))
+                    StorySyncService.SendFlag(LanNetworkManager.Instance, e);
                 return true;
             }
-            return false;
+            story.ClientForward(e);
+            return true;
         }
 
         static bool IsInspectOrigin()
@@ -92,25 +97,48 @@ namespace SyncRADation.Patches
         }
     }
 
+    // SaveManager.Save/Load/NewGame dump and restore *per-player* state (hp, position, enemies, minimap,
+    // inventory, END statics) through SProgress.Set*: never forward those to the host.
+    [HarmonyPatch(typeof(SaveManager), nameof(SaveManager.Save))]
+    public static class SaveManagerSaveScopePatch
+    {
+        [HarmonyPrefix] public static void Prefix() => StorySyncService.BeginSuppressForward();
+        [HarmonyFinalizer] public static void Finalizer() => StorySyncService.EndSuppressForward();
+    }
+
+    [HarmonyPatch(typeof(SaveManager), nameof(SaveManager.Load))]
+    public static class SaveManagerLoadScopePatch
+    {
+        [HarmonyPrefix] public static void Prefix() => StorySyncService.BeginSuppressForward();
+        [HarmonyFinalizer]
+        public static void Finalizer()
+        {
+            StorySyncService.EndSuppressForward();
+            try { LanNetworkManager.Instance?.StorySync.ResetEndBase(); }
+            catch (System.Exception ex) { StorySyncService.WarnOnce("Load ResetEndBase", ex); }
+        }
+    }
+
+    [HarmonyPatch(typeof(SaveManager), nameof(SaveManager.NewGame))]
+    public static class SaveManagerNewGameScopePatch
+    {
+        [HarmonyPrefix] public static void Prefix() => StorySyncService.BeginSuppressForward();
+        [HarmonyFinalizer]
+        public static void Finalizer()
+        {
+            StorySyncService.EndSuppressForward();
+            try { LanNetworkManager.Instance?.StorySync.ResetEndBase(); }
+            catch (System.Exception ex) { StorySyncService.WarnOnce("NewGame ResetEndBase", ex); }
+        }
+    }
+
+    // END_Manager: Add* and the direct static writes (NPC_Tracker, InteractiveLockSingle, PlayerState heal,
+    // MEM_ChecklistLogic) run natively on every peer; the client's *delta* is sent to the host
+    // (StorySyncService.FlushEndDelta) and the host commits one shared tally. OBS_Tracker.Trigger is an
+    // empty method in this build (shares RVA 0x2CB6B0 with every empty stub) - never patch it.
     [HarmonyPatch(typeof(END_Manager))]
     public static class EndManagerPatches
     {
-        [HarmonyPrefix]
-        [HarmonyPatch(nameof(END_Manager.AddCircle))]
-        public static bool PrefixCircle() => AllowHostStat();
-
-        [HarmonyPrefix]
-        [HarmonyPatch(nameof(END_Manager.AddDeath))]
-        public static bool PrefixDeath() => AllowHostStat();
-
-        [HarmonyPrefix]
-        [HarmonyPatch(nameof(END_Manager.AddGraves))]
-        public static bool PrefixGraves() => AllowHostStat();
-
-        [HarmonyPrefix]
-        [HarmonyPatch(nameof(END_Manager.AddLeave))]
-        public static bool PrefixLeave() => AllowHostStat();
-
         [HarmonyPrefix]
         [HarmonyPatch(nameof(END_Manager.EvaluateEnding))]
         public static bool PrefixEvaluate()
@@ -133,13 +161,77 @@ namespace SyncRADation.Patches
         public static void PostfixEvaluate()
         {
             if (!NetGate.Host || NetGate.IsApplying) return;
-            LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.DetermineEnding, 0, END_Manager.Ending, "");
+            LanNetworkManager.Instance.StorySync.MarkDirty();
         }
+    }
 
-        private static bool AllowHostStat()
+    // Secret ending: END_Graves.Graves() writes END_Manager.Ending = 1 directly.
+    [HarmonyPatch(typeof(END_Graves), nameof(END_Graves.Graves))]
+    public static class EndGravesPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix()
+        {
+            if (!NetGate.Live || NetGate.IsApplying) return;
+            var story = LanNetworkManager.Instance.StorySync;
+            if (NetGate.Host)
+            {
+                story.MarkDirty();
+                return;
+            }
+            LanNetworkManager.Instance.SendInteractionRequest(
+                0, InteractionKind.InspectFlag, 100 + (int)StoryCmd.EndGraves);
+        }
+    }
+
+    // Ending start is party-wide: host broadcasts (after a fresh commit), a client asks the host.
+    [HarmonyPatch(typeof(Finale), nameof(Finale.determineEnding))]
+    public static class FinaleDetermineEndingPatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix()
         {
             if (NetGate.IsApplying || !NetGate.Live) return true;
-            return !NetGate.Client;
+            var net = LanNetworkManager.Instance;
+            if (NetGate.Host)
+            {
+                net.StorySync.HostBroadcastEnding(net);
+                return true;
+            }
+            net.SendInteractionRequest(0, InteractionKind.InspectFlag, 100 + (int)StoryCmd.DetermineEnding);
+            return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(Finale), nameof(Finale.goToPenny))]
+    public static class FinaleGoToPennyPatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix()
+        {
+            if (NetGate.IsApplying || !NetGate.Live) return true;
+            var net = LanNetworkManager.Instance;
+            if (NetGate.Host)
+            {
+                if (net.StorySync.Throttled("@goToPenny", 5f)) return false;
+                net.StorySync.BroadcastPresentation(StoryCmd.GoToPenny, 0, 0, "");
+                return true;
+            }
+            net.SendInteractionRequest(0, InteractionKind.InspectFlag, 100 + (int)StoryCmd.GoToPenny);
+            return false;
+        }
+    }
+
+    // Cutscene scripts run console strings (`goto <room>`, `sethp 1`) through Cheats.cheat. Peers outside the
+    // cutscene room skip the cutscene and would never move: relay so the whole party is gathered.
+    [HarmonyPatch(typeof(global::Cheats), nameof(global::Cheats.cheat))]
+    public static class ScriptedCheatPatch
+    {
+        [HarmonyPrefix]
+        public static void Prefix(string cheat)
+        {
+            if (NetGate.IsApplying || !NetGate.Live) return;
+            LanNetworkManager.Instance.StorySync.OnScriptedCheat(cheat);
         }
     }
 
@@ -244,6 +336,9 @@ namespace SyncRADation.Patches
             }
             int enumVal = SafeEnum(item);
             if (enumVal < 0) return false;
+            // One storage transaction in flight per client: a double press before the ack would
+            // otherwise box twice but only remove once. Put reserves the bag copy up front.
+            if (!StorageTxn.TryBegin(put, item, enumVal, ref n)) return false;
             LanNetworkManager.Instance.SendInteractionRequest(
                 0,
                 put ? InteractionKind.StoragePut : InteractionKind.StorageTake,
@@ -336,7 +431,15 @@ namespace SyncRADation.Patches
 
         public static bool Start(int dialogueId)
         {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
+            if (NetGate.IsApplying)
+            {
+                // A story Start applied from the host / a relay replaces whatever local flavor line was up
+                // (flavor never goes through ApplyPresentation). Left set, every later Continue on this peer
+                // took the flavor branch and never reached the host.
+                ClearFlavor();
+                return true;
+            }
+            if (!NetGate.Live) return true;
             if (LocalInspect.DialoguerFlavor(dialogueId) || LocalInspect.InspectScreen())
             {
                 _flavorId = dialogueId;
@@ -350,8 +453,11 @@ namespace SyncRADation.Patches
             _flavorActive = false;
             if (NetGate.Host)
             {
-                LanNetworkManager.Instance.StorySync.BroadcastPresentation(
-                    StoryCmd.DialoguerStartId, 0, dialogueId, "");
+                var story = LanNetworkManager.Instance.StorySync;
+                // Duplicate Start of the same dialogue (a client request landed just before) is swallowed.
+                if (!story.HostDialogueStart(dialogueId))
+                    return false;
+                story.BroadcastPresentation(StoryCmd.DialoguerStartId, 0, dialogueId, story.DialogueTag());
                 return true;
             }
             PlaytestLog.Event("Story", "request Dialoguer " + dialogueId);
@@ -370,12 +476,18 @@ namespace SyncRADation.Patches
                     PartyKeyRing.RestoreUiNames();
                 return true;
             }
+            var story = LanNetworkManager.Instance.StorySync;
             if (NetGate.Host)
             {
-                LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.DialogueContinue, 0, choice, "");
+                // Host press: always valid, advances the step so in-flight client Continues for the old step drop.
+                story.HostDialogueAdvance(-1, 0, false);
+                story.BroadcastPresentation(StoryCmd.DialogueContinue, 0, choice, story.DialogueTag());
                 return true;
             }
-            LanNetworkManager.Instance.SendInteractionRequest(0, InteractionKind.DialogueContinue, choice);
+            // Carry the step this peer is on: with N players any of them may press, the host applies the first
+            // request for a step and drops the rest as stale.
+            LanNetworkManager.Instance.SendInteractionRequest(0, InteractionKind.DialogueContinue, choice,
+                0, 0f, 0f, 0f, story.DialogueTag());
             return false;
         }
 
@@ -387,12 +499,15 @@ namespace SyncRADation.Patches
                 _flavorActive = false;
                 return true;
             }
+            var story = LanNetworkManager.Instance.StorySync;
             if (NetGate.Host)
             {
-                LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.DialogueEnd, 0, 0, "");
+                story.HostDialogueAdvance(-1, 0, true);
+                story.BroadcastPresentation(StoryCmd.DialogueEnd, 0, 0, story.DialogueTag());
                 return true;
             }
-            LanNetworkManager.Instance.SendInteractionRequest(0, InteractionKind.DialogueEnd);
+            LanNetworkManager.Instance.SendInteractionRequest(0, InteractionKind.DialogueEnd,
+                0, 0, 0f, 0f, 0f, story.DialogueTag());
             return false;
         }
 

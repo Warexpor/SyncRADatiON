@@ -41,7 +41,15 @@ namespace SyncRADation.Networking
         PartyLife = 40,
         PartySave = 41,
         PartyRoom = 42,
-        _Highest = 42
+        /// <summary>Host → client: world pickup claim refused (another player got it first).</summary>
+        WorldPickupDeny = 60,
+        /// <summary>Peer → all (host relays): reliable avatar one-shot triggers (Fire/Hurt/Die/...).</summary>
+        AvatarOneShot = 61,
+        /// <summary>Client → host: boss hitbox damage / Falke stab request.</summary>
+        BossHit = 62,
+        /// <summary>Client → host: authoritative enemy side effect (stomp Kill, push, burn, wake).</summary>
+        EnemyAction = 63,
+        _Highest = 63
     }
 
     public enum InteractionKind : byte
@@ -87,6 +95,11 @@ namespace SyncRADation.Networking
         EventZoneFire = 12,
         MultiConditionFire = 13,
         BookOpen = 14,
+        // 20-39: Story domain. Requests reuse InteractionKind.InspectFlag with Int0 = 100 + StoryCmd.
+        GoToPenny = 20,
+        PartyCheat = 21,
+        EndDelta = 22,
+        EndGraves = 23,
     }
 
     public enum DeathKind : byte
@@ -900,6 +913,12 @@ namespace SyncRADation.Networking
         LOV_Microfiche = 76,
         // v11 — MED_Adler_EVdoors DoorL/DoorR local X pose
         MED_Adler_EVdoors = 77,
+        // uncovered durable world objects (puzzle worker)
+        ROT_DiskManager = 78,
+        DET_WallCreature = 79,
+        MapReveal = 80,
+        // MEM_ChecklistLogic: Int0 = checked-item bitmask (monotonic, host ORs concurrent edits), Bool0 = complete
+        MEM_ChecklistLogic = 81,
     }
 
     public struct PuzzleStateEntry
@@ -917,6 +936,17 @@ namespace SyncRADation.Networking
         public float Float0;
         /// <summary>v9: Kolibri radioIntensity / Adler progress.</summary>
         public float Float1;
+        /// <summary>
+        /// Host-stamped version of the resulting state (monotonic per type+WorldId). 0 = unversioned.
+        /// Client-authored entries carry the last host Seq the client had applied (its base version).
+        /// </summary>
+        public int Seq;
+        /// <summary>
+        /// Client-authored edit mask vs the sender's previous state: bits 0..8 = Bool0,Bool1,Bool2,Int0..Int3,Float0,Float1
+        /// changed; bits 16..23 = 16-bit half of Int0..Int3 changed (lo,hi per int). The host merges only those
+        /// cells onto its current state. 0 = no merge info (whole entry, arrival order).
+        /// </summary>
+        public int Mask;
 
         public void Serialize(NetDataWriter w)
         {
@@ -931,6 +961,8 @@ namespace SyncRADation.Networking
             w.Put(Int3);
             w.Put(Float0);
             w.Put(Float1);
+            w.Put(Seq);
+            w.Put(Mask);
         }
 
         public static PuzzleStateEntry Deserialize(NetDataReader r)
@@ -947,7 +979,9 @@ namespace SyncRADation.Networking
                 Int2 = r.GetInt(),
                 Int3 = r.GetInt(),
                 Float0 = r.GetFloat(),
-                Float1 = r.GetFloat()
+                Float1 = r.GetFloat(),
+                Seq = r.GetInt(),
+                Mask = r.GetInt()
             };
         }
     }
@@ -999,6 +1033,121 @@ namespace SyncRADation.Networking
                 WorldId = r.GetLong(),
                 ItemEnum = r.GetUShort(),
                 Count = r.GetInt()
+            };
+    }
+
+    public enum EnemyActionKind : byte
+    {
+        Kill = 0,
+        KillSilent = 1,
+        Knockback = 2,
+        GetPushed = 3,
+        Burndown = 4,
+        WakeUp = 5,
+    }
+
+    /// <summary>Client → host: native EnemyController side effect a puppeted client cannot apply itself.</summary>
+    public struct EnemyActionMessage
+    {
+        public int SenderPlayerId;
+        public long EnemyWorldId;
+        public EnemyActionKind Action;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(SenderPlayerId);
+            w.Put(EnemyWorldId);
+            w.Put((byte)Action);
+        }
+
+        public static EnemyActionMessage Deserialize(NetDataReader r) =>
+            new EnemyActionMessage
+            {
+                SenderPlayerId = r.GetInt(),
+                EnemyWorldId = r.GetLong(),
+                Action = (EnemyActionKind)r.GetByte()
+            };
+    }
+
+    /// <summary>Host → claimer: pickup was already claimed — roll back any native bag add.</summary>
+    public struct WorldPickupDenyMessage
+    {
+        public int TargetPlayerId;
+        public long WorldId;
+        public ushort ItemEnum;
+        public int Count;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(TargetPlayerId);
+            w.Put(WorldId);
+            w.Put(ItemEnum);
+            w.Put(Count);
+        }
+
+        public static WorldPickupDenyMessage Deserialize(NetDataReader r) =>
+            new WorldPickupDenyMessage
+            {
+                TargetPlayerId = r.GetInt(),
+                WorldId = r.GetLong(),
+                ItemEnum = r.GetUShort(),
+                Count = r.GetInt()
+            };
+    }
+
+    /// <summary>Reliable one-shot avatar triggers so Fire/Hurt/Die never ride the lossy sequenced pose.</summary>
+    public struct AvatarOneShotMessage
+    {
+        public int SenderPlayerId;
+        public AnimTriggers Triggers;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(SenderPlayerId);
+            w.Put((ushort)Triggers);
+        }
+
+        public static AvatarOneShotMessage Deserialize(NetDataReader r) =>
+            new AvatarOneShotMessage
+            {
+                SenderPlayerId = r.GetInt(),
+                Triggers = (AnimTriggers)r.GetUShort()
+            };
+    }
+
+    public enum BossHitKind : byte
+    {
+        Damage = 0,
+        Stab = 1,
+        /// <summary>Falke PickupSpears[Amount] taken (client request; host relays to all as presentation).</summary>
+        TakeSpear = 2,
+        /// <summary>Host → clients: LAB Chimera Isa rifle fired (LateUpdate presentation on clients).</summary>
+        ChimeraShot = 3,
+    }
+
+    /// <summary>Client → host: boss HP delta (Hitbox.HP is mutated directly by PlayerAttack), Falke Stab/takeSpear. Host → clients: spear taken, Chimera shot.</summary>
+    public struct BossHitMessage
+    {
+        public int SenderPlayerId;
+        public long WorldId;
+        public BossHitKind Kind;
+        public int Amount;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(SenderPlayerId);
+            w.Put(WorldId);
+            w.Put((byte)Kind);
+            w.Put(Amount);
+        }
+
+        public static BossHitMessage Deserialize(NetDataReader r) =>
+            new BossHitMessage
+            {
+                SenderPlayerId = r.GetInt(),
+                WorldId = r.GetLong(),
+                Kind = (BossHitKind)r.GetByte(),
+                Amount = r.GetInt()
             };
     }
 
