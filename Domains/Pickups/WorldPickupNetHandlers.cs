@@ -141,7 +141,7 @@ namespace SyncRADation.Networking
                     var an = InventoryManager.getItem(item);
                     if (an != null) InventoryManager.AddItem(an, count > 0 ? count : 1);
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
             else if (item != Items.itemlist.None)
             {

@@ -45,7 +45,7 @@ namespace SyncRADation.Sync
             if (log == null) return;
             string line = "[" + tag + "] " + RolePrefix() + msg;
             float now = 0f;
-            try { now = Time.unscaledTime; } catch { }
+            try { now = Time.unscaledTime; } catch (System.Exception e) { Guard.Swallow(e); }
             if (line == _lastLine && now - _lastAt < RepeatWindow)
                 return;
             _lastLine = line;

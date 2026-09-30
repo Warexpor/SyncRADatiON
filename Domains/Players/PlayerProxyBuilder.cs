@@ -91,7 +91,7 @@ namespace SyncRADation.Players
                 proxyAnim.updateMode = AnimatorUpdateMode.Normal;
                 proxyAnim.speed = 1f;
                 proxyAnim.enabled = true;
-                try { proxyAnim.Rebind(); proxyAnim.Update(0f); } catch { }
+                try { proxyAnim.Rebind(); proxyAnim.Update(0f); } catch (System.Exception e) { Guard.Swallow(e); }
                 if (ModRuntime.VerboseLogging)
                     log?.Msg("[Proxy] Animator ENABLED: ctrl=" + sourceAnim.runtimeAnimatorController
                     + " avatar=" + sourceAnim.avatar);
@@ -162,7 +162,7 @@ namespace SyncRADation.Players
                     CharacterModelType.ApplyType();
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
 
             var anyRenderer = proxy.GetComponentInChildren<Renderer>(true);
             if (anyRenderer != null)

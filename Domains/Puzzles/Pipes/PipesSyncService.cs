@@ -23,7 +23,7 @@ namespace SyncRADation.Networking
         public static void SnapPipes(ROT_Pipes x, bool play)
         {
             if (x == null) return;
-            try { x.loaded = true; } catch { }
+            try { x.loaded = true; } catch (System.Exception e) { Guard.Swallow(e); }
             if (play && PuzzleSyncService.TryStartWorldAnim(PuzzleType.ROT_Pipes, x.gameObject))
             {
                 try { x.TurnValve(); }
@@ -36,8 +36,8 @@ namespace SyncRADation.Networking
         static void PosePipes(ROT_Pipes x)
         {
             if (x == null) return;
-            try { if (x.Blockers != null) x.Blockers.SetActive(false); } catch { }
-            try { if (x.interaction != null) x.interaction.SetActive(false); } catch { }
+            try { if (x.Blockers != null) x.Blockers.SetActive(false); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.interaction != null) x.interaction.SetActive(false); } catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var leaks = x.leaks;
@@ -45,11 +45,11 @@ namespace SyncRADation.Networking
                 {
                     for (int i = 0; i < leaks.Length; i++)
                     {
-                        try { if (leaks[i] != null) leaks[i].Stop(); } catch { }
+                        try { if (leaks[i] != null) leaks[i].Stop(); } catch (System.Exception e) { Guard.Swallow(e); }
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var lights = x.lights;
@@ -57,12 +57,12 @@ namespace SyncRADation.Networking
                 {
                     for (int i = 0; i < lights.Length; i++)
                     {
-                        try { if (lights[i] != null) lights[i].enabled = false; } catch { }
+                        try { if (lights[i] != null) lights[i].enabled = false; } catch (System.Exception e) { Guard.Swallow(e); }
                     }
                 }
             }
-            catch { }
-            try { if (x.loopSFX != null) x.loopSFX.Stop(); } catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.loopSFX != null) x.loopSFX.Stop(); } catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 }

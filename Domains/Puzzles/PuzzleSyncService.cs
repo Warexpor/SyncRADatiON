@@ -112,7 +112,7 @@ namespace SyncRADation.Networking
         public void RefreshScene()
         {
             WorldLookup.Invalidate();
-            try { SyncRADation.Patches.EnvEmit.ClearOnce(); } catch { }
+            try { SyncRADation.Patches.EnvEmit.ClearOnce(); } catch (Exception e) { Guard.Swallow(e); }
             _scanned = false;
             _needFullSend = true;
             _lastSent.Clear();
@@ -578,7 +578,7 @@ namespace SyncRADation.Networking
                 if (Readers.TryGetValue(type, out reader))
                     return reader(type, c, wid, out entry);
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
             return false;
         }
 
@@ -1164,7 +1164,7 @@ namespace SyncRADation.Networking
                 for (int i = 0; i < all.Length; i++)
                     DisableOne(all[i]);
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
         }
 
         internal static void DisableOne(Interaction it)
@@ -1174,9 +1174,9 @@ namespace SyncRADation.Networking
             {
                 if (it.GetComponent<ItemPickup>() != null) return;
             }
-            catch { }
-            try { it.triggered = true; } catch { }
-            try { it.enabled = false; } catch { }
+            catch (Exception e) { Guard.Swallow(e); }
+            try { it.triggered = true; } catch (Exception e) { Guard.Swallow(e); }
+            try { it.enabled = false; } catch (Exception e) { Guard.Swallow(e); }
         }
 
         static string AnimKey(PuzzleType type, ulong id) => ((byte)type) + "_" + id.ToString("X");

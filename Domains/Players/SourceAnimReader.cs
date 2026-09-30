@@ -62,7 +62,7 @@ namespace SyncRADation.Players
                 }
                 _prevNormTime = nt;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
 
             msg.Climbing = false;
             try
@@ -70,7 +70,7 @@ namespace SyncRADation.Players
                 if (PlayerState.gameState == PlayerState.gameStates.traversing)
                     msg.Climbing = true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             if (!msg.Climbing)
                 msg.Climbing = CrawlMeshActive();
 
@@ -90,18 +90,18 @@ namespace SyncRADation.Players
 
             if (msg.AimingTime > 0.5f)
                 b |= AnimBools.Aiming;
-            try { if (PlayerState.aiming) b |= AnimBools.Aiming; } catch { }
+            try { if (PlayerState.aiming) b |= AnimBools.Aiming; } catch (System.Exception e) { Guard.Swallow(e); }
 
             bool aiming = b.HasFlag(AnimBools.Aiming);
             bool inventory = false;
-            try { inventory = SafeGetBool(anim, "Inventory"); } catch { }
+            try { inventory = SafeGetBool(anim, "Inventory"); } catch (System.Exception e) { Guard.Swallow(e); }
             bool playOk = true;
             try
             {
                 playOk = PlayerState.gameState == PlayerState.gameStates.play
                     && !PlayerState.reloading;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             bool canFire = aiming && playOk && !inventory;
 
             // Live round: magAmmo decreased. Empty click is a separate flag — never Fire.
@@ -116,7 +116,7 @@ namespace SyncRADation.Players
                 if (eq != null && _hasMagAmmo)
                     magEmpty = eq.magAmmo <= 0;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
 
             if (ammoShot)
                 b |= AnimBools.Shooting;
@@ -132,15 +132,15 @@ namespace SyncRADation.Players
                 b |= AnimBools.EmptyClick;
 
             if (SafeGetBool(anim, "Running")) b |= AnimBools.Running;
-            try { if (AlternatePlayerController.running) b |= AnimBools.Running; } catch { }
-            try { if (PlayerState.charState == PlayerState.charStates.run) b |= AnimBools.Running; } catch { }
+            try { if (AlternatePlayerController.running) b |= AnimBools.Running; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (PlayerState.charState == PlayerState.charStates.run) b |= AnimBools.Running; } catch (System.Exception e) { Guard.Swallow(e); }
             if (SafeGetBool(anim, "Grounded")) b |= AnimBools.Grounded;
             if (SafeGetBool(anim, "Crouch")) b |= AnimBools.Crouch;
             if (SafeGetBool(anim, "Blocked")) b |= AnimBools.Blocked;
             if (SafeGetBool(anim, "Dead")) b |= AnimBools.Dead;
             if (SafeGetBool(anim, "Inventory")) b |= AnimBools.Inventory;
-            try { if (PlayerState.reloading) b |= AnimBools.Reload; } catch { }
-            try { if (PlayerAttack.reloading) b |= AnimBools.Reload; } catch { }
+            try { if (PlayerState.reloading) b |= AnimBools.Reload; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (PlayerAttack.reloading) b |= AnimBools.Reload; } catch (System.Exception e) { Guard.Swallow(e); }
             if (SafeGetBool(anim, "Attack")) b |= AnimBools.Attack;
             if (SafeGetBool(anim, "Injured")) b |= AnimBools.Injured;
             if (SafeGetBool(anim, "Stomp")) b |= AnimBools.Stomp;
@@ -236,7 +236,7 @@ namespace SyncRADation.Players
                 if (_facingPivotCache != null)
                     return _facingPivotCache.rotation;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return player.transform.rotation;
         }
 
@@ -281,11 +281,11 @@ namespace SyncRADation.Players
                                 return true;
                             }
                         }
-                        catch { }
+                        catch (System.Exception e) { Guard.Swallow(e); }
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var ovens = SyncRADation.Sync.WorldLookup.All<DET_Oven>();
@@ -303,11 +303,11 @@ namespace SyncRADation.Players
                                 return true;
                             }
                         }
-                        catch { }
+                        catch (System.Exception e) { Guard.Swallow(e); }
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
 

@@ -27,7 +27,7 @@ namespace SyncRADation.Players
                 }
                 PlaytestLog.Verbose("Weapon", "damage cache " + _weaponDamageCache.Count);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public static float GetDamage(WeaponType wt)
@@ -217,7 +217,7 @@ namespace SyncRADation.Players
                         if (mats != null && mats.Length > 0)
                             dstLrs[i].sharedMaterials = mats;
                     }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                 }
                 dstLrs[i].useWorldSpace = false;
                 dstLrs[i].enabled = false;
@@ -231,7 +231,7 @@ namespace SyncRADation.Players
                     dstPsrs[i].sharedMaterial = srcPsrs[i].sharedMaterial;
                 if (srcPsrs[i].sharedMaterials != null && srcPsrs[i].sharedMaterials.Length > 0)
                 {
-                    try { dstPsrs[i].sharedMaterials = srcPsrs[i].sharedMaterials; } catch { }
+                    try { dstPsrs[i].sharedMaterials = srcPsrs[i].sharedMaterials; } catch (System.Exception e) { Guard.Swallow(e); }
                 }
             }
             // Path-matched renderer material pass (index order can diverge after IL2CPP Instantiate)
@@ -357,7 +357,7 @@ namespace SyncRADation.Players
                         dr.sharedMaterials = sr.sharedMaterials;
                     copied++;
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
             if (copied > 0)
                 PlaytestLog.Verbose("Weapon", "path-matched materials " + copied);
@@ -391,7 +391,7 @@ namespace SyncRADation.Players
                 var p = PlayerState.player;
                 if (p != null) return p;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return null;
         }
 

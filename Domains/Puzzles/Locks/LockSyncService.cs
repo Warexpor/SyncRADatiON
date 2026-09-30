@@ -31,7 +31,7 @@ namespace SyncRADation.Networking
                             plate = DoorNative.IsFlavorSeal(x.gameObject)
                                 || (x.door != null && DoorNative.IsFlavorSeal(x.door.gameObject));
                     }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                     entry = PuzzleDomainUtil.Mk(type, wid, locked, plate, false, 0, 0, 0, 0, 0);
                     return true;
                 }
@@ -102,7 +102,7 @@ namespace SyncRADation.Networking
                     bool ok = x.solved != null && x.solved.solved;
                     // Protocol 10: Int0 = 4×3-bit pinning pack (0..precision, live precision=6).
                     int pack = 0;
-                    try { pack = PackServiceLockPins(x); } catch { }
+                    try { pack = PackServiceLockPins(x); } catch (System.Exception e) { Guard.Swallow(e); }
                     entry = PuzzleDomainUtil.Mk(type, wid, ok, false, false, pack, 0, 0, 0, 0);
                     return true;
                 }
@@ -140,7 +140,7 @@ namespace SyncRADation.Networking
                     return;
                 }
             }
-            catch { }
+            catch (System.Exception ex) { Guard.Swallow(ex); }
             if (e.Bool0)
             {
                 if (x.door != null) x.door.locked = true;
@@ -151,7 +151,7 @@ namespace SyncRADation.Networking
             {
                 if (x.door != null)
                 {
-                    try { x.door.locked = false; } catch { }
+                    try { x.door.locked = false; } catch (System.Exception ex) { Guard.Swallow(ex); }
                     PuzzleSyncService.UnlockDoorObject(x.door.gameObject);
                 }
                 PuzzleSyncService.TryUnlockDoors(x.gameObject);
@@ -228,15 +228,15 @@ namespace SyncRADation.Networking
                 if (x.lockObject != null)
                     x.lockObject.SetActive(false);
             }
-            catch { }
+            catch (System.Exception ex) { Guard.Swallow(ex); }
             try
             {
                 if (x.Door != null)
                     PuzzleSyncService.UnlockDoorObject(x.Door.gameObject);
             }
-            catch { }
+            catch (System.Exception ex) { Guard.Swallow(ex); }
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
-            try { PuzzleSyncService.DisableInteractions(x); } catch { }
+            try { PuzzleSyncService.DisableInteractions(x); } catch (System.Exception ex) { Guard.Swallow(ex); }
         }
 
         public static void ApplyNumber(NumberLockNew x, PuzzleStateEntry e)
@@ -252,8 +252,8 @@ namespace SyncRADation.Networking
                     PuzzleSyncService.UnlockDoorObject(x.door.gameObject);
                 }
             }
-            catch { }
-            try { if (x.doorInt != null) PuzzleSyncService.DisableOne(x.doorInt); } catch { }
+            catch (System.Exception ex) { Guard.Swallow(ex); }
+            try { if (x.doorInt != null) PuzzleSyncService.DisableOne(x.doorInt); } catch (System.Exception ex) { Guard.Swallow(ex); }
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
         }
 
@@ -270,8 +270,8 @@ namespace SyncRADation.Networking
                     PuzzleSyncService.UnlockDoorObject(x.door.gameObject);
                 }
             }
-            catch { }
-            try { if (x.doorInt != null) PuzzleSyncService.DisableOne(x.doorInt); } catch { }
+            catch (System.Exception ex) { Guard.Swallow(ex); }
+            try { if (x.doorInt != null) PuzzleSyncService.DisableOne(x.doorInt); } catch (System.Exception ex) { Guard.Swallow(ex); }
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
         }
 
@@ -294,7 +294,7 @@ namespace SyncRADation.Networking
             if (med != null)
             {
                 bool was = false;
-                try { was = med.unlocked; } catch { }
+                try { was = med.unlocked; } catch (System.Exception ex) { Guard.Swallow(ex); }
                 med.unlocked = e.Bool0;
                 UnpackMedBits(med, e.Int0);
                 if (!e.Bool0) return;
@@ -314,7 +314,7 @@ namespace SyncRADation.Networking
             if (lab != null)
             {
                 bool was = false;
-                try { was = lab.unlocked; } catch { }
+                try { was = lab.unlocked; } catch (System.Exception ex) { Guard.Swallow(ex); }
                 lab.unlocked = e.Bool0;
                 UnpackLabBits(lab, e.Int0);
                 if (!e.Bool0) return;
@@ -336,11 +336,11 @@ namespace SyncRADation.Networking
         {
             int bits = 0;
             if (x == null) return bits;
-            try { if (x.Fire) bits |= 1; } catch { }
-            try { if (x.Earth) bits |= 2; } catch { }
-            try { if (x.Water) bits |= 4; } catch { }
-            try { if (x.Air) bits |= 8; } catch { }
-            try { if (x.Gold) bits |= 16; } catch { }
+            try { if (x.Fire) bits |= 1; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.Earth) bits |= 2; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.Water) bits |= 4; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.Air) bits |= 8; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.Gold) bits |= 16; } catch (System.Exception e) { Guard.Swallow(e); }
             return bits;
         }
 
@@ -348,34 +348,34 @@ namespace SyncRADation.Networking
         {
             int bits = 0;
             if (x == null) return bits;
-            try { if (x.Fire) bits |= 1; } catch { }
-            try { if (x.Earth) bits |= 2; } catch { }
-            try { if (x.Water) bits |= 4; } catch { }
-            try { if (x.Air) bits |= 8; } catch { }
-            try { if (x.Gold) bits |= 16; } catch { }
-            try { if (x.Star) bits |= 32; } catch { }
+            try { if (x.Fire) bits |= 1; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.Earth) bits |= 2; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.Water) bits |= 4; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.Air) bits |= 8; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.Gold) bits |= 16; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.Star) bits |= 32; } catch (System.Exception e) { Guard.Swallow(e); }
             return bits;
         }
 
         static void UnpackMedBits(MED_MultiLock x, int bits)
         {
             if (x == null) return;
-            try { x.Fire = (bits & 1) != 0; } catch { }
-            try { x.Earth = (bits & 2) != 0; } catch { }
-            try { x.Water = (bits & 4) != 0; } catch { }
-            try { x.Air = (bits & 8) != 0; } catch { }
-            try { x.Gold = (bits & 16) != 0; } catch { }
+            try { x.Fire = (bits & 1) != 0; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { x.Earth = (bits & 2) != 0; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { x.Water = (bits & 4) != 0; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { x.Air = (bits & 8) != 0; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { x.Gold = (bits & 16) != 0; } catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         static void UnpackLabBits(LAB_MultiLock x, int bits)
         {
             if (x == null) return;
-            try { x.Fire = (bits & 1) != 0; } catch { }
-            try { x.Earth = (bits & 2) != 0; } catch { }
-            try { x.Water = (bits & 4) != 0; } catch { }
-            try { x.Air = (bits & 8) != 0; } catch { }
-            try { x.Gold = (bits & 16) != 0; } catch { }
-            try { x.Star = (bits & 32) != 0; } catch { }
+            try { x.Fire = (bits & 1) != 0; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { x.Earth = (bits & 2) != 0; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { x.Water = (bits & 4) != 0; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { x.Air = (bits & 8) != 0; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { x.Gold = (bits & 16) != 0; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { x.Star = (bits & 32) != 0; } catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public static void ApplyDoorLockControl(DoorLockControl x, PuzzleStateEntry e, bool mutateWorld)
@@ -393,7 +393,7 @@ namespace SyncRADation.Networking
             // Mirror CryoSyncService Door.SetActive(true): rising-edge activate Door
             // + TryUnlockDoors / UnlockDoorObject (Dig AJ).
             bool was = false;
-            try { was = x.done; } catch { }
+            try { was = x.done; } catch (System.Exception ex) { Guard.Swallow(ex); }
             x.done = e.Bool0;
             if (!e.Bool0) return;
             if (!was)
@@ -404,7 +404,7 @@ namespace SyncRADation.Networking
                     if (x.onSolved != null)
                         x.onSolved.Invoke();
                 }
-                catch { }
+                catch (System.Exception ex) { Guard.Swallow(ex); }
                 finally { NetGate.EndApply(); }
             }
             try
@@ -415,8 +415,8 @@ namespace SyncRADation.Networking
                     PuzzleSyncService.UnlockDoorObject(x.Door);
                 }
             }
-            catch { }
-            try { PuzzleSyncService.TryUnlockDoors(x.gameObject); } catch { }
+            catch (System.Exception ex) { Guard.Swallow(ex); }
+            try { PuzzleSyncService.TryUnlockDoors(x.gameObject); } catch (System.Exception ex) { Guard.Swallow(ex); }
         }
 
         public static void ApplyBiodome(BiodomeDoorLock x, PuzzleStateEntry e)
@@ -440,7 +440,7 @@ namespace SyncRADation.Networking
         static int PackServiceLockPins(DET_ServiceLock x)
         {
             int prec = 6;
-            try { prec = x.precision; } catch { }
+            try { prec = x.precision; } catch (System.Exception e) { Guard.Swallow(e); }
             if (prec < 0) prec = 0;
             if (prec > 7) prec = 7; // 3-bit field
             int pack = 0;
@@ -458,7 +458,7 @@ namespace SyncRADation.Networking
                     pack |= (v & 7) << (i * 3);
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return pack;
         }
 
@@ -476,7 +476,7 @@ namespace SyncRADation.Networking
         {
             if (x == null) return;
             int prec = 6;
-            try { prec = x.precision; } catch { }
+            try { prec = x.precision; } catch (System.Exception e) { Guard.Swallow(e); }
             if (prec < 0) prec = 0;
             try
             {
@@ -490,9 +490,9 @@ namespace SyncRADation.Networking
                     int v = (pack >> (i * 3)) & 7;
                     if (v > prec) v = prec;
                     int cur = 0;
-                    try { cur = pins[i]; } catch { }
+                    try { cur = pins[i]; } catch (System.Exception e) { Guard.Swallow(e); }
                     if (cur == v && PuzzleSyncService.MutateWorld) continue;
-                    try { pins[i] = v; changed = true; } catch { }
+                    try { pins[i] = v; changed = true; } catch (System.Exception e) { Guard.Swallow(e); }
                 }
                 // Native FlipButton ends in SetPins + AdjustCrown for pin/crown visuals.
                 // Call those directly — avoid FlipButton coroutine side effects (SFX/anim).
@@ -501,23 +501,23 @@ namespace SyncRADation.Networking
                 if (!changed && PuzzleSyncService.MutateWorld) return;
             }
             catch { return; }
-            try { x.SetPins(); } catch { }
-            try { x.AdjustCrown(); } catch { }
+            try { x.SetPins(); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { x.AdjustCrown(); } catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public static void SnapBiodomeLock(BiodomeDoorLock x, bool unlocked, int keyLevel)
         {
             if (x == null) return;
-            try { x.KeyLevel = keyLevel; } catch { }
-            try { x.hasLock = !unlocked; } catch { }
-            try { x.setSprites(); } catch { }
+            try { x.KeyLevel = keyLevel; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { x.hasLock = !unlocked; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { x.setSprites(); } catch (System.Exception e) { Guard.Swallow(e); }
             if (!unlocked) return;
             try
             {
                 if (x.door != null)
                     x.door.locked = false;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
         }
 
@@ -529,7 +529,7 @@ namespace SyncRADation.Networking
                 if (x.solved != null)
                     x.solved.solved = true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             PuzzleSyncService.DisableInteractions(x);
             try
             {
@@ -540,7 +540,7 @@ namespace SyncRADation.Networking
                         PuzzleSyncService.DisableOne(buttons[i]);
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var counter = x.CounterButtons;
@@ -550,8 +550,8 @@ namespace SyncRADation.Networking
                         PuzzleSyncService.DisableOne(counter[i]);
                 }
             }
-            catch { }
-            try { PuzzleSyncService.DisableOne(x.TestButton); } catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            try { PuzzleSyncService.DisableOne(x.TestButton); } catch (System.Exception e) { Guard.Swallow(e); }
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
         }
     }

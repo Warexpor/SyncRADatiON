@@ -51,7 +51,7 @@ namespace SyncRADation.Networking
             {
                 if (LocalInspect.AirlockCinematic(x.gameObject)) return true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try { return AirlockCinematic.IsPenTitlesCard(x); } catch { return false; }
         }
 
@@ -61,7 +61,7 @@ namespace SyncRADation.Networking
             // Rising-edge before latch: Disk InsertDisk* / Tarot PlaceCard* bind
             // onSuccessful; Apply used to set unlocked + doors only → peers softlock.
             bool wasUnlocked = false;
-            try { wasUnlocked = x.unlocked; } catch { }
+            try { wasUnlocked = x.unlocked; } catch (System.Exception e) { Guard.Swallow(e); }
             bool localUse = PerPlayerUse(x);
             // Inter snap always (FullRefresh + cinematic): keep party-wide UseItems
             // inert so joiners cannot re-use mid-refresh. Do NOT latch unlocked=true
@@ -83,32 +83,32 @@ namespace SyncRADation.Networking
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             // Durable consequence (door unlock / follow-up interaction) runs on every apply, including the
             // join dump: gating it on MutateWorld left late joiners with the flag set and the door locked.
             // All of it is flag/enable state (flavor seals are filtered inside the helpers), no cutscene.
             // Per-player uses (airlock card) keep the old rule: only a live apply touches the world.
             if (localUse && !PuzzleSyncService.MutateWorld)
             {
-                try { AirlockCinematic.NoteRemoteUnlock(x); } catch { }
+                try { AirlockCinematic.NoteRemoteUnlock(x); } catch (System.Exception e) { Guard.Swallow(e); }
                 try
                 {
                     string n = "?";
-                    try { if (x.gameObject != null) n = x.gameObject.name; } catch { }
+                    try { if (x.gameObject != null) n = x.gameObject.name; } catch (System.Exception e) { Guard.Swallow(e); }
                     PlaytestLog.Verbose("Puzzle", "snap UseItem inter only (no unlock latch) " + n);
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 return;
             }
             // MutateWorld: latch unlocked (or NoteRemoteUnlock for PerPlayerUse) then
             // doors + rising-edge Invoke below.
             if (!localUse)
             {
-                try { x.unlocked = true; } catch { }
+                try { x.unlocked = true; } catch (System.Exception e) { Guard.Swallow(e); }
             }
             else
             {
-                try { AirlockCinematic.NoteRemoteUnlock(x); } catch { }
+                try { AirlockCinematic.NoteRemoteUnlock(x); } catch (System.Exception e) { Guard.Swallow(e); }
             }
             // Mid-unload: flags snapped above; skip door unlock on a torn-down GO.
             try
@@ -124,13 +124,13 @@ namespace SyncRADation.Networking
                     x.slaveInteraction.triggered = false;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var lockComp = x.GetComponent<InteractiveLock>();
                 if (lockComp != null && lockComp.key != null) lockComp.locked = false;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (x.gameObject == null) return;
@@ -150,7 +150,7 @@ namespace SyncRADation.Networking
                     if (x.onSuccessful != null)
                         x.onSuccessful.Invoke();
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 finally { NetGate.EndApply(); }
             }
         }
@@ -158,14 +158,14 @@ namespace SyncRADation.Networking
         static bool SameKey(AnItem a, AnItem b)
         {
             if (a == null || b == null) return false;
-            try { if (a == b) return true; } catch { }
+            try { if (a == b) return true; } catch (System.Exception e) { Guard.Swallow(e); }
             try { return a._item == b._item; } catch { return false; }
         }
 
         static void UnlockMatchingKeyLocks(UseItemInteraction x)
         {
             AnItem key = null;
-            try { key = x.key; } catch { }
+            try { key = x.key; } catch (System.Exception e) { Guard.Swallow(e); }
             if (key == null) return;
             GameObject root = x.gameObject;
             try
@@ -173,7 +173,7 @@ namespace SyncRADation.Networking
                 var room = PuzzleDomainUtil.FindInParents<Room>(x.gameObject);
                 if (room != null) root = room.gameObject;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var singles = root.GetComponentsInChildren<InteractiveLockSingle>(true);
@@ -188,17 +188,17 @@ namespace SyncRADation.Networking
                             if (s.door != null && DoorNative.IsFlavorSeal(s.door.gameObject))
                                 continue;
                         }
-                        catch { }
+                        catch (System.Exception e) { Guard.Swallow(e); }
                         try
                         {
                             if (s.door != null) s.door.locked = false;
                         }
-                        catch { }
+                        catch (System.Exception e) { Guard.Swallow(e); }
                         DoorNative.ApplyLockPlate(s, false);
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var locks = root.GetComponentsInChildren<InteractiveLock>(true);
@@ -213,11 +213,11 @@ namespace SyncRADation.Networking
                             if (l.key == null || DoorNative.IsFlavorSeal(l.gameObject)) continue;
                             if (SameKey(l.key, key)) l.locked = false;
                         }
-                        catch { }
+                        catch (System.Exception e) { Guard.Swallow(e); }
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 }

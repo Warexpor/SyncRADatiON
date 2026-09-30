@@ -105,7 +105,7 @@ namespace SyncRADation.Players
                         _ricochetPath = pa.ricochetSound;
                 }
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
         }
 
         private void CacheEffects(GameObject source)
@@ -135,7 +135,7 @@ namespace SyncRADation.Players
                 if (srcMf != null && srcMf.pivot != null)
                     srcMuzzleTf = srcMf.pivot;
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
 
             if (_muzzleFlash == null)
                 _muzzleFlash = FindMuzzleVisualTarget(allTransforms, _weaponRoot);
@@ -222,7 +222,7 @@ namespace SyncRADation.Players
                         _laserMaxDist = srcAl.laserMaxDist;
                 }
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
 
             if (_laser == null)
                 _laser = FindLineRenderer(allTransforms);
@@ -245,7 +245,7 @@ namespace SyncRADation.Players
                         _laser.endWidth = 0.01f;
                     }
                 }
-                catch { }
+                catch (Exception e) { Guard.Swallow(e); }
             }
             PrepareLaserPoint();
 
@@ -263,7 +263,7 @@ namespace SyncRADation.Players
                 if (srcCe != null && srcCe.particles != null)
                     _caseEject = FindMatchingPs(allTransforms, srcCe.particles.gameObject.name);
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
             if (_caseEject == null)
                 _caseEject = FindParticleSystemByName(allTransforms, "Case", allowAnyFallback: false);
             if (_caseEject == null)
@@ -303,7 +303,7 @@ namespace SyncRADation.Players
                 var psr = ps.GetComponent<ParticleSystemRenderer>();
                 if (psr != null) psr.enabled = true;
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
         }
 
         private static void PlayBurst(ParticleSystem ps)
@@ -315,7 +315,7 @@ namespace SyncRADation.Players
                 ps.Play(true);
                 ps.Emit(1);
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
         }
 
         private static ParticleSystem FindMatchingPs(Transform[] all, string name)
@@ -521,7 +521,7 @@ namespace SyncRADation.Players
                 if (local != null && col.transform.IsChildOf(local.transform))
                     return true;
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
             return false;
         }
 
@@ -654,7 +654,7 @@ namespace SyncRADation.Players
         {
             if (ps == null) return;
             try { ps.Stop(true, ParticleSystemStopBehavior.StopEmitting); }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
         }
 
         public void ResetAll()
@@ -676,7 +676,7 @@ namespace SyncRADation.Players
             if (ps != null)
             {
                 try { ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear); }
-                catch { }
+                catch (Exception e) { Guard.Swallow(e); }
             }
         }
 

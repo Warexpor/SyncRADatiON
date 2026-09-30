@@ -28,7 +28,7 @@ namespace SyncRADation.Patches
             if (_pendingDropKey < 0) return false;
             EnsureGranted();
             FinishDroppedNative(p, true, ignoreCount: true);
-            try { ItemSystem.DroppedItemManager.RestorePlay(); } catch { }
+            try { ItemSystem.DroppedItemManager.RestorePlay(); } catch (System.Exception e) { Guard.Swallow(e); }
             return true;
         }
 
@@ -64,7 +64,7 @@ namespace SyncRADation.Patches
                 if (p._item != null) _pendingDropItem = p._item._item;
                 _pendingDropCount = p.count > 0 ? p.count : 1;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             if (_pendingDropItem == Items.itemlist.None && _pendingDropKey >= 0)
             {
                 int c;
@@ -91,7 +91,7 @@ namespace SyncRADation.Patches
             var id = _pendingDropItem;
             if (id == Items.itemlist.None && p != null)
             {
-                try { if (p._item != null) id = p._item._item; } catch { }
+                try { if (p._item != null) id = p._item._item; } catch (System.Exception e) { Guard.Swallow(e); }
             }
             if (id == Items.itemlist.None && _pendingDropKey >= 0)
                 ItemSystem.DroppedItemManager.TryGet(_pendingDropKey, out id, out _);
@@ -103,7 +103,7 @@ namespace SyncRADation.Patches
         {
             if (p != null && IsInspect(p)) return;
             bool trig = false;
-            try { if (p != null) trig = p.triggered; } catch { }
+            try { if (p != null) trig = p.triggered; } catch (System.Exception e) { Guard.Swallow(e); }
             if (!trig) return;
             FinishDroppedNative(p, true, ignoreCount: true);
         }
@@ -127,9 +127,9 @@ namespace SyncRADation.Patches
         static bool IsInspect(ItemPickup p)
         {
             if (p == null) return false;
-            try { if (p.showItemView) return true; } catch { }
-            try { if (p.focusCamera) return true; } catch { }
-            try { if (p.pauseGame) return true; } catch { }
+            try { if (p.showItemView) return true; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (p.focusCamera) return true; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (p.pauseGame) return true; } catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
 
@@ -145,7 +145,7 @@ namespace SyncRADation.Patches
                 p._item = cat;
                 PartyKeyRing.BindUseDialogue(cat);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         static int _pendingDropKey = -1;
@@ -180,7 +180,7 @@ namespace SyncRADation.Patches
                     return false;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
 
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected)
@@ -193,7 +193,7 @@ namespace SyncRADation.Patches
             {
                 if (__instance.slave) return true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
 
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             if (id == 0) return true;
@@ -206,13 +206,13 @@ namespace SyncRADation.Patches
                 if (_pendingItem == Items.itemlist.None)
                     _pendingItem = WorldPickupSyncService.ResolveItem(__instance);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
 
             if (net.PickupSync.IsClaimed(id) || net.PickupSync.IsClaimedPickup(__instance))
             {
                 PlaytestLog.Verbose("Pickup", "skip claimed " + __instance.gameObject.name
                     + " id=" + id.ToString("X16"));
-                try { net.PickupSync.HidePickup(__instance); } catch { }
+                try { net.PickupSync.HidePickup(__instance); } catch (System.Exception e) { Guard.Swallow(e); }
                 return false;
             }
 
@@ -236,7 +236,7 @@ namespace SyncRADation.Patches
                 {
                     PlaytestLog.Event("Pickup", "host deny " + __instance.gameObject.name
                         + " id=" + id.ToString("X16"));
-                    try { net.PickupSync.HidePickup(__instance); } catch { }
+                    try { net.PickupSync.HidePickup(__instance); } catch (System.Exception e) { Guard.Swallow(e); }
                     return false;
                 }
                 PlaytestLog.Event("Pickup", "host take " + __instance.gameObject.name
@@ -262,19 +262,19 @@ namespace SyncRADation.Patches
             if (net == null || !net.IsConnected) return;
             if (Config.ModConfig.SyncWorldPickups?.Value != true) return;
 
-            try { if (__instance != null && __instance.slave) return; } catch { }
+            try { if (__instance != null && __instance.slave) return; } catch (System.Exception e) { Guard.Swallow(e); }
 
             ulong id = 0;
-            try { id = WorldId.FromGameObject(__instance.gameObject); } catch { }
+            try { id = WorldId.FromGameObject(__instance.gameObject); } catch (System.Exception e) { Guard.Swallow(e); }
             if (id == 0) id = _pendingId;
             if (id == 0) return;
 
             bool inBag = false;
             try { inBag = __instance._item != null && InventoryManager.hasItem(__instance._item); }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             if (!inBag && _pendingItem != Items.itemlist.None)
             {
-                try { inBag = InventoryManager.hasItem(_pendingItem); } catch { }
+                try { inBag = InventoryManager.hasItem(_pendingItem); } catch (System.Exception e) { Guard.Swallow(e); }
             }
 
             if (IsInspect(__instance) && !inBag)
@@ -285,7 +285,7 @@ namespace SyncRADation.Patches
             }
 
             bool triggered = false;
-            try { triggered = __instance != null && __instance.triggered; } catch { }
+            try { triggered = __instance != null && __instance.triggered; } catch (System.Exception e) { Guard.Swallow(e); }
             // Host may have Prefix-reserved; fall through so ReleaseClaimIf can run.
             if (!triggered && !inBag && __instance != null && net.Role != NetworkRole.Host)
                 return;
@@ -321,7 +321,7 @@ namespace SyncRADation.Patches
                         PartyKeyRing.Broadcast();
                     }
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 return;
             }
 
@@ -347,10 +347,10 @@ namespace SyncRADation.Patches
             if (net == null || !net.IsConnected) return;
             if (Config.ModConfig.SyncWorldPickups?.Value != true) return;
             if (p == null && _pendingId == 0) return;
-            try { if (p != null && p.slave) return; } catch { }
+            try { if (p != null && p.slave) return; } catch (System.Exception e) { Guard.Swallow(e); }
 
             ulong id = 0;
-            try { if (p != null) id = WorldId.FromGameObject(p.gameObject); } catch { }
+            try { if (p != null) id = WorldId.FromGameObject(p.gameObject); } catch (System.Exception e) { Guard.Swallow(e); }
             if (id == 0) id = _pendingId;
             if (id == 0) return;
 
@@ -362,7 +362,7 @@ namespace SyncRADation.Patches
                 if (item == Items.itemlist.None)
                     item = WorldPickupSyncService.ResolveItem(p);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
 
             // Native release only adds when the yes/no answer (Dialoguer global bool 1) was yes
             // (ItemPickup.release, Ghidra ItemPickup.c: GetGlobalBoolean(1) gate before AddItemToMax).
@@ -396,7 +396,7 @@ namespace SyncRADation.Patches
                         PartyKeyRing.Broadcast();
                     }
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 return;
             }
 
@@ -600,7 +600,7 @@ namespace SyncRADation.Patches
                 if (item != null)
                     InventoryManager.RemoveItem(item, count);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             // Allow a later respawn/dump of the same key to be claimed again.
             if (clearKey >= 0)
             {
@@ -621,7 +621,7 @@ namespace SyncRADation.Patches
         {
             try { ItemPickupPatches.NoteTakenFromCallback(__instance); }
             catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] callback: " + ex.Message); }
-            try { ItemSystem.DroppedItemManager.TickDeferred(); } catch { }
+            try { ItemSystem.DroppedItemManager.TickDeferred(); } catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 

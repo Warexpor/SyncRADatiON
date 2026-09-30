@@ -77,7 +77,7 @@ namespace SyncRADation.Networking
                     _checklistSeen[wid] = mask;
                     // ForceComplete state is not readable (static flag is consumed); Ariane objects mirror it.
                     bool ready = complete;
-                    try { if (x.ArianeReady != null && x.ArianeReady.activeSelf) ready = true; } catch { }
+                    try { if (x.ArianeReady != null && x.ArianeReady.activeSelf) ready = true; } catch (System.Exception e) { Guard.Swallow(e); }
                     entry = PuzzleDomainUtil.Mk(type, wid, ready, false, false, mask, 0, 0, 0, 0);
                     return true;
                 }

@@ -44,7 +44,7 @@ namespace SyncRADation.Networking
                     if (dlc != null)
                         ApplyDoorLockControl(dlc, true);
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
 
             bool wasOpen = d.open;
@@ -98,11 +98,11 @@ namespace SyncRADation.Networking
                             break;
                         }
                     }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                     t = t.parent;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return FlavorOn(root);
         }
 
@@ -115,7 +115,7 @@ namespace SyncRADation.Networking
                 var dlc = DoorLockOn(go);
                 if (dlc != null && dlc.locked) return true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
 
@@ -192,11 +192,11 @@ namespace SyncRADation.Networking
                         {
                             if (l.locked && l.key == null) return true;
                         }
-                        catch { }
+                        catch (System.Exception e) { Guard.Swallow(e); }
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var singles = go.GetComponentsInChildren<InteractiveLockSingle>(true);
@@ -210,11 +210,11 @@ namespace SyncRADation.Networking
                         {
                             if (s.key == null) return true;
                         }
-                        catch { }
+                        catch (System.Exception e) { Guard.Swallow(e); }
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
 
@@ -224,14 +224,14 @@ namespace SyncRADation.Networking
             try { dlc.setLock(true); }
             catch
             {
-                try { dlc.locked = true; } catch { }
+                try { dlc.locked = true; } catch (System.Exception e) { Guard.Swallow(e); }
             }
             try
             {
                 if (dlc.doorZone != null)
                     dlc.doorZone.locked = true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public static void UnsealDoorLockControl(DoorLockControl dlc)
@@ -240,14 +240,14 @@ namespace SyncRADation.Networking
             try { dlc.setLock(false); }
             catch
             {
-                try { dlc.locked = false; } catch { }
+                try { dlc.locked = false; } catch (System.Exception e) { Guard.Swallow(e); }
             }
             try
             {
                 if (dlc.doorZone != null)
                     dlc.doorZone.locked = false;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public static void ReassertLockVisuals()
@@ -263,7 +263,7 @@ namespace SyncRADation.Networking
                     if (dlc.locked)
                         ApplyDoorLockControl(dlc, true);
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
         }
 
@@ -288,11 +288,11 @@ namespace SyncRADation.Networking
                     if (!HasUnlocker(cd))
                         return;
                     cd.locked = false;
-                    try { cd.Unlock(); } catch { }
+                    try { cd.Unlock(); } catch (System.Exception e) { Guard.Swallow(e); }
                     // Re-check after Unlock — mid-unload can tear the GO during native call.
                     try { if (cd.gameObject == null) return; } catch { return; }
                     ReleaseTraverse(cd);
-                    try { cd.UpdateProperties(); } catch { }
+                    try { cd.UpdateProperties(); } catch (System.Exception e) { Guard.Swallow(e); }
                     EnsurePlates(cd, false);
                     return;
                 }
@@ -314,7 +314,7 @@ namespace SyncRADation.Networking
         static void ReleaseTraverseDoor(AutoTraverseDoor atd)
         {
             if (atd == null) return;
-            try { atd.enabled = true; } catch { }
+            try { atd.enabled = true; } catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var inters = atd.GetComponentsInChildren<Interaction>(true);
@@ -332,10 +332,10 @@ namespace SyncRADation.Networking
                             it.enabled = true;
                         }
                     }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public static bool HasUnlocker(ConnectedDoors cd)
@@ -366,13 +366,13 @@ namespace SyncRADation.Networking
                     if (PlateOn(x.master.A) || PlateOn(x.master.B)) return true;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var atd = x.GetComponentInParent<AutoTraverseDoor>();
                 if (PlateOn(atd)) return true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (x.door != null)
@@ -381,13 +381,13 @@ namespace SyncRADation.Networking
                     if (dlc != null && dlc.locked) return true;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var dlc2 = x.GetComponent<DoorLockControl>();
                 if (dlc2 != null && dlc2.locked) return true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
 
@@ -400,12 +400,12 @@ namespace SyncRADation.Networking
                 {
                     if (x.key == null) return;
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 try
                 {
                     if (x.door != null && IsFlavorSeal(x.door.gameObject)) return;
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
             try
             {
@@ -415,8 +415,8 @@ namespace SyncRADation.Networking
                     SetTraversePlate(x.master.B, on);
                 }
             }
-            catch { }
-            try { SetTraversePlate(x.GetComponentInParent<AutoTraverseDoor>(), on); } catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            try { SetTraversePlate(x.GetComponentInParent<AutoTraverseDoor>(), on); } catch (System.Exception e) { Guard.Swallow(e); }
             if (!on) return;
             try
             {
@@ -427,14 +427,14 @@ namespace SyncRADation.Networking
                         ApplyDoorLockControl(dlc, true);
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         static void EnsurePlates(ConnectedDoors cd, bool on)
         {
             if (cd == null) return;
-            try { SetTraversePlate(cd.A, on); } catch { }
-            try { SetTraversePlate(cd.B, on); } catch { }
+            try { SetTraversePlate(cd.A, on); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { SetTraversePlate(cd.B, on); } catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         static bool PlateOn(AutoTraverseDoor atd)
@@ -445,7 +445,7 @@ namespace SyncRADation.Networking
         static void SetTraversePlate(AutoTraverseDoor atd, bool on)
         {
             if (atd == null || atd.blocker == null) return;
-            try { atd.blocker.SetActive(on); } catch { }
+            try { atd.blocker.SetActive(on); } catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public static void ApplySlidingDoor(EventSlidingDoor sd, bool opened, bool moving)
@@ -482,12 +482,12 @@ namespace SyncRADation.Networking
         {
             if (emitter == null || at == null) return;
             string path = null;
-            try { path = emitter.Event; } catch { }
+            try { path = emitter.Event; } catch (System.Exception e) { Guard.Swallow(e); }
             if (string.IsNullOrEmpty(path))
             {
                 float dummy;
                 if (!WorldSfx.TryVolume(at.transform.position, out dummy)) return;
-                try { emitter.Play(); } catch { }
+                try { emitter.Play(); } catch (System.Exception e) { Guard.Swallow(e); }
                 return;
             }
             PlayWorldPath(path, at);

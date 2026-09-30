@@ -49,11 +49,11 @@ namespace SyncRADation.Patches
                 if (__instance.inter != null && LocalInspect.LockWorld(__instance.inter.gameObject))
                     return true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             if (NetGate.Host) return true;
 
             bool inRange = false;
-            try { inRange = __instance.inter != null && __instance.inter.inRange; } catch { }
+            try { inRange = __instance.inter != null && __instance.inter.inRange; } catch (System.Exception e) { Guard.Swallow(e); }
             if (!inRange) return true;
 
             try
@@ -66,7 +66,7 @@ namespace SyncRADation.Patches
                 _lastRequest[id] = Time.unscaledTime;
                 LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.EventZone);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
 

@@ -85,7 +85,7 @@ namespace SyncRADation.Patches
                     net.PuzzleSync.EmitProgressed(PuzzleType.PEN_Codepad, pid);
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 
@@ -103,13 +103,13 @@ namespace SyncRADation.Patches
             try
             {
                 CryoDoorLock cryoLock = null;
-                try { cryoLock = __instance.GetComponentInChildren<CryoDoorLock>(true); } catch { }
+                try { cryoLock = __instance.GetComponentInChildren<CryoDoorLock>(true); } catch (System.Exception e) { Guard.Swallow(e); }
                 if (cryoLock == null)
                 {
                     var t = __instance.transform;
                     while (t != null)
                     {
-                        try { cryoLock = t.GetComponent<CryoDoorLock>(); } catch { }
+                        try { cryoLock = t.GetComponent<CryoDoorLock>(); } catch (System.Exception e) { Guard.Swallow(e); }
                         if (cryoLock != null) break;
                         t = t.parent;
                     }
@@ -127,7 +127,7 @@ namespace SyncRADation.Patches
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 
@@ -153,7 +153,7 @@ namespace SyncRADation.Patches
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
             net.PuzzleSync.HandlePenCryoEnabled(__instance);
-            try { net.PickupSync.HideClaimed(null); } catch { }
+            try { net.PickupSync.HideClaimed(null); } catch (System.Exception e) { Guard.Swallow(e); }
             net.PuzzleSync.QueueReapply();
         }
     }
@@ -179,14 +179,14 @@ namespace SyncRADation.Patches
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected || ctrl == null) return;
             LAB_PatternLock pad = null;
-            try { pad = ctrl._lock; } catch { }
+            try { pad = ctrl._lock; } catch (System.Exception e) { Guard.Swallow(e); }
             if (pad == null)
             {
-                try { pad = ctrl.GetComponent<LAB_PatternLock>(); } catch { }
+                try { pad = ctrl.GetComponent<LAB_PatternLock>(); } catch (System.Exception e) { Guard.Swallow(e); }
             }
             if (pad == null)
             {
-                try { pad = ctrl.GetComponentInChildren<LAB_PatternLock>(true); } catch { }
+                try { pad = ctrl.GetComponentInChildren<LAB_PatternLock>(true); } catch (System.Exception e) { Guard.Swallow(e); }
             }
             net.PuzzleSync.HandlePatternLockEnabled(pad);
             net.PuzzleSync.QueueReapply();
@@ -208,8 +208,8 @@ namespace SyncRADation.Patches
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected || __instance == null) return;
             if (!net.PuzzleSync.ShouldKillOverlay(__instance)) return;
-            try { __instance.triggered = true; } catch { }
-            try { __instance.enabled = false; } catch { }
+            try { __instance.triggered = true; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { __instance.enabled = false; } catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 
@@ -222,8 +222,8 @@ namespace SyncRADation.Patches
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected || __instance == null) return true;
             if (!net.PuzzleSync.ShouldKillOverlay(__instance)) return true;
-            try { __instance.triggered = true; } catch { }
-            try { __instance.enabled = false; } catch { }
+            try { __instance.triggered = true; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { __instance.enabled = false; } catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
     }
@@ -238,9 +238,9 @@ namespace SyncRADation.Patches
             var net = LanNetworkManager.Instance;
             if (net != null && net.IsConnected && net.PuzzleSync.ShouldKillOverlay(__instance))
             {
-                try { __instance.triggered = true; } catch { }
-                try { __instance.inRange = false; } catch { }
-                try { __instance.enabled = false; } catch { }
+                try { __instance.triggered = true; } catch (System.Exception e) { Guard.Swallow(e); }
+                try { __instance.inRange = false; } catch (System.Exception e) { Guard.Swallow(e); }
+                try { __instance.enabled = false; } catch (System.Exception e) { Guard.Swallow(e); }
                 return false;
             }
             return true;
@@ -256,9 +256,9 @@ namespace SyncRADation.Patches
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected || __instance == null) return true;
             Interaction inter = null;
-            try { inter = __instance.inter; } catch { }
+            try { inter = __instance.inter; } catch (System.Exception e) { Guard.Swallow(e); }
             if (inter == null || !net.PuzzleSync.ShouldKillOverlay(inter)) return true;
-            try { __instance.enabled = false; } catch { }
+            try { __instance.enabled = false; } catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
     }
@@ -282,7 +282,7 @@ namespace SyncRADation.Patches
             if (NetGate.IsApplying) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
-            try { net.PickupSync.HideClaimed(null); } catch { }
+            try { net.PickupSync.HideClaimed(null); } catch (System.Exception e) { Guard.Swallow(e); }
             net.PuzzleSync.QueueReapply();
         }
     }
@@ -296,7 +296,7 @@ namespace SyncRADation.Patches
             if (!value || NetGate.IsApplying) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
-            try { net.PickupSync.HideClaimed(null); } catch { }
+            try { net.PickupSync.HideClaimed(null); } catch (System.Exception e) { Guard.Swallow(e); }
             net.PuzzleSync.QueueReapply();
         }
     }

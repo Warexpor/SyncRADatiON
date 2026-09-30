@@ -72,7 +72,7 @@ namespace SyncRADation.Sync
                 if (!string.IsNullOrEmpty(n) && n.StartsWith("SR_Spawn_", StringComparison.Ordinal))
                     return Compute("spawn", n);
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
             string scene = "";
             try
             {
@@ -80,10 +80,10 @@ namespace SyncRADation.Sync
                 if (go != null)
                     scene = go.scene.name ?? "";
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
             if (string.IsNullOrEmpty(scene))
             {
-                try { scene = SceneManager.GetActiveScene().name ?? ""; } catch { }
+                try { scene = SceneManager.GetActiveScene().name ?? ""; } catch (Exception e) { Guard.Swallow(e); }
             }
             return Compute(scene, GetHierarchyPath(t));
         }

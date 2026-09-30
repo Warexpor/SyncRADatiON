@@ -170,7 +170,7 @@ namespace SyncRADation.Cheats
                             SyncRADation.Networking.PartyKeyRing.Broadcast();
                     }
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 SetStatus("Added: " + item.DisplayName);
             }
             catch (System.Exception ex)
@@ -191,7 +191,7 @@ namespace SyncRADation.Cheats
                     if (fromMgr != null) return fromMgr;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
 
             try
             {
@@ -202,7 +202,7 @@ namespace SyncRADation.Cheats
                         return anItem;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return null;
         }
 

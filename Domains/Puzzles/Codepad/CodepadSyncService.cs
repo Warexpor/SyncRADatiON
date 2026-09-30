@@ -22,9 +22,9 @@ namespace SyncRADation.Networking
         {
             if (pad == null) return;
             ulong id = 0;
-            try { id = WorldId.FromGameObject(pad.gameObject); } catch { }
+            try { id = WorldId.FromGameObject(pad.gameObject); } catch (System.Exception e) { Guard.Swallow(e); }
             bool solved = false;
-            try { solved = pad.solved; } catch { }
+            try { solved = pad.solved; } catch (System.Exception e) { Guard.Swallow(e); }
             if (!solved && !_host.IsHeld(PuzzleType.PEN_Codepad, id))
             {
                 try
@@ -32,7 +32,7 @@ namespace SyncRADation.Networking
                     var cryo = PuzzleDomainUtil.FindInParents<PEN_Cryo>(pad.gameObject);
                     if (cryo != null && cryo.opened) solved = true;
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
             if (!solved && !_host.IsHeld(PuzzleType.PEN_Codepad, id) && !_host.CryoFamilyHeldUnmatched())
                 return;
@@ -47,9 +47,9 @@ namespace SyncRADation.Networking
         {
             if (pad == null) return;
             ulong id = 0;
-            try { id = WorldId.FromGameObject(pad.gameObject); } catch { }
+            try { id = WorldId.FromGameObject(pad.gameObject); } catch (System.Exception e) { Guard.Swallow(e); }
             bool solved = false;
-            try { solved = pad.solved; } catch { }
+            try { solved = pad.solved; } catch (System.Exception e) { Guard.Swallow(e); }
             if (!solved && !_host.IsHeld(PuzzleType.PatternLock, id))
             {
                 try
@@ -57,7 +57,7 @@ namespace SyncRADation.Networking
                     var cryo = PuzzleDomainUtil.FindInParents<PEN_Cryo>(pad.gameObject);
                     if (cryo != null && cryo.opened) solved = true;
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
             if (!solved && !_host.IsHeld(PuzzleType.PatternLock, id) && !_host.CryoFamilyHeldUnmatched())
                 return;
@@ -72,7 +72,7 @@ namespace SyncRADation.Networking
         {
             if (it == null) return false;
             GameObject go = null;
-            try { go = it.gameObject; } catch { }
+            try { go = it.gameObject; } catch (System.Exception e) { Guard.Swallow(e); }
             if (go == null) return false;
             if (DroppedItemManager.IsDroppedGo(go)) return false;
             try
@@ -85,7 +85,7 @@ namespace SyncRADation.Networking
                         return true;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var cryo = PuzzleDomainUtil.FindInParents<PEN_Cryo>(go);
@@ -96,7 +96,7 @@ namespace SyncRADation.Networking
                         return true;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var doorLock = PuzzleDomainUtil.FindInParents<CryoDoorLock>(go);
@@ -107,7 +107,7 @@ namespace SyncRADation.Networking
                         return true;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var code = PuzzleDomainUtil.FindInParents<PEN_Codepad>(go);
@@ -118,7 +118,7 @@ namespace SyncRADation.Networking
                         return true;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
 
@@ -140,7 +140,7 @@ namespace SyncRADation.Networking
                     // Int2 = rows<<8 | cols (dim0 = column). Int3 = cell count so an all-off grid still
                     // holds across remount (Dig AI). Solved stays Bool0.
                     int bits0 = 0, bits1 = 0, dims = 0, count = 0;
-                    try { PackPatternStates(x, out bits0, out bits1, out dims, out count); } catch { }
+                    try { PackPatternStates(x, out bits0, out bits1, out dims, out count); } catch (System.Exception e) { Guard.Swallow(e); }
                     entry = PuzzleDomainUtil.Mk(type, wid, x.solved, false, false, bits0, bits1, dims, count, 0);
                     return true;
                 }
@@ -176,7 +176,7 @@ namespace SyncRADation.Networking
             // ApplyPower 0.5.27). Mirror ApplyMulti 0.5.29 live path: MutateWorld&&!was
             // → BeginApply + onSolved.Invoke(); keep DisablePatternLock + TryUnlockDoors.
             bool was = false;
-            try { was = x.solved; } catch { }
+            try { was = x.solved; } catch (System.Exception ex) { Guard.Swallow(ex); }
             x.solved = e.Bool0;
             if (!e.Bool0)
             {
@@ -228,7 +228,7 @@ namespace SyncRADation.Networking
                     CryoSyncService.SnapCryoLock(c, playAnim);
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         /// <summary>
@@ -253,9 +253,9 @@ namespace SyncRADation.Networking
                     ? (e.Int0 & (1 << i)) != 0
                     : (e.Int1 & (1 << (i - 32))) != 0;
                 bool cur = false;
-                try { cur = ReadPatternCell(x, col, row); } catch { }
+                try { cur = ReadPatternCell(x, col, row); } catch (System.Exception ex) { Guard.Swallow(ex); }
                 if (cur == on) continue;
-                try { x.setButtonState(col, row, on); } catch { }
+                try { x.setButtonState(col, row, on); } catch (System.Exception ex) { Guard.Swallow(ex); }
             }
         }
 
@@ -306,7 +306,7 @@ namespace SyncRADation.Networking
         public static void DisablePatternLock(LAB_PatternLock pad)
         {
             if (pad == null) return;
-            try { pad.solved = true; } catch { }
+            try { pad.solved = true; } catch (System.Exception e) { Guard.Swallow(e); }
             PuzzleSyncService.DisableInteractions(pad);
             try
             {
@@ -322,14 +322,14 @@ namespace SyncRADation.Networking
                         if (ctrl._event != null)
                         {
                             PuzzleSyncService.DisableInteractions(ctrl._event.transform);
-                            try { ctrl._event.SetActive(false); } catch { }
+                            try { ctrl._event.SetActive(false); } catch (System.Exception e) { Guard.Swallow(e); }
                         }
                     }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                     SnapPatternDoor(ctrl);
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         /// <summary>
@@ -360,7 +360,7 @@ namespace SyncRADation.Networking
         public static void DisablePad(PEN_Codepad pad)
         {
             if (pad == null) return;
-            try { pad.solved = true; } catch { }
+            try { pad.solved = true; } catch (System.Exception e) { Guard.Swallow(e); }
             PuzzleSyncService.DisableInteractions(pad);
             try
             {
@@ -371,7 +371,7 @@ namespace SyncRADation.Networking
                         PuzzleSyncService.DisableOne(buttons[i]);
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var counter = pad.counterButtons;
@@ -381,7 +381,7 @@ namespace SyncRADation.Networking
                         PuzzleSyncService.DisableOne(counter[i]);
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 }

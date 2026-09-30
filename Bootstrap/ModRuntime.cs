@@ -101,7 +101,7 @@ namespace SyncRADation
         {
             var pm = Network?.ProxyManager;
             var net = Network;
-            try { DroppedItemManager.TickDeferred(); } catch { }
+            try { DroppedItemManager.TickDeferred(); } catch (System.Exception e) { Guard.Swallow(e); }
 
             // Guard: PlayerState.player must never point at a remote proxy
             if (pm != null)
@@ -187,7 +187,7 @@ namespace SyncRADation
         public static void OnSceneChanged()
         {
             string scene = "";
-            try { scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name; } catch { }
+            try { scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name; } catch (System.Exception e) { Guard.Swallow(e); }
             PlaytestLog.Reset();
             PlaytestLog.Event("Scene", "loaded '" + scene + "'");
             _lastLocalShooting = false;
@@ -204,7 +204,7 @@ namespace SyncRADation
                 var pa = PlayerState.player?.GetComponentInChildren<PlayerAttack>(true);
                 if (pa != null) return pa.WallMask;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return ~0;
         }
 

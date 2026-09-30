@@ -231,19 +231,19 @@ namespace SyncRADation.Networking
                 if (p._item != null && p._item._item != Items.itemlist.None)
                     return p._item._item;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (p._itemEnum != Items.itemlist.None)
                 {
                     if (p._item == null)
                     {
-                        try { p._item = InventoryManager.getItem(p._itemEnum); } catch { }
+                        try { p._item = InventoryManager.getItem(p._itemEnum); } catch (System.Exception e) { Guard.Swallow(e); }
                     }
                     return p._itemEnum;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return Items.itemlist.None;
         }
 
@@ -269,7 +269,7 @@ namespace SyncRADation.Networking
                     if (p.gameObject != null && p.gameObject.activeInHierarchy)
                         return true;
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
             return false;
         }
@@ -286,14 +286,14 @@ namespace SyncRADation.Networking
             if (p == null) return false;
             if (DroppedItemManager.IsDropped(p)) return false;
             ulong id = 0;
-            try { id = WorldId.FromGameObject(p.gameObject); } catch { }
+            try { id = WorldId.FromGameObject(p.gameObject); } catch (System.Exception e) { Guard.Swallow(e); }
             if (id != 0 && _claimed.Contains(id)) return true;
             try
             {
                 if (p._item != null && _claimedItems.Contains((ushort)p._item._item))
                     return UniqueWorldItem(p);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
 
@@ -309,7 +309,7 @@ namespace SyncRADation.Networking
                         return true;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
 
@@ -338,7 +338,7 @@ namespace SyncRADation.Networking
                 if (p.gameObject == null) return;
             }
             catch { return; }
-            try { p.triggered = true; } catch { }
+            try { p.triggered = true; } catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var it = p.GetComponent<Interaction>();
@@ -348,7 +348,7 @@ namespace SyncRADation.Networking
                     it.enabled = false;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (p == null || p.gameObject == null) return;
@@ -357,7 +357,7 @@ namespace SyncRADation.Networking
                 else
                     p.enabled = false;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         /// <summary>Undo HideOnePickup after an orphan claim release (peer gone mid-grant).</summary>
@@ -369,8 +369,8 @@ namespace SyncRADation.Networking
                 if (p.gameObject == null) return;
             }
             catch { return; }
-            try { p.triggered = false; } catch { }
-            try { p.enabled = true; } catch { }
+            try { p.triggered = false; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { p.enabled = true; } catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var it = p.GetComponent<Interaction>();
@@ -380,8 +380,8 @@ namespace SyncRADation.Networking
                     it.enabled = true;
                 }
             }
-            catch { }
-            try { p.gameObject.SetActive(true); } catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            try { p.gameObject.SetActive(true); } catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         /// <summary>
@@ -393,7 +393,7 @@ namespace SyncRADation.Networking
             if (root != null)
             {
                 ItemPickup[] picks = null;
-                try { picks = root.GetComponentsInChildren<ItemPickup>(true); } catch { }
+                try { picks = root.GetComponentsInChildren<ItemPickup>(true); } catch (System.Exception e) { Guard.Swallow(e); }
                 if (picks != null)
                 {
                     for (int i = 0; i < picks.Length; i++)
@@ -442,7 +442,7 @@ namespace SyncRADation.Networking
                 {
                     var p = all[i];
                     if (p == null) continue;
-                    try { if (p.slave) continue; } catch { }
+                    try { if (p.slave) continue; } catch (System.Exception e) { Guard.Swallow(e); }
                     if (DroppedItemManager.IsDropped(p)) continue;
                     ulong id = WorldId.FromGameObject(p.gameObject);
                     if (id == 0) continue;
@@ -575,7 +575,7 @@ namespace SyncRADation.Networking
                         itemEnum = resolved;
                     count = p.count > 0 ? p.count : count;
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
             else if (itemEnum == Items.itemlist.None)
             {
@@ -718,7 +718,7 @@ namespace SyncRADation.Networking
                     if (p._item != null)
                         NoteClaimedItem(p._item._item);
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
             // Host does not ApplyHide its own broadcast — party onPickup for host when
             // a client claimed (native pickUp never ran here). Host-native path Notes
@@ -803,7 +803,7 @@ namespace SyncRADation.Networking
                         if (p._item != null)
                             NoteClaimedItem(p._item._item);
                     }
-                    catch { }
+                    catch (System.Exception ex) { Guard.Swallow(ex); }
                     try
                     {
                         PlaytestLog.Verbose("Pickup", "hide id=" + id.ToString("X16")
@@ -859,18 +859,18 @@ namespace SyncRADation.Networking
                     AnItem item = null;
                     if (kind != Items.itemlist.None)
                     {
-                        try { item = InventoryManager.getItem(kind); } catch { }
+                        try { item = InventoryManager.getItem(kind); } catch (System.Exception e) { Guard.Swallow(e); }
                     }
                     if ((item == null || kind == Items.itemlist.None) && p != null)
                     {
                         kind = ResolveItem(p);
                         if (kind != Items.itemlist.None)
                         {
-                            try { item = InventoryManager.getItem(kind); } catch { }
+                            try { item = InventoryManager.getItem(kind); } catch (System.Exception e) { Guard.Swallow(e); }
                         }
                         if (item == null)
                         {
-                            try { item = p._item; } catch { }
+                            try { item = p._item; } catch (System.Exception e) { Guard.Swallow(e); }
                         }
                     }
                     if (item == null || kind == Items.itemlist.None)
@@ -902,7 +902,7 @@ namespace SyncRADation.Networking
                 if (p != null)
                 {
                     HidePickup(p);
-                    try { if (p._item != null) PartyKeyRing.Note(p._item); } catch { }
+                    try { if (p._item != null) PartyKeyRing.Note(p._item); } catch (System.Exception e) { Guard.Swallow(e); }
                 }
 
                 ModRuntime.Log?.Msg("[WorldPickup] Granted " + (Items.itemlist)msg.ItemEnum + " x" + msg.Count);

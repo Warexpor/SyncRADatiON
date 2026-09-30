@@ -98,7 +98,7 @@ namespace SyncRADation.Patches
             {
                 if (go != null) return go.transform.position;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return Vector3.zero;
         }
     }
@@ -123,7 +123,7 @@ namespace SyncRADation.Patches
             {
                 if (gameObject != null) pos = gameObject.transform.position;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             FmodEmitterSync.TryHostWorldOneShot(FmodEmitterSync.PathFromGuid(guid), pos);
         }
     }
@@ -148,7 +148,7 @@ namespace SyncRADation.Patches
                 var player = PlayerState.player;
                 if (player != null) pos = player.transform.position;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             FmodEmitterSync.TryHostWorldOneShot(_event, pos);
         }
     }

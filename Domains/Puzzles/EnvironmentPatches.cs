@@ -39,7 +39,7 @@ namespace SyncRADation.Patches
             {
                 if (x == null) return;
                 bool ok = false;
-                try { ok = x.solved != null && x.solved.solved; } catch { }
+                try { ok = x.solved != null && x.solved.solved; } catch (System.Exception e) { Guard.Swallow(e); }
                 if (ok) Progressed(PuzzleType.DET_ServiceLock, x);
                 else Read(PuzzleType.DET_ServiceLock, x);
             }
@@ -48,7 +48,7 @@ namespace SyncRADation.Patches
             {
                 if (x == null) return;
                 bool ok = false;
-                try { ok = x.solved; } catch { }
+                try { ok = x.solved; } catch (System.Exception e) { Guard.Swallow(e); }
                 if (ok) Progressed(PuzzleType.MED_Incinerator, x);
                 else Read(PuzzleType.MED_Incinerator, x);
             }
@@ -67,7 +67,7 @@ namespace SyncRADation.Patches
                         if (lab != null) ok = lab.unlocked;
                     }
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 if (ok) Progressed(PuzzleType.MultiLock, x);
                 else Read(PuzzleType.MultiLock, x);
             }
@@ -76,7 +76,7 @@ namespace SyncRADation.Patches
             {
                 if (x == null) return;
                 bool ok = false;
-                try { ok = x.solved; } catch { }
+                try { ok = x.solved; } catch (System.Exception e) { Guard.Swallow(e); }
                 if (ok) Progressed(PuzzleType.MED_Pump, x);
                 else Read(PuzzleType.MED_Pump, x);
             }
@@ -85,7 +85,7 @@ namespace SyncRADation.Patches
             {
                 if (x == null) return;
                 bool ok = false;
-                try { ok = x.solved; } catch { }
+                try { ok = x.solved; } catch (System.Exception e) { Guard.Swallow(e); }
                 if (ok) Progressed(PuzzleType.RES_Power, x);
                 else Read(PuzzleType.RES_Power, x);
             }
@@ -94,7 +94,7 @@ namespace SyncRADation.Patches
             {
                 if (x == null) return;
                 bool ok = false;
-                try { ok = x.solved; } catch { }
+                try { ok = x.solved; } catch (System.Exception e) { Guard.Swallow(e); }
                 if (ok) Progressed(PuzzleType.DialLock, x);
                 else Read(PuzzleType.DialLock, x);
             }
@@ -103,7 +103,7 @@ namespace SyncRADation.Patches
             {
                 if (x == null) return;
                 bool ok = false;
-                try { ok = x.solved; } catch { }
+                try { ok = x.solved; } catch (System.Exception e) { Guard.Swallow(e); }
                 if (ok) Progressed(PuzzleType.EvidenceLockerPuzzle, x);
                 else Read(PuzzleType.EvidenceLockerPuzzle, x);
             }
@@ -112,7 +112,7 @@ namespace SyncRADation.Patches
             {
                 if (x == null) return;
                 bool ok = false;
-                try { ok = x.solved; } catch { }
+                try { ok = x.solved; } catch (System.Exception e) { Guard.Swallow(e); }
                 if (ok) Progressed(PuzzleType.RES_Shrine, x);
                 else Read(PuzzleType.RES_Shrine, x);
             }
@@ -121,7 +121,7 @@ namespace SyncRADation.Patches
             {
                 if (x == null) return;
                 bool ok = false;
-                try { ok = x.finished; } catch { }
+                try { ok = x.finished; } catch (System.Exception e) { Guard.Swallow(e); }
                 if (ok) Progressed(PuzzleType.ROT_Mural, x);
                 else Read(PuzzleType.ROT_Mural, x);
             }
@@ -130,7 +130,7 @@ namespace SyncRADation.Patches
             {
                 if (x == null) return;
                 bool ok = false;
-                try { ok = x.solved; } catch { }
+                try { ok = x.solved; } catch (System.Exception e) { Guard.Swallow(e); }
                 if (ok) Progressed(PuzzleType.PEN_Reaktor, x);
                 else Read(PuzzleType.PEN_Reaktor, x);
             }
@@ -151,7 +151,7 @@ namespace SyncRADation.Patches
                         }
                     }
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 if (unlocked) Progressed(PuzzleType.MultiKeyLock, x);
                 else Read(PuzzleType.MultiKeyLock, x);
             }
@@ -160,7 +160,7 @@ namespace SyncRADation.Patches
             {
                 if (x == null) return;
                 bool opened = false;
-                try { opened = x.opened; } catch { }
+                try { opened = x.opened; } catch (System.Exception e) { Guard.Swallow(e); }
                 if (opened) Progressed(PuzzleType.RES_MusicBox, x);
                 else Read(PuzzleType.RES_MusicBox, x);
             }
@@ -169,7 +169,7 @@ namespace SyncRADation.Patches
             {
                 if (x == null) return;
                 bool ok = false;
-                try { ok = x.solved; } catch { }
+                try { ok = x.solved; } catch (System.Exception e) { Guard.Swallow(e); }
                 if (ok) Progressed(PuzzleType.MED_CardWriter, x);
                 else Read(PuzzleType.MED_CardWriter, x);
             }
@@ -184,11 +184,11 @@ namespace SyncRADation.Patches
                 var net = LanNetworkManager.Instance;
                 if (net == null || !net.IsConnected) return;
                 float dist = 20f;
-                try { dist = x.Distance; } catch { }
+                try { dist = x.Distance; } catch (System.Exception e) { Guard.Swallow(e); }
                 if (dist < 0.01f) dist = 20f;
                 float lx = 0f, rx = 0f;
-                try { if (x.DoorL != null) lx = x.DoorL.localPosition.x; } catch { }
-                try { if (x.DoorR != null) rx = x.DoorR.localPosition.x; } catch { }
+                try { if (x.DoorL != null) lx = x.DoorL.localPosition.x; } catch (System.Exception e) { Guard.Swallow(e); }
+                try { if (x.DoorR != null) rx = x.DoorR.localPosition.x; } catch (System.Exception e) { Guard.Swallow(e); }
                 bool looksOpen = Mathf.Abs(lx) + Mathf.Abs(rx) >= dist * 0.5f;
                 if (open && !looksOpen)
                 {
@@ -232,7 +232,7 @@ namespace SyncRADation.Patches
                 if (__instance.flood != null)
                     EnvEmit.Progressed(PuzzleType.MED_FloodedBathroom, __instance.flood);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 
@@ -309,7 +309,7 @@ namespace SyncRADation.Patches
             try
             {
                 bool active = false;
-                try { active = __instance.solved || __instance.hasCard || __instance.writeMode; } catch { }
+                try { active = __instance.solved || __instance.hasCard || __instance.writeMode; } catch (System.Exception e) { Guard.Swallow(e); }
                 if (!active)
                 {
                     // Mid-trace with card already inserted may leave writeMode false
@@ -327,12 +327,12 @@ namespace SyncRADation.Patches
                             }
                         }
                     }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                 }
                 if (active)
                     EnvEmit.CardWriter(__instance);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 
@@ -365,7 +365,7 @@ namespace SyncRADation.Patches
                 if (__instance.opened)
                     EnvEmit.ReadOnce(PuzzleType.ROT_Magpie, __instance);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 
@@ -664,7 +664,7 @@ namespace SyncRADation.Patches
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
             bool solved = false;
-            try { solved = __instance.solved; } catch { }
+            try { solved = __instance.solved; } catch (System.Exception e) { Guard.Swallow(e); }
             if (solved) EnvEmit.Progressed(PuzzleType.RES_LibraryPC, __instance);
             else EnvEmit.Read(PuzzleType.RES_LibraryPC, __instance);
         }
@@ -713,7 +713,7 @@ namespace SyncRADation.Patches
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             EnvEmit.Read(PuzzleType.ROT_MeatBlocker, __instance);
         }
     }
@@ -730,7 +730,7 @@ namespace SyncRADation.Patches
                 if (__instance.unlocked)
                     EnvEmit.ReadOnce(PuzzleType.RES_Shutters, __instance);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 
@@ -754,7 +754,7 @@ namespace SyncRADation.Patches
                         EnvEmit.Read(PuzzleType.BiodomeDoorLock, __instance);
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 
@@ -786,7 +786,7 @@ namespace SyncRADation.Patches
                 else
                     EnvEmit.Read(PuzzleType.PatternLock, __instance);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 
@@ -819,7 +819,7 @@ namespace SyncRADation.Patches
             {
                 if (__instance.solved) return false;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return true;
         }
 
@@ -834,7 +834,7 @@ namespace SyncRADation.Patches
                 else
                     EnvEmit.Read(PuzzleType.PatternLock, __instance);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 

@@ -331,11 +331,11 @@ namespace SyncRADation.Networking
             // Sticky beyond drop-claims + dump queue: client puppets/boss AI, EventZone
             // once-fired, cutscene skip/start sets, airlock unlocks + personal scene,
             // SceneFollow inflight coalesce, Dialoguer flavor gate.
-            try { _enemySync.Reset(); } catch { }
-            try { _bossSync.Reset(); } catch { }
-            try { Patches.EventZonePatch.OnSceneChanged(); } catch { }
-            try { SceneFollowService.Reset(); } catch { }
-            try { Patches.DialoguerGate.ClearFlavor(); } catch { }
+            try { _enemySync.Reset(); } catch (Exception e) { Guard.Swallow(e); }
+            try { _bossSync.Reset(); } catch (Exception e) { Guard.Swallow(e); }
+            try { Patches.EventZonePatch.OnSceneChanged(); } catch (Exception e) { Guard.Swallow(e); }
+            try { SceneFollowService.Reset(); } catch (Exception e) { Guard.Swallow(e); }
+            try { Patches.DialoguerGate.ClearFlavor(); } catch (Exception e) { Guard.Swallow(e); }
             _handshakeComplete = false;
             _vitalTimer = 0f;
             _peers.Clear();
@@ -370,19 +370,19 @@ namespace SyncRADation.Networking
 
         static void RestoreLocalControl()
         {
-            try { Time.timeScale = 1f; } catch { }
-            try { PlayerState.suspendInput = false; } catch { }
-            try { PlayerState.suspendInputCheats = false; } catch { }
-            try { PlayerState.animating = false; } catch { }
-            try { PlayerState.grappled = false; } catch { }
-            try { PlayerState.stunTime = 0f; } catch { }
+            try { Time.timeScale = 1f; } catch (Exception e) { Guard.Swallow(e); }
+            try { PlayerState.suspendInput = false; } catch (Exception e) { Guard.Swallow(e); }
+            try { PlayerState.suspendInputCheats = false; } catch (Exception e) { Guard.Swallow(e); }
+            try { PlayerState.animating = false; } catch (Exception e) { Guard.Swallow(e); }
+            try { PlayerState.grappled = false; } catch (Exception e) { Guard.Swallow(e); }
+            try { PlayerState.stunTime = 0f; } catch (Exception e) { Guard.Swallow(e); }
             try
             {
                 var gs = PlayerState.gameState;
                 if (gs != PlayerState.gameStates.menu && gs != PlayerState.gameStates.loading)
                     PlayerState.gameState = PlayerState.gameStates.play;
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
             try
             {
                 var cs = PlayerState.charState;
@@ -391,7 +391,7 @@ namespace SyncRADation.Networking
                     || cs == PlayerState.charStates.animation)
                     PlayerState.charState = PlayerState.charStates.idle;
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
             ModRuntime.Log?.Msg("[Network] local control restored (offline)");
         }
 
@@ -990,7 +990,7 @@ namespace SyncRADation.Networking
             _storySync.OnSceneChanged();
             Patches.EventZonePatch.OnSceneChanged();
             _sceneMismatch = false;
-            try { SceneFollowService.NoteArrived(SceneManager.GetActiveScene().name ?? ""); } catch { }
+            try { SceneFollowService.NoteArrived(SceneManager.GetActiveScene().name ?? ""); } catch (Exception e) { Guard.Swallow(e); }
             if (_handshakeComplete)
             {
                 if (SceneFollowService.LocalIsTransient())

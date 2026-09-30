@@ -21,9 +21,9 @@ namespace SyncRADation.Networking
         {
             if (x == null) return;
             ulong id = 0;
-            try { id = WorldId.FromGameObject(x.gameObject); } catch { }
+            try { id = WorldId.FromGameObject(x.gameObject); } catch (System.Exception e) { Guard.Swallow(e); }
             bool open = false;
-            try { open = x.opened; } catch { }
+            try { open = x.opened; } catch (System.Exception e) { Guard.Swallow(e); }
             if (!open && !_host.IsHeld(PuzzleType.PEN_Cryo, id) && !_host.CryoFamilyHeldUnmatched())
                 return;
             if (!_host.IsHeld(PuzzleType.PEN_Cryo, id))
@@ -37,9 +37,9 @@ namespace SyncRADation.Networking
         {
             if (c == null) return;
             ulong id = 0;
-            try { id = WorldId.FromGameObject(c.gameObject); } catch { }
+            try { id = WorldId.FromGameObject(c.gameObject); } catch (System.Exception e) { Guard.Swallow(e); }
             bool done = false;
-            try { done = c.done; } catch { }
+            try { done = c.done; } catch (System.Exception e) { Guard.Swallow(e); }
             if (!done && !_host.IsHeld(PuzzleType.CryoDoorLock, id))
             {
                 try
@@ -47,14 +47,14 @@ namespace SyncRADation.Networking
                     if (c.puzzle != null && c.puzzle.solved)
                         done = true;
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 try
                 {
                     var pen = PuzzleDomainUtil.FindInParents<PEN_Cryo>(c.gameObject)
                         ?? (c.Door != null ? PuzzleDomainUtil.FindInParents<PEN_Cryo>(c.Door) : null);
                     if (pen != null && pen.opened) done = true;
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
             if (!done && !_host.IsHeld(PuzzleType.CryoDoorLock, id) && !_host.CryoFamilyHeldUnmatched())
                 return;
@@ -123,13 +123,13 @@ namespace SyncRADation.Networking
 
             PlaytestLog.Event("Puzzle", "snap CryoDoorLock " + c.gameObject.name
                 + (playAnim ? " anim" : " pose"));
-            try { c.done = true; } catch { }
+            try { c.done = true; } catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (c.puzzle != null)
                     c.puzzle.solved = true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (c.inter != null)
@@ -138,16 +138,16 @@ namespace SyncRADation.Networking
                     c.inter.enabled = false;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (c.Event != null)
                 {
                     PuzzleSyncService.DisableInteractions(c.Event);
-                    try { c.Event.enabled = false; } catch { }
+                    try { c.Event.enabled = false; } catch (System.Exception e) { Guard.Swallow(e); }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             if (c.puzzle != null)
                 CodepadSyncService.DisablePad(c.puzzle);
             try
@@ -161,7 +161,7 @@ namespace SyncRADation.Networking
                     TryOpenCryoController(c.Door, animate: playAnim);
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             PuzzleSyncService.TryUnlockDoors(c.gameObject);
             try
             {
@@ -171,17 +171,17 @@ namespace SyncRADation.Networking
                 if (pen != null)
                     SnapPenCryo(pen, playAnim);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         static void TryOpenCryoController(GameObject door, bool animate)
         {
             if (door == null) return;
             CryoDoorController ctrl = null;
-            try { ctrl = door.GetComponent<CryoDoorController>(); } catch { }
+            try { ctrl = door.GetComponent<CryoDoorController>(); } catch (System.Exception e) { Guard.Swallow(e); }
             if (ctrl == null)
             {
-                try { ctrl = door.GetComponentInChildren<CryoDoorController>(true); } catch { }
+                try { ctrl = door.GetComponentInChildren<CryoDoorController>(true); } catch (System.Exception e) { Guard.Swallow(e); }
             }
             if (ctrl == null) return;
             try
@@ -214,14 +214,14 @@ namespace SyncRADation.Networking
                 return;
             }
 
-            try { PuzzleSyncService.DisableOne(x.interaction); } catch { }
-            try { PuzzleSyncService.DisableInteractions(x); } catch { }
+            try { PuzzleSyncService.DisableOne(x.interaction); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { PuzzleSyncService.DisableInteractions(x); } catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (x.RoomDoor != null)
                     PuzzleSyncService.UnlockDoorObject(x.RoomDoor);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
 
             if (animating)
@@ -257,13 +257,13 @@ namespace SyncRADation.Networking
         static void StampPenCryoOpen(PEN_Cryo x)
         {
             if (x == null) return;
-            try { x.opened = true; } catch { }
-            try { x.doorPos = 1f; } catch { }
-            try { x.coverPos = 1f; } catch { }
-            try { x.moverPos = 1f; } catch { }
-            try { x.openerPos = 1f; } catch { }
-            try { x.fluidPos = 1f; } catch { }
-            try { x.brightness = 0f; } catch { }
+            try { x.opened = true; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { x.doorPos = 1f; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { x.coverPos = 1f; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { x.moverPos = 1f; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { x.openerPos = 1f; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { x.fluidPos = 1f; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { x.brightness = 0f; } catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         static void ActivateCryoContent(PEN_Cryo x)
@@ -271,8 +271,8 @@ namespace SyncRADation.Networking
             if (x == null) return;
             if (x.contentLateActivated != null)
             {
-                try { x.contentLateActivated.SetActive(true); } catch { }
-                try { PuzzleSyncService.RevealPickups(x.contentLateActivated); } catch { }
+                try { x.contentLateActivated.SetActive(true); } catch (System.Exception e) { Guard.Swallow(e); }
+                try { PuzzleSyncService.RevealPickups(x.contentLateActivated); } catch (System.Exception e) { Guard.Swallow(e); }
             }
             HideClaimedAround(x.gameObject);
         }
@@ -285,7 +285,7 @@ namespace SyncRADation.Networking
                 if (net != null)
                     net.PickupSync.HideClaimed(root);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public static void DisableCryoAccess(PEN_Cryo x)
@@ -306,10 +306,10 @@ namespace SyncRADation.Networking
                             var c = locks[i];
                             if (c == null || c.Door == null) continue;
                             PEN_Cryo linked = null;
-                            try { linked = c.Door.GetComponent<PEN_Cryo>(); } catch { }
+                            try { linked = c.Door.GetComponent<PEN_Cryo>(); } catch (System.Exception e) { Guard.Swallow(e); }
                             if (linked == null)
                             {
-                                try { linked = c.Door.GetComponentInChildren<PEN_Cryo>(true); } catch { }
+                                try { linked = c.Door.GetComponentInChildren<PEN_Cryo>(true); } catch (System.Exception e) { Guard.Swallow(e); }
                             }
                             if (linked == null)
                                 linked = PuzzleDomainUtil.FindInParents<PEN_Cryo>(c.Door);
@@ -323,23 +323,23 @@ namespace SyncRADation.Networking
                 }
                 if (lockGo != null)
                 {
-                    try { lockGo.done = true; } catch { }
-                    try { PuzzleSyncService.DisableOne(lockGo.inter); } catch { }
-                    try { PuzzleSyncService.DisableInteractions(lockGo); } catch { }
+                    try { lockGo.done = true; } catch (System.Exception e) { Guard.Swallow(e); }
+                    try { PuzzleSyncService.DisableOne(lockGo.inter); } catch (System.Exception e) { Guard.Swallow(e); }
+                    try { PuzzleSyncService.DisableInteractions(lockGo); } catch (System.Exception e) { Guard.Swallow(e); }
                     try
                     {
                         if (lockGo.Event != null)
                         {
                             PuzzleSyncService.DisableInteractions(lockGo.Event);
-                            try { lockGo.Event.enabled = false; } catch { }
+                            try { lockGo.Event.enabled = false; } catch (System.Exception e) { Guard.Swallow(e); }
                         }
                     }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                     if (lockGo.puzzle != null)
                         CodepadSyncService.DisablePad(lockGo.puzzle);
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var pads = x.GetComponentsInChildren<PEN_Codepad>(true);
@@ -349,14 +349,14 @@ namespace SyncRADation.Networking
                         CodepadSyncService.DisablePad(pads[i]);
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var parentPad = PuzzleDomainUtil.FindInParents<PEN_Codepad>(x.gameObject);
                 if (parentPad != null)
                     CodepadSyncService.DisablePad(parentPad);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var patterns = x.GetComponentsInChildren<LAB_PatternLock>(true);
@@ -366,20 +366,20 @@ namespace SyncRADation.Networking
                         CodepadSyncService.DisablePatternLock(patterns[i]);
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var parentPat = PuzzleDomainUtil.FindInParents<LAB_PatternLock>(x.gameObject);
                 if (parentPat != null)
                     CodepadSyncService.DisablePatternLock(parentPat);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             // Hierarchy-only: pads under this cryo, plus siblings that share cryo's parent.
             // (Replaces the old sqrMagnitude < 64f radius heuristic.)
             try
             {
                 Transform cryoParent = null;
-                try { cryoParent = x.transform.parent; } catch { }
+                try { cryoParent = x.transform.parent; } catch (System.Exception e) { Guard.Swallow(e); }
                 var all = WorldLookup.All<LAB_PatternLock>();
                 if (all != null)
                 {
@@ -397,11 +397,11 @@ namespace SyncRADation.Networking
                             if (cryoParent != null && p.transform.parent == cryoParent)
                                 CodepadSyncService.DisablePatternLock(p);
                         }
-                        catch { }
+                        catch (System.Exception e) { Guard.Swallow(e); }
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public static void PosePenCryoOpen(PEN_Cryo x)
@@ -417,7 +417,7 @@ namespace SyncRADation.Networking
                     x.Door.localEulerAngles = e;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (x.cover != null)
@@ -427,7 +427,7 @@ namespace SyncRADation.Networking
                     x.cover.localEulerAngles = e;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (x.coverMover != null)
@@ -437,7 +437,7 @@ namespace SyncRADation.Networking
                     x.coverMover.localPosition = p;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (x.Opener != null)
@@ -447,8 +447,8 @@ namespace SyncRADation.Networking
                     x.Opener.localPosition = p;
                 }
             }
-            catch { }
-            try { if (x.scanner != null) x.scanner.enabled = false; } catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.scanner != null) x.scanner.enabled = false; } catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (x.fluid != null)
@@ -458,29 +458,29 @@ namespace SyncRADation.Networking
                     x.fluid.localPosition = p;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (x.Fog != null)
                 {
                     for (int i = 0; i < x.Fog.Length; i++)
                     {
-                        try { if (x.Fog[i] != null) x.Fog[i].Stop(true); } catch { }
+                        try { if (x.Fog[i] != null) x.Fog[i].Stop(true); } catch (System.Exception e) { Guard.Swallow(e); }
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (x.Steam != null)
                 {
                     for (int i = 0; i < x.Steam.Length; i++)
                     {
-                        try { if (x.Steam[i] != null) x.Steam[i].Stop(true); } catch { }
+                        try { if (x.Steam[i] != null) x.Steam[i].Stop(true); } catch (System.Exception e) { Guard.Swallow(e); }
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 }

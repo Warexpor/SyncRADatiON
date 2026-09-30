@@ -16,8 +16,8 @@ namespace SyncRADation.Patches
             if (__instance == null) return true;
             if (NetGate.IsApplying)
             {
-                try { if (__instance.completed) return false; } catch { }
-                try { if (__instance.cutscene == null) return false; } catch { }
+                try { if (__instance.completed) return false; } catch (System.Exception e) { Guard.Swallow(e); }
+                try { if (__instance.cutscene == null) return false; } catch (System.Exception e) { Guard.Swallow(e); }
                 return true;
             }
             if (!NetGate.Live) return true;
@@ -25,7 +25,7 @@ namespace SyncRADation.Patches
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             InteractionSyncService.RememberSkip(id);
             bool running = true;
-            try { running = __instance.cutscene != null && !__instance.completed; } catch { }
+            try { running = __instance.cutscene != null && !__instance.completed; } catch (System.Exception e) { Guard.Swallow(e); }
             if (NetGate.Host)
             {
                 LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.CutsceneSkip, id, 0, "");
@@ -45,7 +45,7 @@ namespace SyncRADation.Patches
             if (NetGate.IsApplying || !NetGate.Live) return true;
             if (__instance == null) return true;
             if (LocalInspect.AirlockCinematic(__instance.gameObject)) return true;
-            try { if (__instance.completed) return false; } catch { }
+            try { if (__instance.completed) return false; } catch (System.Exception e) { Guard.Swallow(e); }
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             if (InteractionSyncService.WasSkipped(id)) return false;
             // Host runs native + broadcasts. A client does not start it from here: it asks the host, and the
@@ -73,7 +73,7 @@ namespace SyncRADation.Patches
                 if (!__instance.unskippable)
                     CutsceneSkippingUI.skippableCutscene = true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 
@@ -94,23 +94,23 @@ namespace SyncRADation.Patches
                         var t = all[i];
                         if (t == null) continue;
                         bool started = false;
-                        try { started = t.started; } catch { }
+                        try { started = t.started; } catch (System.Exception e) { Guard.Swallow(e); }
                         if (!started) continue;
-                        try { CutsceneSkippingUI.skippableCutscene = false; } catch { }
+                        try { CutsceneSkippingUI.skippableCutscene = false; } catch (System.Exception e) { Guard.Swallow(e); }
                         AirlockCinematic.ArmTitlesSkip(t);
                         return false;
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             if (ArmWorldSkippers())
             {
-                try { CutsceneSkippingUI.skippableCutscene = true; } catch { }
+                try { CutsceneSkippingUI.skippableCutscene = true; } catch (System.Exception e) { Guard.Swallow(e); }
                 return false;
             }
             bool inCut = false;
-            try { inCut = PlayerState.cutscene || PlayerState.gameState == PlayerState.gameStates.cutscene; } catch { }
-            try { inCut = inCut || CutsceneSkippingUI.skippableCutscene; } catch { }
+            try { inCut = PlayerState.cutscene || PlayerState.gameState == PlayerState.gameStates.cutscene; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { inCut = inCut || CutsceneSkippingUI.skippableCutscene; } catch (System.Exception e) { Guard.Swallow(e); }
 
             // One scene-cached scan (not Update) — detect running + pick skip target.
             CutsceneManager target = null;
@@ -130,12 +130,12 @@ namespace SyncRADation.Patches
                             && (c.cutscene != null || (c.skipper != null && !c.skipper.done)))
                             target = c;
                     }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                 }
             }
             if (!inCut) return true;
             if (target == null) return true;
-            try { target.Skip(); } catch { }
+            try { target.Skip(); } catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
 
@@ -155,7 +155,7 @@ namespace SyncRADation.Patches
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var ends = WorldLookup.All<PEN_CodeRoomEnd>();
@@ -169,7 +169,7 @@ namespace SyncRADation.Patches
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return armed;
         }
 
@@ -179,7 +179,7 @@ namespace SyncRADation.Patches
             try
             {
                 bool done = false;
-                try { done = s.done; } catch { }
+                try { done = s.done; } catch (System.Exception e) { Guard.Swallow(e); }
                 if (done) return false;
                 s.enabled = true;
                 return true;

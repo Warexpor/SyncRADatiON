@@ -87,7 +87,7 @@ namespace SyncRADation.Networking
                 }
                 if (IsDoorEmitter(e)) return;
                 string path = "";
-                try { path = e.Event; } catch { }
+                try { path = e.Event; } catch (System.Exception ex) { Guard.Swallow(ex); }
                 if (IsDoorSfxPath(path)) return;
                 if (IsSceneBed(path)) return;
                 PlaytestLog.Verbose("FMOD", (msg.Play ? "Play" : "Stop")
@@ -107,7 +107,7 @@ namespace SyncRADation.Networking
                             return;
                         }
                     }
-                    catch { }
+                    catch (System.Exception ex) { Guard.Swallow(ex); }
                     e.Play();
                 }
                 else e.Stop();
@@ -146,7 +146,7 @@ namespace SyncRADation.Networking
                 if (known && was && _skipIds.Contains(id)) return;
             }
             string path = "";
-            try { path = emitter.Event; } catch { }
+            try { path = emitter.Event; } catch (System.Exception e) { Guard.Swallow(e); }
             if (IsLocalOnly(emitter.transform) || IsDoorEmitter(emitter) || IsSceneBed(path))
             {
                 _skipIds.Add(id);
@@ -196,7 +196,7 @@ namespace SyncRADation.Networking
                     && !string.IsNullOrEmpty(path))
                     return path;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try { return guid.ToString(); }
             catch { return ""; }
         }
@@ -258,14 +258,14 @@ namespace SyncRADation.Networking
             {
                 if (LocalInspect.Cinematic(t.gameObject)) return true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var player = PlayerState.player;
                 if (player != null && (t == player.transform || t.IsChildOf(player.transform)))
                     return true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var rms = WorldLookup.All<RadioManager>();
@@ -280,7 +280,7 @@ namespace SyncRADation.Networking
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             Transform p = t;
             int hops = 0;
             while (p != null && hops++ < 16)
@@ -295,7 +295,7 @@ namespace SyncRADation.Networking
                     if (p.GetComponent<EventScreen>() != null) return true;
                     if (p.GetComponent<EventScreen3DCam>() != null) return true;
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 p = p.parent;
             }
             try
@@ -314,7 +314,7 @@ namespace SyncRADation.Networking
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
 
@@ -345,10 +345,10 @@ namespace SyncRADation.Networking
                 if (e == null || kvp.Key == 0) continue;
                 if (IsLocalOnly(e.transform) || IsDoorEmitter(e)) continue;
                 string path = "";
-                try { path = e.Event; } catch { }
+                try { path = e.Event; } catch (System.Exception ex) { Guard.Swallow(ex); }
                 if (IsSceneBed(path)) continue;
                 bool playing = false;
-                try { playing = e.IsPlaying(); } catch { }
+                try { playing = e.IsPlaying(); } catch (System.Exception ex) { Guard.Swallow(ex); }
                 if (!playing) continue;
                 _sentPlaying[kvp.Key] = true;
                 net.SendFmodEmitter(new FmodEmitterMessage
@@ -368,7 +368,7 @@ namespace SyncRADation.Networking
                 string path = emitter.Event;
                 if (IsDoorSfxPath(path)) return true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             Transform t = emitter.transform;
             int hops = 0;
             while (t != null && hops++ < 16)
@@ -378,7 +378,7 @@ namespace SyncRADation.Networking
                     if (t.GetComponent<Doorway_Double>() != null) return true;
                     if (t.GetComponent<EventSlidingDoor>() != null) return true;
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 t = t.parent;
             }
             return false;
@@ -415,7 +415,7 @@ namespace SyncRADation.Networking
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
     }

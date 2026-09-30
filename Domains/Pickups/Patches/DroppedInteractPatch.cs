@@ -32,7 +32,7 @@ namespace SyncRADation.Patches
             if (_interactThisFrame) return;
             if (!InteractPressed()) return;
             try { __instance.Interact(); }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         static Interaction _highlighted;
@@ -49,22 +49,22 @@ namespace SyncRADation.Patches
             {
                 if (_highlighted != null)
                 {
-                    try { _highlighted.setInRange(false); } catch { }
-                    try { DroppedItemManager.SetHighlight(_highlighted.gameObject, false); } catch { }
+                    try { _highlighted.setInRange(false); } catch (System.Exception e) { Guard.Swallow(e); }
+                    try { DroppedItemManager.SetHighlight(_highlighted.gameObject, false); } catch (System.Exception e) { Guard.Swallow(e); }
                 }
                 _highlighted = drop;
             }
             if (drop == null) return null;
 
-            try { drop.setInRange(true); } catch { }
-            try { DroppedItemManager.SetHighlight(drop.gameObject, true); } catch { }
+            try { drop.setInRange(true); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { DroppedItemManager.SetHighlight(drop.gameObject, true); } catch (System.Exception e) { Guard.Swallow(e); }
 
             Interaction cur = null;
-            try { cur = inst.currentInter; } catch { }
+            try { cur = inst.currentInter; } catch (System.Exception e) { Guard.Swallow(e); }
             bool ours = cur != null && DroppedItemManager.IsDroppedGo(cur.gameObject);
             if (cur == null || ours)
             {
-                try { inst.currentInter = drop; } catch { }
+                try { inst.currentInter = drop; } catch (System.Exception e) { Guard.Swallow(e); }
             }
             return drop;
         }
@@ -99,7 +99,7 @@ namespace SyncRADation.Patches
                 if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
                     return true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
     }
@@ -119,7 +119,7 @@ namespace SyncRADation.Patches
                 if (gs != PlayerState.gameStates.play)
                     return true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
 
             Transform t = null;
             try { t = __instance.transform; } catch { return true; }
@@ -129,11 +129,11 @@ namespace SyncRADation.Patches
             if (drop == null) return true;
 
             Interaction cur = null;
-            try { cur = __instance.currentInter; } catch { }
+            try { cur = __instance.currentInter; } catch (System.Exception e) { Guard.Swallow(e); }
             if (cur != null && !DroppedItemManager.IsDroppedGo(cur.gameObject))
                 return true;
 
-            try { __instance.currentInter = drop; } catch { }
+            try { __instance.currentInter = drop; } catch (System.Exception e) { Guard.Swallow(e); }
             return true;
         }
     }
@@ -151,7 +151,7 @@ namespace SyncRADation.Patches
                 if (p == null) p = __instance.GetComponentInParent<ItemPickup>();
                 ItemPickupPatches.ArmDropped(p);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         [HarmonyPostfix]
@@ -164,7 +164,7 @@ namespace SyncRADation.Patches
                 if (p == null) p = __instance.GetComponentInParent<ItemPickup>();
                 ItemPickupPatches.CommitDroppedIfTaken(p);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 }

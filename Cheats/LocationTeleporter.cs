@@ -122,7 +122,7 @@ namespace SyncRADation.Cheats
                     return string.CompareOrdinal(an, bn);
                 });
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return list;
         }
 
@@ -233,7 +233,7 @@ namespace SyncRADation.Cheats
 
                 // Native goto first
                 bool cheated = false;
-                try { global::Cheats.cheat("goto " + name); cheated = true; } catch { }
+                try { global::Cheats.cheat("goto " + name); cheated = true; } catch (System.Exception e) { Guard.Swallow(e); }
 
                 // Direct fallback: move player to gotoSpawn + EnterRoom
                 var player = PlayerState.player;
@@ -241,7 +241,7 @@ namespace SyncRADation.Cheats
                 if (player != null && spawn != null)
                 {
                     player.transform.position = spawn.position;
-                    try { room.EnterRoom(); } catch { }
+                    try { room.EnterRoom(); } catch (System.Exception e) { Guard.Swallow(e); }
                 }
 
                 SetStatus((cheated ? "goto " : "teleport ") + name);

@@ -77,7 +77,7 @@ namespace SyncRADation.Players
                     return net != null ? net.LocalPlayerId : 0;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return -1;
         }
 

@@ -35,7 +35,7 @@ namespace SyncRADation.Networking
                         if (x.keypad != null)
                             padSolved = x.keypad.solved || x.keypad.opening;
                     }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                     // Bool0=keypad solved — Apply snaps pad + TryUnlockDoors (door side-effect).
                     entry = PuzzleDomainUtil.Mk(type, wid, padSolved, false, false, x.frequency, x.code, x.hintStation, 0, 0);
                     return true;
@@ -53,7 +53,7 @@ namespace SyncRADation.Networking
             {
                 if (RadioManager.moduleInstalled) radioBools |= 1;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return PuzzleDomainUtil.Mk(PuzzleType.RadioManagerState, 0, radioBools != 0, false, false, radioBools, 0, 0, 0, 0f);
         }
 
@@ -76,7 +76,7 @@ namespace SyncRADation.Networking
             // snap ONLY (skip cutscene remount / skip EndCutscene.trigger). Always
             // set solved when Bool0. Protocol 10 unchanged (reuse Bool0).
             bool was = false;
-            try { was = x.solved; } catch { }
+            try { was = x.solved; } catch (System.Exception ex) { Guard.Swallow(ex); }
             x.solved = e.Bool0;
             if (!e.Bool0) return;
             if (!was)
@@ -91,17 +91,17 @@ namespace SyncRADation.Networking
                             if (x.EndCutscene != null)
                                 x.EndCutscene.trigger();
                         }
-                        catch { }
+                        catch (System.Exception ex) { Guard.Swallow(ex); }
                         try
                         {
                             if (!string.IsNullOrEmpty(x.unlockedSFX))
                                 RuntimeManager.PlayOneShot(x.unlockedSFX, x.transform.position);
                         }
-                        catch { }
+                        catch (System.Exception ex) { Guard.Swallow(ex); }
                     }
                     SnapTutorialFinalPose(x);
                 }
-                catch { }
+                catch (System.Exception ex) { Guard.Swallow(ex); }
                 finally { NetGate.EndApply(); }
             }
         }
@@ -124,19 +124,19 @@ namespace SyncRADation.Networking
                     x.Door.localEulerAngles = e;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (x.returnStations != null)
                     x.returnStations.SetActive(true);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (x.TutorialStation != null)
                     x.TutorialStation.SetActive(false);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public static void ApplyManager(PuzzleStateEntry e)
@@ -153,7 +153,7 @@ namespace SyncRADation.Networking
             x.correctAntenna = e.Int0;
             x.setAntenna = e.Int1;
             x.QualityE = e.Float0;
-            try { x.LoadState(); } catch { }
+            try { x.LoadState(); } catch (System.Exception ex) { Guard.Swallow(ex); }
         }
 
         public static void ApplyCode(DET_RadioCodeLock x, PuzzleStateEntry e)
@@ -173,7 +173,7 @@ namespace SyncRADation.Networking
                     if (x.keypad != null && e.Int1 != 0)
                         x.keypad.solution = e.Int1.ToString();
                 }
-                catch { }
+                catch (System.Exception ex) { Guard.Swallow(ex); }
             }
             if (!e.Bool0) return;
             try
@@ -181,17 +181,17 @@ namespace SyncRADation.Networking
                 if (x.keypad != null)
                 {
                     x.keypad.solved = true;
-                    try { x.keypad.opening = true; } catch { }
+                    try { x.keypad.opening = true; } catch (System.Exception ex) { Guard.Swallow(ex); }
                 }
             }
-            catch { }
+            catch (System.Exception ex) { Guard.Swallow(ex); }
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
             try
             {
                 if (x.keypad != null)
                     PuzzleSyncService.TryUnlockDoors(x.keypad.gameObject);
             }
-            catch { }
+            catch (System.Exception ex) { Guard.Swallow(ex); }
         }
     }
 }

@@ -60,7 +60,7 @@ namespace SyncRADation.Networking
                 inst.start();
                 inst.release();
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         static void Start(string path, FMOD.ATTRIBUTES_3D attrs, float volume)
@@ -73,7 +73,7 @@ namespace SyncRADation.Networking
                 inst.start();
                 inst.release();
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 }

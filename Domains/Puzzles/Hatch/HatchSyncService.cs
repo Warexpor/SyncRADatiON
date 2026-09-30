@@ -44,32 +44,32 @@ namespace SyncRADation.Networking
         public static void SnapSeilbahn(EXC_Seilbahn x, bool play)
         {
             if (x == null) return;
-            try { x.down = true; } catch { }
-            try { if (x.interaction != null) x.interaction.SetActive(false); } catch { }
-            try { if (x.Red != null) x.Red.SetActive(false); } catch { }
-            try { if (x.Green != null) x.Green.SetActive(true); } catch { }
+            try { x.down = true; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.interaction != null) x.interaction.SetActive(false); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.Red != null) x.Red.SetActive(false); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.Green != null) x.Green.SetActive(true); } catch (System.Exception e) { Guard.Swallow(e); }
             if (play && PuzzleSyncService.TryStartWorldAnim(PuzzleType.EXC_Seilbahn, x.gameObject))
             {
                 try { x.goDown(); }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
         }
 
         public static void SnapHatch(EXC_Hatch x, bool play)
         {
             if (x == null) return;
-            try { if (x.Inter != null) x.Inter.SetActive(false); } catch { }
-            try { if (x.Ladder != null) x.Ladder.SetActive(true); } catch { }
+            try { if (x.Inter != null) x.Inter.SetActive(false); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.Ladder != null) x.Ladder.SetActive(true); } catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (x.doorway != null)
                     DoorNative.ApplyConnectedDoors(x.doorway, false);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             if (play && PuzzleSyncService.TryStartWorldAnim(PuzzleType.EXC_Hatch, x.gameObject))
             {
                 try { x.OpenHatch(); }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
         }
     }

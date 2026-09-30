@@ -46,7 +46,7 @@ namespace SyncRADation.Patches
             if (__state.Swapped && __instance != null)
             {
                 try { __instance.Player = __state.OriginalPlayer; }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
 
             if (!NetGate.Host || __instance == null) return;
@@ -70,17 +70,17 @@ namespace SyncRADation.Patches
             float r2 = radius * radius;
 
             GameObject local = null;
-            try { local = net.GetLocalPlayer(); } catch { }
+            try { local = net.GetLocalPlayer(); } catch (System.Exception e) { Guard.Swallow(e); }
             if (local == null)
             {
-                try { local = spawner.Player; } catch { }
+                try { local = spawner.Player; } catch (System.Exception e) { Guard.Swallow(e); }
             }
 
             bool localInRange = false;
             if (local != null)
             {
                 try { localInRange = (local.transform.position - origin).sqrMagnitude <= r2; }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
             if (localInRange) return;
 
@@ -123,7 +123,7 @@ namespace SyncRADation.Patches
         static void TryAdoptNativeChild(EnemySpawner spawner)
         {
             GameObject child = null;
-            try { child = spawner._Child; } catch { }
+            try { child = spawner._Child; } catch (System.Exception e) { Guard.Swallow(e); }
             if (child == null) return;
 
             int cid;
@@ -131,10 +131,10 @@ namespace SyncRADation.Patches
             if (_adoptedChildren.Contains(cid)) return;
 
             EnemyController ec = null;
-            try { ec = child.GetComponent<EnemyController>(); } catch { }
+            try { ec = child.GetComponent<EnemyController>(); } catch (System.Exception e) { Guard.Swallow(e); }
             if (ec == null)
             {
-                try { ec = child.GetComponentInChildren<EnemyController>(true); } catch { }
+                try { ec = child.GetComponentInChildren<EnemyController>(true); } catch (System.Exception e) { Guard.Swallow(e); }
             }
             if (ec == null) return;
 

@@ -59,7 +59,7 @@ namespace SyncRADation.Networking
         public static void Note(AnItem item)
         {
             if (item == null || !IsKeyOrObject(item)) return;
-            try { Note(item._item); } catch { }
+            try { Note(item._item); } catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public static void Remove(Items.itemlist item)
@@ -95,7 +95,7 @@ namespace SyncRADation.Networking
                 if (net != null && net.Role == NetworkRole.Host && net.IsConnected)
                 {
                     // Fan-out sentinel so non-crafter clients strip mirrors too.
-                    try { net.SendPartyKeyRing(msg.ItemEnums); } catch { }
+                    try { net.SendPartyKeyRing(msg.ItemEnums); } catch (System.Exception e) { Guard.Swallow(e); }
                     Broadcast();
                 }
                 return;
@@ -152,7 +152,7 @@ namespace SyncRADation.Networking
                 if (!IsKeyOrObject(item)) return;
                 net.SendPartyKeyRing(new[] { (ushort)item._item });
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         /// <summary>
@@ -202,7 +202,7 @@ namespace SyncRADation.Networking
             for (int i = 0; i < revoke.Count; i++)
                 arr[i + 1] = revoke[i];
             try { net.SendPartyKeyRing(arr); }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             if (net.Role == NetworkRole.Host)
                 Broadcast();
         }
@@ -238,17 +238,17 @@ namespace SyncRADation.Networking
                     en.Dispose();
                     for (int i = 0; i < extra.Count; i++)
                     {
-                        try { InventoryManager.RemoveItem(extra[i], counts[i]); } catch { }
+                        try { InventoryManager.RemoveItem(extra[i], counts[i]); } catch (System.Exception e) { Guard.Swallow(e); }
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (InventoryManager.CurrentItem != null && InventoryManager.CurrentItem._item == item)
                     InventoryManager.CurrentItem = null;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         static void CollectCraftRevoke(List<ushort> dst, AnItem item)
@@ -260,7 +260,7 @@ namespace SyncRADation.Networking
                 if (!dst.Contains(id))
                     dst.Add(id);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         /// <summary>Party save snapshot: copy of the ring (Key/Object enums).</summary>
@@ -308,7 +308,7 @@ namespace SyncRADation.Networking
                     return item;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return MatchByName(item);
         }
 
@@ -316,7 +316,7 @@ namespace SyncRADation.Networking
         {
             if (item == null) return null;
             string want = null;
-            try { want = item._name; } catch { }
+            try { want = item._name; } catch (System.Exception e) { Guard.Swallow(e); }
             if (string.IsNullOrEmpty(want)) return null;
             try
             {
@@ -335,11 +335,11 @@ namespace SyncRADation.Networking
                             return cat;
                         }
                     }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                 }
                 en.Dispose();
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return null;
         }
 
@@ -354,7 +354,7 @@ namespace SyncRADation.Networking
             var cat = CatalogOf(item) ?? item;
             if (cat == null)
             {
-                try { cat = CatalogOf(UseItemInteraction.currentUseItem); } catch { }
+                try { cat = CatalogOf(UseItemInteraction.currentUseItem); } catch (System.Exception e) { Guard.Swallow(e); }
             }
             if (cat == null) return null;
             try
@@ -362,19 +362,19 @@ namespace SyncRADation.Networking
                 var n = InventoryManager.getName(cat);
                 if (!BadLoc(n)) return n;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var n = cat.localizedName();
                 if (!BadLoc(n)) return n;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (!string.IsNullOrEmpty(cat._name) && !BadLoc(cat._name))
                     return cat._name;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return null;
         }
 
@@ -385,20 +385,20 @@ namespace SyncRADation.Networking
             var cat = CatalogOf(item);
             if (cat != null)
             {
-                try { UseItemInteraction.currentUseItem = cat; } catch { }
+                try { UseItemInteraction.currentUseItem = cat; } catch (System.Exception e) { Guard.Swallow(e); }
                 try
                 {
                     if (item != null && item != cat && string.IsNullOrEmpty(item._name)
                         && !string.IsNullOrEmpty(cat._name))
                         item._name = cat._name;
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
             string name = DisplayName(cat ?? item);
             if (string.IsNullOrEmpty(name)) return;
             _uiName = name;
-            try { Dialoguer.SetGlobalString(DialoguerKeyNameId, name); } catch { }
-            try { Dialoguer.SetGlobalString(0, name); } catch { }
+            try { Dialoguer.SetGlobalString(DialoguerKeyNameId, name); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { Dialoguer.SetGlobalString(0, name); } catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         static string _uiName;
@@ -410,8 +410,8 @@ namespace SyncRADation.Networking
         public static void RestoreUiNames()
         {
             if (string.IsNullOrEmpty(_uiName)) return;
-            try { Dialoguer.SetGlobalString(DialoguerKeyNameId, _uiName); } catch { }
-            try { Dialoguer.SetGlobalString(0, _uiName); } catch { }
+            try { Dialoguer.SetGlobalString(DialoguerKeyNameId, _uiName); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { Dialoguer.SetGlobalString(0, _uiName); } catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public static AnItem FindInBag(AnItem item)
@@ -434,7 +434,7 @@ namespace SyncRADation.Networking
                 }
                 en.Dispose();
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return null;
         }
 
@@ -514,7 +514,7 @@ namespace SyncRADation.Networking
             {
                 InventoryManager.AddItem(cat, 1);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             finally { _ensuringBag = false; }
             bool ok = InLocalBag(cat);
             if (ok)

@@ -30,7 +30,7 @@ namespace SyncRADation.Sync
         public static void RebuildIfStale(float maxAgeSeconds = 2f)
         {
             string scene = "";
-            try { scene = SceneManager.GetActiveScene().name ?? ""; } catch { }
+            try { scene = SceneManager.GetActiveScene().name ?? ""; } catch (System.Exception e) { Guard.Swallow(e); }
             float now = Time.realtimeSinceStartup;
             if (scene == _lastRebuildScene && now - _lastRebuildAt < maxAgeSeconds)
                 return;
@@ -196,7 +196,7 @@ namespace SyncRADation.Sync
                 if (!string.IsNullOrEmpty(PlayerState.currentLocation))
                     return PlayerState.currentLocation;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return "";
         }
     }

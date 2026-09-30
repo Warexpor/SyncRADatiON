@@ -123,8 +123,8 @@ namespace SyncRADation.Sync
             if (_loggedDuplicateIds.Count > 1024) _loggedDuplicateIds.Clear();
             if (!_loggedDuplicateIds.Add(id)) return;
             string a = "?", b = "?";
-            try { a = WorldId.GetHierarchyPath(candidate.transform); } catch { }
-            try { b = WorldId.GetHierarchyPath(existing.transform); } catch { }
+            try { a = WorldId.GetHierarchyPath(candidate.transform); } catch (Exception e) { Guard.Swallow(e); }
+            try { b = WorldId.GetHierarchyPath(existing.transform); } catch (Exception e) { Guard.Swallow(e); }
             ModRuntime.Log?.Warning("[WorldLookup] duplicate WorldId " + id.ToString("X16") + " (" + what
                 + "): '" + a + "' vs '" + b + "' — keeping the stable-order winner");
         }

@@ -23,7 +23,7 @@ namespace SyncRADation.Networking
         {
             _nextItemIndex = 1;
             // Player ids + local indices recycle; stale FinishDroppedNative dedupe soft-locks take.
-            try { SyncRADation.Patches.ItemPickupPatches.ResetDropClaims(); } catch { }
+            try { SyncRADation.Patches.ItemPickupPatches.ResetDropClaims(); } catch (Exception e) { Guard.Swallow(e); }
             // Session end: an in-flight storage ack will never arrive.
             StorageTxn.Reset();
         }
@@ -52,7 +52,7 @@ namespace SyncRADation.Networking
         internal void DumpDroppedItems()
         {
             string scene = "";
-            try { scene = SceneManager.GetActiveScene().name ?? ""; } catch { }
+            try { scene = SceneManager.GetActiveScene().name ?? ""; } catch (Exception e) { Guard.Swallow(e); }
             foreach (var drop in DroppedItemManager.All())
             {
                 if (drop.Count <= 0) continue;
@@ -101,7 +101,7 @@ namespace SyncRADation.Networking
             var pos = DroppedItemManager.FloorDropPos(localPlayer.transform);
 
             Items.itemlist itemToDrop = Items.itemlist.None;
-            try { if (anItem != null) itemToDrop = anItem._item; } catch { }
+            try { if (anItem != null) itemToDrop = anItem._item; } catch (Exception e) { Guard.Swallow(e); }
 
             if (itemToDrop == Items.itemlist.None || itemToDrop == Items.itemlist.Injector)
             {
@@ -275,7 +275,7 @@ namespace SyncRADation.Networking
                 {
                     var item = InventoryManager.getItem((Items.itemlist)msg.ItemEnum);
                     int have = 0;
-                    try { if (item != null) have = DroppedItemManager.CountInBag((Items.itemlist)msg.ItemEnum); } catch { }
+                    try { if (item != null) have = DroppedItemManager.CountInBag((Items.itemlist)msg.ItemEnum); } catch (Exception e) { Guard.Swallow(e); }
                     if (item != null && have <= 0)
                     {
                         int grant = DroppedItemManager.SanitizeStack(msg.Count,
@@ -315,7 +315,7 @@ namespace SyncRADation.Networking
             if (held == null) held = bagItem;
             if (held != null)
             {
-                try { InventoryManager.RemoveItem(held, n); } catch { }
+                try { InventoryManager.RemoveItem(held, n); } catch (Exception e) { Guard.Swallow(e); }
             }
             try
             {
@@ -333,17 +333,17 @@ namespace SyncRADation.Networking
                     en.Dispose();
                     for (int i = 0; i < extra.Count; i++)
                     {
-                        try { InventoryManager.RemoveItem(extra[i], n); } catch { }
+                        try { InventoryManager.RemoveItem(extra[i], n); } catch (Exception e) { Guard.Swallow(e); }
                     }
                 }
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
             try
             {
                 if (InventoryManager.CurrentItem != null && InventoryManager.CurrentItem._item == itemToDrop)
                     InventoryManager.CurrentItem = null;
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
         }
 
         static bool IsSharedItem(Items.itemlist itemEnum)
@@ -383,10 +383,10 @@ namespace SyncRADation.Networking
         static AnItem ResolveSelectedItem()
         {
             PlayerState.gameStates gs = PlayerState.gameStates.play;
-            try { gs = PlayerState.gameState; } catch { }
+            try { gs = PlayerState.gameState; } catch (Exception e) { Guard.Swallow(e); }
             InventoryBase inv = FindInventory();
             bool inBagUi = gs == PlayerState.gameStates.inventory;
-            try { if (inv != null && inv.inventoryOpen) inBagUi = true; } catch { }
+            try { if (inv != null && inv.inventoryOpen) inBagUi = true; } catch (Exception e) { Guard.Swallow(e); }
 
             AnItem picked = null;
             try
@@ -420,23 +420,23 @@ namespace SyncRADation.Networking
                         if (igc != null && (slot < 0 || list == null || slot >= list.Count))
                             slot = igc.currentSlot;
                     }
-                    catch { }
+                    catch (Exception e) { Guard.Swallow(e); }
                 }
                 picked = ItemFromList(list, slot);
             }
             catch (Exception ex) { ModRuntime.Log?.Warning("[Drop] currentItems: " + ex.Message); }
             if (picked != null) return picked;
 
-            try { picked = Droppable(InventoryManager.CurrentItem); } catch { }
+            try { picked = Droppable(InventoryManager.CurrentItem); } catch (Exception e) { Guard.Swallow(e); }
             if (picked != null) return picked;
-            try { picked = Droppable(InventoryManager.EquippedTool); } catch { }
+            try { picked = Droppable(InventoryManager.EquippedTool); } catch (Exception e) { Guard.Swallow(e); }
             if (picked != null) return picked;
             try
             {
                 var w = InventoryManager.EquippedWeapon;
                 if (w != null) picked = Droppable(w.parentItem);
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
             if (picked != null) return picked;
 
             picked = FirstInBag();
@@ -461,7 +461,7 @@ namespace SyncRADation.Networking
                     en.Dispose();
                 }
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
             ModRuntime.Log?.Msg("[Drop] resolve fail gs=" + gs
                 + " inv=" + (inv != null)
                 + " bagUi=" + inBagUi
@@ -539,7 +539,7 @@ namespace SyncRADation.Networking
                     else if (fallback == null)
                         fallback = inv;
                 }
-                catch { }
+                catch (Exception e) { Guard.Swallow(e); }
             }
             return fallback;
         }
@@ -560,10 +560,10 @@ namespace SyncRADation.Networking
                         if (inv.intMenuOn) inv.ToggleInteractMenu();
                         inv.updateItems();
                     }
-                    catch { }
+                    catch (Exception e) { Guard.Swallow(e); }
                 }
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
         }
     }
 }

@@ -27,14 +27,14 @@ namespace SyncRADation.Patches
             // ring + EnsureInBag mirrors the same as ApplyUseItem (0.5.17).
             if (NetGate.Host)
             {
-                try { InteractionSyncService.HostRevokeIfConsumed(u); } catch { }
+                try { InteractionSyncService.HostRevokeIfConsumed(u); } catch (System.Exception e) { Guard.Swallow(e); }
                 try
                 {
                     var net = LanNetworkManager.Instance;
                     if (net != null)
                         net.PuzzleSync.Emit(PuzzleType.UseItemInteraction, id, u);
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 return;
             }
             if (!NetGate.Client) return;
@@ -67,7 +67,7 @@ namespace SyncRADation.Patches
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return true;
         }
 
@@ -107,7 +107,7 @@ namespace SyncRADation.Patches
         public static void Postfix(UseItemMultiInteraction __instance)
         {
             if (NetGate.IsApplying || !NetGate.Live || !NetGate.Host) return;
-            try { InteractionSyncService.HostRevokeUseItemMulti(__instance); } catch { }
+            try { InteractionSyncService.HostRevokeUseItemMulti(__instance); } catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 }

@@ -85,7 +85,7 @@ namespace SyncRADation.ItemSystem
                 if (g != null)
                 {
                     string n = null;
-                    try { n = g.name; } catch { }
+                    try { n = g.name; } catch (System.Exception e) { Guard.Swallow(e); }
                     if (!string.IsNullOrEmpty(n) && n.StartsWith(NamePrefix, System.StringComparison.Ordinal))
                     {
                         int parsed;
@@ -124,7 +124,7 @@ namespace SyncRADation.ItemSystem
                 else if (f == PlayerState.face.N)
                     pos.y += 0.35f;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return pos;
         }
 
@@ -180,7 +180,7 @@ namespace SyncRADation.ItemSystem
                         best = inter;
                     }
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
             return best;
         }
@@ -195,10 +195,10 @@ namespace SyncRADation.ItemSystem
                 for (int i = 0; i < outlines.Length; i++)
                 {
                     if (outlines[i] == null) continue;
-                    try { outlines[i].enabled = on; } catch { }
+                    try { outlines[i].enabled = on; } catch (System.Exception e) { Guard.Swallow(e); }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public static bool InspectLocked()
@@ -211,17 +211,17 @@ namespace SyncRADation.ItemSystem
                     || gs == PlayerState.gameStates.book)
                     return true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try { if (PlayerState.paused || PlayerState.eventScreen || PlayerState.suspendInput) return true; }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
 
         public static void RestorePlay()
         {
-            try { PlayerState.paused = false; } catch { }
-            try { PlayerState.eventScreen = false; } catch { }
-            try { PlayerState.suspendInput = false; } catch { }
+            try { PlayerState.paused = false; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { PlayerState.eventScreen = false; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { PlayerState.suspendInput = false; } catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var all = WorldLookup.All<InventoryBase>();
@@ -236,17 +236,17 @@ namespace SyncRADation.ItemSystem
                             if (inv.inventoryOpen)
                                 inv.inventoryOpen = false;
                         }
-                        catch { }
+                        catch (System.Exception e) { Guard.Swallow(e); }
                         try
                         {
                             if (inv.intMenuOn)
                                 inv.ToggleInteractMenu();
                         }
-                        catch { }
+                        catch (System.Exception e) { Guard.Swallow(e); }
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var gs = PlayerState.gameState;
@@ -258,7 +258,7 @@ namespace SyncRADation.ItemSystem
                     || gs == PlayerState.gameStates.menu)
                     PlayerState.gameState = PlayerState.gameStates.play;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         /// <summary>
@@ -306,7 +306,7 @@ namespace SyncRADation.ItemSystem
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var inter = go.GetComponent<Interaction>();
@@ -317,7 +317,7 @@ namespace SyncRADation.ItemSystem
                     inter.enabled = false;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             if (!InspectLocked())
             {
                 try
@@ -332,7 +332,7 @@ namespace SyncRADation.ItemSystem
                         }
                     }
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
             SetHighlight(go, false);
         }
@@ -352,7 +352,7 @@ namespace SyncRADation.ItemSystem
 
         public static void TickDeferred()
         {
-            try { SyncRADation.Patches.ItemPickupPatches.TickPendingDrop(); } catch { }
+            try { SyncRADation.Patches.ItemPickupPatches.TickPendingDrop(); } catch (System.Exception e) { Guard.Swallow(e); }
             if (_deferKey < 0) return;
             bool wait = InspectLocked();
             if (wait && Time.unscaledTime - _deferAt < 2.5f) return;
@@ -372,8 +372,8 @@ namespace SyncRADation.ItemSystem
             {
                 if (drop.Go != null)
                 {
-                    try { drop.Go.SetActive(false); } catch { }
-                    try { Object.Destroy(drop.Go); } catch { }
+                    try { drop.Go.SetActive(false); } catch (System.Exception e) { Guard.Swallow(e); }
+                    try { Object.Destroy(drop.Go); } catch (System.Exception e) { Guard.Swallow(e); }
                 }
                 _worldItems.Remove(netID);
             }
@@ -398,7 +398,7 @@ namespace SyncRADation.ItemSystem
         public static void RespawnCurrentScene()
         {
             string scene = "";
-            try { scene = SceneManager.GetActiveScene().name ?? ""; } catch { }
+            try { scene = SceneManager.GetActiveScene().name ?? ""; } catch (System.Exception e) { Guard.Swallow(e); }
             _keyScratch.Clear();
             foreach (var k in _worldItems.Keys)
                 _keyScratch.Add(k);

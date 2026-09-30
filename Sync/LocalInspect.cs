@@ -13,20 +13,20 @@ namespace SyncRADation.Sync
             {
                 if (DialoguerFlavor((int)d._dialogue)) return true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return UnderEventCamera(d.gameObject) || LockFlavor(d);
         }
 
         public static bool InspectScreen()
         {
-            try { if (PlayerState.eventScreen) return true; } catch { }
+            try { if (PlayerState.eventScreen) return true; } catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var gs = PlayerState.gameState;
                 if (gs == PlayerState.gameStates.eventScreen || gs == PlayerState.gameStates.book)
                     return true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
 
@@ -57,7 +57,7 @@ namespace SyncRADation.Sync
                         if (room == null)
                             room = t.GetComponent<Room>();
                     }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                     t = t.parent;
                 }
                 return room == null;
@@ -103,7 +103,7 @@ namespace SyncRADation.Sync
                     if (t.GetComponent<UseItemInteraction>() != null) return true;
                     if (t.GetComponent<useItemPuzzleHint>() != null) return true;
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 t = t.parent;
             }
             return false;
@@ -131,7 +131,7 @@ namespace SyncRADation.Sync
                     if (t.GetComponent<AirlockInside>() != null) return true;
                     if (t.GetComponent<AirlockDoorLoadZone>() != null) return true;
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 t = t.parent;
             }
             return false;
@@ -151,7 +151,7 @@ namespace SyncRADation.Sync
                     if (t.GetComponent<AirlockInside>() != null) return true;
                     if (t.GetComponent<AirlockDoorLoadZone>() != null) return true;
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 t = t.parent;
             }
             return false;
@@ -175,7 +175,7 @@ namespace SyncRADation.Sync
                     if (t.GetComponent<AutoTraverseDoor>() != null) return true;
                     if (t.GetComponent<useItemPuzzleHint>() != null) return true;
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 t = t.parent;
             }
             try
@@ -186,7 +186,7 @@ namespace SyncRADation.Sync
                     if (d != null && Dialogue(d)) return true;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
     }

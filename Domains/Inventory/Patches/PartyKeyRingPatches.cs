@@ -14,7 +14,7 @@ namespace SyncRADation.Patches
         {
             if (__instance == null || !NetGate.Live) return;
             AnItem held = null;
-            try { held = InventoryManager.CurrentItem; } catch { }
+            try { held = InventoryManager.CurrentItem; } catch (System.Exception e) { Guard.Swallow(e); }
             if (held == null) return;
             Items.itemlist want;
             try { want = held._item; } catch { return; }
@@ -23,7 +23,7 @@ namespace SyncRADation.Patches
             Interaction pick = FromList(__instance, want);
             if (pick == null) pick = FromWorld(want);
             if (pick == null) return;
-            try { __instance.currentInter = pick; } catch { }
+            try { __instance.currentInter = pick; } catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         static Interaction FromList(Interactor inst, Items.itemlist want)
@@ -38,7 +38,7 @@ namespace SyncRADation.Patches
                     if (inter != null) return inter;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return null;
         }
 
@@ -53,12 +53,12 @@ namespace SyncRADation.Patches
                     var u = all[i];
                     if (u == null) continue;
                     bool inRange = false;
-                    try { inRange = u.inter != null && u.inter.inRange; } catch { }
+                    try { inRange = u.inter != null && u.inter.inRange; } catch (System.Exception e) { Guard.Swallow(e); }
                     if (!inRange) continue;
                     if (KeyIs(u, want)) return u.inter;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return null;
         }
 
@@ -66,10 +66,10 @@ namespace SyncRADation.Patches
         {
             if (inter == null) return null;
             UseItemInteraction u = null;
-            try { u = inter.GetComponent<UseItemInteraction>(); } catch { }
+            try { u = inter.GetComponent<UseItemInteraction>(); } catch (System.Exception e) { Guard.Swallow(e); }
             if (u == null)
             {
-                try { u = inter.GetComponentInParent<UseItemInteraction>(); } catch { }
+                try { u = inter.GetComponentInParent<UseItemInteraction>(); } catch (System.Exception e) { Guard.Swallow(e); }
             }
             if (u == null || !KeyIs(u, want)) return null;
             return inter;
@@ -78,9 +78,9 @@ namespace SyncRADation.Patches
         static bool KeyIs(UseItemInteraction u, Items.itemlist want)
         {
             if (u == null) return false;
-            try { if (u.unlocked && !u.repeatable) return false; } catch { }
+            try { if (u.unlocked && !u.repeatable) return false; } catch (System.Exception e) { Guard.Swallow(e); }
             AnItem key = null;
-            try { key = u.key; } catch { }
+            try { key = u.key; } catch (System.Exception e) { Guard.Swallow(e); }
             if (key == null) return false;
             try { return key._item == want; } catch { return false; }
         }
@@ -140,11 +140,11 @@ namespace SyncRADation.Patches
             AnItem key = null;
             if (u != null)
             {
-                try { key = u.key; } catch { }
+                try { key = u.key; } catch (System.Exception e) { Guard.Swallow(e); }
             }
             if (key == null)
             {
-                try { key = UseItemInteraction.currentUseItem; } catch { }
+                try { key = UseItemInteraction.currentUseItem; } catch (System.Exception e) { Guard.Swallow(e); }
             }
             PartyKeyRing.BindUseDialogue(key);
         }
@@ -212,7 +212,7 @@ namespace SyncRADation.Patches
             {
                 if (item._item == Items.itemlist.None) return false;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return true;
         }
     }

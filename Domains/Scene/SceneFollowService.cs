@@ -44,7 +44,7 @@ namespace SyncRADation.Networking
                     return false;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             if (HostStillInCredits(sceneName))
             {
                 // CreditsEnd runs ResetGame + LoadLevel(MainMenu) on every peer when *its* credits finish. A
@@ -63,7 +63,7 @@ namespace SyncRADation.Networking
                     return true;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             if (AlreadyGoingTo(sceneName))
             {
                 // Still emit follow so a late peer request during host load is not silent.
@@ -74,7 +74,7 @@ namespace SyncRADation.Networking
                     if (net != null && net.IsConnected)
                         net.SendSceneFollow(sceneName, false);
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 return true;
             }
             string busy = HostBusyReason(sceneName);
@@ -102,7 +102,7 @@ namespace SyncRADation.Networking
                 if (net != null && net.IsConnected)
                     net.SendSceneFollow(sceneName, false);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return true;
         }
 
@@ -210,13 +210,13 @@ namespace SyncRADation.Networking
                 if (string.Equals(AsyncLoader.targetLevelString, sceneName, System.StringComparison.Ordinal))
                     return true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (string.Equals(NameForBuildIndex(AsyncLoader.targetLevel), sceneName, System.StringComparison.Ordinal))
                     return true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var zones = WorldLookup.All<LoadLevelZone>();
@@ -229,7 +229,7 @@ namespace SyncRADation.Networking
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var loads = WorldLookup.All<LoadLevelInteraction>();
@@ -242,7 +242,7 @@ namespace SyncRADation.Networking
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var helpers = WorldLookup.All<SceneHelper>();
@@ -256,7 +256,7 @@ namespace SyncRADation.Networking
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var air = WorldLookup.All<PenroseAirlock>();
@@ -270,7 +270,7 @@ namespace SyncRADation.Networking
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var doors = WorldLookup.All<AirlockDoorLoadZone>();
@@ -284,7 +284,7 @@ namespace SyncRADation.Networking
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return InBuildSettings(sceneName);
         }
 
@@ -299,7 +299,7 @@ namespace SyncRADation.Networking
                         return true;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
 
@@ -391,7 +391,7 @@ namespace SyncRADation.Networking
                 if (!string.IsNullOrEmpty(stored) && !IsTransient(stored))
                     return stored;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return named ?? "";
         }
 
@@ -427,7 +427,7 @@ namespace SyncRADation.Networking
             NetGate.BeginApply();
             try
             {
-                try { AsyncLoader.LoadLevel(sceneName); return; } catch { }
+                try { AsyncLoader.LoadLevel(sceneName); return; } catch (System.Exception e) { Guard.Swallow(e); }
                 try
                 {
                     var helpers = WorldLookup.All<SceneHelper>();
@@ -437,8 +437,8 @@ namespace SyncRADation.Networking
                         return;
                     }
                 }
-                catch { }
-                try { NewApplication.LoadLevel(sceneName); return; } catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
+                try { NewApplication.LoadLevel(sceneName); return; } catch (System.Exception e) { Guard.Swallow(e); }
                 SceneManager.LoadScene(sceneName);
             }
             catch (System.Exception ex)

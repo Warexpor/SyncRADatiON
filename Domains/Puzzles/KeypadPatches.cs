@@ -61,7 +61,7 @@ namespace SyncRADation.Patches
                 if (!__instance.solved && !__instance.opening) return;
                 ClientKeypad.NoteSolved(__instance);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 
@@ -79,7 +79,7 @@ namespace SyncRADation.Patches
                 ulong id = WorldId.FromGameObject(__instance.gameObject);
                 LanNetworkManager.Instance.PuzzleSync.EmitProgressed(PuzzleType.PEN_Codepad, id);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 }

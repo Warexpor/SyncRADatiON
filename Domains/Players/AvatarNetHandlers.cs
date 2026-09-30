@@ -114,7 +114,7 @@ namespace SyncRADation.Networking
                     if (trn != null) turnAmount = (float)trn.GetValue(tpc);
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
 
             var euler = player.transform.eulerAngles;
             byte modelState = 0;
@@ -125,7 +125,7 @@ namespace SyncRADation.Networking
                 if (cmt != null) modelState = (byte)cmt.modelState;
                 wearHat = CharacterModelType.wearHat;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
 
             var msg = new PlayerStateMessage
             {
@@ -307,7 +307,7 @@ namespace SyncRADation.Networking
                 if (proxy != null)
                 {
                     try { proxy.SetVital(msg.Dead); }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                 }
             }
 
@@ -353,7 +353,7 @@ namespace SyncRADation.Networking
                         // Still allow proxy in most interactive states
                     }
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 _net.ProxyManager.CreateProxy(senderId, source);
             }
 

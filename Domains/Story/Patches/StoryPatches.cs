@@ -85,14 +85,14 @@ namespace SyncRADation.Patches
 
         static bool IsInspectOrigin()
         {
-            try { if (PlayerState.eventScreen) return true; } catch { }
+            try { if (PlayerState.eventScreen) return true; } catch (Exception e) { Guard.Swallow(e); }
             try
             {
                 var gs = PlayerState.gameState;
                 if (gs == PlayerState.gameStates.eventScreen || gs == PlayerState.gameStates.book)
                     return true;
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
             return false;
         }
     }
@@ -324,7 +324,7 @@ namespace SyncRADation.Patches
                 // Host put of unique already in box: absorb bag copy, do not stack.
                 if (put && PartyKeyRing.IsKeyOrObject(item) && HostBoxStock(item) >= 1)
                 {
-                    try { InventoryManager.RemoveItem(item, n); } catch { }
+                    try { InventoryManager.RemoveItem(item, n); } catch (Exception e) { Guard.Swallow(e); }
                     PlaytestLog.Event("StorageBox", "host put absorb unique item="
                         + (int)SafeEnum(item));
                     FlushHostBoxBlob();
@@ -358,7 +358,7 @@ namespace SyncRADation.Patches
             try { have = InventoryManager.boxContainsItemCount(item); }
             catch
             {
-                try { if (InventoryManager.boxContainsItem(item)) have = 1; } catch { }
+                try { if (InventoryManager.boxContainsItem(item)) have = 1; } catch (Exception e) { Guard.Swallow(e); }
             }
             return have;
         }
@@ -373,7 +373,7 @@ namespace SyncRADation.Patches
                 net.StorageSync.RequestSend();
                 net.StorageSync.SendNow(net);
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
         }
 
         // No-count overloads — storage UI can call these and would bypass the int gates.
@@ -517,7 +517,7 @@ namespace SyncRADation.Patches
             {
                 PartyKeyRing.BindUseDialogue(UseItemInteraction.currentUseItem);
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
             try
             {
                 var all = WorldLookup.All<UseItemInteraction>();
@@ -527,13 +527,13 @@ namespace SyncRADation.Patches
                     var u = all[i];
                     if (u == null) continue;
                     bool inRange = false;
-                    try { inRange = u.inter != null && u.inter.inRange; } catch { }
+                    try { inRange = u.inter != null && u.inter.inRange; } catch (Exception e) { Guard.Swallow(e); }
                     if (!inRange && !u.unlocked) continue;
                     UseItemDialogueNamePatch.Bind(u);
                     return;
                 }
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
         }
     }
 

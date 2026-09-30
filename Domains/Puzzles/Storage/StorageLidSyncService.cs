@@ -42,14 +42,14 @@ namespace SyncRADation.Networking
             if (cinematic)
             {
                 try { x.StartCoroutine("Open"); return; }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
             try
             {
                 if (x.lid != null)
                     x.lid.localEulerAngles = new Vector3(-90f, 0f, 0f);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 }

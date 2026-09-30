@@ -18,7 +18,7 @@ namespace SyncRADation.Patches
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
             try { if (!__instance.intMenuOn) return; } catch { return; }
-            try { if (InventoryBase.storeMode) return; } catch { }
+            try { if (InventoryBase.storeMode) return; } catch (System.Exception e) { Guard.Swallow(e); }
 
             Il2CppStringArray old = null;
             try { old = __instance.intChoices; } catch { return; }
@@ -42,7 +42,7 @@ namespace SyncRADation.Patches
                 if (tmp != null && tmp.text != null && tmp.text.IndexOf(DropLabel) < 0)
                     tmp.text = tmp.text + "\n" + DropLabel;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 
@@ -68,7 +68,7 @@ namespace SyncRADation.Patches
             if (!ConfirmPressed()) return true;
 
             AnItem item = null;
-            try { item = __instance.intItem; } catch { }
+            try { item = __instance.intItem; } catch (System.Exception e) { Guard.Swallow(e); }
             net.TryDropItem(item);
             return false;
         }
@@ -82,7 +82,7 @@ namespace SyncRADation.Patches
                 if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
                     return true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
     }

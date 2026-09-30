@@ -50,17 +50,17 @@ namespace SyncRADation.Patches
         static void ApplyKolibriHold(KolibriManager inst)
         {
             if (inst == null || !_kolibriHeld || !NetGate.Live || NetGate.Host) return;
-            try { inst.dead = _kolibriDead; } catch { }
-            try { inst.frequency = _kolibriFreq; } catch { }
-            try { inst.intensity = _kolibriIntensity; } catch { }
-            try { inst.radioIntensity = _kolibriRadio; } catch { }
+            try { inst.dead = _kolibriDead; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { inst.frequency = _kolibriFreq; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { inst.intensity = _kolibriIntensity; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { inst.radioIntensity = _kolibriRadio; } catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         static void ApplyAdlerHold(BOS_Adler inst)
         {
             if (inst == null || !_adlerHeld || !NetGate.Live || NetGate.Host) return;
-            try { inst.intensity = _adlerIntensity; } catch { }
-            try { inst.progress = _adlerProgress; } catch { }
+            try { inst.intensity = _adlerIntensity; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { inst.progress = _adlerProgress; } catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         [HarmonyPatch(typeof(KolibriManager), "Update")]

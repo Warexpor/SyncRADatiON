@@ -34,7 +34,7 @@ namespace SyncRADation.Networking
                         rx = p.x;
                         ry = p.y;
                     }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                     entry = PuzzleDomainUtil.Mk(type, wid, x.solved, true, false, 0, 0, 0, 0, rx, ry);
                     return true;
                 }
@@ -74,7 +74,7 @@ namespace SyncRADation.Networking
                             }
                         }
                     }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                     entry = PuzzleDomainUtil.Mk(type, wid, unlocked, false, false, PackBoolArray(x.keys), 0, 0, 0, 0);
                     return true;
                 }
@@ -91,7 +91,7 @@ namespace SyncRADation.Networking
                     // Instance registered for scan; WorldId-0 global poll is authority.
                     var x = (MED_KeyGrid)c;
                     int bits = 0, count = 0;
-                    try { PackKeyGridNodes(x, out bits, out count); } catch { }
+                    try { PackKeyGridNodes(x, out bits, out count); } catch (System.Exception e) { Guard.Swallow(e); }
                     entry = PuzzleDomainUtil.Mk(type, wid, MED_KeyGrid.solved, false, false, bits, count, 0, 0, 0);
                     return true;
                 }
@@ -111,7 +111,7 @@ namespace SyncRADation.Networking
             // Dig V: extend payload with 17× connected bits (Int0) + count marker (Int1).
             // Keep WorldId 0 poll / client-emit path; solved stays Bool0.
             bool solved = false;
-            try { solved = MED_KeyGrid.solved; } catch { }
+            try { solved = MED_KeyGrid.solved; } catch (System.Exception e) { Guard.Swallow(e); }
             int bits = 0, count = 0;
             try
             {
@@ -126,7 +126,7 @@ namespace SyncRADation.Networking
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return PuzzleDomainUtil.Mk(PuzzleType.MED_KeyGrid, 0, solved, false, false, bits, count, 0, 0, 0f);
         }
 
@@ -134,7 +134,7 @@ namespace SyncRADation.Networking
         public static PuzzleStateEntry ReadArianePhotoCodeGlobal()
         {
             int code = 0;
-            try { code = ArianePhotoCode.code; } catch { }
+            try { code = ArianePhotoCode.code; } catch (System.Exception e) { Guard.Swallow(e); }
             return PuzzleDomainUtil.Mk(PuzzleType.ArianePhotoCode, 0, code != 0, false, false, code, 0, 0, 0, 0f);
         }
 
@@ -151,8 +151,8 @@ namespace SyncRADation.Networking
             // MutateWorld AND FullRefresh (idempotent dimPOI; no separate onLoad).
             // Protocol 10 unchanged (reuse RES_MusicBox Bool0=opened, Bool1=hasCassette).
             bool was = false;
-            try { was = x.opened; } catch { }
-            try { x.hasCassette = e.Bool1; } catch { }
+            try { was = x.opened; } catch (System.Exception ex) { Guard.Swallow(ex); }
+            try { x.hasCassette = e.Bool1; } catch (System.Exception ex) { Guard.Swallow(ex); }
             if (!e.Bool0) return;
             if (!was)
             {
@@ -164,12 +164,12 @@ namespace SyncRADation.Networking
                         if (x.onSuccess != null)
                             x.onSuccess.Invoke();
                     }
-                    catch { }
+                    catch (System.Exception ex) { Guard.Swallow(ex); }
                     SnapMusicBox(x);
                     // Reassert wire cassette — Snap must not own hasCassette.
-                    try { x.hasCassette = e.Bool1; } catch { }
+                    try { x.hasCassette = e.Bool1; } catch (System.Exception ex) { Guard.Swallow(ex); }
                 }
-                catch { }
+                catch (System.Exception ex) { Guard.Swallow(ex); }
                 finally { NetGate.EndApply(); }
             }
         }
@@ -180,11 +180,11 @@ namespace SyncRADation.Networking
             // Mid robotPos always (live + FullRefresh). Bool1 = pack valid.
             if (e.Bool1)
             {
-                try { x.robotPos = new Vector2(e.Float0, e.Float1); } catch { }
+                try { x.robotPos = new Vector2(e.Float0, e.Float1); } catch (System.Exception ex) { Guard.Swallow(ex); }
             }
             if (!e.Bool0) return;
             bool was = false;
-            try { was = x.solved; } catch { }
+            try { was = x.solved; } catch (System.Exception ex) { Guard.Swallow(ex); }
             SnapLibraryPc(x);
             // Asset onSuccess → Play (FMOD one-shot). Rising-edge both paths like MusicBox.
             if (!was)
@@ -195,7 +195,7 @@ namespace SyncRADation.Networking
                     if (x.onSuccess != null)
                         x.onSuccess.Invoke();
                 }
-                catch { }
+                catch (System.Exception ex) { Guard.Swallow(ex); }
                 finally { NetGate.EndApply(); }
             }
         }
@@ -206,7 +206,7 @@ namespace SyncRADation.Networking
             try { x.setPower(e.Bool0); }
             catch
             {
-                try { x.powered = e.Bool0; } catch { }
+                try { x.powered = e.Bool0; } catch (System.Exception ex) { Guard.Swallow(ex); }
             }
         }
 
@@ -215,10 +215,10 @@ namespace SyncRADation.Networking
             // Dig V: Bool0 → static solved; Int0 → nodes[i].connected; Int1 count
             // marker gates node apply so all-zero packs still refresh visuals.
             // nodesObjects SetActive mirrors native Update under NetGate.
-            try { MED_KeyGrid.solved = e.Bool0; } catch { }
+            try { MED_KeyGrid.solved = e.Bool0; } catch (System.Exception ex) { Guard.Swallow(ex); }
             if (e.Int1 <= 0) return;
             MED_KeyGrid[] grids = null;
-            try { grids = WorldLookup.All<MED_KeyGrid>(); } catch { }
+            try { grids = WorldLookup.All<MED_KeyGrid>(); } catch (System.Exception ex) { Guard.Swallow(ex); }
             if (grids == null) return;
             for (int g = 0; g < grids.Length; g++)
             {
@@ -249,10 +249,10 @@ namespace SyncRADation.Networking
                         if (node != null && node.connected)
                             bits |= 1 << i;
                     }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         /// <summary>Unpack Int0 into connected + nodesObjects active (NetGate).</summary>
@@ -278,11 +278,11 @@ namespace SyncRADation.Networking
                                 if (node != null)
                                     node.connected = (bits & (1 << i)) != 0;
                             }
-                            catch { }
+                            catch (System.Exception e) { Guard.Swallow(e); }
                         }
                     }
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 try
                 {
                     var objs = x.nodesObjects;
@@ -299,21 +299,21 @@ namespace SyncRADation.Networking
                                 if (go != null)
                                     go.SetActive((bits & (1 << i)) != 0);
                             }
-                            catch { }
+                            catch (System.Exception e) { Guard.Swallow(e); }
                         }
                     }
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
             finally { NetGate.EndApply(); }
         }
 
         public static void ApplyArianePhotoCode(PuzzleStateEntry e)
         {
-            try { ArianePhotoCode.code = e.Int0; } catch { }
-            try { ArianePhotoCode.LoadState(); } catch { }
+            try { ArianePhotoCode.code = e.Int0; } catch (System.Exception ex) { Guard.Swallow(ex); }
+            try { ArianePhotoCode.LoadState(); } catch (System.Exception ex) { Guard.Swallow(ex); }
             // Reassert after LoadState in case it reloads from local save.
-            try { ArianePhotoCode.code = e.Int0; } catch { }
+            try { ArianePhotoCode.code = e.Int0; } catch (System.Exception ex) { Guard.Swallow(ex); }
         }
 
         public static void ApplyServiceLockKey(DET_ServiceLock_Key x, PuzzleStateEntry e)
@@ -328,7 +328,7 @@ namespace SyncRADation.Networking
             // Rising-edge onSolved: Asset → dimPOI. Snap opens keys/keypad/doors but
             // never Invoked onSolved (Dig AJ, mirror MusicBox Dig R both-path).
             bool was = false;
-            try { was = x.open; } catch { }
+            try { was = x.open; } catch (System.Exception ex) { Guard.Swallow(ex); }
             SnapSafeDoorSmall(x);
             if (!was)
             {
@@ -338,7 +338,7 @@ namespace SyncRADation.Networking
                     if (x.onSolved != null)
                         x.onSolved.Invoke();
                 }
-                catch { }
+                catch (System.Exception ex) { Guard.Swallow(ex); }
                 finally { NetGate.EndApply(); }
             }
         }
@@ -348,26 +348,26 @@ namespace SyncRADation.Networking
             if (x == null) return;
             UnpackBoolArray(x.keys, e.Int0);
             if (!e.Bool0) return;
-            try { x.checkLock(); } catch { }
+            try { x.checkLock(); } catch (System.Exception ex) { Guard.Swallow(ex); }
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
-            try { PuzzleSyncService.DisableInteractions(x); } catch { }
+            try { PuzzleSyncService.DisableInteractions(x); } catch (System.Exception ex) { Guard.Swallow(ex); }
         }
 
         public static void ApplyOpenableDrawer(OpenableDrawer x, PuzzleStateEntry e)
         {
             if (x == null) return;
             if (x.open == e.Bool0) return;
-            try { x.open = e.Bool0; } catch { }
+            try { x.open = e.Bool0; } catch (System.Exception ex) { Guard.Swallow(ex); }
             PoseDrawer(x, e.Bool0);
         }
 
         public static void SnapMusicBox(RES_MusicBox x)
         {
             if (x == null) return;
-            try { x.opened = true; } catch { }
+            try { x.opened = true; } catch (System.Exception e) { Guard.Swallow(e); }
             // hasCassette owned by ApplyMusicBox from wire Bool1 — do not force true.
-            try { if (x.CardPickup != null) x.CardPickup.SetActive(true); } catch { }
-            try { if (x.BoxObs != null) x.BoxObs.SetActive(false); } catch { }
+            try { if (x.CardPickup != null) x.CardPickup.SetActive(true); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.BoxObs != null) x.BoxObs.SetActive(false); } catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (x.euleLid != null)
@@ -377,29 +377,29 @@ namespace SyncRADation.Networking
                     x.euleLid.localEulerAngles = e;
                 }
             }
-            catch { }
-            try { PuzzleSyncService.RevealPickups(x.CardPickup); } catch { }
-            try { PuzzleSyncService.RevealPickups(x.gameObject); } catch { }
-            try { PuzzleSyncService.DisableInteractions(x); } catch { }
-            try { if (x.tapeInteraction != null) x.tapeInteraction.SetActive(false); } catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            try { PuzzleSyncService.RevealPickups(x.CardPickup); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { PuzzleSyncService.RevealPickups(x.gameObject); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { PuzzleSyncService.DisableInteractions(x); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.tapeInteraction != null) x.tapeInteraction.SetActive(false); } catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public static void SnapLibraryPc(RES_LibraryPC x)
         {
             if (x == null) return;
-            try { x.solved = true; } catch { }
-            try { if (x.Pickup != null) x.Pickup.SetActive(true); } catch { }
-            try { if (x.Tome != null) x.Tome.gameObject.SetActive(true); } catch { }
-            try { PuzzleSyncService.RevealPickups(x.Pickup); } catch { }
-            try { PuzzleSyncService.RevealPickups(x.gameObject); } catch { }
-            try { PuzzleSyncService.DisableInteractions(x); } catch { }
+            try { x.solved = true; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.Pickup != null) x.Pickup.SetActive(true); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.Tome != null) x.Tome.gameObject.SetActive(true); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { PuzzleSyncService.RevealPickups(x.Pickup); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { PuzzleSyncService.RevealPickups(x.gameObject); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { PuzzleSyncService.DisableInteractions(x); } catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public static void SnapServiceLockKey(DET_ServiceLock_Key x)
         {
             if (x == null) return;
-            try { x.Open = true; } catch { }
-            try { if (x.KeyObj != null) x.KeyObj.SetActive(true); } catch { }
+            try { x.Open = true; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.KeyObj != null) x.KeyObj.SetActive(true); } catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (x.Key != null)
@@ -409,7 +409,7 @@ namespace SyncRADation.Networking
                     x.Key.localEulerAngles = e;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (x.Door != null)
@@ -419,27 +419,27 @@ namespace SyncRADation.Networking
                     x.Door.localEulerAngles = e;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (x.lockInteraction != null)
                     x.lockInteraction.SetActive(false);
             }
-            catch { }
-            try { PuzzleSyncService.DisableInteractions(x); } catch { }
-            try { if (x.inter != null) PuzzleSyncService.DisableOne(x.inter); } catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            try { PuzzleSyncService.DisableInteractions(x); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.inter != null) PuzzleSyncService.DisableOne(x.inter); } catch (System.Exception e) { Guard.Swallow(e); }
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
         }
 
         public static void SnapSafeDoorSmall(SafeDoorSmall x)
         {
             if (x == null) return;
-            try { x.open = true; } catch { }
-            try { if (x.key != null) x.key.SetActive(true); } catch { }
-            try { if (x.smallKey != null) x.smallKey.SetActive(true); } catch { }
-            try { PuzzleSyncService.RevealPickups(x.key); } catch { }
-            try { PuzzleSyncService.RevealPickups(x.smallKey); } catch { }
-            try { PuzzleSyncService.RevealPickups(x.gameObject); } catch { }
+            try { x.open = true; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.key != null) x.key.SetActive(true); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.smallKey != null) x.smallKey.SetActive(true); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { PuzzleSyncService.RevealPickups(x.key); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { PuzzleSyncService.RevealPickups(x.smallKey); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { PuzzleSyncService.RevealPickups(x.gameObject); } catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (x.keypad != null)
@@ -448,7 +448,7 @@ namespace SyncRADation.Networking
                     PuzzleSyncService.DisableInteractions(x.keypad);
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
         }
 
@@ -459,7 +459,7 @@ namespace SyncRADation.Networking
                 if (x.drawer != null && open)
                     x.drawer.localPosition = x.openPos;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var content = x.Content;
@@ -472,14 +472,14 @@ namespace SyncRADation.Networking
                             if (content[i] != null)
                                 content[i].SetActive(open);
                         }
-                        catch { }
+                        catch (System.Exception e) { Guard.Swallow(e); }
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             if (open)
             {
-                try { PuzzleSyncService.RevealPickups(x.gameObject); } catch { }
+                try { PuzzleSyncService.RevealPickups(x.gameObject); } catch (System.Exception e) { Guard.Swallow(e); }
             }
         }
 
@@ -493,10 +493,10 @@ namespace SyncRADation.Networking
                 if (n > 32) n = 32;
                 for (int i = 0; i < n; i++)
                 {
-                    try { if (arr[i]) bits |= 1 << i; } catch { }
+                    try { if (arr[i]) bits |= 1 << i; } catch (System.Exception e) { Guard.Swallow(e); }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return bits;
         }
 
@@ -509,10 +509,10 @@ namespace SyncRADation.Networking
                 if (n > 32) n = 32;
                 for (int i = 0; i < n; i++)
                 {
-                    try { arr[i] = (bits & (1 << i)) != 0; } catch { }
+                    try { arr[i] = (bits & (1 << i)) != 0; } catch (System.Exception e) { Guard.Swallow(e); }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 }

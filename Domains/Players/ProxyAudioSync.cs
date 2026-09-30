@@ -78,8 +78,8 @@ namespace SyncRADation.Players
         private void ReadFMODPaths()
         {
             GameObject player = null;
-            try { player = LanNetworkManager.Instance?.GetLocalPlayer(); } catch { }
-            if (player == null) try { player = PlayerState.player; } catch { }
+            try { player = LanNetworkManager.Instance?.GetLocalPlayer(); } catch (Exception e) { Guard.Swallow(e); }
+            if (player == null) try { player = PlayerState.player; } catch (Exception e) { Guard.Swallow(e); }
 
             if (player == null)
             {
@@ -93,14 +93,14 @@ namespace SyncRADation.Players
                 if (efs != null && efs.stepSource != null && efs.stepSource.clip != null)
                     _footstepClip = efs.stepSource.clip;
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
 
             try
             {
                 var hs = player.GetComponentInChildren<ElsterHurtSound>(true);
                 if (hs != null) _hurtPath = hs.HurtSound;
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
 
             try
             {
@@ -111,21 +111,21 @@ namespace SyncRADation.Players
                     _holsterSound = pa.holsterSound;
                 }
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
 
             try
             {
                 var sc = player.GetComponentInChildren<StepSoundClass>(true);
                 if (sc != null) _footstepPath = sc.audioStep;
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
 
             try
             {
                 var inv = player.GetComponentInChildren<InventoryBase>(true);
                 if (inv != null) _reloadFMODPath = inv.reloadSound;
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
 
             PlaytestLog.Event("Audio", "cached footstep=" + (_footstepPath ?? "null")
                 + " hurt=" + (_hurtPath ?? "null")
@@ -154,8 +154,8 @@ namespace SyncRADation.Players
             // Distance check: only play proxy sounds if within hearing range of local player
             float distToLocal = float.MaxValue;
             GameObject localPlayer = null;
-            try { localPlayer = LanNetworkManager.Instance?.GetLocalPlayer(); } catch { }
-            if (localPlayer == null) try { localPlayer = PlayerState.player; } catch { }
+            try { localPlayer = LanNetworkManager.Instance?.GetLocalPlayer(); } catch (Exception e) { Guard.Swallow(e); }
+            if (localPlayer == null) try { localPlayer = PlayerState.player; } catch (Exception e) { Guard.Swallow(e); }
             if (localPlayer != null)
                 distToLocal = Vector3.Distance(_proxyTransform.position, localPlayer.transform.position);
 
@@ -368,7 +368,7 @@ namespace SyncRADation.Players
                             + " empty=" + (w.emptyMod ?? "null")
                             + " reload=" + (w.reloadMod ?? "null"));
                     }
-                    catch { }
+                    catch (Exception e) { Guard.Swallow(e); }
                 }
 
                 PlaytestLog.Event("Audio", "weapon FMOD shot=" + shotCount + " reload=" + reloadCount);

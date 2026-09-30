@@ -200,7 +200,7 @@ namespace SyncRADation.Networking
             SyncRADation.Patches.EventZonePatch.MarkFired(id);
             if (LocalInspect.InLocalRoom(z.gameObject))
             {
-                try { if (z.onInRange != null) z.onInRange.Invoke(); } catch { }
+                try { if (z.onInRange != null) z.onInRange.Invoke(); } catch (System.Exception e) { Guard.Swallow(e); }
             }
             else
                 PlaytestLog.Event("Interact", "EventZone other-room id=" + id.ToString("X16"));
@@ -240,14 +240,14 @@ namespace SyncRADation.Networking
             // wasUnlocked=false so host Apply (client UseItem) Invokes onSuccessful
             // (Disk InsertDisk* / Tarot PlaceCard*). Snap sets unlocked + doors.
             PuzzleSyncService.TryUnlockDoors(u.gameObject);
-            try { PuzzleSyncService.SnapUseItemWorld(u); } catch { }
+            try { PuzzleSyncService.SnapUseItemWorld(u); } catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var netPuzzle = LanNetworkManager.Instance;
                 if (netPuzzle != null)
                     netPuzzle.PuzzleSync.Emit(PuzzleType.UseItemInteraction, id, u);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
 
             bool consumes = UnlockInteractiveLocks(u, key);
 
@@ -326,7 +326,7 @@ namespace SyncRADation.Networking
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             if (parts.Count > 0)
                 consumeReason = "consume:" + string.Join("|", parts);
             PartyKeyRing.Broadcast();
@@ -352,7 +352,7 @@ namespace SyncRADation.Networking
         private static void ConsumeKey(AnItem key)
         {
             // Ring drop + EnsureInBag mirror strip on all peers via CraftRevokeSentinel fan-out.
-            try { PartyKeyRing.RevokeConsumed(key._item); } catch { }
+            try { PartyKeyRing.RevokeConsumed(key._item); } catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         /// <summary>
@@ -388,7 +388,7 @@ namespace SyncRADation.Networking
                 if (any)
                     PartyKeyRing.Broadcast();
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         /// <returns>true if a ConsumesKey revoke ran</returns>
@@ -396,7 +396,7 @@ namespace SyncRADation.Networking
         {
             if (u == null) return false;
             AnItem key = null;
-            try { key = u.key; } catch { }
+            try { key = u.key; } catch (System.Exception e) { Guard.Swallow(e); }
             if (key == null) return false;
             bool consumes = UnlockInteractiveLocks(u, key);
             if (!consumes) return false;
@@ -419,7 +419,7 @@ namespace SyncRADation.Networking
                     consumes = consumes || (lockComp.ConsumesKey && key != null);
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var single = u.GetComponent<InteractiveLockSingle>()
@@ -433,7 +433,7 @@ namespace SyncRADation.Networking
                         if (single.master != null && DoorNative.AllowUnlock(single.master))
                             single.master.locked = false;
                     }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                     try
                     {
                         if (single.door != null)
@@ -443,10 +443,10 @@ namespace SyncRADation.Networking
                                 single.door.locked = false;
                         }
                     }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
 
             // ConnectedDoors.ConsumesKey: native Unlock() (DoorNative.ApplyConnectedDoors)
             // only copies the flag + key onto AutoTraverseDoor InteractiveLockSingle
@@ -466,7 +466,7 @@ namespace SyncRADation.Networking
                         if (cd.ConsumesKey && cd.key != null && cd.key._item == want)
                             consumes = true;
                     }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                     try
                     {
                         var singles = cd.GetComponentsInChildren<InteractiveLockSingle>(true);
@@ -481,14 +481,14 @@ namespace SyncRADation.Networking
                                     if (s.key != null && s.key._item == want)
                                         consumes = true;
                                 }
-                                catch { }
+                                catch (System.Exception e) { Guard.Swallow(e); }
                             }
                         }
                     }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return consumes;
         }
 
@@ -509,7 +509,7 @@ namespace SyncRADation.Networking
                 {
                     NetGate.BeginApply();
                     try { k.openDoor(); }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                     finally { NetGate.EndApply(); }
                 }
                 PuzzleSyncService.TryUnlockDoors(k.gameObject);
@@ -519,7 +519,7 @@ namespace SyncRADation.Networking
                     if (net != null)
                         net.PuzzleSync.Emit(PuzzleType.Keypad3D, id, k);
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 return true;
             }
             var r = Find<ROT_Keypad>(id);
@@ -539,7 +539,7 @@ namespace SyncRADation.Networking
                         if (r.onSuccess != null)
                             r.onSuccess.Invoke();
                     }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                     finally { NetGate.EndApply(); }
                 }
                 PuzzleSyncService.TryUnlockDoors(r.gameObject);
@@ -549,7 +549,7 @@ namespace SyncRADation.Networking
                     if (net != null)
                         net.PuzzleSync.Emit(PuzzleType.ROT_Keypad, id, r);
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 return true;
             }
             var p = Find<PEN_Codepad>(id);
@@ -584,7 +584,7 @@ namespace SyncRADation.Networking
                     if (c.unskippable) CutsceneSkippingUI.skippableCutscene = false;
                     else CutsceneSkippingUI.skippableCutscene = true;
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
             else
                 PlaytestLog.Event("Interact", "CutsceneStart other-room id=" + id.ToString("X16"));
@@ -700,19 +700,19 @@ namespace SyncRADation.Networking
         internal static void NativeSkip(CutsceneManager c)
         {
             if (c == null) return;
-            try { if (c.completed) return; } catch { }
+            try { if (c.completed) return; } catch (System.Exception e) { Guard.Swallow(e); }
             bool running = false;
-            try { running = c.cutscene != null; } catch { }
+            try { running = c.cutscene != null; } catch (System.Exception e) { Guard.Swallow(e); }
             if (!running)
             {
-                try { c.completed = true; } catch { }
+                try { c.completed = true; } catch (System.Exception e) { Guard.Swallow(e); }
                 try
                 {
                     if (c.onCutsceneSkip != null)
                         c.onCutsceneSkip.Invoke();
                 }
-                catch { }
-                try { CutsceneSkippingUI.skippableCutscene = false; } catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
+                try { CutsceneSkippingUI.skippableCutscene = false; } catch (System.Exception e) { Guard.Swallow(e); }
                 return;
             }
             NetGate.BeginApply();
@@ -724,10 +724,10 @@ namespace SyncRADation.Networking
                     if (c.skipper != null && c.skipper.skipEvent != null)
                         c.skipper.skipEvent.Invoke();
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
             finally { NetGate.EndApply(); }
-            try { CutsceneSkippingUI.skippableCutscene = false; } catch { }
+            try { CutsceneSkippingUI.skippableCutscene = false; } catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         private static bool ApplyStorage(InteractionRequestMessage msg, bool put, out string reasonOut)
@@ -739,7 +739,7 @@ namespace SyncRADation.Networking
 
             int have = BoxStock(item);
             int enumVal = 0;
-            try { enumVal = (int)item._item; } catch { }
+            try { enumVal = (int)item._item; } catch (System.Exception e) { Guard.Swallow(e); }
             bool unique = PartyKeyRing.IsKeyOrObject(item);
             if (unique && n > 1) n = 1;
             var net = LanNetworkManager.Instance;
@@ -845,7 +845,7 @@ namespace SyncRADation.Networking
             try { have = InventoryManager.boxContainsItemCount(item); }
             catch
             {
-                try { if (InventoryManager.boxContainsItem(item)) have = 1; } catch { }
+                try { if (InventoryManager.boxContainsItem(item)) have = 1; } catch (System.Exception e) { Guard.Swallow(e); }
             }
             return have;
         }
@@ -868,7 +868,7 @@ namespace SyncRADation.Networking
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             float r2 = range * range;
             foreach (var kvp in WorldRegistry.AllEnemies())
             {
@@ -883,7 +883,7 @@ namespace SyncRADation.Networking
                     if (t != null) e.playerPos = t;
                     e.WakeUpfromGunShot();
                 }
-                catch { }
+                catch (System.Exception ex) { Guard.Swallow(ex); }
             }
         }
 

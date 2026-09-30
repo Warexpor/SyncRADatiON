@@ -67,7 +67,7 @@ namespace SyncRADation.Patches
                 if (t.skipper != null)
                     t.skipper.enabled = true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public static bool IsPenTitlesCard(UseItemInteraction x)
@@ -83,7 +83,7 @@ namespace SyncRADation.Patches
                         return true;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
 
@@ -107,11 +107,11 @@ namespace SyncRADation.Patches
                         {
                             bool unlocked = false;
                             try { unlocked = t.keyCardEvent != null && t.keyCardEvent.unlocked; }
-                            catch { }
+                            catch (System.Exception e) { Guard.Swallow(e); }
                             match = unlocked;
                         }
                     }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                     if (!match) continue;
                     if (t.started)
                         return false;
@@ -123,7 +123,7 @@ namespace SyncRADation.Patches
                     return true;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
 
@@ -144,7 +144,7 @@ namespace SyncRADation.Patches
                         return true;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
 
@@ -169,7 +169,7 @@ namespace SyncRADation.Patches
             if (string.IsNullOrEmpty(hostScene)) return false;
             string local = "";
             try { local = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name ?? ""; }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             // Host left Penrose — follow (LOV etc.). Stale _personalScene=PEN_Hole used to
             // trap the client in the hole after LOV_Reeducation loaded (pause-only freeze).
             if (!IsWreckOrHole(hostScene))
@@ -208,7 +208,7 @@ namespace SyncRADation.Patches
                         return true;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
 

@@ -21,7 +21,7 @@ namespace SyncRADation.Networking
         {
             if (x == null) return;
             bool was = false;
-            try { was = x.triggered; } catch { }
+            try { was = x.triggered; } catch (System.Exception ex) { Guard.Swallow(ex); }
             x.triggered = e.Bool0;
             if (!(e.Bool0 && !was)) return;
 
@@ -29,7 +29,7 @@ namespace SyncRADation.Networking
             // LiveEdge, not mutateWorld: ReapplyHeld runs with mutateWorld=true and must not replay the zone event.
             if (PuzzleSyncService.LiveEdge && LocalInspect.InLocalRoom(x.gameObject))
             {
-                try { if (x.onInRange != null) x.onInRange.Invoke(); } catch { }
+                try { if (x.onInRange != null) x.onInRange.Invoke(); } catch (System.Exception ex) { Guard.Swallow(ex); }
             }
             else
                 PlaytestLog.Verbose("Puzzle", "skip EventZone invoke " + x.gameObject.name);

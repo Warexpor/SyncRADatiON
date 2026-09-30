@@ -422,18 +422,18 @@ namespace SyncRADation.Players
                             sb.Append(" s0=").Append(si.shortNameHash);
                             sb.Append(" t0=").Append(si.normalizedTime.ToString("F2"));
                         }
-                        catch { }
+                        catch (System.Exception e) { Guard.Swallow(e); }
                         try
                         {
                             var si1 = a.GetCurrentAnimatorStateInfo(1);
                             sb.Append(" s1=").Append(si1.shortNameHash);
                             sb.Append(" t1=").Append(si1.normalizedTime.ToString("F2"));
                         }
-                        catch { }
+                        catch (System.Exception e) { Guard.Swallow(e); }
                     }
                     PlaytestLog.Verbose("DRV", sb.ToString());
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 _lastLog = Time.time;
             }
         }

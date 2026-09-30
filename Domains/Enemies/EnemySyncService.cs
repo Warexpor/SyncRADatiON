@@ -88,7 +88,7 @@ namespace SyncRADation.Networking
                     if (e.hitbox != null) hp = e.hitbox.HP;
                     else hp = maxHp;
                 }
-                catch { }
+                catch (Exception ex) { Guard.Swallow(ex); }
 
                 int animHash = 0;
                 float animTime = 0f;
@@ -101,10 +101,10 @@ namespace SyncRADation.Networking
                         animTime = si.normalizedTime;
                     }
                 }
-                catch { }
+                catch (Exception ex) { Guard.Swallow(ex); }
 
                 float rotY = 0f;
-                try { rotY = et.eulerAngles.y; } catch { }
+                try { rotY = et.eulerAngles.y; } catch (Exception ex) { Guard.Swallow(ex); }
 
                 float velX = 0f, velY = 0f, velZ = 0f;
                 try
@@ -115,7 +115,7 @@ namespace SyncRADation.Networking
                         velX = v.x; velY = v.y; velZ = v.z;
                     }
                 }
-                catch { }
+                catch (Exception ex) { Guard.Swallow(ex); }
 
                 _snapList.Add(new EnemySnapshotNet
                 {
@@ -145,7 +145,7 @@ namespace SyncRADation.Networking
                         e.AimTarget = nearest;
                         e.IkTarget = nearest;
                     }
-                    catch { }
+                    catch (Exception ex) { Guard.Swallow(ex); }
 
                     int tid = -1;
                     try
@@ -154,7 +154,7 @@ namespace SyncRADation.Networking
                         if (tid < 0 && nearest.gameObject == net.GetLocalPlayer())
                             tid = net.LocalPlayerId;
                     }
-                    catch { }
+                    catch (Exception ex) { Guard.Swallow(ex); }
                     var snap = _snapList[_snapList.Count - 1];
                     snap.TargetPlayerId = (sbyte)Mathf.Clamp(tid, -1, 127);
                     _snapList[_snapList.Count - 1] = snap;
@@ -206,7 +206,7 @@ namespace SyncRADation.Networking
                     }
                 }
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
 
             try
             {
@@ -226,7 +226,7 @@ namespace SyncRADation.Networking
                     }
                 }
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
         }
 
         private static Transform FindNearestStatic(Vector3 fromPos, LanNetworkManager net, PlayerProxyManager pm)
@@ -281,7 +281,7 @@ namespace SyncRADation.Networking
                 if (enemy.hurtbox != null)
                     enemy.hurtbox.SetActive(!dead);
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
             try
             {
                 if (enemy.downedHitbox != null)
@@ -292,7 +292,7 @@ namespace SyncRADation.Networking
                     enemy.downedHitbox.SetActive(downed);
                 }
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
         }
 
         /// <summary>
@@ -446,14 +446,14 @@ namespace SyncRADation.Networking
                 if (!EnemyVisiblyInChunk(enemy))
                 {
                     if (enemy == null) return;
-                    try { enemy.state = (EnemyController.enemystate)snap.State; } catch { }
-                    try { enemy.staggerType = (EnemyController.hurtState)snap.HurtState; } catch { }
+                    try { enemy.state = (EnemyController.enemystate)snap.State; } catch (Exception e) { Guard.Swallow(e); }
+                    try { enemy.staggerType = (EnemyController.hurtState)snap.HurtState; } catch (Exception e) { Guard.Swallow(e); }
                     try
                     {
                         if (enemy != null && enemy.hitbox != null)
                             enemy.hitbox.HP = snap.HP;
                     }
-                    catch { }
+                    catch (Exception e) { Guard.Swallow(e); }
                     // Off-chunk still needs dead hurtbox gate (join dump / sleeping chunk).
                     {
                         bool dead = !snap.Alive
@@ -496,9 +496,9 @@ namespace SyncRADation.Networking
                 }
                 catch { return; }
 
-                try { enemy.state = (EnemyController.enemystate)snap.State; } catch { }
+                try { enemy.state = (EnemyController.enemystate)snap.State; } catch (Exception e) { Guard.Swallow(e); }
                 // Decompile EnemyController.staggerType (hurtState) — was on wire unused.
-                try { enemy.staggerType = (EnemyController.hurtState)snap.HurtState; } catch { }
+                try { enemy.staggerType = (EnemyController.hurtState)snap.HurtState; } catch (Exception e) { Guard.Swallow(e); }
 
                 // Puppet peers never run UpdateDataBlock — mirror dead/downed hitbox GOs.
                 {
@@ -514,13 +514,13 @@ namespace SyncRADation.Networking
                     if (enemy.hitbox != null)
                         enemy.hitbox.HP = snap.HP;
                 }
-                catch { }
+                catch (Exception e) { Guard.Swallow(e); }
                 try
                 {
                     if (enemy.debugHP != null)
                         enemy.debugHP.text = snap.HP + "/" + snap.MaxHP;
                 }
-                catch { }
+                catch (Exception e) { Guard.Swallow(e); }
 
                 var anim = enemy.animator;
                 if (anim != null && snap.AnimHash != 0)
@@ -533,10 +533,10 @@ namespace SyncRADation.Networking
                         if (stateInfo.fullPathHash != snap.AnimHash)
                             anim.Play(snap.AnimHash, 0, snap.AnimTime);
                     }
-                    catch { }
+                    catch (Exception e) { Guard.Swallow(e); }
                 }
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
         }
 
         private static bool EnemyVisiblyInChunk(EnemyController enemy)
@@ -655,8 +655,8 @@ namespace SyncRADation.Networking
         static void Puppet(EnemyController enemy)
         {
             if (enemy == null) return;
-            try { enemy.enabled = false; } catch { }
-            try { if (enemy.agent != null) enemy.agent.enabled = false; } catch { }
+            try { enemy.enabled = false; } catch (Exception e) { Guard.Swallow(e); }
+            try { if (enemy.agent != null) enemy.agent.enabled = false; } catch (Exception e) { Guard.Swallow(e); }
         }
 
         /// <summary>
@@ -680,7 +680,7 @@ namespace SyncRADation.Networking
                 if (enemy.agent != null) enemy.agent.enabled = true;
                 enemy.WakeUp();
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
         }
 
         public void PuppetAllNow()
@@ -703,8 +703,8 @@ namespace SyncRADation.Networking
             {
                 var e = kvp.Value;
                 if (e == null) continue;
-                try { e.enabled = true; } catch { }
-                try { if (e.agent != null) e.agent.enabled = true; } catch { }
+                try { e.enabled = true; } catch (Exception ex) { Guard.Swallow(ex); }
+                try { if (e.agent != null) e.agent.enabled = true; } catch (Exception ex) { Guard.Swallow(ex); }
             }
             _clientPuppeted.Clear();
         }
@@ -750,7 +750,7 @@ namespace SyncRADation.Networking
                             break;
                         }
                     }
-                    catch { }
+                    catch (Exception e) { Guard.Swallow(e); }
                 }
             }
             int bits = 0;
@@ -766,7 +766,7 @@ namespace SyncRADation.Networking
         internal static PuzzleStateEntry ReadGlobalAlert()
         {
             int alarmVal = 0;
-            try { alarmVal = (int)GlobalAlertStatus.currentStatus; } catch { }
+            try { alarmVal = (int)GlobalAlertStatus.currentStatus; } catch (Exception e) { Guard.Swallow(e); }
             return PuzzleDomainUtil.Mk(
                 PuzzleType.GlobalAlertStatus, 0, false, false, false, alarmVal, 0, 0, 0, 0f);
         }

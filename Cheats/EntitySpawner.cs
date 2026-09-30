@@ -94,7 +94,7 @@ namespace SyncRADation.Cheats
                 if (PlayerState.player != null)
                     rotY = PlayerState.player.transform.eulerAngles.y;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
 
             if (NetGate.Client)
             {
@@ -155,7 +155,7 @@ namespace SyncRADation.Cheats
                 if (PlayerState.currentRoom != null)
                     go.transform.SetParent(PlayerState.currentRoom.transform, true);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
 
             go.transform.position = pos;
             var eul = go.transform.eulerAngles;
@@ -179,7 +179,7 @@ namespace SyncRADation.Cheats
                 if (ec.seeker != null) ec.seeker.enabled = true;
                 ec.enabled = true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try { ec.WakeUp(); } catch (System.Exception ex) { PlaytestLog.Event("Spawn", "WakeUp: " + ex.Message); }
             try
             {
@@ -190,7 +190,7 @@ namespace SyncRADation.Cheats
                     ec.IkTarget = PlayerState.player.transform;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
 
             WorldRegistry.RegisterEnemy(id, ec);
             if (NetGate.Client)
@@ -200,7 +200,7 @@ namespace SyncRADation.Cheats
                     ec.enabled = false;
                     if (ec.agent != null) ec.agent.enabled = false;
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
 
             var net = LanNetworkManager.Instance;
@@ -237,7 +237,7 @@ namespace SyncRADation.Cheats
             if (ec == null || ec.gameObject == null) return;
 
             string n = "";
-            try { n = ec.gameObject.name ?? ""; } catch { }
+            try { n = ec.gameObject.name ?? ""; } catch (System.Exception e) { Guard.Swallow(e); }
             if (n.StartsWith(SpawnPrefix, System.StringComparison.Ordinal))
             {
                 ulong existingId = WorldId.FromGameObject(ec.gameObject);
@@ -280,7 +280,7 @@ namespace SyncRADation.Cheats
                 return;
             }
 
-            try { ec.gameObject.name = goName; } catch { }
+            try { ec.gameObject.name = goName; } catch (System.Exception e) { Guard.Swallow(e); }
             WorldRegistry.RegisterEnemy(id, ec);
 
             var net = LanNetworkManager.Instance;
@@ -381,13 +381,13 @@ namespace SyncRADation.Cheats
                 var sp = spawners[i];
                 if (sp == null) continue;
                 GameObject prefab = null;
-                try { prefab = sp.EnemyType; } catch { }
+                try { prefab = sp.EnemyType; } catch (System.Exception e) { Guard.Swallow(e); }
                 if (prefab == null) continue;
                 EnemyController ec = null;
-                try { ec = prefab.GetComponent<EnemyController>(); } catch { }
+                try { ec = prefab.GetComponent<EnemyController>(); } catch (System.Exception e) { Guard.Swallow(e); }
                 if (ec == null)
                 {
-                    try { ec = prefab.GetComponentInChildren<EnemyController>(true); } catch { }
+                    try { ec = prefab.GetComponentInChildren<EnemyController>(true); } catch (System.Exception e) { Guard.Swallow(e); }
                 }
                 Consider(ec);
             }
@@ -449,7 +449,7 @@ namespace SyncRADation.Cheats
                     && candidate.state != EnemyController.enemystate.dead)
                     return true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
 
@@ -468,7 +468,7 @@ namespace SyncRADation.Cheats
                         return t;
                 }
             }
-            catch { }
+            catch (System.Exception ex) { Guard.Swallow(ex); }
             try
             {
                 string n = e.gameObject.name ?? "";
@@ -481,7 +481,7 @@ namespace SyncRADation.Cheats
                         return k;
                 }
             }
-            catch { }
+            catch (System.Exception ex) { Guard.Swallow(ex); }
             return "";
         }
 
@@ -493,18 +493,18 @@ namespace SyncRADation.Cheats
                 var sp = ec.GetComponentInParent<EnemySpawner>();
                 if (sp == null) return;
                 GameObject prefab = null;
-                try { prefab = sp.EnemyType; } catch { }
+                try { prefab = sp.EnemyType; } catch (System.Exception e) { Guard.Swallow(e); }
                 if (prefab == null) return;
                 EnemyController tmpl = null;
-                try { tmpl = prefab.GetComponent<EnemyController>(); } catch { }
+                try { tmpl = prefab.GetComponent<EnemyController>(); } catch (System.Exception e) { Guard.Swallow(e); }
                 if (tmpl == null)
                 {
-                    try { tmpl = prefab.GetComponentInChildren<EnemyController>(true); } catch { }
+                    try { tmpl = prefab.GetComponentInChildren<EnemyController>(true); } catch (System.Exception e) { Guard.Swallow(e); }
                 }
                 if (tmpl != null)
                     Stash(tmpl, typeKey);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         private static Vector3 SpawnPos()
@@ -516,7 +516,7 @@ namespace SyncRADation.Cheats
                         + PlayerState.player.transform.forward * 5f
                         + Vector3.up * 0.1f;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return Vector3.zero;
         }
 

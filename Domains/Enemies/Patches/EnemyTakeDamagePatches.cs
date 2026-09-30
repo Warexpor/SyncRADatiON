@@ -36,8 +36,8 @@ namespace SyncRADation.Patches
                 crit = PlayerAttack.criticalChance;
                 hurt = PlayerAttack.hurtChance;
             }
-            catch { }
-            try { noSneak = !PlayerState.sneaking; } catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            try { noSneak = !PlayerState.sneaking; } catch (System.Exception e) { Guard.Swallow(e); }
             return Handle(__instance, fire, crit, hurt, noSneak);
         }
 

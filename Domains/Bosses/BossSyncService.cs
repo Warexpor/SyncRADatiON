@@ -67,11 +67,11 @@ namespace SyncRADation.Networking
                     if (bt == null) continue;
                     var n = FindNearest(bt.position, net, pm);
                     if (n == null) continue;
-                    try { b.Elster = n; } catch { }
-                    try { b.Target = n; } catch { }
+                    try { b.Elster = n; } catch (Exception e) { Guard.Swallow(e); }
+                    try { b.Target = n; } catch (Exception e) { Guard.Swallow(e); }
                 }
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
 
             try
             {
@@ -85,10 +85,10 @@ namespace SyncRADation.Networking
                     catch { continue; }
                     if (at == null) continue;
                     var n = FindNearest(at.position, net, pm);
-                    if (n != null) { try { a.Elster = n; } catch { } }
+                    if (n != null) { try { a.Elster = n; } catch (Exception e) { Guard.Swallow(e); } }
                 }
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
         }
 
         static Transform FindNearest(Vector3 fromPos, LanNetworkManager net, PlayerProxyManager pm)
@@ -256,7 +256,7 @@ namespace SyncRADation.Networking
                 if (t == null) continue;
                 var anim = b.animator;
                 int hp = 0;
-                try { if (b.hitbox != null) hp = b.hitbox.HP; } catch { }
+                try { if (b.hitbox != null) hp = b.hitbox.HP; } catch (Exception e) { Guard.Swallow(e); }
                 int animHash = 0;
                 float animTime = 0f;
                 if (anim != null)
@@ -267,7 +267,7 @@ namespace SyncRADation.Networking
                         animHash = si.shortNameHash;
                         animTime = si.normalizedTime;
                     }
-                    catch { }
+                    catch (Exception e) { Guard.Swallow(e); }
                 }
                 list.Add(new BossSnapshotNet
                 {
@@ -423,7 +423,7 @@ namespace SyncRADation.Networking
                         break;
                 }
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
         }
 
         private static void ApplyEND(END_Boss b, BossSnapshotNet snap)
@@ -440,24 +440,24 @@ namespace SyncRADation.Networking
             }
             catch { return; }
 
-            try { b.state = (END_Boss.states)snap.StateEnum; } catch { }
-            try { b.started = snap.Bool0; } catch { }
-            try { b.survival = snap.Bool1; } catch { }
-            try { b.hit = snap.Bool2; } catch { }
-            try { b.didWideAttack = snap.Bool3; } catch { }
-            try { b.deployed = snap.Bool4; } catch { }
-            try { b.stage = snap.Int0; } catch { }
-            try { b.ammo = snap.Int1; } catch { }
-            try { b.cycle = snap.Float0; } catch { }
-            try { b.stagger = snap.Float1; } catch { }
-            try { b.timer = snap.Float2; } catch { }
-            try { b.corrupt = snap.Corrupt; } catch { }
+            try { b.state = (END_Boss.states)snap.StateEnum; } catch (Exception e) { Guard.Swallow(e); }
+            try { b.started = snap.Bool0; } catch (Exception e) { Guard.Swallow(e); }
+            try { b.survival = snap.Bool1; } catch (Exception e) { Guard.Swallow(e); }
+            try { b.hit = snap.Bool2; } catch (Exception e) { Guard.Swallow(e); }
+            try { b.didWideAttack = snap.Bool3; } catch (Exception e) { Guard.Swallow(e); }
+            try { b.deployed = snap.Bool4; } catch (Exception e) { Guard.Swallow(e); }
+            try { b.stage = snap.Int0; } catch (Exception e) { Guard.Swallow(e); }
+            try { b.ammo = snap.Int1; } catch (Exception e) { Guard.Swallow(e); }
+            try { b.cycle = snap.Float0; } catch (Exception e) { Guard.Swallow(e); }
+            try { b.stagger = snap.Float1; } catch (Exception e) { Guard.Swallow(e); }
+            try { b.timer = snap.Float2; } catch (Exception e) { Guard.Swallow(e); }
+            try { b.corrupt = snap.Corrupt; } catch (Exception e) { Guard.Swallow(e); }
             try
             {
                 if (b.hitbox != null)
                     b.hitbox.HP = snap.Hp;
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
 
             if (b.animator != null && snap.AnimHash != 0)
             {
@@ -467,7 +467,7 @@ namespace SyncRADation.Networking
                     if (si.shortNameHash != snap.AnimHash || Mathf.Abs(si.normalizedTime - snap.AnimTime) > 0.1f)
                         b.animator.Play(snap.AnimHash, 0, snap.AnimTime);
                 }
-                catch { }
+                catch (Exception e) { Guard.Swallow(e); }
             }
 
             // Client AI is disabled — Start/Stabbed/Update no longer drive arena doors,
@@ -518,8 +518,8 @@ namespace SyncRADation.Networking
 
             // Keep field mirror aligned with the presentation we just chose (stage regress /
             // corrupt toggle from a partial field write cannot desync GO active flags).
-            try { b.stage = stage; } catch { }
-            try { b.corrupt = corrupt; } catch { }
+            try { b.stage = stage; } catch (Exception e) { Guard.Swallow(e); }
+            try { b.corrupt = corrupt; } catch (Exception e) { Guard.Swallow(e); }
 
             try
             {
@@ -535,11 +535,11 @@ namespace SyncRADation.Networking
                             if (arenas[i] != null)
                                 arenas[i].SetActive(i == stage);
                         }
-                        catch { }
+                        catch (Exception e) { Guard.Swallow(e); }
                     }
                 }
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
 
             try
             {
@@ -555,40 +555,40 @@ namespace SyncRADation.Networking
                             if (spears[i] != null)
                                 spears[i].SetActive(i < stage);
                         }
-                        catch { }
+                        catch (Exception e) { Guard.Swallow(e); }
                     }
                 }
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
 
             try
             {
                 if (b.FloatShields != null)
                     b.FloatShields.SetActive(stage >= 3);
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
             try
             {
                 if (b.FloatShields2 != null)
                     b.FloatShields2.SetActive(stage >= 5);
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
 
             try
             {
                 if (b.CorruptedMesh != null)
                     b.CorruptedMesh.SetActive(corrupt);
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
             try
             {
                 if (b.NormalMesh != null)
                     b.NormalMesh.SetActive(!corrupt);
             }
-            catch { }
+            catch (Exception e) { Guard.Swallow(e); }
 
             // Stabbed / DeploySpears also refresh BodySpears from ammo/deployed (already snapped).
-            try { b.SetBodySpearStates(); } catch { }
+            try { b.SetBodySpearStates(); } catch (Exception e) { Guard.Swallow(e); }
         }
 
         private static void ApplyLAB(LAB_ChimeraBoss b, BossSnapshotNet snap)
@@ -603,12 +603,12 @@ namespace SyncRADation.Networking
                     rot.y = snap.RotY;
                     b.Chimera.transform.eulerAngles = rot;
                 }
-                catch { }
+                catch (Exception e) { Guard.Swallow(e); }
             }
 
-            try { b.inOperation = snap.Bool0; } catch { }
-            try { b.done = snap.Bool1; } catch { }
-            try { b.remainingBossTime = snap.Float0; } catch { }
+            try { b.inOperation = snap.Bool0; } catch (Exception e) { Guard.Swallow(e); }
+            try { b.done = snap.Bool1; } catch (Exception e) { Guard.Swallow(e); }
+            try { b.remainingBossTime = snap.Float0; } catch (Exception e) { Guard.Swallow(e); }
             // Bossfight coroutine is host-only: mirror the Isa stand-up (GetUp trigger) on the edge.
             try
             {
@@ -638,13 +638,13 @@ namespace SyncRADation.Networking
                     rot.y = snap.RotY;
                     b.Mynah.transform.eulerAngles = rot;
                 }
-                catch { }
+                catch (Exception e) { Guard.Swallow(e); }
             }
 
-            try { b.inProgress = snap.Bool0; } catch { }
-            try { b.phaseTwo = snap.Bool1; } catch { }
-            try { b.phaseThree = snap.Bool2; } catch { }
-            try { b.schonfrist = snap.Float0; } catch { }
+            try { b.inProgress = snap.Bool0; } catch (Exception e) { Guard.Swallow(e); }
+            try { b.phaseTwo = snap.Bool1; } catch (Exception e) { Guard.Swallow(e); }
+            try { b.phaseThree = snap.Bool2; } catch (Exception e) { Guard.Swallow(e); }
+            try { b.schonfrist = snap.Float0; } catch (Exception e) { Guard.Swallow(e); }
         }
 
         private MonoBehaviour FindLocalBossByWorldId(long worldIdLong, out BossType type)
@@ -750,7 +750,7 @@ namespace SyncRADation.Networking
         private static bool HaltBossController(MonoBehaviour b, bool keepEnabled = false)
         {
             if (b == null) return false;
-            try { b.StopAllCoroutines(); } catch { }
+            try { b.StopAllCoroutines(); } catch (Exception e) { Guard.Swallow(e); }
             if (keepEnabled) return true;
             try { b.enabled = false; } catch { return false; }
             return true;
@@ -790,7 +790,7 @@ namespace SyncRADation.Networking
         public void Reset()
         {
             // StopNetwork may leave client-disabled bosses offline with AI off.
-            try { EnableLocalAI(); } catch { }
+            try { EnableLocalAI(); } catch (Exception e) { Guard.Swallow(e); }
             OnSceneChanged();
             _sendTimer = 0f;
             _forceSend = false;

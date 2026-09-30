@@ -38,7 +38,7 @@ namespace SyncRADation.ItemSystem
                     if (cached.gameObject != null)
                         return cached;
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 ByItem.Remove(key);
             }
 
@@ -59,14 +59,14 @@ namespace SyncRADation.ItemSystem
             {
                 var p = all[i];
                 if (p == null || DroppedItemRegistry.IsDropped(p)) continue;
-                try { if (p.slave) continue; } catch { }
+                try { if (p.slave) continue; } catch (System.Exception e) { Guard.Swallow(e); }
                 if (VisualTooBig(p)) continue;
                 bool inScene = false;
                 bool live = false;
                 bool spent = false;
-                try { inScene = p.gameObject != null && p.gameObject.scene.IsValid(); } catch { }
-                try { live = inScene && p.gameObject.activeInHierarchy; } catch { }
-                try { spent = p.triggered; } catch { }
+                try { inScene = p.gameObject != null && p.gameObject.scene.IsValid(); } catch (System.Exception e) { Guard.Swallow(e); }
+                try { live = inScene && p.gameObject.activeInHierarchy; } catch (System.Exception e) { Guard.Swallow(e); }
+                try { spent = p.triggered; } catch (System.Exception e) { Guard.Swallow(e); }
                 if (live && !spent && anyLive == null) anyLive = p;
                 if (inScene && !spent && anyScene == null) anyScene = p;
                 if (ResolveItem(p) == item)
@@ -102,13 +102,13 @@ namespace SyncRADation.ItemSystem
                 if (p._item != null && p._item._item != Items.itemlist.None)
                     return p._item._item;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (p._itemEnum != Items.itemlist.None)
                     return p._itemEnum;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return Items.itemlist.None;
         }
     }

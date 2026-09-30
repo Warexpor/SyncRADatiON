@@ -48,14 +48,14 @@ namespace SyncRADation.Networking
                         if (code != null && code.Length <= 32)
                             codeBits = ResidencyPuzzleSyncService.PackBoolArray(code);
                     }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                     try
                     {
                         var input = x.input;
                         if (input != null && input.Length <= 32)
                             inputBits = ResidencyPuzzleSyncService.PackBoolArray(input);
                     }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                     entry = PuzzleDomainUtil.Mk(type, wid, x.done, x.locked, false, codeBits, inputBits, 0, 0, 0);
                     return true;
                 }
@@ -77,8 +77,8 @@ namespace SyncRADation.Networking
             // onSolved.Invoke(); !MutateWorld && !was → onLoad.Invoke() (dimPOI soak,
             // skip remount StartCutscene). Keep SnapMedPump drain.
             bool was = false;
-            try { was = x.solved; } catch { }
-            try { x.a = e.Int0; x.b = e.Int1; x.c = e.Int2; } catch { }
+            try { was = x.solved; } catch (System.Exception ex) { Guard.Swallow(ex); }
+            try { x.a = e.Int0; x.b = e.Int1; x.c = e.Int2; } catch (System.Exception ex) { Guard.Swallow(ex); }
             if (!e.Bool0) return;
             SnapMedPump(x, cinematic);
             // Shared edge rule (PuzzleEdge): live rising edge = onSolved (dimPOI + StartCutscene + RecordSplit);
@@ -112,7 +112,7 @@ namespace SyncRADation.Networking
                         input[idx] = e.Bool0;
                 }
             }
-            catch { }
+            catch (System.Exception ex) { Guard.Swallow(ex); }
             if (e.Bool0) PuzzleSyncService.TryUnlockDoors(x.gameObject);
         }
 
@@ -127,7 +127,7 @@ namespace SyncRADation.Networking
                 if (code != null && code.Length <= 32)
                     ResidencyPuzzleSyncService.UnpackBoolArray(code, e.Int0);
             }
-            catch { }
+            catch (System.Exception ex) { Guard.Swallow(ex); }
             // Dig U: unpack Int1→input[] (≤32) so partial switch progress survives
             // remount / late-join FullRefresh without requiring Bool0 done.
             try
@@ -136,10 +136,10 @@ namespace SyncRADation.Networking
                 if (input != null && input.Length <= 32)
                     ResidencyPuzzleSyncService.UnpackBoolArray(input, e.Int1);
             }
-            catch { }
+            catch (System.Exception ex) { Guard.Swallow(ex); }
             if (!e.Bool0) return;
             // dlc.locked is a flag snap — apply on join FullRefresh too.
-            try { if (x.dlc != null) x.dlc.locked = false; } catch { }
+            try { if (x.dlc != null) x.dlc.locked = false; } catch (System.Exception ex) { Guard.Swallow(ex); }
             // TryUnlockDoors is a lock-flag snap (flavor seals gated by AllowUnlock): join dump needs it too.
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
         }
@@ -147,13 +147,13 @@ namespace SyncRADation.Networking
         public static void SnapMedPump(MED_Pump x, bool play)
         {
             if (x == null) return;
-            try { x.solved = true; } catch { }
+            try { x.solved = true; } catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (x.flood != null)
                     SnapFlood(x.flood, play);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
         }
 
@@ -172,8 +172,8 @@ namespace SyncRADation.Networking
         static void PoseFlood(MED_FloodedBathroom x)
         {
             if (x == null) return;
-            try { x.setLevel(x.endDepth); } catch { }
-            try { x.level = x.endDepth; } catch { }
+            try { x.setLevel(x.endDepth); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { x.level = x.endDepth; } catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (x.waterTrans != null)
@@ -183,9 +183,9 @@ namespace SyncRADation.Networking
                     x.waterTrans.localPosition = p;
                 }
             }
-            catch { }
-            try { if (x.Ladder != null) x.Ladder.SetActive(true); } catch { }
-            try { if (x.ObservationFlood != null) x.ObservationFlood.SetActive(false); } catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.Ladder != null) x.Ladder.SetActive(true); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.ObservationFlood != null) x.ObservationFlood.SetActive(false); } catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 }

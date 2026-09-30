@@ -108,7 +108,7 @@ namespace SyncRADation.Networking
                         var p = picks[i];
                         if (p == null) continue;
                         ulong pid = 0;
-                        try { pid = WorldId.FromGameObject(p.gameObject); } catch { }
+                        try { pid = WorldId.FromGameObject(p.gameObject); } catch (System.Exception e) { Guard.Swallow(e); }
                         try
                         {
                             var netClaim = LanNetworkManager.Instance;
@@ -118,10 +118,10 @@ namespace SyncRADation.Networking
                                 continue;
                             }
                         }
-                        catch { }
-                        try { p.triggered = false; } catch { }
-                        try { p.gameObject.SetActive(true); } catch { }
-                        try { p.enabled = true; } catch { }
+                        catch (System.Exception e) { Guard.Swallow(e); }
+                        try { p.triggered = false; } catch (System.Exception e) { Guard.Swallow(e); }
+                        try { p.gameObject.SetActive(true); } catch (System.Exception e) { Guard.Swallow(e); }
+                        try { p.enabled = true; } catch (System.Exception e) { Guard.Swallow(e); }
                         try
                         {
                             var it = p.GetComponent<Interaction>();
@@ -131,18 +131,18 @@ namespace SyncRADation.Networking
                                 it.triggered = false;
                             }
                         }
-                        catch { }
+                        catch (System.Exception e) { Guard.Swallow(e); }
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var net = LanNetworkManager.Instance;
                 if (net != null)
                     net.PickupSync.NotifyRevealed();
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         internal static void UnlockDoorObject(GameObject door)
@@ -161,26 +161,26 @@ namespace SyncRADation.Networking
                 if (dlc != null)
                     DoorNative.UnsealDoorLockControl(dlc);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var simple = door.GetComponent<Doorway_simple>();
                 if (simple != null) simple.locked = false;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var dbl = door.GetComponent<Doorway_Double>();
                 if (dbl != null) dbl.locked = false;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var cd = door.GetComponent<ConnectedDoors>();
                 if (cd != null && DoorNative.AllowUnlock(cd))
                     DoorNative.ApplyConnectedDoors(cd, false);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         internal static void TryUnlockDoors(GameObject go)
@@ -193,7 +193,7 @@ namespace SyncRADation.Networking
                 if (cd != null && cd.locked && DoorNative.AllowUnlock(cd))
                     DoorNative.ApplyConnectedDoors(cd, false);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 }

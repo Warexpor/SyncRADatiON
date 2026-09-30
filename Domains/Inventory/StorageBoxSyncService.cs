@@ -83,10 +83,10 @@ namespace SyncRADation.Networking
                         finally { Sync.NetGate.EndApply(); }
                         PlaytestLog.Event("StorageBox", "clamp unique " + item._item + " was=" + have);
                     }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public void Apply(StorageBoxBlobMessage msg)
@@ -118,7 +118,7 @@ namespace SyncRADation.Networking
                 var dict = InventoryManager.boxItems;
                 if (dict != null)
                 {
-                    try { dict.Clear(); } catch { }
+                    try { dict.Clear(); } catch (System.Exception e) { Guard.Swallow(e); }
                 }
                 PlaytestLog.Event("StorageBox", "apply items=" + pending.Count);
                 for (int i = 0; i < pending.Count; i++)
@@ -127,7 +127,7 @@ namespace SyncRADation.Networking
                     try { InventoryManager.boxItem(pair.Key, pair.Value); }
                     catch
                     {
-                        try { InventoryManager.storeItem(pair.Key, pair.Value); } catch { }
+                        try { InventoryManager.storeItem(pair.Key, pair.Value); } catch (System.Exception e) { Guard.Swallow(e); }
                     }
                 }
             }
@@ -168,7 +168,7 @@ namespace SyncRADation.Networking
                 }
                 en.Dispose();
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             int n = _readScratch.Count;
             if (_itemsScratch.Length != n)
                 _itemsScratch = new StorageBoxItem[n];

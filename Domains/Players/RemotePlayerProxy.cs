@@ -84,7 +84,7 @@ namespace SyncRADation.Players
                         anim.SetTrigger("Die");
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public void ApplyState(PlayerStateMessage state)

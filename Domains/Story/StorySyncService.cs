@@ -565,7 +565,7 @@ namespace SyncRADation.Networking
                 arr[i++] = kvp.Value;
 
             string xml = "";
-            try { xml = Dialoguer.GetGlobalVariablesState() ?? ""; } catch { }
+            try { xml = Dialoguer.GetGlobalVariablesState() ?? ""; } catch (System.Exception e) { Guard.Swallow(e); }
 
             int circle = 0, death = 0, graves = 0, leave = 0, ending = 0;
             int npc = 0, healedSeg = 0, doors = 0;
@@ -583,10 +583,10 @@ namespace SyncRADation.Networking
                 memoryTime = END_Manager.memoryTime;
                 doors = END_Manager.doors;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
 
             byte gs = 0;
-            try { gs = (byte)PlayerState.gameState; } catch { }
+            try { gs = (byte)PlayerState.gameState; } catch (System.Exception e) { Guard.Swallow(e); }
 
             bool replay = replayPresentation && CanReplayPresentation(LastCmd, LastWorldId);
             net.SendStoryCommit(new StoryCommitMessage
@@ -685,7 +685,7 @@ namespace SyncRADation.Networking
                         _flags[k] = new StoryFlagEntry { Kind = 0, Key = k, BoolVal = vals[i] };
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         private void DumpInts(ProgressSlotBehaviour p)
@@ -703,7 +703,7 @@ namespace SyncRADation.Networking
                         _flags[k] = new StoryFlagEntry { Kind = 1, Key = k, IntVal = vals[i] };
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         private void DumpFloats(ProgressSlotBehaviour p)
@@ -721,7 +721,7 @@ namespace SyncRADation.Networking
                         _flags[k] = new StoryFlagEntry { Kind = 2, Key = k, FloatVal = vals[i] };
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         private void DumpStrings(ProgressSlotBehaviour p)
@@ -739,7 +739,7 @@ namespace SyncRADation.Networking
                         _flags[k] = new StoryFlagEntry { Kind = 3, Key = k, StringVal = vals[i] ?? "" };
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         private void DumpVectors(ProgressSlotBehaviour p)
@@ -758,7 +758,7 @@ namespace SyncRADation.Networking
                     _flags[k] = new StoryFlagEntry { Kind = 4, Key = k, FloatVal = v.x, VecY = v.y, VecZ = v.z };
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public void ApplyCommit(StoryCommitMessage msg)
@@ -821,14 +821,14 @@ namespace SyncRADation.Networking
                                 case 4: SProgress.SetVector(f.Key, new Vector3(f.FloatVal, f.VecY, f.VecZ)); break;
                             }
                         }
-                        catch { }
+                        catch (System.Exception e) { Guard.Swallow(e); }
                     }
                 }
 
                 if (!string.IsNullOrEmpty(msg.DialoguerXml))
                 {
-                    try { Dialoguer.SetGlobalVariablesState(msg.DialoguerXml); } catch { }
-                    try { PartyKeyRing.RestoreUiNames(); } catch { }
+                    try { Dialoguer.SetGlobalVariablesState(msg.DialoguerXml); } catch (System.Exception e) { Guard.Swallow(e); }
+                    try { PartyKeyRing.RestoreUiNames(); } catch (System.Exception e) { Guard.Swallow(e); }
                 }
 
                 try
@@ -1307,7 +1307,7 @@ namespace SyncRADation.Networking
             // sets triedOnce first → Apply sees was=true → no double-fire. Protocol 10
             // unchanged (reuse MultiConditionEvent Bool0 triedOnce + Int0 tried).
             bool was = false;
-            try { was = x.triedOnce; } catch { }
+            try { was = x.triedOnce; } catch (System.Exception ex) { Guard.Swallow(ex); }
             x.triedOnce = e.Bool0;
             x.tried = e.Int0;
             if (!e.Bool0) return;
@@ -1319,7 +1319,7 @@ namespace SyncRADation.Networking
                     if (x.OnTryDone != null)
                         x.OnTryDone.Invoke();
                 }
-                catch { }
+                catch (System.Exception ex) { Guard.Swallow(ex); }
                 finally { NetGate.EndApply(); }
             }
         }
@@ -1335,7 +1335,7 @@ namespace SyncRADation.Networking
                 if (x.eventInter != null)
                     x.eventInter.enabled = false;
             }
-            catch { }
+            catch (System.Exception ex) { Guard.Swallow(ex); }
         }
 
         internal static void ApplyCutsceneCompleted(CutsceneManager x, PuzzleStateEntry e)
