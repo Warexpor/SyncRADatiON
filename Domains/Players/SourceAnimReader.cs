@@ -195,7 +195,7 @@ namespace SyncRADation.Players
                 if (_facingPivotCache != null)
                 {
                     _boneReader = new BoneSyncManager();
-                    _boneReader.FindArmature(_facingPivotCache.gameObject);
+                    _boneReader.FindArmature(_facingPivotCache);
                 }
             }
             if (_boneReader != null)

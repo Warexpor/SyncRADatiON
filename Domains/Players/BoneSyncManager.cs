@@ -1,4 +1,5 @@
-// SyncRADation ? bind-pose bones only (skip runtime mount props). Euler read, quaternion apply.
+// Elster armature bone list: the sender reads it, the proxy writes it. Same tree walk on the same hierarchy on both
+// sides, so a bone's list index is its wire identity.
 using System.Collections.Generic;
 using SyncRADation.Sync;
 using UnityEngine;
@@ -8,56 +9,69 @@ namespace SyncRADation.Players
     public sealed class BoneSyncManager
     {
         private Transform _armatureRoot;
-        private List<Transform> _bones;
+        private readonly List<Transform> _bones = new List<Transform>(96);
         private float[] _readBuf;
 
-        public int BoneCount => _bones?.Count ?? 0;
+        public int BoneCount => _bones.Count;
 
-        public void FindArmature(GameObject root)
+        /// <summary>
+        /// The Elster model under a player root: its first direct child with a skinned mesh below it (Ellie_Default under
+        /// Character Root). The sender reads bones from it and the proxy is a clone of it.
+        /// </summary>
+        public static Transform FindModelRoot(Transform playerRoot)
+        {
+            if (playerRoot == null) return null;
+            var smrs = playerRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+            for (int i = 0; i < smrs.Length; i++)
+            {
+                if (smrs[i] == null) continue;
+                Transform t = smrs[i].transform;
+                while (t.parent != null && t.parent != playerRoot)
+                    t = t.parent;
+                if (t.parent == playerRoot)
+                    return t;
+            }
+            return null;
+        }
+
+        public void FindArmature(Transform modelRoot)
         {
             _armatureRoot = null;
-            _bones = new List<Transform>();
+            _bones.Clear();
             _readBuf = null;
-            SkinnedMeshRenderer[] smrs = root.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+            SkinnedMeshRenderer[] smrs = modelRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true);
             for (int i = 0; i < smrs.Length; i++)
             {
                 if (smrs[i] == null || smrs[i].rootBone == null) continue;
-                if (InWeaponPropTree(smrs[i].transform, root.transform)) continue;
+                if (InWeaponPropTree(smrs[i].transform, modelRoot)) continue;
                 Transform top = smrs[i].rootBone;
-                while (top.parent != null && top.parent.parent != null && top.parent.parent != root.transform)
+                while (top.parent != null && top.parent.parent != null && top.parent.parent != modelRoot)
                     top = top.parent;
                 _armatureRoot = top;
                 break;
             }
             if (_armatureRoot == null)
             {
-                PlaytestLog.Warn("DRV", "armature root not on SMR, searching hierarchy");
-                var smrParents = root.GetComponentsInChildren<Transform>(true);
-                for (int i = 0; i < smrParents.Length; i++)
+                // No SMR with a rootBone: the armature is the bone-only child with a real subtree.
+                for (int i = 0; i < modelRoot.childCount; i++)
                 {
-                    if (smrParents[i] != null && smrParents[i].parent == root.transform
-                        && smrParents[i].GetComponent<SkinnedMeshRenderer>() == null
-                        && smrParents[i].childCount > 3)
+                    var c = modelRoot.GetChild(i);
+                    if (c.GetComponent<SkinnedMeshRenderer>() == null && c.childCount > 3)
                     {
-                        _armatureRoot = smrParents[i];
+                        _armatureRoot = c;
                         break;
                     }
                 }
             }
             if (_armatureRoot != null)
-            {
                 CollectBonesSkipProps(_armatureRoot);
-                PlaytestLog.Verbose("DRV", "armature=" + _armatureRoot.name + " bones=" + _bones.Count);
-            }
             else
-            {
-                PlaytestLog.Warn("DRV", "no armature found");
-            }
+                PlaytestLog.Warn("DRV", "no armature under '" + modelRoot.name + "'");
         }
 
         private void CollectBonesSkipProps(Transform t)
         {
-            if (t == null || IsWeaponPropName(t.name)) return;
+            if (IsWeaponPropName(t.name)) return;
             _bones.Add(t);
             for (int i = 0; i < t.childCount; i++)
                 CollectBonesSkipProps(t.GetChild(i));
@@ -89,20 +103,20 @@ namespace SyncRADation.Players
         /// </summary>
         public float[] ReadRotations()
         {
-            if (_bones == null || _bones.Count == 0) return null;
-            int n = _bones.Count * 3;
-            if (_readBuf == null || _readBuf.Length != n)
-                _readBuf = new float[n];
-            float[] data = _readBuf;
-            for (int i = 0; i < _bones.Count; i++)
+            int count = _bones.Count;
+            if (count == 0) return null;
+            if (_readBuf == null || _readBuf.Length != count * 3)
+                _readBuf = new float[count * 3];
+            for (int i = 0; i < count; i++)
             {
-                if (_bones[i] == null) continue;
-                Vector3 e = _bones[i].localEulerAngles;
-                data[i * 3] = e.x;
-                data[i * 3 + 1] = e.y;
-                data[i * 3 + 2] = e.z;
+                var b = _bones[i];
+                if (b == null) continue;
+                Vector3 e = b.localEulerAngles;
+                _readBuf[i * 3] = e.x;
+                _readBuf[i * 3 + 1] = e.y;
+                _readBuf[i * 3 + 2] = e.z;
             }
-            return data;
+            return _readBuf;
         }
 
         /// <summary>Euler snapshot to local rotations, once per snapshot (not once per rendered frame).</summary>
@@ -115,45 +129,22 @@ namespace SyncRADation.Players
 
         public void ApplyRotations(Quaternion[] rots)
         {
-            if (_bones == null || rots == null) return;
             int count = Mathf.Min(_bones.Count, rots.Length);
             for (int i = 0; i < count; i++)
             {
                 var b = _bones[i];
-                if (b == null) continue;
-                b.localRotation = rots[i];
+                if (b != null) b.localRotation = rots[i];
             }
         }
 
-        public void ApplyRotationsInterpolated(Quaternion[] prev, Quaternion[] cur, float t)
+        public void ApplyRotationsInterpolated(Quaternion[] a, Quaternion[] b, float t)
         {
-            if (_bones == null || prev == null || cur == null) return;
-            int count = System.Math.Min(_bones.Count, System.Math.Min(prev.Length, cur.Length));
+            int count = System.Math.Min(_bones.Count, System.Math.Min(a.Length, b.Length));
             for (int i = 0; i < count; i++)
             {
-                var b = _bones[i];
-                if (b == null) continue;
-                b.localRotation = Nlerp(prev[i], cur[i], t);
+                var bone = _bones[i];
+                if (bone != null) bone.localRotation = PoseMath.Nlerp(a[i], b[i], t);
             }
-        }
-
-        /// <summary>
-        /// Shortest-path normalized lerp in managed code. Consecutive snapshots are ~33 ms apart, where nlerp and
-        /// slerp are visually identical; it skips the native Slerp call per bone per frame.
-        /// </summary>
-        private static Quaternion Nlerp(Quaternion a, Quaternion b, float t)
-        {
-            float dot = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
-            float s = dot < 0f ? -t : t;
-            float u = 1f - t;
-            float x = a.x * u + b.x * s;
-            float y = a.y * u + b.y * s;
-            float z = a.z * u + b.z * s;
-            float w = a.w * u + b.w * s;
-            float mag = (float)System.Math.Sqrt(x * x + y * y + z * z + w * w);
-            if (mag < 1e-6f) return b;
-            float inv = 1f / mag;
-            return new Quaternion(x * inv, y * inv, z * inv, w * inv);
         }
     }
 }

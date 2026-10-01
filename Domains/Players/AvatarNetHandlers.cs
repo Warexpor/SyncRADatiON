@@ -418,9 +418,7 @@ namespace SyncRADation.Networking
             }
 
             if (SenderElsewhere(senderId)) return;
-            var proxy = _net.ProxyManager.GetProxy(senderId);
-            if (proxy != null && proxy.AnimDriver != null)
-                proxy.AnimDriver.ApplyBoneChunk(msg.TotalBones, msg.StartBone, msg.Eulers);
+            _net.ProxyManager.GetProxy(senderId)?.Pose.OnBoneChunk(msg.TotalBones, msg.StartBone, msg.Eulers);
         }
     }
 }

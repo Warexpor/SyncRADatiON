@@ -216,14 +216,6 @@ namespace SyncRADation
             try { net?.Update(); }
             catch (System.Exception ex) { Log?.Error("Network.Update crashed: " + ex); }
             HitchTrace.End("net.Update", tp);
-
-            tp = HitchTrace.Begin();
-            if (pm != null)
-            {
-                foreach (int pid in pm.GetProxyPlayerIds())
-                    pm.GetProxy(pid)?.AnimDriver?.PreTick();
-            }
-            HitchTrace.End("proxyPreTick", tp);
             HitchTrace.FrameEnd();
         }
 

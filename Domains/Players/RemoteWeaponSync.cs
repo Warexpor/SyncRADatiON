@@ -92,7 +92,7 @@ namespace SyncRADation.Players
         // Fallback muzzle: chest height above the proxy's feet (SIGNALIS walks the XY plane, up is -Z).
         private static readonly Vector3 MuzzleHeight = new Vector3(0f, 0f, -0.95f);
 
-        public void Tick(PlayerStateMessage state, AnimBools bools, AnimTriggers triggers, Vector3 proxyPos, Vector3 aimDir)
+        public void Tick(bool aiming, AnimTriggers triggers, Vector3 proxyPos, Vector3 aimDir)
         {
             _facingDir = aimDir.sqrMagnitude > 0.0001f ? aimDir.normalized : Vector3.forward;
 
@@ -129,7 +129,6 @@ namespace SyncRADation.Players
             if (triggers.HasFlag(AnimTriggers.ReloadTrigger))
                 fx.OnReload();
 
-            bool aiming = bools.HasFlag(AnimBools.Aiming) || state.AimingTime > 0.5f;
             fx.UpdateLaser(aiming);
         }
 
