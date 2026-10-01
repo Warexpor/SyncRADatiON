@@ -1,4 +1,4 @@
-// Dropped-item world registry + claim/inspect helpers (Domains peel from DroppedItemManager).
+// Player-dropped items: the key → floor object registry, lookup by object, inspect-safe despawn and play restore.
 using System.Collections.Generic;
 using SyncRADation.Sync;
 using UnityEngine;
@@ -42,11 +42,6 @@ namespace SyncRADation.ItemSystem
             _worldItems[netID] = drop;
         }
 
-        public static void Remove(int netID)
-        {
-            _worldItems.Remove(netID);
-        }
-
         public static bool IsDropped(ItemPickup p)
         {
             if (p == null) return false;
@@ -64,28 +59,22 @@ namespace SyncRADation.ItemSystem
         {
             key = -1;
             if (p == null) return false;
-            try { return TryKeyOfGo(p.gameObject, out key); }
+            try { return FindDrop(p.gameObject, out key, false); }
             catch { return false; }
         }
 
-        public static bool TryKeyOfGo(GameObject go, out int key)
-        {
-            return FindDrop(go, out key, false);
-        }
-
+        /// <summary>The drop this object (or one of its parents) belongs to: SR_Drop_&lt;key&gt; name, else a registry match.</summary>
         static bool FindDrop(GameObject go, out int key, bool prefixCounts)
         {
             key = -1;
-            Transform t = null;
-            try { if (go != null) t = go.transform; } catch { return false; }
-            while (t != null)
+            if (go == null) return false;
+            try
             {
-                GameObject g = null;
-                try { g = t.gameObject; } catch { break; }
-                if (g != null)
+                for (var t = go.transform; t != null; t = t.parent)
                 {
-                    string n = null;
-                    try { n = g.name; } catch (System.Exception e) { Guard.Swallow(e); }
+                    var g = t.gameObject;
+                    if (g == null) continue;
+                    string n = g.name;
                     if (!string.IsNullOrEmpty(n) && n.StartsWith(NamePrefix, System.StringComparison.Ordinal))
                     {
                         int parsed;
@@ -106,8 +95,8 @@ namespace SyncRADation.ItemSystem
                         }
                     }
                 }
-                try { t = t.parent; } catch { break; }
             }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
 
@@ -133,71 +122,6 @@ namespace SyncRADation.ItemSystem
             if (unique) return 1;
             if (n < 1 || n > 99) return 1;
             return n;
-        }
-
-        public static int CountInBag(Items.itemlist id)
-        {
-            if (id == Items.itemlist.None) return 0;
-            try
-            {
-                var dict = InventoryManager.elsterItems;
-                if (dict == null) return 0;
-                var en = dict.GetEnumerator();
-                int n = 0;
-                while (en.MoveNext())
-                {
-                    var held = en.Current.key;
-                    if (held == null || held._item != id) continue;
-                    int v = en.Current.value;
-                    if (v > 0 && v <= 99) n += v;
-                    else if (v > 99) n += 1;
-                }
-                en.Dispose();
-                return n;
-            }
-            catch { return 0; }
-        }
-
-        /// <summary>True when the bag already holds a full stack (AddItem would silently drop everything).</summary>
-        public static bool StackAtCap(Items.itemlist id)
-        {
-            try
-            {
-                var item = InventoryManager.getItem(id);
-                if (item == null) return false;
-                if (SyncRADation.Networking.PartyKeyRing.IsKeyOrObject(item)) return false;
-                int max = item.maxNumber;
-                return max > 0 && CountInBag(id) >= max;
-            }
-            catch (System.Exception e) { Guard.Swallow(e); return false; }
-        }
-
-        /// <summary>
-        /// The bag can take this item: an existing stack below its max, or a free slot for a new stack
-        /// (native AddItem ignores maxSlots, so every mod-side add checks this first).
-        /// </summary>
-        public static bool BagHasRoom(Items.itemlist id)
-        {
-            try
-            {
-                var item = InventoryManager.getItem(id);
-                if (item != null && SyncRADation.Networking.PartyKeyRing.InLocalBag(item))
-                    return !StackAtCap(id);
-                int used = 0;
-                var dict = InventoryManager.elsterItems;
-                if (dict == null) return true;
-                var en = dict.GetEnumerator();
-                while (en.MoveNext())
-                {
-                    if (en.Current.key != null && en.Current.value > 0)
-                        used++;
-                }
-                en.Dispose();
-                int max = InventoryManager.maxSlots;
-                if (max <= 0) max = 6;
-                return used < max;
-            }
-            catch { return true; }
         }
 
         /// <summary>Move a registered drop to a new key (and rename its GameObject). False when absent / newKey taken.</summary>
@@ -251,10 +175,7 @@ namespace SyncRADation.ItemSystem
                 var outlines = go.GetComponentsInChildren<cakeslice.Outline>(true);
                 if (outlines == null) return;
                 for (int i = 0; i < outlines.Length; i++)
-                {
-                    if (outlines[i] == null) continue;
-                    try { outlines[i].enabled = on; } catch (System.Exception e) { Guard.Swallow(e); }
-                }
+                    if (outlines[i] != null) outlines[i].enabled = on;
             }
             catch (System.Exception e) { Guard.Swallow(e); }
         }
@@ -264,47 +185,38 @@ namespace SyncRADation.ItemSystem
             try
             {
                 var gs = PlayerState.gameState;
-                if (gs == PlayerState.gameStates.dialogue
+                return gs == PlayerState.gameStates.dialogue
                     || gs == PlayerState.gameStates.eventScreen
-                    || gs == PlayerState.gameStates.book)
-                    return true;
+                    || gs == PlayerState.gameStates.book
+                    || PlayerState.paused || PlayerState.eventScreen || PlayerState.suspendInput;
             }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            try { if (PlayerState.paused || PlayerState.eventScreen || PlayerState.suspendInput) return true; }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            return false;
+            catch (System.Exception e) { Guard.Swallow(e); return false; }
         }
 
         public static void RestorePlay()
         {
-            try { PlayerState.paused = false; } catch (System.Exception e) { Guard.Swallow(e); }
-            try { PlayerState.eventScreen = false; } catch (System.Exception e) { Guard.Swallow(e); }
-            try { PlayerState.suspendInput = false; } catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
-                var all = WorldLookup.All<InventoryBase>();
-                if (all != null)
-                {
-                    for (int i = 0; i < all.Length; i++)
-                    {
-                        var inv = all[i];
-                        if (inv == null) continue;
-                        try
-                        {
-                            if (inv.inventoryOpen)
-                                inv.inventoryOpen = false;
-                        }
-                        catch (System.Exception e) { Guard.Swallow(e); }
-                        try
-                        {
-                            if (inv.intMenuOn)
-                                inv.ToggleInteractMenu();
-                        }
-                        catch (System.Exception e) { Guard.Swallow(e); }
-                    }
-                }
+                PlayerState.paused = false;
+                PlayerState.eventScreen = false;
+                PlayerState.suspendInput = false;
             }
             catch (System.Exception e) { Guard.Swallow(e); }
+            var all = WorldLookup.All<InventoryBase>();
+            if (all != null)
+            {
+                for (int i = 0; i < all.Length; i++)
+                {
+                    var inv = all[i];
+                    if (inv == null) continue;
+                    try
+                    {
+                        if (inv.inventoryOpen) inv.inventoryOpen = false;
+                        if (inv.intMenuOn) inv.ToggleInteractMenu();
+                    }
+                    catch (System.Exception e) { Guard.Swallow(e); }
+                }
+            }
             try
             {
                 var gs = PlayerState.gameState;
@@ -333,29 +245,30 @@ namespace SyncRADation.ItemSystem
                 {
                     // EndDialogue fires the dialogue's end callbacks, which can start a load of their own (and
                     // IsApplying lets loads through): swallow loads for the duration, the follow's own load comes after.
-                    SyncRADation.Sync.NetGate.BeginApply();
+                    NetGate.BeginApply();
                     SyncRADation.Networking.SceneFollowService.BeginSuppressLoads();
                     try { Dialoguer.EndDialogue(); }
                     finally
                     {
                         SyncRADation.Networking.SceneFollowService.EndSuppressLoads();
-                        SyncRADation.Sync.NetGate.EndApply();
+                        NetGate.EndApply();
                     }
                 }
             }
             catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] RestorePlayForLoad dialogue: " + ex.Message); }
             try { SyncRADation.Patches.DialoguerGate.ClearFlavor(); }
             catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] RestorePlayForLoad flavor: " + ex.Message); }
-            try { PlayerState.cutscene = false; } catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] RestorePlayForLoad cutscene: " + ex.Message); }
             try
             {
+                PlayerState.cutscene = false;
                 if (PlayerState.gameState == PlayerState.gameStates.cutscene)
                     PlayerState.gameState = PlayerState.gameStates.play;
+                CutsceneSkippingUI.skippableCutscene = false;
             }
-            catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] RestorePlayForLoad gameState: " + ex.Message); }
-            try { CutsceneSkippingUI.skippableCutscene = false; } catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] RestorePlayForLoad skippable: " + ex.Message); }
+            catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] RestorePlayForLoad cutscene: " + ex.Message); }
         }
 
+        /// <summary>Make a claimed floor item untouchable now (colliders, interaction) and invisible unless an inspect is open on it.</summary>
         public static void HideForClaim(int netID)
         {
             var go = GetItem(netID);
@@ -364,16 +277,8 @@ namespace SyncRADation.ItemSystem
             {
                 var cols = go.GetComponents<BoxCollider2D>();
                 if (cols != null)
-                {
                     for (int i = 0; i < cols.Length; i++)
-                    {
                         if (cols[i] != null) cols[i].enabled = false;
-                    }
-                }
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            try
-            {
                 var inter = go.GetComponent<Interaction>();
                 if (inter != null)
                 {
@@ -381,24 +286,15 @@ namespace SyncRADation.ItemSystem
                     inter.inRange = false;
                     inter.enabled = false;
                 }
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            if (!InspectLocked())
-            {
-                try
+                if (!InspectLocked())
                 {
-                    if (go == null) return;
                     var rends = go.GetComponentsInChildren<Renderer>(true);
                     if (rends != null)
-                    {
                         for (int i = 0; i < rends.Length; i++)
-                        {
                             if (rends[i] != null) rends[i].enabled = false;
-                        }
-                    }
                 }
-                catch (System.Exception e) { Guard.Swallow(e); }
             }
+            catch (System.Exception e) { Guard.Swallow(e); }
             SetHighlight(go, false);
         }
 
@@ -433,15 +329,17 @@ namespace SyncRADation.ItemSystem
         public static void DespawnItem(int netID)
         {
             Drop drop;
-            if (_worldItems.TryGetValue(netID, out drop))
+            if (!_worldItems.TryGetValue(netID, out drop)) return;
+            if (drop.Go != null)
             {
-                if (drop.Go != null)
+                try
                 {
-                    try { drop.Go.SetActive(false); } catch (System.Exception e) { Guard.Swallow(e); }
-                    try { Object.Destroy(drop.Go); } catch (System.Exception e) { Guard.Swallow(e); }
+                    drop.Go.SetActive(false);
+                    Object.Destroy(drop.Go);
                 }
-                _worldItems.Remove(netID);
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
+            _worldItems.Remove(netID);
         }
 
         public static void ClearVisuals()
@@ -493,9 +391,7 @@ namespace SyncRADation.ItemSystem
         public static GameObject GetItem(int netID)
         {
             Drop drop;
-            if (_worldItems.TryGetValue(netID, out drop))
-                return drop.Go;
-            return null;
+            return _worldItems.TryGetValue(netID, out drop) ? drop.Go : null;
         }
 
         public static bool TryGet(int netID, out Items.itemlist item, out int count)

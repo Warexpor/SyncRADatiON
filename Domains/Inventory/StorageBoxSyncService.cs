@@ -49,9 +49,13 @@ namespace SyncRADation.Networking
             ClampUniqueKeyStacks();
             var items = ReadBox();
             string sig = Signature(items);
-            if (sig == _lastSig) return;
-            _lastSig = sig;
-            PlaytestLog.Event("StorageBox", "send items=" + items.Length);
+            // A unicast dump goes to one peer: always send, never record it as the box everyone has.
+            if (!net.UnicastActive)
+            {
+                if (sig == _lastSig) return;
+                _lastSig = sig;
+            }
+            PlaytestLog.Event("StorageBox", "send items=" + items.Length + (net.UnicastActive ? " (unicast)" : ""));
             net.SendStorageBoxBlob(items);
         }
 

@@ -4,7 +4,7 @@ using LiteNetLib.Utils;
 
 namespace SyncRADation.Networking
 {
-    /// <summary>Host-authoritative world ItemPickup claim / grant / hide wire.</summary>
+    /// <summary>Host-authoritative world ItemPickup claim / grant / deny / hide wire.</summary>
     internal sealed class WorldPickupNetHandlers
     {
         private readonly LanNetworkManager _net;
@@ -33,24 +33,29 @@ namespace SyncRADation.Networking
             }
         }
 
-        internal void SendWorldPickupClaim(ulong worldId, Items.itemlist item = Items.itemlist.None, int count = 1)
+        /// <summary>
+        /// Client → host. remaining &gt; 0: not a claim but this peer's settled partial take (the prop kept that many),
+        /// sent on the same ordered channel right after the claim, so the host always sees the claim first.
+        /// </summary>
+        internal void SendWorldPickupClaim(ulong worldId, Items.itemlist item = Items.itemlist.None, int count = 1,
+            int remaining = 0)
         {
             var msg = new WorldPickupClaimMessage
             {
                 ClaimerPlayerId = _net.LocalPlayerId,
                 WorldId = unchecked((long)worldId),
                 ItemEnum = (ushort)item,
-                Count = count > 0 ? count : 1
+                Count = count > 0 ? count : 1,
+                Remaining = remaining > 0 ? remaining : 0
             };
             var writer = new NetDataWriter();
             writer.Put((byte)NetMessageType.WorldPickupClaim);
             msg.Serialize(writer);
-            // Client → host only
-            if (_net.TryGetPeer(0, out var peer)
-                && peer.ConnectionState == ConnectionState.Connected)
+            if (_net.TryGetPeer(0, out var peer) && peer.ConnectionState == ConnectionState.Connected)
                 peer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
 
+        /// <summary>Host → the (remote) claimer.</summary>
         internal void SendWorldPickupGrant(int targetPlayerId, ulong worldId, Items.itemlist item, int count)
         {
             var msg = new WorldPickupGrantMessage
@@ -63,15 +68,11 @@ namespace SyncRADation.Networking
             var writer = new NetDataWriter();
             writer.Put((byte)NetMessageType.WorldPickupGrant);
             msg.Serialize(writer);
-            if (_net.TryGetPeer(targetPlayerId, out var peer)
-                && peer.ConnectionState == ConnectionState.Connected)
+            if (_net.TryGetPeer(targetPlayerId, out var peer) && peer.ConnectionState == ConnectionState.Connected)
                 peer.Send(writer, DeliveryMethod.ReliableOrdered);
-            // Host also grants if target is host
-            if (targetPlayerId == _net.LocalPlayerId)
-                _net.PickupSync.ApplyGrant(msg);
         }
 
-        internal void SendWorldPickupDeny(int targetPlayerId, ulong worldId, Items.itemlist item, int count)
+        void SendWorldPickupDeny(int targetPlayerId, ulong worldId, Items.itemlist item, int count)
         {
             if (targetPlayerId == _net.LocalPlayerId) return;
             var msg = new WorldPickupDenyMessage
@@ -84,8 +85,7 @@ namespace SyncRADation.Networking
             var writer = new NetDataWriter();
             writer.Put((byte)NetMessageType.WorldPickupDeny);
             msg.Serialize(writer);
-            if (_net.TryGetPeer(targetPlayerId, out var peer)
-                && peer.ConnectionState == ConnectionState.Connected)
+            if (_net.TryGetPeer(targetPlayerId, out var peer) && peer.ConnectionState == ConnectionState.Connected)
                 peer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
 
@@ -105,54 +105,30 @@ namespace SyncRADation.Networking
         {
             if (_net.Role != NetworkRole.Host)
                 return;
+            ulong id = unchecked((ulong)claim.WorldId);
+
+            // Settled partial take: give the rest back to everyone (only the claim's owner can).
+            if (claim.Remaining > 0)
+            {
+                _net.PickupSync.HostReleaseRemainder(id, claim.ClaimerPlayerId, claim.Remaining);
+                return;
+            }
 
             // Peer disconnected before host handled the claim — do not hide the prop.
             if (claim.ClaimerPlayerId != _net.LocalPlayerId && !_net.HasPeer(claim.ClaimerPlayerId))
             {
-                ModRuntime.Log?.Msg("[WorldPickup] Claim ignored — peer gone id="
-                    + unchecked((ulong)claim.WorldId).ToString("X16")
+                ModRuntime.Log?.Msg("[WorldPickup] Claim ignored — peer gone id=" + id.ToString("X16")
                     + " by " + claim.ClaimerPlayerId);
                 return;
             }
 
-            ulong id = unchecked((ulong)claim.WorldId);
-            Items.itemlist item;
-            int count;
-            if (!_net.PickupSync.TryClaimOnHost(id, claim.ClaimerPlayerId, out item, out count, hideNow: true,
-                    hintItem: (Items.itemlist)claim.ItemEnum, hintCount: claim.Count))
-            {
-                ModRuntime.Log?.Msg("[WorldPickup] Claim denied id=" + id.ToString("X16")
-                    + " by " + claim.ClaimerPlayerId);
-                // Inspect-path claimers already ran native pickUp: tell them to take the item back.
-                SendWorldPickupDeny(claim.ClaimerPlayerId, id, item, count);
+            // HasPeer was checked on entry and the grant goes out in this same call: no orphan window.
+            if (_net.PickupSync.HostClaim(id, claim.ClaimerPlayerId, (Items.itemlist)claim.ItemEnum, claim.Count,
+                    hostNative: false))
                 return;
-            }
-
-            ModRuntime.Log?.Msg("[WorldPickup] Claim OK id=" + id.ToString("X16")
-                + " item=" + item + " x" + count + " → player " + claim.ClaimerPlayerId);
-
-            PartyKeyRing.Note(item);
-            PartyKeyRing.Broadcast();
-
-            if (claim.ClaimerPlayerId == _net.LocalPlayerId)
-            {
-                try
-                {
-                    var an = InventoryManager.getItem(item);
-                    if (an != null) InventoryManager.AddItem(an, count > 0 ? count : 1);
-                }
-                catch (System.Exception e) { Guard.Swallow(e); }
-            }
-            else if (item != Items.itemlist.None)
-            {
-                // HasPeer was checked on entry and the grant goes out in this same call: no orphan window.
-                SendWorldPickupGrant(claim.ClaimerPlayerId, id, item, count > 0 ? count : 1);
-            }
-            else
-                ModRuntime.Log?.Warning("[WorldPickup] Claim OK but item None id=" + id.ToString("X16"));
-
-            _net.PickupSync.BroadcastTriggered(id, true);
-            _net.PickupSync.HideClaimed(null);
+            ModRuntime.Log?.Msg("[WorldPickup] Claim denied id=" + id.ToString("X16") + " by " + claim.ClaimerPlayerId);
+            // Inspect-path claimers already ran native pickUp: tell them to take the item back.
+            SendWorldPickupDeny(claim.ClaimerPlayerId, id, (Items.itemlist)claim.ItemEnum, claim.Count);
         }
 
         internal void HandleWorldPickupGrant(WorldPickupGrantMessage grant)
