@@ -403,7 +403,7 @@ namespace SyncRADation.Players
             {
                 if (IsPlayerHit(hit.collider))
                 {
-                    if (Config.ModConfig.FriendlyFire?.Value == true)
+                    if (Config.ModConfig.FriendlyFireEnabled)
                         PlayAt(_ricochet, hit.point, hit.normal);
                     return;
                 }

@@ -29,7 +29,7 @@ namespace SyncRADation.Networking
 
         internal void SendFriendlyFire(int targetPlayerId, float damage, Vector3 hitPos)
         {
-            if (ModConfig.FriendlyFire?.Value != true) return;
+            if (!ModConfig.FriendlyFireEnabled) return; // host's toggle while connected
             if (PartyVitals.IsDown(targetPlayerId)) return; // downed players cannot be shot
             damage = ClampFriendlyDamage(damage);
             if (damage <= 0f) return;
@@ -79,7 +79,7 @@ namespace SyncRADation.Networking
                     tpeer.Send(w, DeliveryMethod.ReliableOrdered);
             }
 
-            if (ModConfig.FriendlyFire?.Value != true) return;
+            if (!ModConfig.FriendlyFireEnabled) return;
             if (msg.TargetPlayerId == _net.LocalPlayerId)
             {
                 ModRuntime.Log?.Msg("[FF] Received damage=" + msg.Damage.ToString("F0") + " from player " + msg.AttackerPlayerId);

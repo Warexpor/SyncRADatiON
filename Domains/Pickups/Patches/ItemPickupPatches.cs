@@ -25,7 +25,7 @@ namespace SyncRADation.Patches
         static bool Synced(ItemPickup p, out LanNetworkManager net)
         {
             net = LanNetworkManager.Instance;
-            if (net == null || !net.IsConnected || Config.ModConfig.SyncWorldPickups?.Value != true) return false;
+            if (net == null || !net.IsConnected || !Config.ModConfig.WorldPickupsEnabled) return false;
             try { return p == null || !p.slave; }
             catch (System.Exception e) { Guard.Swallow(e); return true; }
         }
@@ -207,7 +207,7 @@ namespace SyncRADation.Patches
             if (!__runOriginal) return;
             if (__instance != null && DroppedItemRegistry.IsDropped(__instance)) return;
             var net = LanNetworkManager.Instance;
-            if (net == null || !net.IsConnected || Config.ModConfig.SyncWorldPickups?.Value != true) return;
+            if (net == null || !net.IsConnected || !Config.ModConfig.WorldPickupsEnabled) return;
             var sync = net.PickupSync;
 
             // pickUp ran but opened no dialogue (refused / aborted): no release is coming, so the

@@ -809,7 +809,7 @@ namespace SyncRADation.Networking
             // Runs for every role (LanNetworkManager.Update): client deny reverts / release waits live here too.
             TickTakes();
             if (net == null || !NetGate.Host) return;
-            if (Config.ModConfig.SyncWorldPickups?.Value != true) return;
+            if (!Config.ModConfig.WorldPickupsEnabled) return;
 
             // Send cadence is wall-clock: slow-mo / timeScale must not stretch the pickup state stream.
             _timer += Mathf.Min(Time.unscaledDeltaTime, 0.1f);
@@ -826,7 +826,7 @@ namespace SyncRADation.Networking
         {
             var net = LanNetworkManager.Instance;
             if (!NetGate.Host || net.UnicastActive) return;
-            if (Config.ModConfig.SyncWorldPickups?.Value != true) return;
+            if (!Config.ModConfig.WorldPickupsEnabled) return;
             bool full = _needFull;
             _needFull = false;
             SendState(net);

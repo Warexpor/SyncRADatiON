@@ -98,7 +98,7 @@ namespace SyncRADation.Networking
             {
                 if (msg.Seq > 0) return;
                 // A client's F11 spawns for the whole party: only when the host allows client cheats.
-                if (ModConfig.AllowClientCheats?.Value != true)
+                if (!ModConfig.ClientCheatsAllowed)
                 {
                     PlaytestLog.Warn("Spawn", "rejected client spawn " + msg.TypeKey + " (AllowClientCheats off)");
                     return;
