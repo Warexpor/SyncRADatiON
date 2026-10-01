@@ -20,7 +20,7 @@ namespace SyncRADation.Patches
             _handled.Clear();
             KeypadPress.Clear();
             UseItemInteractionPatch.OnSceneChanged();
-            InteractionSyncService.OnSceneChanged();
+            CutsceneSync.OnSceneChanged();
             AirlockCinematic.Reset();
         }
 
