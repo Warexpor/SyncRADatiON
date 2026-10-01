@@ -461,6 +461,8 @@ namespace SyncRADation.Networking
             if (!WorldRegistry.TryGetEnemy(id, out enemy) || enemy == null)
             {
                 _mapMisses++;
+                try { FlickerTrace.ClientEnemyMiss(id, new Vector3(snap.PosX, snap.PosY, snap.PosZ), snap.State); }
+                catch (Exception e) { Guard.Swallow(e); }
                 return;
             }
             _mapHits++;
@@ -469,6 +471,7 @@ namespace SyncRADation.Networking
             {
                 // Unity fake-null: destroyed GOs compare equal to null.
                 if (enemy == null || enemy.gameObject == null) return;
+                FlickerTrace.ClientEnemy(id, enemy, snap.Alive, snap.State);
 
                 // Puppet only after successful map
                 if (!_clientPuppeted.Contains(id))
@@ -512,6 +515,7 @@ namespace SyncRADation.Networking
                     bool have = _interp.TryGetValue(id, out pi);
                     if (!have || (cur - target).sqrMagnitude > TeleportDist * TeleportDist)
                     {
+                        if (have) FlickerTrace.ClientEnemySnapJump(id, enemy, Vector3.Distance(cur, target));
                         t.position = target;
                         var rot0 = t.eulerAngles;
                         rot0.y = snap.RotY;
@@ -713,11 +717,20 @@ namespace SyncRADation.Networking
                 if (!enemy.gameObject.activeInHierarchy)
                 {
                     Room room;
-                    if (!OnlyChunkAsleep(enemy, out room)) return false;
+                    if (!OnlyChunkAsleep(enemy, out room))
+                    {
+                        FlickerTrace.HostWake(enemy, false, "disabled by the level (not a sleeping chunk)");
+                        return false;
+                    }
                     NetGate.BeginApply(); // RoomChunkPuzzlePatch: not a local room entry, no re-apply sweep
                     try { room.SetChunkStatus(true); }
                     finally { NetGate.EndApply(); }
-                    if (!enemy.gameObject.activeInHierarchy) return false;
+                    if (!enemy.gameObject.activeInHierarchy)
+                    {
+                        FlickerTrace.HostWake(enemy, false, "still inactive after chunk on");
+                        return false;
+                    }
+                    FlickerTrace.HostWake(enemy, true, wakeAi ? "chunk on (peer in room)" : "chunk on (combat)");
                 }
                 enemy.enabled = true;
                 if (enemy.agent != null) enemy.agent.enabled = true;

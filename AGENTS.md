@@ -104,6 +104,8 @@ Role prefix on connected lines: `H ` = host, `C ` = client.
 
 **Always-on tags:** `[Story]` `[Interact]` `[KeyRing]` `[StorageBox]` `[Scene]` `[Damage]` `[Door]` `[Puzzle]` `[Pickup]` `[Harmony]` `[Hitch]` `[Spawn]` `[Enemy]` `[Proxy]` `[Weapon]`. Session / scene follow / story send-apply / interact ok|FAIL / key ring / pickup claim / door open-close / puzzle solve-snap / death / MISS|warn.
 
+**Flicker trace** (always on, change-only, budgeted; `Sync/FlickerTrace.cs`): `[Room] chunk ON|OFF … by=game|mod flips=N`, `[Room] enter`, `[Proxy] vis pN …` / `[Proxy] jump pN d=…`, client `[Enemy] client <id> active=…` / `client snap-jump` / `client unknown <id>`, host `[Enemy] wake ok|REFUSED`. A `flapping:` line means that tag toggled more than 25 times in 5 s.
+
 **VerboseLogging** (`[SyncRADation]` in MelonPreferences.cfg on **both** installs, default `false`):
 - Leave **off** for normal soak (noise).
 - Turn **on** when hunting FMOD Play/Stop, proxy clone/FX (`[Proxy]`/`[DRV]`), or incremental puzzle apply diffs.

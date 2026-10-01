@@ -141,6 +141,7 @@ namespace SyncRADation.Players
                 _idDirty = true;
                 _proxyObjects.Remove(playerId);
                 _interp.Remove(playerId);
+                FlickerTrace.ProxyGone(playerId);
                 PlaytestLog.Event("Proxy", "destroyed p" + playerId);
             }
         }
@@ -221,12 +222,15 @@ namespace SyncRADation.Players
                 SamplePose(ist, renderTime, out Vector3 pos, out Quaternion facing);
                 go.transform.position = pos;
                 go.transform.rotation = YawOnPlane(facing, go.transform.up);
+                try { FlickerTrace.Proxy(pid, go, _mode); } catch (System.Exception e) { Guard.Swallow(e); }
             }
 
             TickAll();
             for (int i = 0; i < _staleScratch.Count; i++)
                 DestroyProxy(_staleScratch[i]);
         }
+
+        static string _mode = "hold"; // last SamplePose branch, for FlickerTrace
 
         static void SamplePose(InterpState ist, float renderTime, out Vector3 pos, out Quaternion facing)
         {
@@ -240,6 +244,7 @@ namespace SyncRADation.Players
                 pos = oldest.Pos;
                 facing = oldest.Facing;
                 HitchTrace.Interp("hold");
+                _mode = "hold";
                 return;
             }
 
@@ -251,6 +256,7 @@ namespace SyncRADation.Players
                 pos.z = newest.Pos.z;
                 facing = newest.Facing;
                 HitchTrace.Interp("extrap");
+                _mode = "extrap";
                 return;
             }
 
@@ -267,6 +273,7 @@ namespace SyncRADation.Players
             pos.z = Mathf.Lerp(a.Pos.z, b.Pos.z, t);
             facing = Quaternion.Slerp(a.Facing, b.Facing, t);
             HitchTrace.Interp("lerp");
+            _mode = "lerp";
         }
 
         static Vector3 Hermite(Vector3 p0, Vector3 v0, Vector3 p1, Vector3 v1, float dt, float t)

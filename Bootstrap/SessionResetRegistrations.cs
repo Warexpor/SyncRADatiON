@@ -26,6 +26,7 @@ namespace SyncRADation
             SessionReset.Register("Fmod", FmodEmitterSync.Reset);
             SessionReset.Register("BossAuth", KolibriAdlerAuthPatches.Clear);           // held Kolibri/Adler snapshots
             SessionReset.Register("SourceAnim", SourceAnimReader.Reset);
+            SessionReset.Register("FlickerTrace", FlickerTrace.Reset);
             SessionReset.Register("Airlock", AirlockCinematic.Reset);
             SessionReset.Register("DialoguerFlavor", DialoguerGate.ResetSession);   // flavor + held dialogue callbacks + _depth/_localEnd
             SessionReset.Register("EventZone", EventZonePatch.OnSceneChanged);          // fired sets, keypad/use-item dedupe

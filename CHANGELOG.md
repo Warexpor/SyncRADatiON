@@ -7,6 +7,9 @@ Protocol **v17** (no wire change). Fixes from the second human dual-box session 
 - **Remote player "dance" after a local inventory/menu pause** — the proxy timeline (pose stamps, render time, bone clock, animator update mode) ran on scaled time, which stops at `timeScale 0`; the backlog then replayed at once. All proxy timing is on `Time.unscaledTime`.
 - **Lock ping-pong** — a client whose read of a lock never converged on the host's merged state re-sent it every tick (`InteractiveLockSingle` flipping once a second). The client now drops an entry identical to the one it last sent for that key within 10 s and logs `[Puzzle] echo damp <Type> <id>` once.
 
+### Added
+- **Flicker trace** (`Sync/FlickerTrace.cs`, always on, one line per change, 25 lines per tag per 5 s then a `flapping:` summary): `[Room] chunk ON|OFF <room> by=game|mod flips=N here=<room>` and `[Room] enter`; `[Proxy] vis pN active/renderers/drawn/onScreen/mode` and `[Proxy] jump pN d=` (> 2 units in one frame); client `[Enemy] client <id> active=… hostAlive=…`, `client snap-jump`, `client unknown <id>` (host enemy this client lacks); host `[Enemy] wake ok|REFUSED <name> <why>` once per enemy.
+
 Protocol **17**. Product **0.5.64** (not 1.0).
 
 ## 0.5.63 — 2026-10-01

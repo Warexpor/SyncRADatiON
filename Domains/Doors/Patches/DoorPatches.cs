@@ -281,8 +281,9 @@ namespace SyncRADation.Patches
     public static class RoomEnterPuzzlePatch
     {
         [HarmonyPostfix]
-        public static void Postfix()
+        public static void Postfix(Room __instance)
         {
+            try { FlickerTrace.RoomEnter(__instance); } catch (System.Exception e) { Guard.Swallow(e); }
             if (NetGate.IsApplying) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
@@ -295,8 +296,9 @@ namespace SyncRADation.Patches
     public static class RoomChunkPuzzlePatch
     {
         [HarmonyPostfix]
-        public static void Postfix(bool value)
+        public static void Postfix(Room __instance, bool value)
         {
+            try { FlickerTrace.RoomChunk(__instance, value); } catch (System.Exception e) { Guard.Swallow(e); }
             if (!value || NetGate.IsApplying) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
