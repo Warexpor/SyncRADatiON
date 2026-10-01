@@ -364,7 +364,7 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(AnItem item, ref bool __result)
         {
-            if (__result || item == null || !NetGate.Live) return;
+            if (__result || item == null || !NetGate.Live || ItemPickupTakeScope.Active) return;
             if (PartyKeyRing.Has(item))
                 __result = true;
         }
@@ -376,7 +376,7 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(Items.itemlist item, ref bool __result)
         {
-            if (__result || !NetGate.Live) return;
+            if (__result || !NetGate.Live || ItemPickupTakeScope.Active) return;
             if (PartyKeyRing.Has(item))
                 __result = true;
         }
@@ -393,7 +393,7 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(AnItem item, ref int __result)
         {
-            if (__result > 0 || item == null || !NetGate.Live || _counting) return;
+            if (__result > 0 || item == null || !NetGate.Live || _counting || ItemPickupTakeScope.Active) return;
             var held = PartyKeyRing.FindInBag(item);
             if (held != null && held != item)
             {

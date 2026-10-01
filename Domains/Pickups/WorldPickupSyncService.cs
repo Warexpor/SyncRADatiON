@@ -223,10 +223,9 @@ namespace SyncRADation.Networking
             _gainCheck.Remove(id);
             int gained = DroppedItemManager.CountInBag(np.Item) - np.BagBefore;
             if (gained < 0) gained = 0;
-            bool has = false;
-            try { has = InventoryManager.hasItem(np.Item); } catch (System.Exception e) { Guard.Swallow(e); }
+            // hasItem/getCount are ring-masqueraded outside release, so only the raw bag delta is logged.
             PlaytestLog.Event("Pickup", "native release id=" + id.ToString("X16") + " " + np.Item
-                + " gained=" + gained + "/" + np.Count + " inBag=" + has);
+                + " gained=" + gained + "/" + np.Count);
             if (np.MagBefore >= 0)
             {
                 // Bag full: native MagFill put the ammo straight into the magazine.
