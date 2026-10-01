@@ -1,4 +1,4 @@
-// SyncRADation � IMGUI debug window: add any game item to inventory
+// F6 IMGUI debug window: add any game item to the inventory (keys / story objects also go on the party ring).
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -12,6 +12,7 @@ namespace SyncRADation.Cheats
         private static string _statusMessage = "";
         private static float _statusTimer;
         private static int _activeTab;
+        private static readonly string[] Tabs = { "Useful", "Weapons", "Keys/Story" };
 
         private static readonly List<ItemEntry> UsefulItems = new List<ItemEntry>
         {
@@ -107,12 +108,11 @@ namespace SyncRADation.Cheats
             GUI.Label(new Rect(10, y, 400, 20), "Click an item to add it to your inventory");
             y += 24;
 
-            var tabs = new[] { "Useful", "Weapons", "Keys/Story" };
-            for (int i = 0; i < tabs.Length; i++)
+            for (int i = 0; i < Tabs.Length; i++)
             {
                 var r = new Rect(10 + i * 135, y, 130, 22);
                 var was = _activeTab == i;
-                var now = GUI.Toggle(r, was, tabs[i], GUI.skin.button);
+                var now = GUI.Toggle(r, was, Tabs[i], GUI.skin.button);
                 if (now && !was) _activeTab = i;
             }
             y += 28;

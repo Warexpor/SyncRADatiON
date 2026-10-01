@@ -30,6 +30,8 @@ namespace SyncRADation.Cheats
             { "ADLR", "BOS_Adler" },
         };
 
+        // Persistent on purpose: banked templates (DontDestroyOnLoad clones) and the spawn sequence, which must never
+        // reuse an SR_Spawn_* name still alive in the scene from an earlier session.
         private static readonly Dictionary<string, EnemyController> Vault = new Dictionary<string, EnemyController>();
         private static int _nextSeq = 1;
         private static Vector2 _scrollPos;
@@ -116,7 +118,7 @@ namespace SyncRADation.Cheats
             {
                 string hint;
                 HomeHint.TryGetValue(typeKey, out hint);
-                SetStatus("No " + typeKey + " in memory ? load " + hint + " once (F7)", true);
+                SetStatus("No " + typeKey + " in memory: load " + hint + " once (F7)", true);
                 PlaytestLog.Event("Spawn", "MISS template " + typeKey);
                 return;
             }
@@ -236,7 +238,7 @@ namespace SyncRADation.Cheats
 
         /// <summary>
         /// Host: promote a native EnemySpawner._Child into SR_Spawn_* identity and
-        /// broadcast EnemySpawn so the client Instantiates a matching puppet (protocol 8).
+        /// broadcast EnemySpawn so the client Instantiates a matching puppet.
         /// Hierarchy WorldIds diverge when both peers spawn; one host-authored name stays stable.
         /// </summary>
         public static void AdoptNativeSpawn(EnemyController ec, bool broadcast)
