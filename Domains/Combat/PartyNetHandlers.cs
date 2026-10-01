@@ -64,7 +64,7 @@ namespace SyncRADation.Networking
 
         internal void SendPartyRoom(string room)
         {
-            if (_net.Role != NetworkRole.Client) return;
+            if (_net.Role == NetworkRole.Offline) return;
             var msg = new PartyRoomMessage { PlayerId = _net.LocalPlayerId, Room = room ?? "" };
             var w = new NetDataWriter();
             w.Put((byte)NetMessageType.PartyRoom);
@@ -72,11 +72,23 @@ namespace SyncRADation.Networking
             _net.BroadcastRaw(w, DeliveryMethod.ReliableOrdered);
         }
 
+        /// <summary>Host: note the sender's room and relay it to the other clients. Client: note rooms the host sends
+        /// (its own, PlayerId 0, or a relayed client's).</summary>
         internal void HandlePartyRoom(PartyRoomMessage msg, int senderId)
         {
-            if (_net.Role != NetworkRole.Host) return;
-            if (senderId < 1) return;
-            PartyVitals.NoteRoom(senderId, msg.Room);
+            if (_net.Role == NetworkRole.Host)
+            {
+                if (senderId < 1) return;
+                PartyVitals.NoteRoom(senderId, msg.Room);
+                var relay = new PartyRoomMessage { PlayerId = senderId, Room = msg.Room ?? "" };
+                var w = new NetDataWriter();
+                w.Put((byte)NetMessageType.PartyRoom);
+                relay.Serialize(w);
+                _net.BroadcastRawExcept(w, DeliveryMethod.ReliableOrdered, senderId);
+                return;
+            }
+            if (senderId != 0 || msg.PlayerId == _net.LocalPlayerId) return;
+            PartyVitals.NoteRoom(msg.PlayerId, msg.Room);
         }
     }
 }

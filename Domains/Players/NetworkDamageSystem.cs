@@ -36,6 +36,8 @@ namespace SyncRADation.Players
         private static float _wipeAt = -99f;
         private static float _hostTick;
         private static float _roomTimer;
+        private static float _roomRefresh;
+        private const float RoomRefreshInterval = 5f;
         private static string _lastRoomSent = "";
         private static bool _hasPendingRevive;
         private static PartyLifeMessage _pendingRevive;
@@ -828,15 +830,18 @@ namespace SyncRADation.Players
             }
         }
 
+        // Every peer reports its room (the host relays client rooms), so each side knows where everyone is. Unchanged
+        // rooms are re-sent every RoomRefreshInterval so a late joiner learns the others' rooms without a move.
         private static void ReportRoom(LanNetworkManager net)
         {
-            if (net.Role != NetworkRole.Client) return;
             _roomTimer += Time.unscaledDeltaTime;
+            _roomRefresh += Time.unscaledDeltaTime;
             if (_roomTimer < RoomReportInterval) return;
             _roomTimer = 0f;
             string room = CurrentRoomName();
-            if (room == _lastRoomSent) return;
+            if (room == _lastRoomSent && _roomRefresh < RoomRefreshInterval) return;
             _lastRoomSent = room;
+            _roomRefresh = 0f;
             try { net.PartyHandlers.SendPartyRoom(room); }
             catch (System.Exception ex) { LogOnce("room report", ex); }
         }
@@ -855,6 +860,7 @@ namespace SyncRADation.Players
             _wipeBlockedLog = -99f;
             _hostTick = 0f;
             _roomTimer = 0f;
+            _roomRefresh = 0f;
             _lastRoomSent = "";
             _prevCloaked = false;
             PartyVitals.Reset();

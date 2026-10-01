@@ -279,6 +279,27 @@ namespace SyncRADation.Patches
         }
     }
 
+    // A peer's solve replays onSolved / onSuccess / onUnlocked here, and those UnityEvents call exitEvent on a screen
+    // this player never opened. Native Callback then sets PlayerState.suspendInput, waits 0.6 s and indexes
+    // eventCamera.path[0]: the list is only filled while the screen is open, so the coroutine throws before it clears
+    // suspendInput and the player can never move again. Only exit a screen that is actually open here.
+    [HarmonyPatch(typeof(EventScreenInteraction), nameof(EventScreenInteraction.exitEvent))]
+    public static class EventScreenExitNotOpenPatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(EventScreenInteraction __instance)
+        {
+            if (__instance == null || !NetGate.Party) return true;
+            bool open = true;
+            try { open = __instance.Eventing; } catch (System.Exception e) { Guard.Swallow(e); }
+            if (open) return true;
+            string name = "?";
+            try { name = __instance.gameObject.name; } catch (System.Exception e) { Guard.Swallow(e); }
+            PlaytestLog.Event("Puzzle", "exitEvent skipped (screen not open here) " + name);
+            return false;
+        }
+    }
+
     [HarmonyPatch(typeof(Room), nameof(Room.EnterRoom))]
     public static class RoomEnterPuzzlePatch
     {
