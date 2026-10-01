@@ -11,6 +11,13 @@ namespace SyncRADation.Players
         private readonly Dictionary<int, RemotePlayerProxy> _proxies = new Dictionary<int, RemotePlayerProxy>();
         private readonly Dictionary<int, GameObject> _proxyObjects = new Dictionary<int, GameObject>();
         private readonly Dictionary<Collider, int> _proxyColliders = new Dictionary<Collider, int>();
+        private readonly Dictionary<int, Collider> _colliderOf = new Dictionary<int, Collider>();
+
+        /// <summary>
+        /// A proxy whose sender stopped sending poses (loading a scene, left this scene: the host stops relaying it)
+        /// is removed instead of standing frozen where it was last seen; the next pose recreates it.
+        /// </summary>
+        private const float StaleProxySeconds = 3f;
 
         // Snapshot interpolation: render PoseInterpDelay behind (~2.5 packets at the real ~25 Hz) so the
         // pose is sampled between snaps (Hermite + Slerp), not exponential-lerped at the live packet.
@@ -105,14 +112,15 @@ namespace SyncRADation.Players
             if (_proxies.ContainsKey(playerId))
                 DestroyProxy(playerId);
 
-            GameObject clone = PlayerProxyBuilder.CreatePlayerClone(source, "RemotePlayer_" + playerId, Vector3.zero, ModRuntime.Log);
+            GameObject clone = PlayerProxyBuilder.CreatePlayerClone(source, "RemotePlayer_" + playerId, Vector3.zero,
+                ModRuntime.Log, out var variants);
             if (clone == null)
             {
                 PlaytestLog.Warn("Proxy", "failed to create p" + playerId);
                 return;
             }
 
-            var proxy = new RemotePlayerProxy(clone, playerId);
+            var proxy = new RemotePlayerProxy(clone, playerId, variants);
             _proxies[playerId] = proxy;
             _idDirty = true;
             _proxyObjects[playerId] = clone;
@@ -120,6 +128,7 @@ namespace SyncRADation.Players
             if (capCol != null)
             {
                 _proxyColliders[capCol] = playerId;
+                _colliderOf[playerId] = capCol;
                 if (_proxyLayer < 0) _proxyLayer = capCol.gameObject.layer;
             }
             _interp[playerId] = new InterpState { isFirst = true };
@@ -128,15 +137,18 @@ namespace SyncRADation.Players
 
         public void DestroyProxy(int playerId)
         {
+            // The collider entry goes even when a scene load already destroyed the proxy object.
+            if (_colliderOf.TryGetValue(playerId, out var col))
+            {
+                _colliderOf.Remove(playerId);
+                try { _proxyColliders.Remove(col); }
+                catch (System.Exception e) { Guard.Swallow(e); }
+            }
             if (_proxies.TryGetValue(playerId, out var proxy))
             {
                 proxy.Destroy();
                 if (_proxyObjects.TryGetValue(playerId, out var go) && go != null)
-                {
-                    var capCol = go.GetComponent<Collider>();
-                    if (capCol != null) _proxyColliders.Remove(capCol);
                     Object.Destroy(go);
-                }
                 _proxies.Remove(playerId);
                 _idDirty = true;
                 _proxyObjects.Remove(playerId);
@@ -151,6 +163,8 @@ namespace SyncRADation.Players
             var ids = new List<int>(_proxies.Keys);
             foreach (int id in ids)
                 DestroyProxy(id);
+            _proxyColliders.Clear();
+            _colliderOf.Clear();
         }
 
         public void ApplyState(int playerId, PlayerStateMessage state)
@@ -207,7 +221,8 @@ namespace SyncRADation.Players
         public void LateUpdate()
         {
             // Real time: a local pause (inventory / menu sets timeScale 0) must not freeze or back up the remote timeline.
-            float renderTime = Time.unscaledTime - PluginInfo.PoseInterpDelay;
+            float now = Time.unscaledTime;
+            float renderTime = now - PluginInfo.PoseInterpDelay;
             _staleScratch.Clear();
 
             foreach (var kvp in _proxyObjects)
@@ -216,6 +231,12 @@ namespace SyncRADation.Players
                 var go = kvp.Value;
                 if (go == null)
                 {
+                    _staleScratch.Add(pid);
+                    continue;
+                }
+                if (_proxies.TryGetValue(pid, out var px) && now - px.LastStateAt > StaleProxySeconds)
+                {
+                    PlaytestLog.Event("Proxy", "p" + pid + " sent no pose for " + StaleProxySeconds.ToString("F0") + "s - removed");
                     _staleScratch.Add(pid);
                     continue;
                 }

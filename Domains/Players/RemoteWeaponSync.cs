@@ -44,7 +44,6 @@ namespace SyncRADation.Players
         private WeaponType _currentWeapon = WeaponType.None;
         private int _targetLayer;
         private GameObject _source;
-        private AnimBools _lastBools;
         private Vector3 _facingDir = Vector3.forward;
         private Vector3 _muzzlePos;
 
@@ -90,52 +89,48 @@ namespace SyncRADation.Players
 
         public System.Action<WeaponType> OnShotFired; // callback for secondary sounds (pump, eject)
 
+        // Fallback muzzle: chest height above the proxy's feet (SIGNALIS walks the XY plane, up is -Z).
+        private static readonly Vector3 MuzzleHeight = new Vector3(0f, 0f, -0.95f);
+
         public void Tick(PlayerStateMessage state, AnimBools bools, AnimTriggers triggers, Vector3 proxyPos, Vector3 aimDir)
         {
             _facingDir = aimDir.sqrMagnitude > 0.0001f ? aimDir.normalized : Vector3.forward;
 
-            if (_currentWeapon != WeaponType.None && _effects.TryGetValue(_currentWeapon, out var fxMuzzle))
+            RemoteWeaponEffects fx = null;
+            if (_currentWeapon != WeaponType.None)
+                _effects.TryGetValue(_currentWeapon, out fx);
+
+            if (fx != null)
             {
                 Vector3 m;
-                if (fxMuzzle.TryGetMuzzleWorldPos(out m))
+                if (fx.TryGetMuzzleWorldPos(out m))
                     _muzzlePos = m;
                 else
-                    _muzzlePos = proxyPos + Vector3.up * 0.95f + _facingDir * 0.35f;
+                    _muzzlePos = proxyPos + MuzzleHeight + _facingDir * 0.35f;
                 Vector3 mdir;
-                if (fxMuzzle.TryGetLaserForward(out mdir) || fxMuzzle.TryGetMuzzleForward(out mdir))
+                if (fx.TryGetLaserForward(out mdir) || fx.TryGetMuzzleForward(out mdir))
                     _facingDir = mdir;
             }
             else
-                _muzzlePos = proxyPos + Vector3.up * 0.95f + _facingDir * 0.35f;
+                _muzzlePos = proxyPos + MuzzleHeight + _facingDir * 0.35f;
 
-            if (_currentWeapon != WeaponType.None && _effects.TryGetValue(_currentWeapon, out var fx))
+            if (fx == null) return;
+            fx.Tick(Time.unscaledDeltaTime);
+
+            // Only the ammo-spent Fire pulse. Held Fire1 used to retrigger FX every dropped packet.
+            if (triggers.HasFlag(AnimTriggers.Fire))
             {
-                fx.Tick(Time.deltaTime);
-
-                // Only the ammo-spent Fire pulse. Held Fire1 used to retrigger FX every dropped packet.
-                if (triggers.HasFlag(AnimTriggers.Fire))
-                {
-                    fx.OnShot();
-                    DoImpactRaycast(GetDamage(_currentWeapon));
-                    var cb = OnShotFired;
-                    if (cb != null) cb(_currentWeapon);
-                }
-
-                if (triggers.HasFlag(AnimTriggers.ReloadTrigger))
-                    fx.OnReload();
-
-                bool aiming = bools.HasFlag(AnimBools.Aiming) || state.AimingTime > 0.5f;
-                fx.UpdateLaser(aiming);
+                fx.OnShot();
+                fx.DoImpactRaycast(_muzzlePos, _facingDir);
+                var cb = OnShotFired;
+                if (cb != null) cb(_currentWeapon);
             }
 
-            _lastBools = bools;
-        }
+            if (triggers.HasFlag(AnimTriggers.ReloadTrigger))
+                fx.OnReload();
 
-        private void DoImpactRaycast(float damage)
-        {
-            if (_currentWeapon == WeaponType.None) return;
-            if (!_effects.TryGetValue(_currentWeapon, out var fx)) return;
-            fx.DoImpactRaycast(_muzzlePos, _facingDir, damage);
+            bool aiming = bools.HasFlag(AnimBools.Aiming) || state.AimingTime > 0.5f;
+            fx.UpdateLaser(aiming);
         }
 
         private void HideCurrent()
@@ -245,10 +240,8 @@ namespace SyncRADation.Players
 
             // Destroy all MBs on weapon clone — IL2CPP native methods (Awake/Start/Update)
             // would try to read null serialized fields and interfere with manual effect driving
-#if true
             int mbsKilled = DestroyAllMBs(clone);
             PlaytestLog.Verbose("Weapon", "stripped " + mbsKilled + " MBs on " + weapon);
-#endif
             _effects[weapon] = fx;
 
             clone.SetActive(false);

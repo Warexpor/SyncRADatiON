@@ -26,10 +26,11 @@ namespace SyncRADation.Networking
         private static readonly Dictionary<long, float> _swingTime = new Dictionary<long, float>();
 
         // Dedicated hurtbox list. WorldLookup.All<Hurtbox> is cached per scene and never sees enemies,
-        // projectiles or adopted spawns created after the load, so the host keeps its own list: rescanned
-        // about once a second, immediately after a spawn hook (NoteSpawn), and every 0.25 s while a remote
-        // proxy is within HotRange of a hurtbox (chunk loads and runtime-instantiated hurtboxes have no hook;
-        // the enemy spawner, EnemySpawn adoption and host F11 spawns do call NoteSpawn).
+        // projectiles or adopted spawns created after the load, so the host keeps its own list. The scan includes
+        // inactive objects, so sleeping room chunks and weapon windows (Hit/EndHit toggling) are already in it; it
+        // is redone only when the world changes: a spawn hook (NoteSpawn: enemy spawner, EnemySpawn adoption, host
+        // F11, Grenade.OnEnable for the GrenadeExplosion prefab, the one runtime-instantiated Hurtbox prefab), a
+        // WorldRegistry rebuild (generation), a scene change, and a slow safety rescan.
         // hid / damage / pulse / collider are cached here: they are read-only for the scan, so the per-frame
         // pass only touches the three live toggles (Hurtbox.enabled, activeInHierarchy, Collider.enabled).
         private struct Hb
@@ -46,21 +47,20 @@ namespace SyncRADation.Networking
         private static readonly List<Hb> _hurtboxes = new List<Hb>(64);
         private static float _nextRefresh;
         private static bool _forceRefresh = true;
-        private const float RefreshInterval = 1f;
-        private const float HotRefreshInterval = 0.25f;
-        private const float HotRange = 30f;
-        private static bool _hot;
+        private static int _scanGeneration = int.MinValue;
+        private const float SafetyRefreshInterval = 5f;
 
-        /// <summary>An enemy / spawner child appeared: rescan hurtboxes on the next tick.</summary>
+        /// <summary>An enemy / spawner child / grenade appeared: rescan hurtboxes on the next tick.</summary>
         public static void NoteSpawn() => _forceRefresh = true;
 
         static void RefreshHurtboxes()
         {
             float now = Time.unscaledTime;
-            if (!_forceRefresh && now < _nextRefresh) return;
+            int gen = WorldRegistry.Generation;
+            if (!_forceRefresh && gen == _scanGeneration && now < _nextRefresh) return;
             _forceRefresh = false;
+            _scanGeneration = gen;
             _hurtboxes.Clear();
-            _hot = false;
             // Per-collider caches are keyed by local instance ids; projectiles churn them, so cap growth.
             if (_colliders.Count > 512)
             {
@@ -103,20 +103,9 @@ namespace SyncRADation.Networking
                     e.Col = col;
                     e.NoClosest = _noClosestPoint.Contains(e.Hid);
                     _hurtboxes.Add(e);
-
-                    if (!_hot && _targets.Count > 0)
-                    {
-                        try
-                        {
-                            var hp = e.Go.transform.position;
-                            for (int t = 0; t < _targets.Count; t++)
-                                if ((_targets[t].Pos - hp).sqrMagnitude <= HotRange * HotRange) { _hot = true; break; }
-                        }
-                        catch (System.Exception ex) { WarnOnce("hurtbox position", ex); }
-                    }
                 }
             }
-            _nextRefresh = now + (_hot ? HotRefreshInterval : RefreshInterval);
+            _nextRefresh = now + SafetyRefreshInterval;
         }
 
         static bool SupportsClosestPoint(Collider col)
@@ -150,7 +139,6 @@ namespace SyncRADation.Networking
         {
             _hurtboxes.Clear();
             _forceRefresh = true;
-            _hot = false;
             _peerSceneOk.Clear();
             _inside.Clear();
             _seen.Clear();
@@ -275,8 +263,9 @@ namespace SyncRADation.Networking
         {
             try
             {
-                // Proxy root sits at the feet; test roughly chest height so low/flat volumes still connect.
-                var mid = feet + new Vector3(0f, 0.9f, 0f);
+                // Proxy root sits at the feet; also test roughly chest height so torso-level volumes connect.
+                // SIGNALIS walks the XY plane: up is -Z.
+                var mid = feet + new Vector3(0f, 0f, -0.9f);
                 if (!b.Contains(mid) && !b.Contains(feet)) return false;
                 if (noClosest) return true;
                 try

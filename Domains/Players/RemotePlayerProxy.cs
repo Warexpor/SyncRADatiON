@@ -13,6 +13,7 @@ namespace SyncRADation.Players
         public RemoteWeaponSync WeaponSync { get; }
         public int PlayerId { get; }
 
+        private readonly ProxyModelVariants _variants;
         private WeaponType _lastWeapon;
         private byte _lastModelState = 255;
         private bool _lastWearHat;
@@ -22,14 +23,18 @@ namespace SyncRADation.Players
         private bool _hasFxState;
 
         public bool LastDead { get; private set; }
+        /// <summary>Unscaled time of the last PlayerState applied (stale-proxy cleanup).</summary>
+        public float LastStateAt { get; private set; }
         // Reliable AvatarOneShot(Die) and PlayerVital(dead) both announce a death and race each other.
         private float _dieShotAt = -99f;
         private const float DieDedupe = 2f;
 
-        public RemotePlayerProxy(GameObject go, int playerId)
+        public RemotePlayerProxy(GameObject go, int playerId, ProxyModelVariants variants)
         {
             PlayerId = playerId;
             GameObject = go;
+            _variants = variants;
+            LastStateAt = Time.unscaledTime;
             AnimDriver = new RemoteAnimatorDriver(go);
             AnimDriver.Initialize(go);
             AudioSync = new ProxyAudioSync(go);
@@ -46,25 +51,6 @@ namespace SyncRADation.Players
                 + " armatures=" + armList.Count
                 + (armList.Count > 0 ? " " + string.Join(",", armList) : "")
                 + " rootY=" + go.transform.eulerAngles.y.ToString("F1"));
-
-            var rends = go.GetComponentsInChildren<Renderer>(true);
-            int smrCount = 0, smrValidMesh = 0, nullMat = 0;
-            for (int ri = 0; ri < rends.Length; ri++)
-            {
-                var r = rends[ri];
-                if (r == null) continue;
-                if (!r.enabled) continue;
-                var rType = r.GetType().Name;
-                if (rType == "SkinnedMeshRenderer")
-                {
-                    smrCount++;
-                    SkinnedMeshRenderer smr = (SkinnedMeshRenderer)r;
-                    if (smr.sharedMesh != null) smrValidMesh++;
-                    if (smr.sharedMaterial == null) nullMat++;
-                }
-            }
-            PlaytestLog.Verbose("DRV", "proxy p" + playerId + " renderers=" + rends.Length
-                + " SMRs=" + smrCount + " mesh=" + smrValidMesh + " nullMat=" + nullMat);
         }
 
         public void Destroy()
@@ -76,39 +62,24 @@ namespace SyncRADation.Players
         {
             bool wasDead = LastDead;
             LastDead = dead;
-            if (!dead && wasDead)
+            bool revived = !dead && wasDead;
+            if (revived)
             {
                 // Drop anything the reliable one-shot path queued for the old life.
                 _fxTriggers &= ~(AnimTriggers.Die | AnimTriggers.Hurt);
                 AnimDriver?.DropPending(AnimTriggers.Die | AnimTriggers.Hurt);
+                _dieShotAt = -99f;
             }
-
-            try
-            {
-                var anim = GameObject != null ? GameObject.GetComponentInChildren<Animator>(true) : null;
-                if (anim != null)
-                {
-                    anim.SetBool("Dead", dead);
-                    if (dead && !wasDead)
-                    {
-                        // A one-shot Die that already fired owns this death: a second latched Die would
-                        // replay the death clip right after the revive.
-                        if (Time.unscaledTime - _dieShotAt > DieDedupe)
-                            anim.SetTrigger("Die");
-                    }
-                    else if (!dead && wasDead)
-                    {
-                        anim.ResetTrigger("Die");
-                        anim.ResetTrigger("Hurt");
-                        _dieShotAt = -99f;
-                    }
-                }
-            }
+            // A one-shot Die that already fired owns this death: a second latched Die would replay the death clip
+            // right after the revive.
+            bool playDie = dead && !wasDead && Time.unscaledTime - _dieShotAt > DieDedupe;
+            try { AnimDriver?.ApplyVital(dead, playDie, revived); }
             catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public void ApplyState(PlayerStateMessage state)
         {
+            LastStateAt = Time.unscaledTime;
             // Weapon before FX tick so first-frame Fire after equip still has a clone
             if (state.Weapon != _lastWeapon)
             {
@@ -141,20 +112,16 @@ namespace SyncRADation.Players
             AnimDriver.AddOneShot(triggers);
             _fxTriggers |= triggers;
             _fxPending = true;
+            // Audio keys off the triggers only (footstep / ladder / swap state stays with the pose stream).
             if (_hasFxState)
-            {
-                // Audio keys off the triggers; clear the per-tick edge flags of the cached pose so a
-                // footstep / ladder loop is not replayed.
-                var s = _fxState;
-                s.StepHappened = false;
-                s.Climbing = false;
-                AudioSync.Tick(s, s.AnimBools, triggers);
-            }
+                AudioSync.OnTriggers(_fxState.Weapon, triggers);
         }
 
         public void LateFxTick()
         {
-            if (WeaponSync == null || GameObject == null) return;
+            if (GameObject == null) return;
+            AudioSync?.LateTick();
+            if (WeaponSync == null) return;
             Vector3 dir = AnimDriver != null ? AnimDriver.AimDirection : GameObject.transform.forward;
             AnimTriggers trig = _fxPending ? _fxTriggers : 0;
             WeaponSync.Tick(_fxState, _fxState.AnimBools, trig, GameObject.transform.position, dir);
@@ -162,25 +129,23 @@ namespace SyncRADation.Players
             _fxPending = false;
         }
 
-        private static readonly object _modelApplyLock = new object();
-
+        /// <summary>
+        /// The sender's outfit: what native CharacterModelType.ApplyType does for the local Elster (one model object
+        /// per ElsterType active, hat by wearHat), applied to the objects the builder read from the clone.
+        /// </summary>
         private void ApplyModel(byte modelState, bool wearHat)
         {
+            if (_variants == null) return;
             try
             {
-                var cmt = GameObject.GetComponentInChildren<CharacterModelType>(true);
-                if (cmt == null) return;
-                cmt.modelState = (CharacterModelType.ElsterType)modelState;
-                lock (_modelApplyLock)
+                var models = _variants.Models;
+                for (int i = 0; i < models.Length; i++)
                 {
-                    var prev = CharacterModelType.instance;
-                    var prevHat = CharacterModelType.wearHat;
-                    CharacterModelType.instance = cmt;
-                    CharacterModelType.wearHat = wearHat;
-                    CharacterModelType.ApplyType();
-                    CharacterModelType.instance = prev;
-                    CharacterModelType.wearHat = prevHat;
+                    if (models[i] != null)
+                        models[i].SetActive(i == modelState);
                 }
+                if (_variants.Hat != null)
+                    _variants.Hat.SetActive(wearHat);
             }
             catch (System.Exception ex)
             {
@@ -189,4 +154,3 @@ namespace SyncRADation.Players
         }
     }
 }
-

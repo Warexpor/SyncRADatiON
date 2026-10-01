@@ -12,7 +12,6 @@ namespace SyncRADation.Players
         private static Transform _facingPivotCache;
         private static Transform _lastPlayerRoot;
         private static AnimBools _lastBools;
-        private static AnimTriggers _accumulatedTriggers;
         private static bool _hasLast;
         private static float _prevNormTime;
         private static Networking.WeaponType _lastWeaponRead;
@@ -26,30 +25,67 @@ namespace SyncRADation.Players
         private static Animator _hipsAnim;
         private static Transform _hips;
 
-        public static void ReadFromPlayer(GameObject player, ref PlayerStateMessage msg)
+        /// <summary>
+        /// Shot serial: +1 for every pose tick that saw the equipped weapon's magAmmo drop (a live round). Local
+        /// friendly fire keys off this edge, the same one that sends AnimTriggers.Fire. Intentionally persistent:
+        /// readers compare it with the value they last saw, never with zero.
+        /// </summary>
+        public static int ShotSerial { get; private set; }
+
+        private static GameObject _animFor;
+        private static Animator _anim;
+
+        // Animator.StringToHash once. Only parameters that exist in ElsterNewController; the wire fields for
+        // names it does not have (Blend, IKwalk, X, Y, Running/Grounded/Crouch/... bools) stay 0.
+        private static class P
         {
-            Animator anim = null;
+            public static readonly int Forward = Animator.StringToHash("Forward");
+            public static readonly int Turn = Animator.StringToHash("Turn");
+            public static readonly int AimingTime = Animator.StringToHash("AimingTime");
+            public static readonly int Stamina = Animator.StringToHash("Stamina");
+            public static readonly int HurtTime = Animator.StringToHash("HurtTime");
+            public static readonly int Dead = Animator.StringToHash("Dead");
+            public static readonly int Inventory = Animator.StringToHash("Inventory");
+            public static readonly int Injured = Animator.StringToHash("Injured");
+            // Trigger params read as bools (set until a transition consumes them).
+            public static readonly int Attack = Animator.StringToHash("Attack");
+            public static readonly int Stomp = Animator.StringToHash("Stomp");
+            public static readonly int Push = Animator.StringToHash("Push");
+            public static readonly int Reload = Animator.StringToHash("Reload");
+            public static readonly int Swap = Animator.StringToHash("Swap");
+            public static readonly int ReloadChamber = Animator.StringToHash("ReloadChamber");
+            public static readonly int Taser = Animator.StringToHash("Tools/Taser");
+        }
+
+        /// <summary>The local Elster's controller-driven Animator, looked up once per player object.</summary>
+        private static Animator SourceAnimator(GameObject player)
+        {
+            if (_animFor == player && _anim != null) return _anim;
+            _animFor = player;
+            _anim = null;
             var anims = player.GetComponentsInChildren<Animator>(true);
             for (int i = 0; i < anims.Length; i++)
             {
                 if (anims[i] != null && anims[i].runtimeAnimatorController != null)
                 {
-                    anim = anims[i];
+                    _anim = anims[i];
                     break;
                 }
             }
+            return _anim;
+        }
+
+        public static void ReadFromPlayer(GameObject player, ref PlayerStateMessage msg)
+        {
+            Animator anim = SourceAnimator(player);
             if (anim == null) return;
 
             // Read floats
-            msg.Forward = SafeGetFloat(anim, "Forward");
-            msg.Turn = SafeGetFloat(anim, "Turn");
-            msg.AimingTime = SafeGetFloat(anim, "AimingTime");
-            msg.Stamina = SafeGetFloat(anim, "Stamina");
-            msg.Blend = SafeGetFloat(anim, "Blend");
-            msg.IKwalk = SafeGetFloat(anim, "IKwalk");
-            msg.InputX = SafeGetFloat(anim, "X");
-            msg.InputY = SafeGetFloat(anim, "Y");
-            msg.HurtTime = SafeGetFloat(anim, "HurtTime");
+            msg.Forward = SafeGetFloat(anim, P.Forward);
+            msg.Turn = SafeGetFloat(anim, P.Turn);
+            msg.AimingTime = SafeGetFloat(anim, P.AimingTime);
+            msg.Stamina = SafeGetFloat(anim, P.Stamina);
+            msg.HurtTime = SafeGetFloat(anim, P.HurtTime);
 
             // Detect footsteps from animation normalizedTime (base layer)
             try
@@ -95,8 +131,7 @@ namespace SyncRADation.Players
             try { if (PlayerState.aiming) b |= AnimBools.Aiming; } catch (System.Exception e) { Guard.Swallow(e); }
 
             bool aiming = b.HasFlag(AnimBools.Aiming);
-            bool inventory = false;
-            try { inventory = SafeGetBool(anim, "Inventory"); } catch (System.Exception e) { Guard.Swallow(e); }
+            bool inventory = SafeGetBool(anim, P.Inventory);
             bool playOk = true;
             try
             {
@@ -108,6 +143,7 @@ namespace SyncRADation.Players
 
             // Live round: magAmmo decreased. Empty click is a separate flag — never Fire.
             bool ammoShot = TryDetectAmmoShot();
+            if (ammoShot) ShotSerial++;
             bool triggerHeld = Input.GetButton("Fire1") || Input.GetMouseButton(0);
             bool triggerEdge = triggerHeld && !_lastTriggerHeld;
             _lastTriggerHeld = triggerHeld;
@@ -133,30 +169,21 @@ namespace SyncRADation.Players
                 && msg.Weapon != Networking.WeaponType.Melee)
                 b |= AnimBools.EmptyClick;
 
-            if (SafeGetBool(anim, "Running")) b |= AnimBools.Running;
+            // Running is not an ElsterNewController param: native run state only (proxy footstep loudness).
             try { if (AlternatePlayerController.running) b |= AnimBools.Running; } catch (System.Exception e) { Guard.Swallow(e); }
             try { if (PlayerState.charState == PlayerState.charStates.run) b |= AnimBools.Running; } catch (System.Exception e) { Guard.Swallow(e); }
-            if (SafeGetBool(anim, "Grounded")) b |= AnimBools.Grounded;
-            if (SafeGetBool(anim, "Crouch")) b |= AnimBools.Crouch;
-            if (SafeGetBool(anim, "Blocked")) b |= AnimBools.Blocked;
-            if (SafeGetBool(anim, "Dead")) b |= AnimBools.Dead;
-            if (SafeGetBool(anim, "Inventory")) b |= AnimBools.Inventory;
+            if (SafeGetBool(anim, P.Dead)) b |= AnimBools.Dead;
+            if (inventory) b |= AnimBools.Inventory;
             try { if (PlayerState.reloading) b |= AnimBools.Reload; } catch (System.Exception e) { Guard.Swallow(e); }
             try { if (PlayerAttack.reloading) b |= AnimBools.Reload; } catch (System.Exception e) { Guard.Swallow(e); }
-            if (SafeGetBool(anim, "Attack")) b |= AnimBools.Attack;
-            if (SafeGetBool(anim, "Injured")) b |= AnimBools.Injured;
-            if (SafeGetBool(anim, "Stomp")) b |= AnimBools.Stomp;
-            if (SafeGetBool(anim, "Push")) b |= AnimBools.Push;
-            if (SafeGetBool(anim, "Melee")) b |= AnimBools.Melee;
-            if (SafeGetBool(anim, "Snap")) b |= AnimBools.Snap;
-            if (SafeGetBool(anim, "Reload")) b |= AnimBools.Reload;
-            if (SafeGetBool(anim, "Swap")) b |= AnimBools.Swap;
-            if (SafeGetBool(anim, "Burst")) b |= AnimBools.Burst;
-            if (SafeGetBool(anim, "Taser")) b |= AnimBools.Taser;
-            if (SafeGetBool(anim, "Random")) b |= AnimBools.Random;
-            if (SafeGetBool(anim, "Hugged")) b |= AnimBools.Hugged;
-            if (SafeGetBool(anim, "ReloadRounds")) b |= AnimBools.ReloadRounds;
-            if (SafeGetBool(anim, "ReloadChamber")) b |= AnimBools.ReloadChamber;
+            if (SafeGetBool(anim, P.Attack)) b |= AnimBools.Attack;
+            if (SafeGetBool(anim, P.Injured)) b |= AnimBools.Injured;
+            if (SafeGetBool(anim, P.Stomp)) b |= AnimBools.Stomp;
+            if (SafeGetBool(anim, P.Push)) b |= AnimBools.Push;
+            if (SafeGetBool(anim, P.Reload)) b |= AnimBools.Reload;
+            if (SafeGetBool(anim, P.Swap)) b |= AnimBools.Swap;
+            if (SafeGetBool(anim, P.Taser)) b |= AnimBools.Taser;
+            if (SafeGetBool(anim, P.ReloadChamber)) b |= AnimBools.ReloadChamber;
             msg.AnimBools = b;
 
             // Read all armature bone rotations from the facing pivot child only
@@ -209,21 +236,15 @@ namespace SyncRADation.Players
                     triggers |= AnimTriggers.AttackTrigger;
                 if (!_lastBools.HasFlag(AnimBools.Swap) && b.HasFlag(AnimBools.Swap))
                     triggers |= AnimTriggers.SwapTrigger;
-                if (!_lastBools.HasFlag(AnimBools.Burst) && b.HasFlag(AnimBools.Burst))
-                    triggers |= AnimTriggers.BurstTrigger;
                 if (!_lastBools.HasFlag(AnimBools.Stomp) && b.HasFlag(AnimBools.Stomp))
                     triggers |= AnimTriggers.StompTrigger;
                 if (!_lastBools.HasFlag(AnimBools.Push) && b.HasFlag(AnimBools.Push))
                     triggers |= AnimTriggers.PushTrigger;
-                if (!_lastBools.HasFlag(AnimBools.Snap) && b.HasFlag(AnimBools.Snap))
-                    triggers |= AnimTriggers.SnapTrigger;
                 if (!_lastBools.HasFlag(AnimBools.Injured) && b.HasFlag(AnimBools.Injured))
                     triggers |= AnimTriggers.Hurt;
                 if (!_lastBools.HasFlag(AnimBools.Dead) && b.HasFlag(AnimBools.Dead))
                     triggers |= AnimTriggers.Die;
             }
-            triggers |= _accumulatedTriggers;
-            _accumulatedTriggers = 0;
             msg.AnimTriggers = triggers;
             _lastBools = b;
             _hasLast = true;
@@ -239,11 +260,6 @@ namespace SyncRADation.Players
                     + " forward=" + msg.Forward.ToString("F2"));
                 _lastSrcLog = Time.time;
             }
-        }
-
-        public static void AccumulateTrigger(AnimTriggers trigger)
-        {
-            _accumulatedTriggers |= trigger;
         }
 
         public static Quaternion ReadFacingWorldRotation(GameObject player)
@@ -264,8 +280,9 @@ namespace SyncRADation.Players
         {
             _hasLast = false;
             _lastBools = 0;
-            _accumulatedTriggers = 0;
             _prevNormTime = 0f;
+            _animFor = null;
+            _anim = null;
             _facingPivotCache = null;
             _lastPlayerRoot = null;
             _boneReader = null;
@@ -399,15 +416,15 @@ namespace SyncRADation.Players
             return false;
         }
 
-        private static float SafeGetFloat(Animator a, string name)
+        private static float SafeGetFloat(Animator a, int id)
         {
-            try { return a.GetFloat(name); }
+            try { return a.GetFloat(id); }
             catch { return 0f; }
         }
 
-        private static bool SafeGetBool(Animator a, string name)
+        private static bool SafeGetBool(Animator a, int id)
         {
-            try { return a.GetBool(name); }
+            try { return a.GetBool(id); }
             catch { return false; }
         }
     }

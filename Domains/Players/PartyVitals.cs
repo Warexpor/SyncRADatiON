@@ -92,13 +92,19 @@ namespace SyncRADation.Players
             }
         }
 
+        /// <summary>
+        /// DeathPolicy(ClientDowned): authoritative, unlike a "dead" vital. It is sent once, at the moment of death,
+        /// ReliableOrdered on the Events channel ahead of that death's vitals; the host only revives a peer it has
+        /// already seen down, so this message always lands before the revive it could be confused with. One that
+        /// arrives after a revive is a new death. Dropping it (ack window / grace) left the peer downed for good when
+        /// no periodic vitals repeat it (SyncPlayerVitals off).
+        /// </summary>
         public static void NoteDown(int playerId)
         {
             if (playerId < 0 || IsLocal(playerId)) return;
             var e = Get(playerId);
+            e.AwaitingAck = false;
             if (e.Down) return;
-            if (IsAwaitingAck(e)) return; // stale: a peer that has not applied its revive cannot die again yet
-            if (Time.unscaledTime - e.ReviveSentAt < ReviveGrace) return;
             e.Down = true;
             e.DownAt = Time.unscaledTime;
             PlaytestLog.Event("Damage", "peer " + playerId + " downed");

@@ -42,11 +42,6 @@ namespace SyncRADation.Players
             TryReadWallMask();
         }
 
-        public void SetWallMask(int mask)
-        {
-            _wallMask = mask;
-        }
-
         public bool TryGetLaserForward(out Vector3 dir)
         {
             if (_laser != null)
@@ -474,7 +469,7 @@ namespace SyncRADation.Players
             _ejectStopTimer = 0.2f;
         }
 
-        public void DoImpactRaycast(Vector3 origin, Vector3 direction, float damage)
+        public void DoImpactRaycast(Vector3 origin, Vector3 direction)
         {
             RaycastHit hit;
             if (Physics.Raycast(origin, direction, out hit, 50f, _wallMask))
@@ -601,10 +596,15 @@ namespace SyncRADation.Players
             _laserPoint.enabled = false;
         }
 
+        // Camera.main per frame per aiming proxy: cached, refetched when destroyed (scene load) or switched off (cutscene camera).
+        // Pure cache: intentionally persistent (self-heals on the null / disabled check).
+        private static Camera _cam;
+
         private void BillboardLaserPoint()
         {
             if (_laserPoint == null) return;
-            Camera cam = Camera.main;
+            if (_cam == null || !_cam.isActiveAndEnabled) _cam = Camera.main;
+            Camera cam = _cam;
             if (cam == null) return;
             _laserPoint.transform.rotation = Quaternion.LookRotation(cam.transform.forward, cam.transform.up);
         }
