@@ -1,5 +1,5 @@
 // Host LoadLevel broadcasts SceneFollow; client LoadLevel becomes a request.
-// One Harmony class per method — a single missing IL2CPP overload used to skip the whole file.
+// One Harmony class per method: a missing IL2CPP overload then fails only its own class, not every load gate.
 using HarmonyLib;
 using SyncRADation.Networking;
 using SyncRADation.Sync;
@@ -123,11 +123,7 @@ namespace SyncRADation.Patches
             // Host: allowed; its ResetNow + LoadLevel(MainMenu) ends the session (SceneLoadGate). Client: quit to menu
             // leaves the party. Stop synchronously so the native ResetNow + LoadLevel that follows run offline - a
             // deferred stop would let that load be gated as a follow request and the quit silently did nothing.
-            if (NetGate.Client)
-            {
-                LanNetworkManager.Instance.EndSession("Left to the main menu");
-                return true;
-            }
+            if (NetGate.Client) LanNetworkManager.Instance.EndSession("Left to the main menu");
             return true;
         }
     }

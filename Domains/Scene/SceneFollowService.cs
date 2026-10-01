@@ -1,4 +1,6 @@
-// Host commands chapter loads; clients apply the same AsyncLoader.LoadLevel.
+// Scene follow: the host owns chapter / scene loads. A host load broadcasts SceneFollow and every client loads the same
+// scene (Apply); a client's own load becomes a request the host runs (TryApplyRequest) and everyone then follows.
+// The wreck / hole split never follows (AirlockCinematic).
 using SyncRADation.ItemSystem;
 using SyncRADation.Patches;
 using SyncRADation.Sync;
@@ -9,116 +11,74 @@ namespace SyncRADation.Networking
 {
     public static class SceneFollowService
     {
-        public static void RequestFollow(string sceneName)
-        {
-            var net = LanNetworkManager.Instance;
-            if (net == null || !net.IsConnected) return;
-            if (string.IsNullOrEmpty(sceneName) || IsTransient(sceneName)) return;
-            if (AlreadyRequested(sceneName) || AlreadyGoingTo(sceneName)) return;
-            if (!string.Equals(_requested, sceneName, System.StringComparison.Ordinal)) _retries = 0;
-            NoteRequested(sceneName);
-            net.SendSceneFollow(sceneName, true);
-        }
-
-        public static bool TryApplyRequest(string sceneName)
-        {
-            if (string.IsNullOrEmpty(sceneName)) return false;
-            if (!IsKnownScene(sceneName))
-            {
-                PlaytestLog.Warn("Scene", "unknown '" + sceneName + "'");
-                return false;
-            }
-            try
-            {
-                string here = SceneManager.GetActiveScene().name ?? "";
-                if (AirlockCinematic.IsWreckHoleSplit(here, sceneName))
-                {
-                    PlaytestLog.Event("Scene", "reject peer '" + sceneName
-                        + "' (airlock split, host='" + here + "')");
-                    return true;
-                }
-                if (AirlockCinematic.DeferFollowWhileAirlockPresent())
-                {
-                    if (string.Equals(here, sceneName, System.StringComparison.Ordinal))
-                        return true;
-                    PlaytestLog.Event("Scene", "reject peer '" + sceneName + "' (host airlock cinematic)");
-                    return false;
-                }
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            if (HostStillInCredits(sceneName))
-            {
-                // CreditsEnd runs ResetGame + LoadLevel(MainMenu) on every peer when *its* credits finish. A
-                // client that is faster must not cut the host's credits short: the host's own load follows.
-                PlaytestLog.Event("Scene", "ignore peer '" + sceneName + "' (host still in credits)");
-                return true;
-            }
-            try
-            {
-                string cur = SceneManager.GetActiveScene().name ?? "";
-                if (string.Equals(cur, sceneName, System.StringComparison.Ordinal))
-                {
-                    var net = LanNetworkManager.Instance;
-                    if (net != null && net.IsConnected)
-                        net.SendSceneFollow(sceneName, false);
-                    return true;
-                }
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            if (AlreadyGoingTo(sceneName))
-            {
-                // Still emit follow so a late peer request during host load is not silent.
-                PlaytestLog.Event("Scene", "coalesce load '" + sceneName + "'");
-                try
-                {
-                    var net = LanNetworkManager.Instance;
-                    if (net != null && net.IsConnected)
-                        net.SendSceneFollow(sceneName, false);
-                }
-                catch (System.Exception e) { Guard.Swallow(e); }
-                return true;
-            }
-            string busy = HostBusyReason(sceneName);
-            if (busy != null)
-            {
-                // A different-scene request while the host is mid-load / loading / dying must not start a second
-                // load on top of the first (two peers taking two different doors). Keep only the newest request
-                // and run it once the host has arrived and is alive again (Tick).
-                QueueRequest(sceneName, busy);
-                return true;
-            }
-            // A peer's request drags the host out of whatever it was doing: same sticky-state teardown as a follower's
-            // Apply (open inventory / menu / dialogue / cutscene state would survive the load).
-            try { DroppedItemManager.RestorePlayForLoad(); }
-            catch (System.Exception ex) { PlaytestLog.Warn("Scene", "RestorePlayForLoad: " + ex.Message); }
-            try
-            {
-                AsyncLoader.LoadLevel(sceneName);
-                return true;
-            }
-            catch (System.Exception ex)
-            {
-                PlaytestLog.Warn("Scene", "peer LoadLevel failed: " + ex.Message);
-            }
-            Apply(sceneName);
-            try
-            {
-                var net = LanNetworkManager.Instance;
-                if (net != null && net.IsConnected)
-                    net.SendSceneFollow(sceneName, false);
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            return true;
-        }
-
-        // --- Non-level scenes (Pregame): MainMenu / DeadMenu / EndCredits -------------------------
-        // They are in build settings, so IsKnownScene accepts them and every load path (AsyncLoader,
-        // SceneHelper.LoadScene/LoadSceneDirect, NewApplication.LoadLevel, SceneManager.LoadScene) is gated:
-        // DeadMenu (LAB_Emptiness cutscene -> LoadSceneDirect) and its buttons (LoadScene MEM_Memory), and the
-        // post-credits CreditsEnd (ResetGame.ResetNow + LoadLevel MainMenu) follow the host like a chapter load.
+        // Non-level scenes (Pregame): MainMenu / DeadMenu / EndCredits. They are in build settings, so IsKnownScene accepts
+        // them and every load path (AsyncLoader, SceneHelper.LoadScene/LoadSceneDirect, NewApplication.LoadLevel,
+        // SceneManager.LoadScene) is gated: DeadMenu (LAB_Emptiness cutscene -> LoadSceneDirect) and its buttons (LoadScene
+        // MEM_Memory), and the post-credits CreditsEnd (ResetGame.ResetNow + LoadLevel MainMenu) follow the host like a
+        // chapter load.
         public const string MainMenuScene = "MainMenu";
         public const string DeadMenuScene = "DeadMenu";
         public const string EndCreditsScene = "EndCredits";
+
+        // A load the host started (or a follower is running) to this scene, and when.
+        static string _pending;
+        static float _pendingAt;
+        // Client: the scene it asked the host for, and when.
+        static string _requested;
+        static float _requestedAt;
+        const float InflightWindow = 12f;
+
+        // Host: the newest peer request that arrived while the host was busy.
+        static string _queued;
+        static float _queuedAt;
+        // The request waits for as long as the host stays busy (dual-box chapter loads and a death / respawn can each
+        // run past 30 s); it is only abandoned after this hard cap, and then the requester is pointed back at the
+        // host's scene instead of being left hanging.
+        const float QueueMaxWait = 90f;
+
+        // Client: re-ask when a blocked / queued request never produced a load.
+        const float RetryAfter = 25f;
+        const int MaxRetries = 2;
+        static int _retries;
+
+        // Scope: loads are swallowed (even inside IsApplying). Used while a follow tears down a dialogue whose end
+        // callbacks could otherwise start a load of their own on the follower.
+        static int _suppressLoads;
+
+        // Build-settings scene names by build index: fixed for the process (pure cache, never reset).
+        static string[] _buildNames;
+        static System.Collections.Generic.HashSet<string> _buildSet;
+
+        public static void Reset()
+        {
+            _pending = null;
+            _pendingAt = 0f;
+            _requested = null;
+            _requestedAt = 0f;
+            _queued = null;
+            _queuedAt = 0f;
+            _retries = 0;
+            _suppressLoads = 0;
+        }
+
+        public static bool LoadsSuppressed => _suppressLoads > 0;
+        public static void BeginSuppressLoads() => _suppressLoads++;
+        public static void EndSuppressLoads() { if (_suppressLoads > 0) _suppressLoads--; }
+
+        // ------------------------------------------------------------------ scene names
+
+        static string ActiveScene()
+        {
+            try { return SceneManager.GetActiveScene().name ?? ""; }
+            catch (System.Exception ex) { PlaytestLog.Warn("Scene", "active scene: " + ex.Message); return ""; }
+        }
+
+        public static bool IsTransient(string sceneName)
+        {
+            return string.IsNullOrEmpty(sceneName) || string.Equals(sceneName, "LoadingScreen", System.StringComparison.Ordinal);
+        }
+
+        public static bool LocalIsTransient() => IsTransient(ActiveScene());
 
         /// <summary>
         /// "MainMenu" (SceneHelper.resetGame, StringLiteral_13696 -> index 13695) or "MainMenu2" (CreditsEnd,
@@ -126,8 +86,7 @@ namespace SyncRADation.Networking
         /// </summary>
         public static bool IsMainMenu(string sceneName)
         {
-            return !string.IsNullOrEmpty(sceneName)
-                && sceneName.StartsWith(MainMenuScene, System.StringComparison.Ordinal);
+            return !string.IsNullOrEmpty(sceneName) && sceneName.StartsWith(MainMenuScene, System.StringComparison.Ordinal);
         }
 
         public static bool IsMenuScene(string sceneName)
@@ -138,111 +97,111 @@ namespace SyncRADation.Networking
                 || string.Equals(sceneName, "Credits", System.StringComparison.Ordinal);
         }
 
-        static string HostSceneNow()
+        static string[] BuildNames()
         {
-            try { return SceneManager.GetActiveScene().name ?? ""; }
-            catch (System.Exception ex) { PlaytestLog.Warn("Scene", "active scene: " + ex.Message); return ""; }
+            if (_buildNames != null) return _buildNames;
+            try
+            {
+                var names = new string[SceneManager.sceneCountInBuildSettings];
+                for (int i = 0; i < names.Length; i++)
+                    names[i] = SceneFileName(SceneUtility.GetScenePathByBuildIndex(i));
+                _buildSet = new System.Collections.Generic.HashSet<string>(names, System.StringComparer.Ordinal);
+                _buildNames = names;
+            }
+            catch (System.Exception e) { Guard.Swallow(e); return new string[0]; }
+            return _buildNames;
         }
 
-        static bool HostStillInCredits(string requested)
+        static string SceneFileName(string path)
         {
-            return IsMainMenu(requested)
-                && string.Equals(HostSceneNow(), EndCreditsScene, System.StringComparison.Ordinal);
+            if (string.IsNullOrEmpty(path)) return "";
+            int start = Mathf.Max(path.LastIndexOf('/'), path.LastIndexOf('\\')) + 1;
+            int dot = path.LastIndexOf('.');
+            return dot <= start ? path.Substring(start) : path.Substring(start, dot - start);
         }
 
-        static bool HostDead()
+        // Every load path (AsyncLoader, SceneHelper, LoadLevelZone, LoadLevelInteraction, PenroseAirlock,
+        // AirlockDoorLoadZone) can only reach a scene in build settings, so that is the whole check.
+        static bool IsKnownScene(string sceneName)
         {
-            // Menu scenes keep the last hp / charState statics: a dead hp there is not "the host is dying".
-            if (IsMenuScene(HostSceneNow())) return false;
-            // Profile select / calibration and any other non-gameplay scene have no live player object: the stale
-            // hp / charState statics there are not "the host is dying".
-            try { if (PlayerState.player == null) return false; }
-            catch (System.Exception ex) { PlaytestLog.Warn("Scene", "player: " + ex.Message); }
-            try { if (PlayerState.charState == PlayerState.charStates.dead) return true; }
-            catch (System.Exception ex) { PlaytestLog.Warn("Scene", "charState: " + ex.Message); }
-            try { if (PlayerState.hp <= 0) return true; }
-            catch (System.Exception ex) { PlaytestLog.Warn("Scene", "hp: " + ex.Message); }
-            return false;
+            return !IsTransient(sceneName) && BuildNames().Length > 0 && _buildSet.Contains(sceneName);
         }
 
-        static bool LoadInFlight(string exceptScene)
+        public static string ResolveLevelName(int index)
         {
-            return !string.IsNullOrEmpty(_pending)
-                && !string.Equals(_pending, exceptScene, System.StringComparison.Ordinal)
+            var names = BuildNames();
+            string named = index >= 0 && index < names.Length ? names[index] : "";
+            if (!IsTransient(named)) return named;
+            try
+            {
+                string stored = AsyncLoader.targetLevelString;
+                if (!IsTransient(stored)) return stored;
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            return named;
+        }
+
+        // ------------------------------------------------------------------ load bookkeeping
+
+        public static bool AlreadyGoingTo(string sceneName)
+        {
+            // Only our own NoteGoingTo window counts: AsyncLoader.targetLevelString keeps the last native target after a
+            // network reset, and trusting it coalesced peer requests and skipped SendSceneFollow for good.
+            return !IsTransient(sceneName)
+                && string.Equals(_pending, sceneName, System.StringComparison.Ordinal)
                 && Time.unscaledTime - _pendingAt < InflightWindow;
         }
 
-        /// <summary>Why the host cannot start a load for a peer request right now, or null when it can.</summary>
-        static string HostBusyReason(string sceneName)
+        static bool AlreadyRequested(string sceneName)
         {
-            if (LocalIsTransient()) return "host loading";
-            if (LoadInFlight(sceneName)) return "host load in flight to '" + _pending + "'";
-            if (HostDead()) return "host dead";
-            return null;
+            return string.Equals(_requested, sceneName, System.StringComparison.Ordinal)
+                && Time.unscaledTime - _requestedAt < InflightWindow;
         }
 
-        static string _queued;
-        static float _queuedAt;
-        // The request waits for as long as the host stays busy (dual-box chapter loads and a death / respawn can each
-        // run past 30 s); it is only abandoned after this hard cap, and then the requester is pointed back at the
-        // host's scene instead of being left hanging.
-        const float QueueMaxWait = 90f;
-
-        static void QueueRequest(string sceneName, string reason)
+        static void NoteRequested(string sceneName)
         {
-            PlaytestLog.Event("Scene", "queue peer '" + sceneName + "' (" + reason + ")");
-            // The cap is absolute: a client re-requesting every ~25 s replaces the scene but must not refresh the clock,
-            // or the queue would never expire while the requester keeps retrying.
-            if (string.IsNullOrEmpty(_queued)) _queuedAt = Time.unscaledTime;
-            _queued = sceneName;
+            _requested = sceneName;
+            _requestedAt = Time.unscaledTime;
         }
 
-        /// <summary>Host tick: run the queued peer request once the host is arrived / alive.</summary>
-        public static void Tick()
+        public static void NoteGoingTo(string sceneName)
         {
-            if (string.IsNullOrEmpty(_queued)) return;
+            if (IsTransient(sceneName)) return;
+            _pending = sceneName;
+            _pendingAt = Time.unscaledTime;
+        }
+
+        public static void NoteArrived(string sceneName)
+        {
+            if (IsTransient(sceneName)) return;
+            if (string.Equals(_pending, sceneName, System.StringComparison.Ordinal))
+                _pending = null;
+            if (string.Equals(_requested, sceneName, System.StringComparison.Ordinal))
+            {
+                _requested = null;
+                _retries = 0;
+            }
+        }
+
+        static void SendFollow(string sceneName)
+        {
             var net = LanNetworkManager.Instance;
-            if (net == null || net.Role != NetworkRole.Host || !net.IsConnected)
-            {
-                _queued = null;
-                return;
-            }
-            if (!net.HasReadyPeers)
-            {
-                _queued = null; // the requester is gone
-                return;
-            }
-            if (Time.unscaledTime - _queuedAt > QueueMaxWait)
-            {
-                PlaytestLog.Event("Scene", "drop stale queued peer '" + _queued + "'");
-                _queued = null;
-                ResendHostScene(net);
-                return;
-            }
-            if (HostBusyReason(_queued) != null) return;
-            string q = _queued;
-            _queued = null;
-            PlaytestLog.Event("Scene", "run queued peer '" + q + "'");
-            TryApplyRequest(q);
+            if (net != null && net.IsConnected) net.SendSceneFollow(sceneName, false);
         }
 
-        /// <summary>Tell everyone (a requester whose request was dropped included) which scene the host is actually in.</summary>
-        static void ResendHostScene(LanNetworkManager net)
+        // ------------------------------------------------------------------ client: request
+
+        public static void RequestFollow(string sceneName)
         {
-            try
-            {
-                string here = HostSceneNow();
-                if (IsTransient(here) || net == null || !net.IsConnected) return;
-                net.SendSceneFollow(here, false);
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
+            var net = LanNetworkManager.Instance;
+            if (net == null || !net.IsConnected) return;
+            if (IsTransient(sceneName) || AlreadyRequested(sceneName) || AlreadyGoingTo(sceneName)) return;
+            if (!string.Equals(_requested, sceneName, System.StringComparison.Ordinal)) _retries = 0;
+            NoteRequested(sceneName);
+            net.SendSceneFollow(sceneName, true);
         }
 
-        // --- Client: re-ask when a blocked / queued request never produced a load --------------------------
-        const float RetryAfter = 25f;
-        const int MaxRetries = 2;
-        static int _retries;
-
+        /// <summary>Client tick: re-ask when a blocked / queued request never produced a load.</summary>
         public static void TickClient()
         {
             if (string.IsNullOrEmpty(_requested)) return;
@@ -250,7 +209,8 @@ namespace SyncRADation.Networking
             if (net == null || net.Role != NetworkRole.Client || !net.IsConnected) return;
             if (Time.unscaledTime - _requestedAt < RetryAfter) return;
             string scene = _requested;
-            if (string.Equals(HostSceneNow(), scene, System.StringComparison.Ordinal) || LocalIsTransient())
+            string here = ActiveScene();
+            if (string.Equals(here, scene, System.StringComparison.Ordinal) || IsTransient(here))
             {
                 _requested = null;
                 _retries = 0;
@@ -269,206 +229,197 @@ namespace SyncRADation.Networking
             net.SendSceneFollow(scene, true);
         }
 
-        // Scope: loads are swallowed (even inside IsApplying). Used while a follow tears down a dialogue whose end
-        // callbacks could otherwise start a load of their own on the follower.
-        static int _suppressLoads;
-        public static bool LoadsSuppressed => _suppressLoads > 0;
-        public static void BeginSuppressLoads() => _suppressLoads++;
-        public static void EndSuppressLoads() { if (_suppressLoads > 0) _suppressLoads--; }
+        // ------------------------------------------------------------------ host: a peer's request
 
-        public static bool LocalIsTransient()
+        public static bool TryApplyRequest(string sceneName)
         {
-            try { return IsTransient(SceneManager.GetActiveScene().name); }
-            catch { return false; }
-        }
-
-        // Every load path (AsyncLoader, SceneHelper, LoadLevelZone, LoadLevelInteraction, PenroseAirlock,
-        // AirlockDoorLoadZone) can only reach a scene in build settings, so that is the whole check.
-        private static bool IsKnownScene(string sceneName)
-        {
-            return !IsTransient(sceneName) && InBuildSettings(sceneName);
-        }
-
-        static bool InBuildSettings(string sceneName)
-        {
+            if (string.IsNullOrEmpty(sceneName)) return false;
+            if (!IsKnownScene(sceneName))
+            {
+                PlaytestLog.Warn("Scene", "unknown '" + sceneName + "'");
+                return false;
+            }
+            string here = ActiveScene();
+            if (AirlockCinematic.IsWreckHoleSplit(here, sceneName))
+            {
+                PlaytestLog.Event("Scene", "reject peer '" + sceneName + "' (airlock split, host='" + here + "')");
+                return true;
+            }
+            bool alreadyHere = string.Equals(here, sceneName, System.StringComparison.Ordinal);
+            if (AirlockCinematic.DeferFollowWhileAirlockPresent())
+            {
+                if (alreadyHere) return true;
+                PlaytestLog.Event("Scene", "reject peer '" + sceneName + "' (host airlock cinematic)");
+                return false;
+            }
+            if (IsMainMenu(sceneName) && string.Equals(here, EndCreditsScene, System.StringComparison.Ordinal))
+            {
+                // CreditsEnd runs ResetGame + LoadLevel(MainMenu) on every peer when *its* credits finish. A client that
+                // is faster must not cut the host's credits short: the host's own load follows.
+                PlaytestLog.Event("Scene", "ignore peer '" + sceneName + "' (host still in credits)");
+                return true;
+            }
+            if (alreadyHere)
+            {
+                SendFollow(sceneName);
+                return true;
+            }
+            if (AlreadyGoingTo(sceneName))
+            {
+                // Still emit follow so a late peer request during the host load is answered.
+                PlaytestLog.Event("Scene", "coalesce load '" + sceneName + "'");
+                SendFollow(sceneName);
+                return true;
+            }
+            string busy = HostBusyReason(sceneName, here);
+            if (busy != null)
+            {
+                // A different-scene request while the host is mid-load / loading / dying must not start a second
+                // load on top of the first (two peers taking two different doors). Keep only the newest request
+                // and run it once the host has arrived and is alive again (Tick).
+                QueueRequest(sceneName, busy);
+                return true;
+            }
+            // A peer's request drags the host out of whatever it was doing: same sticky-state teardown as a follower's
+            // Apply (open inventory / menu / dialogue / cutscene state would survive the load).
+            try { DroppedItemManager.RestorePlayForLoad(); }
+            catch (System.Exception ex) { PlaytestLog.Warn("Scene", "RestorePlayForLoad: " + ex.Message); }
             try
             {
-                int n = SceneManager.sceneCountInBuildSettings;
-                for (int i = 0; i < n; i++)
-                {
-                    if (string.Equals(NameForBuildIndex(i), sceneName, System.StringComparison.Ordinal))
-                        return true;
-                }
+                // The host's own load gate (SceneLoadGate) notes the target and broadcasts the follow.
+                AsyncLoader.LoadLevel(sceneName);
+                return true;
             }
-            catch (System.Exception e) { Guard.Swallow(e); }
+            catch (System.Exception ex) { PlaytestLog.Warn("Scene", "peer LoadLevel failed: " + ex.Message); }
+            Apply(sceneName);
+            SendFollow(sceneName);
+            return true;
+        }
+
+        static bool HostDead(string here)
+        {
+            // Menu scenes keep the last hp / charState statics, and non-gameplay scenes (profile select, calibration)
+            // have no live player object: stale statics there are not "the host is dying".
+            if (IsMenuScene(here)) return false;
+            try
+            {
+                if (PlayerState.player == null) return false;
+                return PlayerState.charState == PlayerState.charStates.dead || PlayerState.hp <= 0;
+            }
+            catch (System.Exception ex) { PlaytestLog.Warn("Scene", "host vitals: " + ex.Message); }
             return false;
         }
 
-        static string NameForBuildIndex(int index)
+        /// <summary>Why the host cannot start a load for a peer request right now, or null when it can.</summary>
+        static string HostBusyReason(string sceneName, string here)
         {
-            if (index < 0) return "";
-            try
-            {
-                string path = SceneUtility.GetScenePathByBuildIndex(index);
-                if (string.IsNullOrEmpty(path)) return "";
-                int slash = path.LastIndexOf('/');
-                int bs = path.LastIndexOf('\\');
-                int start = (slash > bs ? slash : bs) + 1;
-                int dot = path.LastIndexOf('.');
-                if (dot <= start) return path.Substring(start);
-                return path.Substring(start, dot - start);
-            }
-            catch { return ""; }
+            if (IsTransient(here)) return "host loading";
+            if (!string.IsNullOrEmpty(_pending) && !string.Equals(_pending, sceneName, System.StringComparison.Ordinal)
+                && Time.unscaledTime - _pendingAt < InflightWindow)
+                return "host load in flight to '" + _pending + "'";
+            if (HostDead(here)) return "host dead";
+            return null;
         }
 
-        static string _pending;
-        static float _pendingAt;
-        static string _requested;
-        static float _requestedAt;
-        const float InflightWindow = 12f;
-
-        public static void Reset()
+        static void QueueRequest(string sceneName, string reason)
         {
-            _pending = null;
-            _pendingAt = 0f;
-            _requested = null;
-            _requestedAt = 0f;
+            PlaytestLog.Event("Scene", "queue peer '" + sceneName + "' (" + reason + ")");
+            // The cap is absolute: a client re-requesting every ~25 s replaces the scene but must not refresh the clock,
+            // or the queue would never expire while the requester keeps retrying.
+            if (string.IsNullOrEmpty(_queued)) _queuedAt = Time.unscaledTime;
+            _queued = sceneName;
+        }
+
+        /// <summary>Host tick: run the queued peer request once the host has arrived and is alive.</summary>
+        public static void Tick()
+        {
+            if (string.IsNullOrEmpty(_queued)) return;
+            var net = LanNetworkManager.Instance;
+            if (net == null || net.Role != NetworkRole.Host || !net.IsConnected || !net.HasReadyPeers)
+            {
+                _queued = null; // offline, or the requester is gone
+                return;
+            }
+            if (Time.unscaledTime - _queuedAt > QueueMaxWait)
+            {
+                PlaytestLog.Event("Scene", "drop stale queued peer '" + _queued + "'");
+                _queued = null;
+                // Tell everyone (the requester included) which scene the host is actually in.
+                string here = ActiveScene();
+                if (!IsTransient(here)) net.SendSceneFollow(here, false);
+                return;
+            }
+            if (HostBusyReason(_queued, ActiveScene()) != null) return;
+            string q = _queued;
             _queued = null;
-            _queuedAt = 0f;
-            _retries = 0;
-            _suppressLoads = 0;
+            PlaytestLog.Event("Scene", "run queued peer '" + q + "'");
+            TryApplyRequest(q);
         }
 
-        public static bool IsTransient(string sceneName)
-        {
-            if (string.IsNullOrEmpty(sceneName)) return true;
-            return string.Equals(sceneName, "LoadingScreen", System.StringComparison.Ordinal);
-        }
-
-        public static bool AlreadyGoingTo(string sceneName)
-        {
-            if (string.IsNullOrEmpty(sceneName) || IsTransient(sceneName)) return false;
-            // Only trust our NoteGoingTo window. AsyncLoader.targetLevelString alone is
-            // stale after StopNetwork.Reset while native still holds the last target —
-            // that used to coalesce peer requests and skip SendSceneFollow forever.
-            return string.Equals(_pending, sceneName, System.StringComparison.Ordinal)
-                && Time.unscaledTime - _pendingAt < InflightWindow;
-        }
-
-        static bool AlreadyRequested(string sceneName)
-        {
-            return string.Equals(_requested, sceneName, System.StringComparison.Ordinal)
-                && Time.unscaledTime - _requestedAt < InflightWindow;
-        }
-
-        static void NoteRequested(string sceneName)
-        {
-            _requested = sceneName;
-            _requestedAt = Time.unscaledTime;
-        }
-
-        public static void NoteGoingTo(string sceneName)
-        {
-            if (string.IsNullOrEmpty(sceneName) || IsTransient(sceneName)) return;
-            _pending = sceneName;
-            _pendingAt = Time.unscaledTime;
-        }
-
-        public static void NoteArrived(string sceneName)
-        {
-            if (string.IsNullOrEmpty(sceneName) || IsTransient(sceneName)) return;
-            if (string.Equals(_pending, sceneName, System.StringComparison.Ordinal))
-                _pending = null;
-            if (string.Equals(_requested, sceneName, System.StringComparison.Ordinal))
-            {
-                _requested = null;
-                _retries = 0;
-            }
-        }
-
-        public static string ResolveLevelName(int index)
-        {
-            string named = NameForBuildIndex(index);
-            if (!string.IsNullOrEmpty(named) && !IsTransient(named))
-                return named;
-            try
-            {
-                string stored = AsyncLoader.targetLevelString;
-                if (!string.IsNullOrEmpty(stored) && !IsTransient(stored))
-                    return stored;
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            return named ?? "";
-        }
+        // ------------------------------------------------------------------ follower
 
         public static void Apply(string sceneName)
         {
-            if (string.IsNullOrEmpty(sceneName) || IsTransient(sceneName)) return;
-            string cur = SceneManager.GetActiveScene().name ?? "";
+            if (IsTransient(sceneName)) return;
+            string cur = ActiveScene();
             if (string.Equals(cur, sceneName, System.StringComparison.Ordinal))
             {
                 _pending = null;
                 return;
             }
-            if (AlreadyGoingTo(sceneName))
-                return;
+            if (AlreadyGoingTo(sceneName)) return;
 
             NoteGoingTo(sceneName);
             PlaytestLog.Event("Scene", "follow load '" + sceneName + "' (was '" + cur + "')");
-            // Mid-inventory / menu / dialogue sticky: unload alone does not always
-            // restore play before AsyncLoader. Mirror disconnect restore (Dig AJ).
-            // Also ends an active cutscene / Dialoguer: their coroutines die with the unloaded scene and left
-            // gameStates.cutscene / PlayerState.cutscene / dialogue sticky on the follower.
+            // An open inventory / menu / dialogue, or a cutscene whose coroutine dies with the unloaded scene, would leave
+            // gameState / PlayerState.cutscene / dialogue sticky on the follower: restore play first, like a disconnect.
             try { DroppedItemManager.RestorePlayForLoad(); }
             catch (System.Exception ex) { PlaytestLog.Warn("Scene", "RestorePlayForLoad: " + ex.Message); }
-            if (IsMainMenu(sceneName))
-            {
-                // SceneHelper.resetGame / CreditsEnd run ResetNow before the menu load; a peer that is dragged
-                // there by the host never ran it.
-                NetGate.BeginApply();
-                try { ResetGame.ResetNow(); }
-                catch (System.Exception ex) { PlaytestLog.Warn("Scene", "ResetGame.ResetNow: " + ex.Message); }
-                finally { NetGate.EndApply(); }
-            }
             NetGate.BeginApply();
             try
             {
-                try { AsyncLoader.LoadLevel(sceneName); return; } catch (System.Exception e) { Guard.Swallow(e); }
-                try
+                if (IsMainMenu(sceneName)) ResetBeforeMenu();
+                LoadFirstAvailable(sceneName);
+            }
+            catch (System.Exception ex) { PlaytestLog.Warn("Scene", "load failed: " + ex.Message); }
+            finally { NetGate.EndApply(); }
+        }
+
+        // SceneHelper.resetGame / CreditsEnd run ResetNow before the menu load; a peer the host drags there never ran it.
+        // A failed reset still loads the menu.
+        static void ResetBeforeMenu()
+        {
+            try { ResetGame.ResetNow(); }
+            catch (System.Exception ex) { PlaytestLog.Warn("Scene", "ResetGame.ResetNow: " + ex.Message); }
+        }
+
+        // Fallback chain: AsyncLoader (loading screen), then the scene's SceneHelper, NewApplication, and plain SceneManager.
+        static void LoadFirstAvailable(string sceneName)
+        {
+            try { AsyncLoader.LoadLevel(sceneName); return; } catch (System.Exception e) { Guard.Swallow(e); }
+            try
+            {
+                var helpers = WorldLookup.All<SceneHelper>();
+                if (helpers != null && helpers.Length > 0 && helpers[0] != null)
                 {
-                    var helpers = WorldLookup.All<SceneHelper>();
-                    if (helpers != null && helpers.Length > 0 && helpers[0] != null)
-                    {
-                        helpers[0].LoadScene(sceneName);
-                        return;
-                    }
+                    helpers[0].LoadScene(sceneName);
+                    return;
                 }
-                catch (System.Exception e) { Guard.Swallow(e); }
-                try { NewApplication.LoadLevel(sceneName); return; } catch (System.Exception e) { Guard.Swallow(e); }
-                SceneManager.LoadScene(sceneName);
             }
-            catch (System.Exception ex)
-            {
-                PlaytestLog.Warn("Scene", "load failed: " + ex.Message);
-            }
-            finally
-            {
-                NetGate.EndApply();
-            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            try { NewApplication.LoadLevel(sceneName); return; } catch (System.Exception e) { Guard.Swallow(e); }
+            SceneManager.LoadScene(sceneName);
         }
 
         public static void HandleMessage(SceneFollowMessage msg)
         {
             var net = LanNetworkManager.Instance;
             if (net == null) return;
-
             if (msg.IsRequest)
             {
-                if (net.Role != NetworkRole.Host) return;
-                TryApplyRequest(msg.SceneName);
+                if (net.Role == NetworkRole.Host) TryApplyRequest(msg.SceneName);
                 return;
             }
-
             if (net.Role == NetworkRole.Host) return;
             if (AirlockCinematic.ShouldIgnoreHostFollow(msg.SceneName))
             {

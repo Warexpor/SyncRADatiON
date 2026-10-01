@@ -172,11 +172,8 @@ namespace SyncRADation.Networking
             }
 
             _net.NotePeerScene(msg.SenderPlayerId, msg.SceneName ?? "");
-            if (msg.SenderPlayerId == 0 || _net.Role == NetworkRole.Client)
-            {
-                if (msg.SenderPlayerId == 0)
-                    _net.SetHostSceneName(msg.SceneName ?? "");
-            }
+            if (msg.SenderPlayerId == 0)
+                _net.SetHostSceneName(msg.SceneName ?? "");
 
             // WorldId divergence: host compares a client's checksum, a client remembers the host's and self-checks.
             if (_net.Role == NetworkRole.Host)
