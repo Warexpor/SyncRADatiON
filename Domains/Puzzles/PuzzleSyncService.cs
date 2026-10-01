@@ -1206,23 +1206,42 @@ namespace SyncRADation.Networking
             return false;
         }
 
-        bool HeldUnmatched(PuzzleType type)
+        // Cryo/Codepad ask "held" to mean SOLVED (they disable the pad and kill its buttons). A PatternLock entry
+        // is held while unsolved too (mid-grid presses, Int3 = cell count), so for them only Bool0 counts:
+        // otherwise every button of a fresh lock was swallowed as "already solved" (PEN_Wreck cryo, 0.5.64).
+        static bool HeldSolved(PuzzleStateEntry e)
+            => e.Type == PuzzleType.PatternLock ? e.Bool0 : IsProgressed(e);
+
+        bool IPuzzleDomainHost.IsHeld(PuzzleType type, ulong worldId)
+        {
+            if (worldId == 0) return false;
+            for (int i = 0; i < _held.Count; i++)
+            {
+                if (_held[i].Type == type && _held[i].WorldId == unchecked((long)worldId) && HeldSolved(_held[i]))
+                    return true;
+            }
+            return false;
+        }
+
+        bool IPuzzleDomainHost.HeldUnmatched(PuzzleType type) => HeldSolvedUnmatched(type);
+
+        bool HeldSolvedUnmatched(PuzzleType type)
         {
             for (int i = 0; i < _held.Count; i++)
             {
-                if (_held[i].Type != type || !IsProgressed(_held[i])) continue;
+                if (_held[i].Type != type || !HeldSolved(_held[i])) continue;
                 if (Get<Component>(type, _held[i].WorldId) == null)
                     return true;
             }
             return false;
         }
 
-        void RemapHeld(PuzzleType type, ulong newId)
+        void IPuzzleDomainHost.RemapHeld(PuzzleType type, ulong newId)
         {
             if (newId == 0) return;
             for (int i = 0; i < _held.Count; i++)
             {
-                if (_held[i].Type != type || !IsProgressed(_held[i])) continue;
+                if (_held[i].Type != type || !HeldSolved(_held[i])) continue;
                 if (Get<Component>(type, _held[i].WorldId) != null) continue;
                 var e = _held[i];
                 e.WorldId = unchecked((long)newId);
@@ -1232,18 +1251,13 @@ namespace SyncRADation.Networking
             }
         }
 
-        bool CryoFamilyHeldUnmatched()
+        bool IPuzzleDomainHost.CryoFamilyHeldUnmatched()
         {
-            return HeldUnmatched(PuzzleType.PEN_Cryo)
-                || HeldUnmatched(PuzzleType.CryoDoorLock)
-                || HeldUnmatched(PuzzleType.PEN_Codepad)
-                || HeldUnmatched(PuzzleType.PatternLock);
+            return HeldSolvedUnmatched(PuzzleType.PEN_Cryo)
+                || HeldSolvedUnmatched(PuzzleType.CryoDoorLock)
+                || HeldSolvedUnmatched(PuzzleType.PEN_Codepad)
+                || HeldSolvedUnmatched(PuzzleType.PatternLock);
         }
-
-        bool IPuzzleDomainHost.IsHeld(PuzzleType type, ulong worldId) => IsHeld(type, worldId);
-        bool IPuzzleDomainHost.HeldUnmatched(PuzzleType type) => HeldUnmatched(type);
-        void IPuzzleDomainHost.RemapHeld(PuzzleType type, ulong newId) => RemapHeld(type, newId);
-        bool IPuzzleDomainHost.CryoFamilyHeldUnmatched() => CryoFamilyHeldUnmatched();
 
         /// <summary>Native OnEnable re-enables pad/open. Shut them in the same callback if already solved.</summary>
         public void HandlePenCryoEnabled(PEN_Cryo x) => _cryo.HandlePenCryoEnabled(x);
