@@ -195,7 +195,7 @@ namespace SyncRADation
 
             // Friendly fire only (opt-in, host's toggle while connected). Enemy hits go through Harmony →
             // EnemyController.TakeDamage (Domains/Enemies/Patches/EnemyTakeDamagePatches) — not DIY raycasts.
-            // One ray per live round: the equipped magAmmo-drop edge SourceAnimReader also sends as AnimTriggers.Fire
+            // One ray per live round: the equipped magAmmo-drop edge SourceAnimReader also sends as AvatarCue.Fire
             // (a trigger press while not aiming, empty, reloading or in a menu fires nothing). Chest height: up is -Z.
             int shotSerial = SourceAnimReader.ShotSerial;
             if (net != null && net.IsConnected && ModConfig.FriendlyFireEnabled && shotSerial != _ffShotSerial)
@@ -241,14 +241,6 @@ namespace SyncRADation
             try { net?.Update(); }
             catch (System.Exception ex) { Log?.Error("Network.Update crashed: " + ex); }
             HitchTrace.End("net.Update", tp);
-
-            tp = HitchTrace.Begin();
-            if (pm != null)
-            {
-                foreach (int pid in pm.GetProxyPlayerIds())
-                    pm.GetProxy(pid)?.AnimDriver?.PreTick();
-            }
-            HitchTrace.End("proxyPreTick", tp);
             HitchTrace.FrameEnd();
         }
 

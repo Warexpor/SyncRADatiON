@@ -4,6 +4,7 @@
 // The party wipes (host reloads its last save via HostReload, clients restore bag snapshots and follow the
 // host's scene load) only when every player is down. Solo / no party: nothing here runs, the native game over
 // stays vanilla.
+using System.Collections.Generic;
 using FMODUnity;
 using SyncRADation.Config;
 using SyncRADation.ItemSystem;
@@ -20,6 +21,7 @@ namespace SyncRADation.Players
         private const float WipeDelay = 3f;
         private const float WipeDebounce = 6f;
         private const float RoomReportInterval = 0.5f;
+        private const float RoomRefreshInterval = 5f;
         private const float HostTickInterval = 0.25f;
         /// <summary>
         /// A downed player drops its bag only after this grace, and only if a teammate is still up then. Two players
@@ -37,7 +39,6 @@ namespace SyncRADation.Players
         private static float _hostTick;
         private static float _roomTimer;
         private static float _roomRefresh;
-        private const float RoomRefreshInterval = 5f;
         private static string _lastRoomSent = "";
         private static bool _hasPendingRevive;
         private static PartyLifeMessage _pendingRevive;
@@ -63,15 +64,9 @@ namespace SyncRADation.Players
             }
         }
 
-        public static float PlayerHP
-        {
-            get
-            {
-                try { return PlayerState.hp; } catch { return 0f; }
-            }
-        }
+        public static float PlayerHP => PlayerState.hp;
 
-        public static float MaxHP => 100f;
+        private static bool CheatImmortal => global::Cheats.buddha || global::Cheats.kami || global::Cheats.hastur;
 
         // ------------------------------------------------------------------ native hooks
 
@@ -80,42 +75,22 @@ namespace SyncRADation.Players
         {
             if (!PartyLive) return false;
             if (_isDead) return true;
-            try
-            {
-                if (global::Cheats.buddha || global::Cheats.kami || global::Cheats.hastur) return false;
-            }
-            catch (System.Exception ex) { LogOnce("cheat flags", ex); }
-            try
-            {
-                if (PlayerState.hp >= 2) return false;
-                var tool = InventoryManager.EquippedTool;
-                if (tool != null && tool._item == Items.itemlist.Injector) return false;
-            }
-            catch (System.Exception ex) { LogOnce("suppress check", ex); return false; }
-            return true;
+            if (CheatImmortal || PlayerState.hp >= 2) return false;
+            var tool = InventoryManager.EquippedTool;
+            return tool == null || tool._item != Items.itemlist.Injector;
         }
 
         /// <summary>PlayerState.HurtElster prefix gate (native: only in play / dialogue).</summary>
         public static bool HurtGateOpen()
         {
-            try
-            {
-                var gs = PlayerState.gameState;
-                return gs == PlayerState.gameStates.play || gs == PlayerState.gameStates.dialogue;
-            }
-            catch (System.Exception ex) { LogOnce("hurt gate", ex); return false; }
+            var gs = PlayerState.gameState;
+            return gs == PlayerState.gameStates.play || gs == PlayerState.gameStates.dialogue;
         }
 
         /// <summary>PlayerState.HurtElster postfix: native damage finished and hp is at the native death threshold.</summary>
         public static void OnNativeHurt()
         {
-            if (_isDead || !PartyLive) return;
-            try
-            {
-                if (global::Cheats.buddha || global::Cheats.kami || global::Cheats.hastur) return;
-                if (PlayerState.hp >= 2) return;
-            }
-            catch (System.Exception ex) { LogOnce("hurt post", ex); return; }
+            if (_isDead || !PartyLive || CheatImmortal || PlayerState.hp >= 2) return;
             PlaytestLog.Event("Damage", "native lethal hit hp=" + PlayerState.hp);
             Die();
         }
@@ -123,23 +98,15 @@ namespace SyncRADation.Players
         /// <summary>Remote-authored damage (host enemy hit, friendly fire) through native HurtElster.</summary>
         public static void ApplyDamage(float damage)
         {
-            if (_isDead) return;
-            if (float.IsNaN(damage) || damage <= 0f) return;
-            try
-            {
-                if (PlayerState.hp <= 0 || PlayerState.charState == PlayerState.charStates.dead)
-                    return;
-            }
-            catch (System.Exception ex) { LogOnce("damage pre", ex); }
+            if (_isDead || float.IsNaN(damage) || damage <= 0f) return;
+            if (PlayerState.hp <= 0 || PlayerState.charState == PlayerState.charStates.dead) return;
 
             // No hit direction on the wire: zero, as the callers always passed.
             try { PlayerState.HurtElster((int)damage, Vector2.zero); }
-            catch (System.Exception hurtEx) { LogOnce("HurtElster", hurtEx); }
+            catch (System.Exception ex) { LogOnce("HurtElster", ex); }
 
-            int hp = 0;
-            try { hp = PlayerState.hp; } catch (System.Exception ex) { LogOnce("hp read", ex); }
+            int hp = PlayerState.hp;
             PlaytestLog.Event("Damage", "-" + damage.ToString("F0") + " HP remain=" + hp);
-
             // Native postfix normally downs us inside HurtElster; this is the fallback path.
             if (hp < 2 && PartyLive)
                 Die();
@@ -164,45 +131,42 @@ namespace SyncRADation.Players
             _dropPending = true;
             _dropAt = _downAt + DropGrace;
 
-            try
-            {
-                var hurtSound = PlayerState.player?.GetComponent<ElsterHurtSound>();
-                if (hurtSound != null && !string.IsNullOrEmpty(hurtSound.DeathSound))
-                    RuntimeManager.PlayOneShot(hurtSound.DeathSound);
-            }
-            catch (System.Exception ex) { LogOnce("death sound", ex); }
-
+            PlayDeathSound();
             net.SendDeathPolicy(DeathKind.ClientDowned);
-            try { net.AvatarHandlers.SendLocalVital(); }
-            catch (System.Exception ex) { LogOnce("vital send", ex); }
+            net.AvatarHandlers.SendLocalVital();
             PlaytestLog.Event("Damage", (net.Role == NetworkRole.Host ? "host" : "client")
                 + " downed — respawn in " + ModConfig.DownedRespawnSeconds.ToString("F0") + "s");
         }
 
-        private static void ApplyDownedLocal(bool firstTime)
+        private static void PlayDeathSound()
         {
-            try { PlayerState.charState = PlayerState.charStates.dead; } catch (System.Exception ex) { LogOnce("down charState", ex); }
-            try { PlayerState.suspendInput = true; } catch (System.Exception ex) { LogOnce("down suspendInput", ex); }
+            var player = PlayerState.player;
+            if (player == null) return;
             try
             {
-                if (firstTime) _prevCloaked = PlayerState.cloaked;
-                // EnemyVision.CanSee returns false while cloaked: enemies lose the downed player.
-                PlayerState.cloaked = true;
+                var hurtSound = player.GetComponent<ElsterHurtSound>();
+                if (hurtSound != null && !string.IsNullOrEmpty(hurtSound.DeathSound))
+                    RuntimeManager.PlayOneShot(hurtSound.DeathSound);
             }
-            catch (System.Exception ex) { LogOnce("down cloak", ex); }
+            catch (System.Exception ex) { LogOnce("death sound", ex); }
+        }
+
+        private static void ApplyDownedLocal(bool firstTime)
+        {
+            PlayerState.charState = PlayerState.charStates.dead;
+            PlayerState.suspendInput = true;
+            if (firstTime) _prevCloaked = PlayerState.cloaked;
+            // EnemyVision.CanSee returns false while cloaked: enemies lose the downed player.
+            PlayerState.cloaked = true;
 
             // Every frame while downed (firstTime or not): a scene change swaps the player object and its animator
             // comes up alive, so re-assert the dead pose whenever the Dead bool is not set.
-            try
+            var anim = DeathAnimator();
+            if (anim != null && !anim.GetBool(DeadHash))
             {
-                var anim = DeathAnimator();
-                if (anim != null && !anim.GetBool(DeadHash))
-                {
-                    anim.SetTrigger(DieHash);
-                    anim.SetBool(DeadHash, true);
-                }
+                anim.SetTrigger(DieHash);
+                anim.SetBool(DeadHash, true);
             }
-            catch (System.Exception ex) { LogOnce("down anim", ex); }
         }
 
         /// <summary>The animator ElsterDeathHandler drives (its own <c>anim</c>), falling back to the first one in the tree.</summary>
@@ -211,13 +175,8 @@ namespace SyncRADation.Players
             var player = PlayerState.player;
             if (player == null) return null;
             if (_deathAnimFor == player && _deathAnim != null) return _deathAnim;
-            Animator anim = null;
-            try
-            {
-                var handler = player.GetComponent<ElsterDeathHandler>();
-                if (handler != null) anim = handler.anim;
-            }
-            catch (System.Exception ex) { LogOnce("death handler anim", ex); }
+            var handler = player.GetComponent<ElsterDeathHandler>();
+            Animator anim = handler != null ? handler.anim : null;
             if (anim == null)
                 anim = player.GetComponentInChildren<Animator>(true);
             _deathAnimFor = player;
@@ -231,26 +190,22 @@ namespace SyncRADation.Players
             if (!_dropPending || Time.unscaledTime < _dropAt) return;
             _dropPending = false;
             if (PartyVitals.AnyOtherAlive(net))
-                DropInventoryOnDeath();
+                DropInventoryOnDeath(net);
             else
                 PlaytestLog.Event("Damage", "last player down — skip floor drop (wipe follows)");
         }
 
-        private static void DropInventoryOnDeath()
+        private static void DropInventoryOnDeath(LanNetworkManager net)
         {
-            var net = ModRuntime.Network;
-            if (net == null || !net.IsConnected) return;
             var player = PlayerState.player;
-            if (player == null) return;
-
+            var dict = InventoryManager.elsterItems;
+            if (player == null || dict == null) return;
             Vector3 pos = DroppedItemManager.FloorDropPos(player.transform);
 
             try
             {
-                var dict = InventoryManager.elsterItems;
-                if (dict == null) return;
-
-                var itemsToDrop = new System.Collections.Generic.List<(AnItem item, int count, Items.itemlist enumVal)>();
+                // Snapshot first: RemoveItem below mutates the bag dictionary.
+                var itemsToDrop = new List<(AnItem item, int count, Items.itemlist enumVal)>();
                 var enumerator = dict.GetEnumerator();
                 while (enumerator.MoveNext())
                 {
@@ -258,14 +213,12 @@ namespace SyncRADation.Players
                     var item = kvp.key;
                     int count = kvp.value;
                     if (item == null || count <= 0) continue;
-                    Items.itemlist itemEnum;
-                    try { itemEnum = item._item; } catch { continue; }
+                    var itemEnum = item._item;
                     if (itemEnum == Items.itemlist.None || itemEnum == Items.itemlist.Injector) continue;
                     itemsToDrop.Add((item, count, itemEnum));
                 }
                 enumerator.Dispose();
 
-                int n = 0;
                 foreach (var entry in itemsToDrop)
                 {
                     // Party ring is SoT for unique Key/Object. Bag copies are EnsureInBag /
@@ -282,8 +235,7 @@ namespace SyncRADation.Players
                             PartyKeyRing.OfferToHost(entry.item);
                             PlaytestLog.Event("Damage", "death note ring unique " + entry.enumVal);
                         }
-                        try { InventoryManager.RemoveItem(entry.item, entry.count); }
-                        catch (System.Exception ex) { LogOnce("death strip unique", ex); }
+                        InventoryManager.RemoveItem(entry.item, entry.count);
                         PlaytestLog.Event("Damage", "death skip floor unique " + entry.enumVal);
                         continue;
                     }
@@ -291,13 +243,11 @@ namespace SyncRADation.Players
                     ushort idx = net.AllocateItemIndex();
                     int key = (net.LocalPlayerId << 16) | idx;
                     Vector3 dropPos = pos + new Vector3(
-                        UnityEngine.Random.Range(-0.35f, 0.35f),
-                        UnityEngine.Random.Range(-0.08f, 0.08f),
+                        Random.Range(-0.35f, 0.35f),
+                        Random.Range(-0.08f, 0.08f),
                         0f);
-                    n++;
                     DroppedItemManager.SpawnLocalItem(entry.enumVal, entry.count, key, dropPos);
-
-                    net.SendDropItem(new Networking.DropItemSpawnMessage
+                    net.SendDropItem(new DropItemSpawnMessage
                     {
                         SenderID = (byte)net.LocalPlayerId,
                         LocalIndex = idx,
@@ -307,18 +257,13 @@ namespace SyncRADation.Players
                         PosY = dropPos.y,
                         PosZ = dropPos.z
                     });
-
-                    try { InventoryManager.RemoveItem(entry.item, entry.count); }
-                    catch (System.Exception ex) { LogOnce("death remove item", ex); }
+                    InventoryManager.RemoveItem(entry.item, entry.count);
                     PartyKeyRing.Remove(entry.enumVal);
                 }
                 if (net.Role == NetworkRole.Host)
                     PartyKeyRing.Broadcast();
             }
-            catch (System.Exception ex)
-            {
-                ModRuntime.Log?.Warning("[DeathDrop] Failed: " + ex.Message);
-            }
+            catch (System.Exception ex) { LogOnce("death drop", ex); }
         }
 
         // ------------------------------------------------------------------ wire handlers
@@ -326,18 +271,11 @@ namespace SyncRADation.Players
         public static void HandleDeathPolicy(DeathPolicyMessage msg)
         {
             var net = ModRuntime.Network;
-            if (net == null) return;
-            if (msg.SenderPlayerId == net.LocalPlayerId) return;
+            if (net == null || msg.SenderPlayerId == net.LocalPlayerId) return;
 
+            // Wipes travel as PartyLife(Wipe); DeathKind.HostWipeReload is never sent (its wire id stays reserved).
             if (msg.Kind == DeathKind.ClientDowned)
-            {
                 PartyVitals.NoteDown(msg.SenderPlayerId);
-                return;
-            }
-
-            // Legacy HostWipeReload: wipes now travel as PartyLife(Wipe); clients never load their own slot.
-            if (msg.Kind == DeathKind.HostWipeReload)
-                PlaytestLog.Event("Damage", "legacy HostWipeReload ignored (PartyLife wipe is authoritative)");
         }
 
         /// <summary>Every peer: host announced a revive.</summary>
@@ -349,8 +287,7 @@ namespace SyncRADation.Players
             if (msg.PlayerId != net.LocalPlayerId)
             {
                 PartyVitals.NoteRevived(msg.PlayerId);
-                try { net.ProxyManager.GetProxy(msg.PlayerId)?.SetVital(false); }
-                catch (System.Exception ex) { LogOnce("proxy revive", ex); }
+                net.ProxyManager.GetProxy(msg.PlayerId)?.SetVital(false);
                 PlaytestLog.Event("Damage", "peer " + msg.PlayerId + " respawned");
                 return;
             }
@@ -364,7 +301,8 @@ namespace SyncRADation.Players
         private static void TryApplyPendingRevive()
         {
             if (!_hasPendingRevive) return;
-            if (PlayerState.player == null || SceneFollowService.LocalIsTransient()) return;
+            var player = PlayerState.player;
+            if (player == null || SceneFollowService.LocalIsTransient()) return;
             _hasPendingRevive = false;
             var msg = _pendingRevive;
 
@@ -372,8 +310,7 @@ namespace SyncRADation.Players
             bool teleport = msg.HasPos && SceneMatches(msg.Scene);
             if (teleport)
             {
-                try { PlayerState.player.transform.position = new Vector3(msg.PosX, msg.PosY, msg.PosZ); }
-                catch (System.Exception ex) { LogOnce("revive teleport", ex); }
+                player.transform.position = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
                 EnterRoomByName(msg.Room);
             }
 
@@ -381,16 +318,13 @@ namespace SyncRADation.Players
             PlaytestLog.Event("Damage", "respawned hp=" + PlayerState.hp
                 + (teleport ? " at teammate (" + msg.PosX.ToString("F1") + "," + msg.PosZ.ToString("F1") + ")"
                     : (msg.HasPos ? " in place (teammate scene '" + msg.Scene + "' != here)" : " in place")));
-            var net = ModRuntime.Network;
-            try { net?.AvatarHandlers.SendLocalVital(); }
-            catch (System.Exception ex) { LogOnce("vital send", ex); }
+            ModRuntime.Network?.AvatarHandlers.SendLocalVital();
         }
 
         private static bool SceneMatches(string scene)
         {
-            if (string.IsNullOrEmpty(scene)) return true;
-            try { return string.Equals(SceneManager.GetActiveScene().name, scene, System.StringComparison.Ordinal); }
-            catch (System.Exception ex) { LogOnce("scene match", ex); return true; }
+            return string.IsNullOrEmpty(scene)
+                || string.Equals(SceneManager.GetActiveScene().name, scene, System.StringComparison.Ordinal);
         }
 
         /// <summary>Client: host wiped the party. No own-slot load: bag from the save snapshot, follow the host reload.</summary>
@@ -400,8 +334,7 @@ namespace SyncRADation.Players
             if (net == null) return;
             PlaytestLog.Event("Damage", "party wipe — host reloads '" + msg.Scene + "'");
             // The host reverted to a save, this peer never loads a slot: story progress is replaced by the host's next full dump.
-            try { net.StorySync.OnPartyWipe(); }
-            catch (System.Exception ex) { LogOnce("wipe story", ex); }
+            Step("wipe story", net.StorySync.OnPartyWipe);
 
             var token = new PartySaveToken { Slot = msg.SaveSlot, Counter = msg.SaveCounter, Stamp = msg.SaveStamp };
             WipeWorldLocal(net);
@@ -426,8 +359,7 @@ namespace SyncRADation.Players
             // Session-scoped sticky state (puzzle memory, fired zones, held boss snapshots...) belongs to the world
             // that is being replaced. Clients never run SaveManager.Load, so they reset here; the host in its Load postfix.
             SessionReset.RunAll(SessionReset.ReasonWipe);
-            try { net.AvatarHandlers.SendLocalVital(); }
-            catch (System.Exception ex) { LogOnce("vital send", ex); }
+            net.AvatarHandlers.SendLocalVital();
         }
 
         /// <summary>
@@ -438,47 +370,47 @@ namespace SyncRADation.Players
         private static void FollowWipeReload(string scene)
         {
             if (string.IsNullOrEmpty(scene) || SceneFollowService.IsTransient(scene)) return;
-            try
+            if (SceneFollowService.LocalIsTransient() || SceneFollowService.AlreadyGoingTo(scene)) return;
+            if (!SceneMatches(scene))
             {
-                if (SceneFollowService.LocalIsTransient() || SceneFollowService.AlreadyGoingTo(scene)) return;
-                if (!SceneMatches(scene))
-                {
-                    // The wipe is authoritative. The host's SceneFollow normally already dragged us here, but it is not
-                    // reliable (airlock wreck<->hole split ignores it, personal chapter loads skip the broadcast, or
-                    // loads were suppressed when it arrived), and the host's world is a reverted one: be in its scene.
-                    // The wreck<->hole rule (ShouldIgnoreHostFollow) stays in force for ordinary follows only; a wipe
-                    // voids the airlock split (everyone is reloaded from one save / new game).
-                    PlaytestLog.Event("Damage", "wipe: scene mismatch, following directly '" + scene + "'");
-                    SceneFollowService.Apply(scene);
-                    return;
-                }
-                SceneFollowService.NoteGoingTo(scene);
-                try { DroppedItemManager.RestorePlayForLoad(); }
-                catch (System.Exception ex) { LogOnce("wipe restore play", ex); }
-                NetGate.BeginApply();
-                try { AsyncLoader.LoadLevel(scene); }
-                finally { NetGate.EndApply(); }
-                PlaytestLog.Event("Damage", "wipe: same-scene reload '" + scene + "'");
+                // The wipe is authoritative. The host's SceneFollow normally already dragged us here, but it is not
+                // reliable (airlock wreck<->hole split ignores it, personal chapter loads skip the broadcast, or
+                // loads were suppressed when it arrived), and the host's world is a reverted one: be in its scene.
+                // The wreck<->hole rule (ShouldIgnoreHostFollow) stays in force for ordinary follows only; a wipe
+                // voids the airlock split (everyone is reloaded from one save / new game).
+                PlaytestLog.Event("Damage", "wipe: scene mismatch, following directly '" + scene + "'");
+                SceneFollowService.Apply(scene);
+                return;
             }
-            catch (System.Exception ex) { LogOnce("wipe follow", ex); }
+            SceneFollowService.NoteGoingTo(scene);
+            Step("wipe restore play", DroppedItemManager.RestorePlayForLoad);
+            NetGate.BeginApply();
+            try { AsyncLoader.LoadLevel(scene); }
+            catch (System.Exception ex) { LogOnce("wipe reload", ex); }
+            finally { NetGate.EndApply(); }
+            PlaytestLog.Event("Damage", "wipe: same-scene reload '" + scene + "'");
         }
 
         /// <summary>Clear floor drops + claim state on this peer before the save reload.</summary>
         private static void WipeWorldLocal(LanNetworkManager net)
         {
-            try { DroppedItemManager.ClearAll(); }
-            catch (System.Exception ex) { LogOnce("wipe drops", ex); }
-            try { SyncRADation.Patches.ItemPickupPatches.ResetDropClaims(); }
-            catch (System.Exception ex) { LogOnce("wipe drop claims", ex); }
-            try { net.PickupSync.Reset(); }
-            catch (System.Exception ex) { LogOnce("wipe pickup claims", ex); }
+            Step("wipe drops", DroppedItemManager.ClearAll);
+            Step("wipe drop claims", SyncRADation.Patches.ItemPickupPatches.ResetDropClaims);
+            Step("wipe pickup claims", net.PickupSync.Reset);
+        }
+
+        /// <summary>One independent step of the wipe: a failing step must not skip the ones after it.</summary>
+        private static void Step(string what, System.Action action)
+        {
+            try { action(); }
+            catch (System.Exception ex) { LogOnce(what, ex); }
         }
 
         // ------------------------------------------------------------------ host: revive + wipe
 
         private static void TickHostParty(LanNetworkManager net)
         {
-            if (net.Role != NetworkRole.Host || !net.IsConnected) return;
+            if (net.Role != NetworkRole.Host) return;
             _hostTick += Time.unscaledDeltaTime;
             if (_hostTick < HostTickInterval) return;
             _hostTick = 0f;
@@ -510,13 +442,11 @@ namespace SyncRADation.Players
 
             _allDownSince = -1f;
             float delay = ModConfig.DownedRespawnSeconds;
-
             if (_isDead && now - _downAt >= delay)
                 ReviveOne(net, net.LocalPlayerId);
             foreach (int pid in net.GetRemotePlayerIds())
             {
-                if (!PartyVitals.IsDown(pid)) continue;
-                if (now - PartyVitals.DownAt(pid) >= delay)
+                if (PartyVitals.IsDown(pid) && now - PartyVitals.DownAt(pid) >= delay)
                     ReviveOne(net, pid);
             }
         }
@@ -528,45 +458,29 @@ namespace SyncRADation.Players
 
         private static bool TryGetPlayerPos(LanNetworkManager net, int pid, out Vector3 pos)
         {
-            if (pid == net.LocalPlayerId)
-            {
-                var p = PlayerState.player;
-                if (p != null)
-                {
-                    pos = p.transform.position;
-                    return true;
-                }
-                pos = Vector3.zero;
-                return false;
-            }
-            return PartyVitals.TryGetPos(pid, out pos);
-        }
-
-        private static string RoomOf(LanNetworkManager net, int pid)
-        {
-            if (pid == net.LocalPlayerId) return CurrentRoomName();
-            return PartyVitals.RoomOf(pid);
+            if (pid != net.LocalPlayerId)
+                return PartyVitals.TryGetPos(pid, out pos);
+            var p = PlayerState.player;
+            pos = p != null ? p.transform.position : Vector3.zero;
+            return p != null;
         }
 
         private static void ReviveOne(LanNetworkManager net, int pid)
         {
-            Vector3 body;
-            bool hasBody = TryGetPlayerPos(net, pid, out body);
+            bool hasBody = TryGetPlayerPos(net, pid, out Vector3 body);
             string bodyScene = net.SceneOf(pid);
 
+            // Nearest living teammate in the downed player's scene.
             int best = -1;
             float bestD = float.MaxValue;
             Vector3 bestPos = Vector3.zero;
-            var ids = new System.Collections.Generic.List<int>(8);
-            ids.Add(net.LocalPlayerId);
-            foreach (int id in net.GetRemotePlayerIds()) ids.Add(id);
-            for (int i = 0; i < ids.Count; i++)
+            var remotes = net.GetRemotePlayerIds();
+            for (int i = -1; i < remotes.Length; i++)
             {
-                int cid = ids[i];
+                int cid = i < 0 ? net.LocalPlayerId : remotes[i];
                 if (cid == pid || PartyVitals.IsDown(cid)) continue;
                 if (!SameScene(bodyScene, net.SceneOf(cid))) continue;
-                Vector3 cpos;
-                if (!TryGetPlayerPos(net, cid, out cpos)) continue;
+                if (!TryGetPlayerPos(net, cid, out Vector3 cpos)) continue;
                 float d = hasBody ? (cpos - body).sqrMagnitude : 0f;
                 if (d < bestD)
                 {
@@ -585,7 +499,7 @@ namespace SyncRADation.Players
                 PosX = bestPos.x,
                 PosY = bestPos.y,
                 PosZ = bestPos.z,
-                Room = best >= 0 ? RoomOf(net, best) : "",
+                Room = best < 0 ? "" : best == net.LocalPlayerId ? CurrentRoomName() : PartyVitals.RoomOf(best),
                 Scene = best >= 0 ? net.SceneOf(best) : ""
             };
             PlaytestLog.Event("Damage", "revive p" + pid + (best >= 0 ? " near p" + best : " in place (no teammate in scene)"));
@@ -593,8 +507,7 @@ namespace SyncRADation.Players
             if (pid != net.LocalPlayerId)
             {
                 PartyVitals.NoteRevived(pid);
-                try { net.ProxyManager.GetProxy(pid)?.SetVital(false); }
-                catch (System.Exception ex) { LogOnce("proxy revive", ex); }
+                net.ProxyManager.GetProxy(pid)?.SetVital(false);
             }
             net.SendPartyLife(msg);
             if (pid == net.LocalPlayerId)
@@ -655,55 +568,40 @@ namespace SyncRADation.Players
 
         private static int ReviveHp()
         {
-            int hp = 50;
-            try
-            {
-                var s = PlayerState.settings;
-                if (s != null && s.InjectorReviveHP > 0) hp = s.InjectorReviveHP;
-            }
-            catch (System.Exception ex) { LogOnce("revive hp", ex); }
+            var s = PlayerState.settings;
+            int hp = s != null && s.InjectorReviveHP > 0 ? s.InjectorReviveHP : 50;
             return Mathf.Clamp(hp, 1, 100);
         }
 
         public static string CurrentRoomName()
         {
-            try
-            {
-                var r = PlayerState.currentRoom;
-                if (r != null && !string.IsNullOrEmpty(r.roomName)) return r.roomName;
-            }
-            catch (System.Exception ex) { LogOnce("room name", ex); }
-            return "";
+            var r = PlayerState.currentRoom;
+            return r != null && !string.IsNullOrEmpty(r.roomName) ? r.roomName : "";
         }
 
         private static void EnterRoomByName(string name)
         {
             if (string.IsNullOrEmpty(name)) return;
-            try
-            {
-                var cur = PlayerState.currentRoom;
-                if (cur != null && cur.roomName == name) return;
+            var cur = PlayerState.currentRoom;
+            if (cur != null && cur.roomName == name) return;
 
-                Room target = null;
-                var all = Resources.FindObjectsOfTypeAll<Room>();
-                for (int i = 0; i < all.Length; i++)
+            Room target = null;
+            foreach (var r in Resources.FindObjectsOfTypeAll<Room>())
+            {
+                if (r != null && r.roomName == name && r.gameObject.scene.IsValid())
                 {
-                    var r = all[i];
-                    if (r == null || r.roomName != name) continue;
-                    if (!r.gameObject.scene.IsValid()) continue;
                     target = r;
                     break;
                 }
-                if (target == null)
-                {
-                    PlaytestLog.Event("Damage", "revive room '" + name + "' not found");
-                    return;
-                }
-                if (cur != null)
-                {
-                    try { cur.LeaveRoom(); }
-                    catch (System.Exception ex) { LogOnce("revive leave room", ex); }
-                }
+            }
+            if (target == null)
+            {
+                PlaytestLog.Event("Damage", "revive room '" + name + "' not found");
+                return;
+            }
+            try
+            {
+                if (cur != null) cur.LeaveRoom();
                 target.EnterRoom();
             }
             catch (System.Exception ex) { LogOnce("revive enter room", ex); }
@@ -717,44 +615,29 @@ namespace SyncRADation.Players
             _hasPendingRevive = false;
             _dropPending = false;
             PartySaveService.ClearBagAtDown();
-            try { PlayerState.hp = Mathf.Clamp(hp, 1, 100); } catch (System.Exception ex) { LogOnce("clear hp", ex); }
+            PlayerState.hp = Mathf.Clamp(hp, 1, 100);
             // Only undo the cloak we set: a peer that was never downed (wipe) may be cloaked by GrayFox on its own.
-            if (wasDead)
-            {
-                try { PlayerState.cloaked = _prevCloaked; } catch (System.Exception ex) { LogOnce("clear cloak", ex); }
-            }
+            if (wasDead) PlayerState.cloaked = _prevCloaked;
             _prevCloaked = false;
-            try { PlayerState.suspendInput = false; } catch (System.Exception ex) { LogOnce("clear suspendInput", ex); }
-            try { PlayerState.gameOver = false; } catch (System.Exception ex) { LogOnce("clear gameOver", ex); }
-            try { PlayerState.charState = PlayerState.charStates.idle; } catch (System.Exception ex) { LogOnce("clear charState", ex); }
-            try
+            PlayerState.suspendInput = false;
+            PlayerState.gameOver = false;
+            PlayerState.charState = PlayerState.charStates.idle;
+            // Native ElsterDeathHandler parks gameState in cutscene while dead.
+            if (PlayerState.gameState == PlayerState.gameStates.cutscene)
+                PlayerState.gameState = PlayerState.gameStates.play;
+            var anim = DeathAnimator();
+            if (anim != null)
             {
-                // Native ElsterDeathHandler parks gameState in cutscene while dead.
-                if (PlayerState.gameState == PlayerState.gameStates.cutscene)
-                    PlayerState.gameState = PlayerState.gameStates.play;
+                anim.SetBool(DeadHash, false);
+                anim.ResetTrigger(DieHash);
             }
-            catch (System.Exception ex) { LogOnce("clear gameState", ex); }
-            try
-            {
-                var anim = DeathAnimator();
-                if (anim != null)
-                {
-                    anim.SetBool(DeadHash, false);
-                    anim.ResetTrigger(DieHash);
-                }
-            }
-            catch (System.Exception ex) { LogOnce("clear anim", ex); }
 
             if (wiped) return;
-            try
-            {
-                var s = PlayerState.settings;
-                // Native healElster sets phoenix itself, except on difficulty 2 (no free revive there): mirror that.
-                if (s != null && s.difficulty != 2) PlayerState.phoenix = true;
-                PlayerState.hurtCool = 0f;
-                if (s != null) PlayerState.inviTimer = s.maxInvi;
-            }
-            catch (System.Exception ex) { LogOnce("clear invi", ex); }
+            var s = PlayerState.settings;
+            // Native healElster sets phoenix itself, except on difficulty 2 (no free revive there): mirror that.
+            if (s != null && s.difficulty != 2) PlayerState.phoenix = true;
+            PlayerState.hurtCool = 0f;
+            if (s != null) PlayerState.inviTimer = s.maxInvi;
             try { PlayerState.healElster(); }
             catch (System.Exception ex) { LogOnce("healElster", ex); }
         }
@@ -781,23 +664,16 @@ namespace SyncRADation.Players
                 TickDownedDrop(net);
                 TryApplyPendingRevive();
             }
-            else if (PartyLive)
+            else if (PartyLive && PlayerState.hp <= 0 && PlayerState.player != null
+                && PlayerState.gameState != PlayerState.gameStates.menu
+                && PlayerState.gameState != PlayerState.gameStates.loading)
             {
-                try
+                if (Time.unscaledTime - _lastSafetyLog > 5f)
                 {
-                    if (PlayerState.hp <= 0 && PlayerState.player != null
-                        && PlayerState.gameState != PlayerState.gameStates.menu
-                        && PlayerState.gameState != PlayerState.gameStates.loading)
-                    {
-                        if (Time.unscaledTime - _lastSafetyLog > 5f)
-                        {
-                            _lastSafetyLog = Time.unscaledTime;
-                            PlaytestLog.Event("Damage", "hp<=0 poll — downing");
-                        }
-                        Die();
-                    }
+                    _lastSafetyLog = Time.unscaledTime;
+                    PlaytestLog.Event("Damage", "hp<=0 poll — downing");
                 }
-                catch (System.Exception ex) { LogOnce("hp poll", ex); }
+                Die();
             }
 
             if (net.IsConnected)
@@ -819,8 +695,7 @@ namespace SyncRADation.Players
             if (room == _lastRoomSent && _roomRefresh < RoomRefreshInterval) return;
             _lastRoomSent = room;
             _roomRefresh = 0f;
-            try { net.PartyHandlers.SendPartyRoom(room); }
-            catch (System.Exception ex) { LogOnce("room report", ex); }
+            net.PartyHandlers.SendPartyRoom(room);
         }
 
         public static void Reset()
@@ -845,8 +720,7 @@ namespace SyncRADation.Players
         }
 
         // Warn-once keys: intentionally persistent.
-        private static readonly System.Collections.Generic.HashSet<string> _logged =
-            new System.Collections.Generic.HashSet<string>();
+        private static readonly HashSet<string> _logged = new HashSet<string>();
 
         private static void LogOnce(string what, System.Exception ex)
         {

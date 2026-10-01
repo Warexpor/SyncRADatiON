@@ -122,7 +122,9 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static bool Prefix()
         {
-            return !NetworkDamageSystem.ShouldSuppressNativeGameOver();
+            // A failed check must leave the native game over in charge, never swallow the hurt.
+            try { return !NetworkDamageSystem.ShouldSuppressNativeGameOver(); }
+            catch (System.Exception e) { Guard.Swallow("DeathPatches.GameOver", e); return true; }
         }
     }
 
@@ -158,7 +160,9 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(bool __state)
         {
-            if (__state) NetworkDamageSystem.OnNativeHurt();
+            if (!__state) return;
+            try { NetworkDamageSystem.OnNativeHurt(); }
+            catch (System.Exception e) { Guard.Swallow("DeathPatches.Hurt", e); }
         }
     }
 
@@ -180,7 +184,9 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(bool __state)
         {
-            if (__state) NetworkDamageSystem.OnNativeHurt();
+            if (!__state) return;
+            try { NetworkDamageSystem.OnNativeHurt(); }
+            catch (System.Exception e) { Guard.Swallow("DeathPatches.Hug", e); }
         }
     }
 }
