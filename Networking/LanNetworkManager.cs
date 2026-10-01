@@ -330,15 +330,9 @@ namespace SyncRADation.Networking
             _peerConnectedAt.Clear();
             _loggedGateDrops.Clear();
             _localPlayer = null;
-            // Kept explicit: no SessionReset entry covers these (proxies + per-instance handler state). Proxies stay first,
-            // before any domain reset, as before.
-            _proxyManager.DestroyAll();
-            try { AvatarHandlers.ResetSendState(); } catch (Exception e) { Guard.Swallow(e); }
-            try { DroppedItemHandlers.Reset(); } catch (Exception e) { Guard.Swallow(e); }
-            try { SessionHandlers.Reset(); } catch (Exception e) { Guard.Swallow(e); }
-            // Everything else (doors, puzzles, pickups, story, storage, key ring, FMOD, NetGate, traces, damage, floor
-            // drops, scene diff, enemies, bosses, EventZone, SceneFollow, Dialoguer) is a registered SessionReset clear
-            // (Bootstrap/SessionResetRegistrations.cs), each isolated so one throwing never skips the rest.
+            // Every Session + Connection step (proxies first, then handler state, doors, puzzles, pickups, story, storage,
+            // key ring, FMOD, NetGate, traces, damage, floor drops, scene diff, enemies, bosses, EventZone, SceneFollow,
+            // Dialoguer) in Bootstrap/SessionResetRegistrations.cs order, each isolated.
             SessionReset.RunAll(SessionReset.ReasonStop);
             _handshakeComplete = false;
             _vitalTimer = 0f;
@@ -879,13 +873,13 @@ namespace SyncRADation.Networking
                 StatusText = "Hosting (" + (GetPlayerCount() - 1) + "/" + (PluginInfo.MaxPlayers - 1) + " clients)";
                 ModRuntime.Log?.Msg("[Network] Handshake OK, player " + senderId + " ready (" + GetPlayerCount() + " players)");
                 WorldRegistry.RebuildIfStale();
-                BroadcastSceneHello();
+                SceneHandlers.BroadcastSceneHello();
 
                 var hostConnected = _connected;
                 if (hostConnected != null) hostConnected();
 
                 BroadcastPlayerRoster();
-                SendFullWorldSnapshot(senderId);
+                SessionHandlers.SendFullWorldSnapshot(senderId);
                 PartySaveService.SendJoinToken(this, senderId);
                 return;
             }
@@ -918,7 +912,7 @@ namespace SyncRADation.Networking
             StatusText = "Connected to host";
             ModRuntime.Log?.Msg("[Network] Handshake OK, local playerId=" + _localPlayerId);
             WorldRegistry.RebuildIfStale();
-            BroadcastSceneHello();
+            SceneHandlers.BroadcastSceneHello();
 
             var connected = _connected;
             if (connected != null) connected();
@@ -999,29 +993,18 @@ namespace SyncRADation.Networking
             ModRuntime.Log?.Msg("[Network] Roster applied, players=" + GetPlayerCount());
         }
 
-        public void OnSceneChanged()
+        /// <summary>
+        /// Scene load (ModRuntime.OnSceneChanged, after the WorldId scan and registry rebuild): this manager's own per-scene
+        /// fields, then every Scene-scope SessionReset step (Bootstrap/SessionResetRegistrations.cs order), then the scene
+        /// hello / world dump for a live session.
+        /// </summary>
+        public void OnSceneChanged(string scene)
         {
             _localPlayer = null;
-            AvatarHandlers.ResetSendState();
-            SourceAnimReader.Reset();
-            HitchTrace.Reset();
             _sendTimer = 0f;
             _lastStateTime = 0f;
-            _proxyManager.DestroyAll();
-            DroppedItemManager.ClearVisuals();
-            DroppedItemManager.RespawnCurrentScene();
-            // ModRuntime.OnSceneChanged just rebuilt the registry; only redo it when stale.
-            WorldRegistry.RebuildIfStale();
-            DoorSyncService.RefreshScene();
-            FmodEmitterSync.Reset();
-            _enemySync.OnSceneChanged();
-            _puzzleSync.RefreshScene();
-            _bossSync.OnSceneChanged();
-            _pickupSync.RefreshScene();
-            _storySync.OnSceneChanged();
-            Patches.EventZonePatch.OnSceneChanged();
             _sceneMismatch = false;
-            try { SceneFollowService.NoteArrived(SceneManager.GetActiveScene().name ?? ""); } catch (Exception e) { Guard.Swallow(e); }
+            SessionReset.RunScene(scene ?? "");
             if (_handshakeComplete)
             {
                 if (SceneFollowService.LocalIsTransient())
@@ -1031,17 +1014,17 @@ namespace SyncRADation.Networking
                         SessionHandlers.DeferDump(-1);
                     return;
                 }
-                BroadcastSceneHello();
+                SceneHandlers.BroadcastSceneHello();
                 if (_role == NetworkRole.Host)
                 {
                     if (HasReadyPeers)
-                        SendFullWorldSnapshot();
+                        SessionHandlers.SendFullWorldSnapshot();
                 }
                 else if (AirlockCinematic.ShouldIgnoreHostFollow(_hostSceneName))
                     PlaytestLog.Event("Scene", "skip wreck dump (airlock split)");
                 else
                 {
-                    RequestWorldSnapshot();
+                    SessionHandlers.RequestWorldSnapshot();
                     _enemySync.PuppetAllNow();
                 }
             }

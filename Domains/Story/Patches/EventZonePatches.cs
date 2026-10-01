@@ -1,4 +1,4 @@
-// Client EventZone → host request; host Presentation broadcast. Scene-changed reset hub.
+// Client EventZone → host request; host Presentation broadcast.
 using HarmonyLib;
 using SyncRADation.Networking;
 using SyncRADation.Sync;
@@ -18,10 +18,6 @@ namespace SyncRADation.Patches
             _lastRequest.Clear();
             _kind.Clear();
             _handled.Clear();
-            KeypadPress.Clear();
-            UseItemInteractionPatch.OnSceneChanged();
-            InteractionSyncService.OnSceneChanged();
-            AirlockCinematic.Reset();
         }
 
         public static void MarkFired(ulong id)

@@ -902,8 +902,6 @@ namespace SyncRADation.Networking
             _clientPuppeted.Clear();
             _interp.Clear();
             _lastAnimTime.Clear();
-            SyncRADation.Patches.EnemySpawnerPatches.ClearAdopted();
-            ClientDamageService.OnSceneChanged();
             _mapHits = 0;
             _mapMisses = 0;
             _sendTimer = 0f;

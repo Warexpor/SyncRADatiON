@@ -13,6 +13,12 @@ namespace SyncRADation.Sync
         static float _lastLog = -99f;
         static bool _wasInScreen;
 
+        public static void Reset()
+        {
+            _lastLog = -99f;
+            _wasInScreen = false;
+        }
+
         public static void Tick()
         {
             var net = LanNetworkManager.Instance;

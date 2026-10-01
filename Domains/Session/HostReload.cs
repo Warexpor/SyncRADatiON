@@ -255,12 +255,12 @@ namespace SyncRADation.Networking
             {
                 if (mode == Mode.NewGame && NetGate.Host)
                 {
-                    ResetHostWorldState(ModRuntime.Network); // fresh run: Current is invalid, so the ring becomes empty
+                    ResetHostWorldState(LanNetworkManager.Instance); // fresh run: Current is invalid, so the ring becomes empty
                     PlaytestLog.Event("Damage", "wipe reload NewGame arrived '" + scene + "'");
                 }
                 else if (NetGate.Host)
                 {
-                    ResetRetryWorldState(ModRuntime.Network);
+                    ResetRetryWorldState(LanNetworkManager.Instance);
                     PlaytestLog.Event("Damage", "wipe reload Retry arrived '" + scene + "' (drops/claims reset, bag restored)");
                 }
                 if (wipe && NetGate.Host)
@@ -355,7 +355,7 @@ namespace SyncRADation.Networking
             _retryBag = null;
             PlaytestLog.Event("Damage", "wipe reload aborted (" + why + ")");
             // Dumps held back while pending must not stay queued forever (the world is whatever it is now).
-            try { ModRuntime.Network?.SessionHandlers.DeferDump(-1); }
+            try { LanNetworkManager.Instance?.SessionHandlers.DeferDump(-1); }
             catch (Exception ex) { Guard.Swallow("HostReload.abortDump", ex); }
         }
 

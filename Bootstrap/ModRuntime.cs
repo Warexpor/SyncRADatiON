@@ -11,18 +11,24 @@ namespace SyncRADation
 {
     public static class ModRuntime
     {
+        // persistent: process logger
         public static MelonLogger.Instance Log;
-        public static LanNetworkManager Network { get; private set; }
+        /// <summary>Forward kept for domain call sites; new code uses LanNetworkManager.Instance (the one accessor).</summary>
+        public static LanNetworkManager Network => LanNetworkManager.Instance;
         public static bool VerboseLogging => ModConfig.VerboseLogging?.Value == true;
 
-        // Boot/process-lifetime values (logger, harmony, running flag, FF edge state reset per scene): not session state.
+        // persistent: boot-once flag (the network manager lives for the process)
         private static bool _running;
+        // persistent: process Harmony instance
         private static HarmonyLib.Harmony _harmony;
 
         /// <summary>False when the boot audit found a Harmony target or reflected member that no longer resolves.</summary>
+        // persistent: boot audit result
         public static bool PatchAuditOk { get; private set; } = true;
         /// <summary>One line for F2: "Harmony audit: N ok, M missing" (or "not run").</summary>
+        // persistent: boot audit result
         public static string PatchAuditSummary { get; private set; } = "Harmony audit: not run";
+        // persistent: boot audit result
         private static readonly System.Collections.Generic.List<string> _patchAuditMissing = new System.Collections.Generic.List<string>();
         /// <summary>First missing items (capped) for F2.</summary>
         public static System.Collections.Generic.IReadOnlyList<string> PatchAuditMissing => _patchAuditMissing;
@@ -47,8 +53,13 @@ namespace SyncRADation
             if (_patchAuditMissing.Count < 8) _patchAuditMissing.Add(item);
         }
 
+        // Friendly-fire shot edge: resynced on every scene load (SessionReset "FriendlyFireEdge", scene scope).
         private static int _ffShotSerial;
+        // persistent: once per process (first scene load)
         private static bool _lateAuditDone;
+
+        /// <summary>Scene load: a shot counted in the previous scene must not fire a ray in this one.</summary>
+        internal static void ResyncFriendlyFireEdge() => _ffShotSerial = SourceAnimReader.ShotSerial;
 
         public static void Start(MelonLogger.Instance log, HarmonyLib.Harmony harmony)
         {
@@ -66,7 +77,11 @@ namespace SyncRADation
                 GameBuild.Compute();
                 try { SessionResetRegistrations.RegisterAll(); }
                 catch (System.Exception ex) { Guard.Swallow("ModRuntime.SessionReset", ex); }
-                Log.Msg("[SessionReset] " + SessionReset.Count + " clears registered");
+                try { DumpFlushRegistrations.RegisterAll(); }
+                catch (System.Exception ex) { Guard.Swallow("ModRuntime.DumpFlush", ex); }
+                Log.Msg("[SessionReset] " + SessionReset.Count + " steps registered (scene " + SessionReset.CountOf(ResetScope.Scene)
+                    + ", session " + SessionReset.CountOf(ResetScope.Session) + ", connection " + SessionReset.CountOf(ResetScope.Connection)
+                    + "); " + DumpFlush.Count + " dump flushes");
 
                 Log.Msg("=============================================");
                 Log.Msg("  " + PluginInfo.Name + " v" + PluginInfo.Version);
@@ -128,13 +143,13 @@ namespace SyncRADation
         {
             if (_running) return;
             _running = true;
-            Network = new LanNetworkManager();
+            new LanNetworkManager(); // the constructor publishes LanNetworkManager.Instance
         }
 
         public static void OnUpdate()
         {
-            var pm = Network?.ProxyManager;
-            var net = Network;
+            var net = LanNetworkManager.Instance;
+            var pm = net?.ProxyManager;
             HitchTrace.FrameBegin(net != null && net.IsConnected);
             long tp = HitchTrace.Begin();
             try { SyncRADation.UI.FreeCursor.Tick(); } catch (System.Exception e) { Guard.Swallow(e); }
@@ -195,7 +210,7 @@ namespace SyncRADation
                         {
                             // Clamped / NaN-checked again in SendFriendlyFire and on the receiving side.
                             float dmg = RemoteWeaponSync.GetDamage(WeaponUtils.EquippedWeaponType());
-                            net.SendFriendlyFire(hitPid, dmg, hit.point);
+                            net.CombatHandlers.SendFriendlyFire(hitPid, dmg, hit.point);
                         }
                     }
                 }
@@ -231,7 +246,7 @@ namespace SyncRADation
         {
             HitchTrace.LateBegin();
             long tp = HitchTrace.Begin();
-            try { Network?.LateUpdate(); }
+            try { LanNetworkManager.Instance?.LateUpdate(); }
             catch (System.Exception ex) { Log?.Error("Network.LateUpdate crashed: " + ex); }
             HitchTrace.End("net.LateUpdate", tp);
             HitchTrace.LateEnd();
@@ -240,10 +255,8 @@ namespace SyncRADation
         public static void OnSceneChanged()
         {
             string scene = "";
-            try { scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name; } catch (System.Exception e) { Guard.Swallow(e); }
-            PlaytestLog.Reset();
-            PlaytestLog.Event("Scene", "loaded '" + scene + "'");
-            _ffShotSerial = SourceAnimReader.ShotSerial;
+            try { scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name ?? ""; } catch (System.Exception e) { Guard.Swallow(e); }
+            PlaytestLog.EventAlways("Scene", "loaded '" + scene + "'");
             if (!_lateAuditDone)
             {
                 _lateAuditDone = true;
@@ -264,13 +277,14 @@ namespace SyncRADation
             WorldRegistry.Rebuild(rescan: false);
             // F11 template harvest (two Resources.FindObjectsOfTypeAll + template clones) only for a live session or an
             // open F11 window. FinishSpawn / AdoptNativeSpawn harvest on demand, so a session started later still works.
-            if ((Network != null && Network.IsConnected) || Cheats.EntitySpawner.ShowMenu)
+            if (NetGate.Live || Cheats.EntitySpawner.ShowMenu)
                 Cheats.EntitySpawner.HarvestLoaded();
-            // Before Network.OnSceneChanged: a wipe reload that has arrived resets the host's world state first, so the
-            // full snapshot Network.OnSceneChanged sends is the post-wipe one (clients reset locally on the Wipe message).
+            // Before the network scene path: a wipe reload that has arrived resets the host's world state first, so the
+            // full snapshot sent after the scene resets is the post-wipe one (clients reset locally on the Wipe message).
             try { HostReload.OnSceneArrived(scene); }
             catch (System.Exception e) { Guard.Swallow("ModRuntime.HostReloadArrived", e); }
-            Network?.OnSceneChanged();
+            // Every Scene-scope SessionReset step (Bootstrap/SessionResetRegistrations.cs), then the hello / dump.
+            LanNetworkManager.Instance?.OnSceneChanged(scene);
         }
 
         private static int GetWallMask()
@@ -286,7 +300,7 @@ namespace SyncRADation
 
         public static void Stop()
         {
-            Network?.StopNetwork();
+            LanNetworkManager.Instance?.StopNetwork();
             _harmony?.UnpatchSelf();
             _running = false;
         }

@@ -41,14 +41,15 @@ namespace SyncRADation.UI
                 return;
             }
 
+            bool active = NetGate.Active;
             // Roster rows (remote players only; the local line is part of the role row).
-            List<int> roster = net.Role != NetworkRole.Offline ? net.GetSessionPlayerIdsSorted() : null;
+            List<int> roster = active ? net.GetSessionPlayerIdsSorted() : null;
             int rows = roster != null ? roster.Count : 0;
             // Two footer rows (game build, audit summary) + one per missing audit item.
             int footerRows = 2 + ModRuntime.PatchAuditMissing.Count;
             _windowRect.height = BaseHeight + (rows > 0 ? (rows + 1) * RowHeight : 0f)
                 + footerRows * RowHeight
-                + (net.Role != NetworkRole.Offline ? RowHeight : 0f);
+                + (active ? RowHeight : 0f);
 
             GUI.Box(_windowRect, "SyncRADation v" + PluginInfo.Version);
 
@@ -63,7 +64,7 @@ namespace SyncRADation.UI
                 GUI.Label(CR(10, 90, 320, 20), "Room: " + WorldRegistry.GetLocalRoomName());
 
             float y = 130f;
-            if (net.Role == NetworkRole.Offline)
+            if (!active)
             {
                 GUI.Label(CR(10, y, 70, 20), "Address:");
                 _address = GUI.TextField(CR(85, y, 230, 20), _address);
@@ -91,7 +92,7 @@ namespace SyncRADation.UI
                     int pid = roster[i];
                     string tag = pid == net.LocalPlayerId ? " (you)" : (pid == 0 ? " (host)" : "");
                     string scene = net.SceneOf(pid);
-                    string ping = pid != net.LocalPlayerId && net.Role == NetworkRole.Host
+                    string ping = pid != net.LocalPlayerId && NetGate.HostRole
                         ? "  " + net.GetPeerPing(pid) + "ms" : "";
                     GUI.Label(CR(20, y, 320, 20), "#" + pid + tag
                         + (string.IsNullOrEmpty(scene) ? "" : "  " + scene) + ping);
@@ -104,22 +105,22 @@ namespace SyncRADation.UI
                 y += 40f;
             }
 
-            if (net.Role != NetworkRole.Offline)
+            if (active)
             {
-                GUI.Label(CR(10, y, 340, 20), net.WorldSyncStatus);
+                GUI.Label(CR(10, y, 340, 20), net.SceneHandlers.WorldSyncStatus());
                 y += RowHeight;
             }
 
             GUI.Label(CR(10, y, 340, 20), ModConfig.Describe(ModConfig.EffectiveSyncFlags)
-                + (net.Role == NetworkRole.Client ? " (host)" : ""));
+                + (NetGate.ClientRole ? " (host)" : ""));
             y += 25f;
 
-            if (net.Role != NetworkRole.Offline && GUI.Button(CR(10, y, 150, 28), "Resync world"))
+            if (active && GUI.Button(CR(10, y, 150, 28), "Resync world"))
             {
-                if (net.Role == NetworkRole.Client)
-                    net.RequestWorldSnapshot();
+                if (NetGate.ClientRole)
+                    net.SessionHandlers.RequestWorldSnapshot();
                 else if (net.HasReadyPeers)
-                    net.SendFullWorldSnapshot(); // host: re-dump to every client
+                    net.SessionHandlers.SendFullWorldSnapshot(); // host: re-dump to every client
             }
             y += 35f;
 

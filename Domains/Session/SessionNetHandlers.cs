@@ -59,7 +59,7 @@ namespace SyncRADation.Networking
         /// </summary>
         internal void DeferDump(int targetPlayerId)
         {
-            if (_net.Role != NetworkRole.Host) return;
+            if (!NetGate.HostRole) return;
             if (targetPlayerId >= 0)
             {
                 _pendingDumpTargets.Add(targetPlayerId);
@@ -75,7 +75,7 @@ namespace SyncRADation.Networking
         /// <summary>Host tick: flush deferred dumps once active scene is non-transient.</summary>
         internal void TickPendingDumps()
         {
-            if (_net.Role != NetworkRole.Host || !_net.HandshakeComplete) return;
+            if (!NetGate.Host) return;
             FlushRateDeferred();
             if (!_pendingDumpAll && _pendingDumpTargets.Count == 0) return;
             if (SceneFollowService.LocalIsTransient()) return;
@@ -144,7 +144,7 @@ namespace SyncRADation.Networking
         /// <summary>Host: dump full world. targetPlayerId &gt;= 0 unicasts (join / client resync); -1 = all peers.</summary>
         internal void SendFullWorldSnapshot(int targetPlayerId = -1)
         {
-            if (_net.Role != NetworkRole.Host || !_net.HandshakeComplete) return;
+            if (!NetGate.Host) return;
             if (SceneFollowService.LocalIsTransient() || HostReload.Pending)
             {
                 DeferDump(targetPlayerId);
@@ -209,7 +209,7 @@ namespace SyncRADation.Networking
             ModRuntime.Log?.Msg("[Network] Sending full world snapshot"
                 + (targetPlayerId >= 0 ? " to player " + targetPlayerId : " to all peers"));
             if (targetPlayerId >= 0 && HasOtherReadyPeer(targetPlayerId))
-                FlushPendingDiffs();
+                DumpFlush.RunAll();
             int prevUnicast = _net.BeginUnicast(targetPlayerId);
             try
             {
@@ -233,8 +233,8 @@ namespace SyncRADation.Networking
                 _net.DroppedItemHandlers.DumpDroppedItems();
                 FmodEmitterSync.DumpPlaying();
                 if (!SceneFollowService.IsTransient(SceneManager.GetActiveScene().name ?? ""))
-                    _net.SendSceneFollow(SceneManager.GetActiveScene().name ?? "", false);
-                _net.BroadcastSceneHello();
+                    _net.SceneHandlers.SendSceneFollow(SceneManager.GetActiveScene().name ?? "", false);
+                _net.SceneHandlers.BroadcastSceneHello();
             }
             finally
             {
@@ -244,9 +244,9 @@ namespace SyncRADation.Networking
 
         /// <summary>
         /// Before a unicast dump (3+ players): the dump's full sends record "already sent" state, so a change still
-        /// waiting for its next broadcast diff would reach only the joiner. Send those diffs to everyone first.
-        /// Story (dirty keys) and the storage box (signature) flush here; doors / puzzles / world pickups have no
-        /// on-demand diff, so their full-send paths skip the sent-record while LanNetworkManager.UnicastActive.
+        /// waiting for its next broadcast diff would reach only the joiner. Every domain's DumpFlush hook
+        /// (Bootstrap/DumpFlushRegistrations.cs) sends its pending diff to everyone first. A domain without an on-demand
+        /// diff must instead skip its sent-record while LanNetworkManager.UnicastActive.
         /// </summary>
         bool HasOtherReadyPeer(int targetPlayerId)
         {
@@ -257,20 +257,12 @@ namespace SyncRADation.Networking
             return false;
         }
 
-        void FlushPendingDiffs()
-        {
-            try { _net.StorySync.Send(_net, false); }
-            catch (System.Exception ex) { Guard.Swallow("Session.FlushStory", ex); }
-            try { _net.StorageSync.SendNow(_net); }
-            catch (System.Exception ex) { Guard.Swallow("Session.FlushStorage", ex); }
-        }
-
         /// <summary>Client: unscaled time of the last snapshot request (-999 = none). Lets the WorldId divergence path skip a redundant one.</summary>
         internal float LastSnapshotRequestAt { get; private set; } = -999f;
 
         internal void RequestWorldSnapshot()
         {
-            if (_net.Role != NetworkRole.Client || !_net.HandshakeComplete) return;
+            if (!NetGate.Client) return;
             LastSnapshotRequestAt = Time.unscaledTime;
             var msg = new SnapshotRequestMessage { SenderPlayerId = _net.LocalPlayerId };
             var writer = new NetDataWriter();
@@ -282,7 +274,7 @@ namespace SyncRADation.Networking
 
         internal void HandleSnapshotRequest(SnapshotRequestMessage req, int senderId)
         {
-            if (_net.Role != NetworkRole.Host) return;
+            if (!NetGate.HostRole) return;
             // Only the requester gets the dump; the wire SenderPlayerId is ignored.
             int target = senderId;
             if (target < 1 || !_net.HasPeer(target)) return;

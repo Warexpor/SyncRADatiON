@@ -830,7 +830,6 @@ namespace SyncRADation.Networking
             _endIds = Array.Empty<ulong>();
             _chimeraIds = Array.Empty<ulong>();
             _mynahIds = Array.Empty<ulong>();
-            SyncRADation.Patches.KolibriAdlerAuthPatches.Clear();
         }
 
         public void Reset()

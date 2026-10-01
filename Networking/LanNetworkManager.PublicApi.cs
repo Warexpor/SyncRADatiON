@@ -3,8 +3,9 @@ using System.Collections.Generic;
 namespace SyncRADation.Networking
 {
     /// <summary>
-    /// Public one-line forwards onto domain NetHandlers.
-    /// Keeps call sites on DoorSyncService / EnemySync / Story / Fmod / Pickups stable.
+    /// Transitional one-line forwards onto domain NetHandlers, kept only while domain call sites still use them.
+    /// New code calls the owning handler directly (net.DoorHandlers.SendDoorState(...), net.SessionHandlers...);
+    /// delete a forward once its last caller has moved. The net core, Session domain and UI no longer use any.
     /// </summary>
     public sealed partial class LanNetworkManager
     {
@@ -59,15 +60,7 @@ namespace SyncRADation.Networking
         public void SendWorldPickupClaim(ulong worldId, Items.itemlist item = Items.itemlist.None, int count = 1) =>
             WorldPickupHandlers.SendWorldPickupClaim(worldId, item, count);
 
-        public void SendFriendlyFire(int targetPlayerId, float damage, UnityEngine.Vector3 hitPos) =>
-            CombatHandlers.SendFriendlyFire(targetPlayerId, damage, hitPos);
-
         public void SendDeathPolicy(DeathKind kind) => CombatHandlers.SendDeathPolicy(kind);
-
-        public void BroadcastSceneHello() => SceneHandlers.BroadcastSceneHello();
-
-        /// <summary>F2 line: "World: in sync" or "World: N ids differ".</summary>
-        public string WorldSyncStatus => SceneHandlers.WorldSyncStatus();
 
         public void SendSceneFollow(string sceneName, bool isRequest) =>
             SceneHandlers.SendSceneFollow(sceneName, isRequest);
@@ -76,9 +69,6 @@ namespace SyncRADation.Networking
             InventoryHandlers.SendStorageBoxBlob(items);
 
         public void SendPartyKeyRing(ushort[] enums) => InventoryHandlers.SendPartyKeyRing(enums);
-
-        public void SendFullWorldSnapshot(int targetPlayerId = -1) =>
-            SessionHandlers.SendFullWorldSnapshot(targetPlayerId);
 
         public void RequestWorldSnapshot() => SessionHandlers.RequestWorldSnapshot();
     }

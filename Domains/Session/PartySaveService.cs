@@ -430,7 +430,7 @@ namespace SyncRADation.Networking
         /// <summary>Host: unicast the token the session runs from to a joining client.</summary>
         public static void SendJoinToken(LanNetworkManager net, int targetPlayerId)
         {
-            if (net == null || net.Role != NetworkRole.Host || targetPlayerId < 1) return;
+            if (net == null || !NetGate.HostRole || targetPlayerId < 1) return;
             EnsureHostLoaded();
             if (!Current.Valid) return;
             net.PartyHandlers.SendPartySave(Current, PartySaveMessage.FlagJoin, targetPlayerId);
