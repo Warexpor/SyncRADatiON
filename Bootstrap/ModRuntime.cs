@@ -51,6 +51,8 @@ namespace SyncRADation
             {
                 ModConfig.Bind();
                 PatchAllSafe();
+                try { HarmonyPhaseTiming.Install(_harmony, typeof(ModRuntime).Assembly.GetTypes()); }
+                catch (System.Exception ex) { Guard.Swallow("ModRuntime.PhaseTiming", ex); }
                 try { PatchAudit.Run(typeof(ModRuntime).Assembly.GetTypes()); }
                 catch (System.Exception ex) { Guard.Swallow("ModRuntime.PatchAudit", ex); }
                 GameBuild.Compute();
@@ -129,7 +131,11 @@ namespace SyncRADation
         {
             var pm = Network?.ProxyManager;
             var net = Network;
+            HitchTrace.FrameBegin(net != null && net.IsConnected);
+            long tp = HitchTrace.Begin();
             try { DroppedItemManager.TickDeferred(); } catch (System.Exception e) { Guard.Swallow(e); }
+            HitchTrace.End("dropTick", tp);
+            tp = HitchTrace.Begin();
 
             // Guard: PlayerState.player must never point at a remote proxy
             if (pm != null)
@@ -149,6 +155,9 @@ namespace SyncRADation
                     }
                 }
             }
+
+            HitchTrace.End("guard", tp);
+            tp = HitchTrace.Begin();
 
             // Friendly fire only (opt-in). Enemy hits go through Harmony → EnemyController.TakeDamage
             // (see Patches/EnemyTakeDamagePatches) — not DIY raycasts.
@@ -190,28 +199,43 @@ namespace SyncRADation
                 _lastLocalShooting = Input.GetButton("Fire1") || Input.GetMouseButton(0);
             }
 
+            HitchTrace.End("friendlyFire", tp);
+            tp = HitchTrace.Begin();
+
             try { NetworkDamageSystem.TickRespawn(); }
             catch (System.Exception ex) { Guard.Swallow("ModRuntime.TickRespawn", ex); }
+            HitchTrace.End("tickRespawn", tp);
+            tp = HitchTrace.Begin();
             try { Cheats.EntitySpawner.Tick(); }
             catch (System.Exception ex) { Guard.Swallow("ModRuntime.EntitySpawnerTick", ex); }
+            HitchTrace.End("entitySpawner", tp);
 
             if (net != null && net.IsConnected)
                 HitchTrace.Frame();
 
+            tp = HitchTrace.Begin();
             try { net?.Update(); }
             catch (System.Exception ex) { Log?.Error("Network.Update crashed: " + ex); }
+            HitchTrace.End("net.Update", tp);
 
+            tp = HitchTrace.Begin();
             if (pm != null)
             {
                 foreach (int pid in pm.GetProxyPlayerIds())
                     pm.GetProxy(pid)?.AnimDriver?.PreTick();
             }
+            HitchTrace.End("proxyPreTick", tp);
+            HitchTrace.FrameEnd();
         }
 
         public static void OnLateUpdate()
         {
+            HitchTrace.LateBegin();
+            long tp = HitchTrace.Begin();
             try { Network?.LateUpdate(); }
             catch (System.Exception ex) { Log?.Error("Network.LateUpdate crashed: " + ex); }
+            HitchTrace.End("net.LateUpdate", tp);
+            HitchTrace.LateEnd();
         }
 
         public static void OnSceneChanged()

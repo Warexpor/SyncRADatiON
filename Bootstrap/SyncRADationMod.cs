@@ -19,6 +19,7 @@ namespace SyncRADation
         public override void OnUpdate()
         {
             ModRuntime.OnUpdate();
+            long tp = Sync.HitchTrace.Begin();
 
             if (!_autoActionDone)
             {
@@ -38,6 +39,7 @@ namespace SyncRADation
                 Cheats.LocationTeleporter.ShowMenu = !Cheats.LocationTeleporter.ShowMenu;
             if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F11))
                 Cheats.EntitySpawner.ShowMenu = !Cheats.EntitySpawner.ShowMenu;
+            Sync.HitchTrace.End("modUpdateTail", tp);
         }
 
         private void QuickConnect()
@@ -98,10 +100,13 @@ namespace SyncRADation
 
         public override void OnGUI()
         {
+            long tp = Sync.HitchTrace.Begin();
             UI.MultiplayerMenu.OnGUI();
             Cheats.ItemGiver.OnGUI();
             Cheats.LocationTeleporter.OnGUI();
             Cheats.EntitySpawner.OnGUI();
+            Sync.HitchTrace.End("onGUI", tp);
+            Sync.HitchTrace.GuiEnd(tp);
         }
 
         public override void OnSceneWasLoaded(int buildIndex, string sceneName)

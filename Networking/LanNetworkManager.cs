@@ -429,8 +429,10 @@ namespace SyncRADation.Networking
         {
             if (_net != null)
             {
+                long tPoll = HitchTrace.Begin();
                 try { _net.PollEvents(); }
                 catch (Exception ex) { TickFailed("poll", ex); }
+                HitchTrace.End("pollEvents", tPoll);
             }
 
             if (_stopPending)
@@ -441,8 +443,10 @@ namespace SyncRADation.Networking
                 return;
             }
 
+            long tTimeouts = HitchTrace.Begin();
             TickConnectTimeout();
             TickHandshakeTimeouts();
+            HitchTrace.End("netTimeouts", tTimeouts);
 
             if (!IsConnected || !_handshakeComplete)
                 return;
@@ -459,6 +463,7 @@ namespace SyncRADation.Networking
                 return;
 
             // Each domain tick is isolated: one throwing must not skip the others this frame.
+            long tTicks = HitchTrace.Begin();
             try { SessionHandlers.TickPendingDumps(); } catch (Exception ex) { TickFailed("dumps", ex); }
             try { DoorSyncService.Tick(); } catch (Exception ex) { TickFailed("door", ex); }
             try { _enemySync.TickHost(this); } catch (Exception ex) { TickFailed("enemy", ex); }
@@ -475,6 +480,7 @@ namespace SyncRADation.Networking
                 try { SceneFollowService.Tick(); } catch (Exception ex) { TickFailed("scenefollow", ex); }
             }
             try { _storageSync.TickHost(this); } catch (Exception ex) { TickFailed("storage", ex); }
+            HitchTrace.End("domainTicks", tTicks);
 
             // Vitals ~5 Hz for remote damage/death presentation
             if (ModConfig.SyncPlayerVitals?.Value == true)
@@ -483,7 +489,9 @@ namespace SyncRADation.Networking
                 if (_vitalTimer >= 0.2f)
                 {
                     _vitalTimer = 0f;
+                    long tVital = HitchTrace.Begin();
                     try { AvatarHandlers.SendLocalVital(); } catch (Exception ex) { TickFailed("vital", ex); }
+                    HitchTrace.End("sendVital", tVital);
                 }
             }
 
@@ -503,6 +511,7 @@ namespace SyncRADation.Networking
             if (player == null)
                 return;
 
+            long tAvatar = HitchTrace.Begin();
             try
             {
                 var msg = AvatarHandlers.BuildPlayerStateMessage(player);
@@ -510,6 +519,7 @@ namespace SyncRADation.Networking
                 HitchTrace.Send();
             }
             catch (Exception ex) { TickFailed("avatar", ex); }
+            HitchTrace.End("sendAvatar", tAvatar);
 
             // Host also needs to relay states it received from clients — but that's handled
             // in OnReceive: the host stores the state and re-sends to all other peers
