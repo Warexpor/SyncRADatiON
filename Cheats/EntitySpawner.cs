@@ -37,12 +37,6 @@ namespace SyncRADation.Cheats
         private static float _statusTimer;
         private static Rect _windowRect = new Rect(250f, 120f, 450f, 480f);
 
-        public static bool BankLoadActive => false;
-
-        public static void Tick() { }
-
-        public static bool OnBankSceneLoaded(string sceneName) => false;
-
         public static void OnGUI()
         {
             if (!ShowMenu) return;
@@ -98,6 +92,12 @@ namespace SyncRADation.Cheats
 
             if (NetGate.Client)
             {
+                // The host rejects it anyway (EnemyNetHandlers.HandleEnemySpawn): say so here.
+                if (Config.ModConfig.AllowClientCheats?.Value != true)
+                {
+                    SetStatus("Host does not allow client cheats", true);
+                    return;
+                }
                 LanNetworkManager.Instance?.SendEnemySpawnRequest(typeKey, pos, rotY);
                 SetStatus("Requested host spawn: " + typeKey);
                 PlaytestLog.Event("Spawn", "request " + typeKey);
@@ -109,7 +109,9 @@ namespace SyncRADation.Cheats
 
         public static void FinishSpawn(string typeKey, Vector3 pos, float rotY, int seq, bool broadcast)
         {
-            HarvestLoaded();
+            // Resources.FindObjectsOfTypeAll walk: only when this type is not banked yet.
+            if (!HasTemplate(typeKey))
+                HarvestLoaded();
             if (!HasTemplate(typeKey))
             {
                 string hint;
@@ -180,7 +182,12 @@ namespace SyncRADation.Cheats
                 ec.enabled = true;
             }
             catch (System.Exception e) { Guard.Swallow(e); }
-            try { ec.WakeUp(); } catch (System.Exception ex) { PlaytestLog.Event("Spawn", "WakeUp: " + ex.Message); }
+            // WakeUp shakes the screen / rumbles / plays WakeSFX (Ghidra EnemyController.c): host-side only. A client
+            // copy is a puppet of the host's spawn and gets its state from the snapshots.
+            if (!NetGate.Client)
+            {
+                try { ec.WakeUp(); } catch (System.Exception ex) { PlaytestLog.Event("Spawn", "WakeUp: " + ex.Message); }
+            }
             try
             {
                 if (PlayerState.player != null)
@@ -246,16 +253,17 @@ namespace SyncRADation.Cheats
                 return;
             }
 
-            HarvestLoaded();
             string typeKey = TypeKeyOf(ec);
             // Bank THIS live native (and parent EnemySpawner.EnemyType) so peers can
             // FinishSpawn the same SR_Spawn_* WorldId. Hierarchy-only ids miss when the
-            // Instantiated _Child exists only on the host.
+            // Instantiated _Child exists only on the host. The full Resources scan only runs
+            // when neither gave a template (steady state: one dictionary lookup per spawn).
             if (!string.IsNullOrEmpty(typeKey) && !HasTemplate(typeKey))
             {
                 Stash(ec, typeKey);
                 TryStashFromParentSpawner(ec, typeKey);
-                HarvestLoaded();
+                if (!HasTemplate(typeKey))
+                    HarvestLoaded();
             }
 
             if (string.IsNullOrEmpty(typeKey) || !HasTemplate(typeKey))

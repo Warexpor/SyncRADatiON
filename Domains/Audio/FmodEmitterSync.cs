@@ -37,6 +37,19 @@ namespace SyncRADation.Networking
         // Client: keys that already passed the (hierarchy-walking) local-only check. Only the cheap dynamic
         // Cinematic test is repeated per Play. Cleared in Reset and when WorldRegistry rebuilds.
         static readonly HashSet<EmitKey> _okKeys = new HashSet<EmitKey>();
+        // Host: same idea for the host's own relay check (IsLocalOnly / door / bed); a separate set because the
+        // client check is stricter (enemy/boss emitters are host-authored and never client-sent).
+        static readonly HashSet<EmitKey> _hostOkKeys = new HashSet<EmitKey>();
+        // Sliding-door open/close SFX paths of this registry generation (IsSlidingDoorSfxPath read two IL2CPP
+        // strings per sliding door on every Play / one-shot).
+        static readonly Dictionary<string, EventSlidingDoor> _slidingSfx = new Dictionary<string, EventSlidingDoor>();
+        static int _slidingSfxGeneration = -1;
+        // Client: the local player's room and its floor-plan rectangle (XY of the room's mesh renderers), for the
+        // room gate on relayed one-shots that only carry a position.
+        static Room _boundsRoom;
+        static Rect _roomRect;
+        static bool _roomRectOk;
+        static int _boundsGeneration = -1;
         // Host: when a Stop for a key last went out, so a client Play that crossed it on the wire does not restart the loop.
         static readonly Dictionary<EmitKey, float> _lastHostStopAt = new Dictionary<EmitKey, float>();
         static readonly Dictionary<EmitKey, StudioEventEmitter> _byId = new Dictionary<EmitKey, StudioEventEmitter>();
@@ -95,6 +108,7 @@ namespace SyncRADation.Networking
             _missUntil.Clear();
             _skipIds.Clear();
             _okKeys.Clear();
+            _hostOkKeys.Clear();
             // The scene registry was rebuilt (everything was invalidated): the next miss may scan right away.
             _lastRebuildAt = -999f;
             _lastInvalidateAt = -999f;
@@ -200,9 +214,18 @@ namespace SyncRADation.Networking
             {
                 if (msg.Kind == 1)
                 {
+                    var at = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+                    // Same room gate as relayed emitters (AudibleHere): a one-shot from the next room is not heard
+                    // through the wall just because it is within the distance falloff.
+                    if (!AudibleAt(at))
+                    {
+                        if (ModRuntime.VerboseLogging)
+                            PlaytestLog.Verbose("FMOD", "skip OneShot (other room) " + msg.Path);
+                        return;
+                    }
                     if (ModRuntime.VerboseLogging)
                         PlaytestLog.Verbose("FMOD", "apply OneShot " + msg.Path);
-                    WorldSfx.Play(msg.Path, new Vector3(msg.PosX, msg.PosY, msg.PosZ));
+                    WorldSfx.Play(msg.Path, at);
                     return;
                 }
 
@@ -287,12 +310,32 @@ namespace SyncRADation.Networking
                 if (known && was && _skipIds.Contains(key)) return;
             }
             string path = "";
-            try { path = emitter.Event; } catch (System.Exception e) { Guard.Swallow(e); }
-            if (IsLocalOnly(emitter.transform) || IsDoorEmitter(emitter) || IsSceneBed(path))
+            if (_hostOkKeys.Contains(key))
             {
-                _skipIds.Add(key);
-                _sentPlaying[key] = play;
-                return;
+                // Static checks passed before; Cinematic is the one dynamic part (airlock / event camera starts).
+                bool cinematic = false;
+                try { cinematic = LocalInspect.Cinematic(emitter.gameObject); } catch (System.Exception e) { Guard.Swallow(e); }
+                if (cinematic)
+                {
+                    _sentPlaying[key] = play;
+                    return;
+                }
+                if (ModRuntime.VerboseLogging)
+                {
+                    try { path = emitter.Event; } catch (System.Exception e) { Guard.Swallow(e); }
+                }
+            }
+            else
+            {
+                try { path = emitter.Event; } catch (System.Exception e) { Guard.Swallow(e); }
+                if (IsLocalOnly(emitter.transform) || IsDoorEmitter(emitter) || IsSceneBed(path))
+                {
+                    _skipIds.Add(key);
+                    _sentPlaying[key] = play;
+                    return;
+                }
+                if (_hostOkKeys.Count > 4096) _hostOkKeys.Clear();
+                _hostOkKeys.Add(key);
             }
             _skipIds.Remove(key);
             _sentPlaying[key] = play;
@@ -505,7 +548,7 @@ namespace SyncRADation.Networking
             if (net == null || !net.IsConnected) return;
             if (ModRuntime.VerboseLogging)
                 PlaytestLog.Verbose("FMOD", "OneShot " + path);
-            net.SendFmodEmitter(new FmodEmitterMessage
+            var msg = new FmodEmitterMessage
             {
                 Play = true,
                 Kind = 1,
@@ -513,7 +556,13 @@ namespace SyncRADation.Networking
                 PosY = pos.y,
                 PosZ = pos.z,
                 Path = path
-            });
+            };
+            // Same rule as HostEmit: a one-shot produced by applying a client's packet already played natively on
+            // that client, so it goes to everyone else only.
+            if (NetGate.IsApplying && NetGate.ApplySender >= 1)
+                net.FmodHandlers.SendFmodEmitterExcept(msg, NetGate.ApplySender);
+            else
+                net.SendFmodEmitter(msg);
         }
 
         /// <summary>Resolve FMOD event path from Guid via StudioSystem.lookupPath.</summary>
@@ -547,7 +596,7 @@ namespace SyncRADation.Networking
         /// <summary>Shared host relay for world one-shots (string / Guid / Attached).</summary>
         public static void TryHostWorldOneShot(string path, Vector3 position)
         {
-            if (!NetGate.Host) return;
+            if (!NetGate.Host || !NetGate.Party) return; // a lone host has nobody to tell
             if (string.IsNullOrEmpty(path)) return;
             // A peer's puzzle press replayed here: every peer replays it from the puzzle state itself.
             if (PuzzleFx.Active) return;
@@ -584,6 +633,87 @@ namespace SyncRADation.Networking
                 return WorldSfx.TryVolume(go.transform.position, out vol);
             }
             catch (System.Exception e) { Guard.Swallow(e); return true; }
+        }
+
+        /// <summary>
+        /// Client gate for a relayed one-shot (position only, no emitter): inside the local player's room when that
+        /// room's floor plan is known, else the door distance. The plan is the XY union of the room's active mesh
+        /// renderers (its chunk geometry), measured once per room and registry generation.
+        /// </summary>
+        public static bool AudibleAt(Vector3 pos)
+        {
+            try
+            {
+                var player = PlayerState.player;
+                if (player != null)
+                {
+                    // Right next to the player is audible whatever the floor plan says (doorways, rect edges).
+                    Vector2 d = (Vector2)(player.transform.position - pos);
+                    if (d.sqrMagnitude < RoomNearAlways * RoomNearAlways) return true;
+                }
+                var here = PlayerState.currentRoom;
+                if (here != null)
+                {
+                    int g = WorldRegistry.Generation;
+                    if (g != _boundsGeneration || _boundsRoom == null || _boundsRoom != here)
+                    {
+                        _boundsGeneration = g;
+                        _boundsRoom = here;
+                        _roomRectOk = TryRoomRect(here, out _roomRect);
+                    }
+                    if (_roomRectOk)
+                        return _roomRect.Contains(new Vector2(pos.x, pos.y));
+                }
+                float vol;
+                return WorldSfx.TryVolume(pos, out vol);
+            }
+            catch (System.Exception e) { Guard.Swallow(e); return true; }
+        }
+
+        const float RoomRectSlack = 1f;
+        const float RoomNearAlways = 8f;
+
+        static bool TryRoomRect(Room room, out Rect rect)
+        {
+            rect = default(Rect);
+            bool any = false;
+            float minX = 0f, minY = 0f, maxX = 0f, maxY = 0f;
+            try
+            {
+                AddRenderers(room.gameObject, ref any, ref minX, ref minY, ref maxX, ref maxY);
+                // The tile floor can live outside the Room's own hierarchy.
+                var tiles = room.Tilesystem;
+                if (tiles != null && !tiles.transform.IsChildOf(room.transform))
+                    AddRenderers(tiles, ref any, ref minX, ref minY, ref maxX, ref maxY);
+            }
+            catch (System.Exception e) { Guard.Swallow(e); return false; }
+            if (!any) return false;
+            rect = Rect.MinMaxRect(minX - RoomRectSlack, minY - RoomRectSlack, maxX + RoomRectSlack, maxY + RoomRectSlack);
+            return true;
+        }
+
+        static void AddRenderers(GameObject root, ref bool any, ref float minX, ref float minY, ref float maxX, ref float maxY)
+        {
+            var rends = root.GetComponentsInChildren<MeshRenderer>(false);
+            if (rends == null) return;
+            for (int i = 0; i < rends.Length; i++)
+            {
+                var r = rends[i];
+                if (r == null) continue;
+                var b = r.bounds;
+                var mn = b.min;
+                var mx = b.max;
+                if (!any)
+                {
+                    minX = mn.x; minY = mn.y; maxX = mx.x; maxY = mx.y;
+                    any = true;
+                    continue;
+                }
+                if (mn.x < minX) minX = mn.x;
+                if (mn.y < minY) minY = mn.y;
+                if (mx.x > maxX) maxX = mx.x;
+                if (mx.y > maxY) maxY = mx.y;
+            }
         }
 
         public static bool ShouldBlockDoorOneShot(string path)
@@ -693,6 +823,12 @@ namespace SyncRADation.Networking
             _lastHostStopAt.Clear();
             _skipIds.Clear();
             _okKeys.Clear();
+            _hostOkKeys.Clear();
+            _slidingSfx.Clear();
+            _slidingSfxGeneration = -1;
+            _boundsRoom = null;
+            _roomRectOk = false;
+            _boundsGeneration = -1;
             _byId.Clear();
             _missUntil.Clear();
             _idCache.Clear();
@@ -777,20 +913,28 @@ namespace SyncRADation.Networking
         {
             door = null;
             if (string.IsNullOrEmpty(path)) return false;
-            try
+            int g = WorldRegistry.Generation;
+            if (g != _slidingSfxGeneration)
             {
-                foreach (var kvp in WorldRegistry.AllSlidingDoors())
+                _slidingSfxGeneration = g;
+                _slidingSfx.Clear();
+                try
                 {
-                    var sd = kvp.Value;
-                    if (sd == null) continue;
-                    if (sd.openSFX == path || sd.closeSFX == path)
+                    foreach (var kvp in WorldRegistry.AllSlidingDoors())
                     {
-                        door = sd;
-                        return true;
+                        var sd = kvp.Value;
+                        if (sd == null) continue;
+                        string open = sd.openSFX, close = sd.closeSFX;
+                        // First registered door wins, as the old registry walk did.
+                        if (!string.IsNullOrEmpty(open) && !_slidingSfx.ContainsKey(open)) _slidingSfx[open] = sd;
+                        if (!string.IsNullOrEmpty(close) && !_slidingSfx.ContainsKey(close)) _slidingSfx[close] = sd;
                     }
                 }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
-            catch (System.Exception e) { Guard.Swallow(e); }
+            if (!_slidingSfx.TryGetValue(path, out door)) return false;
+            if (door != null) return true;
+            door = null; // destroyed since the rebuild
             return false;
         }
     }

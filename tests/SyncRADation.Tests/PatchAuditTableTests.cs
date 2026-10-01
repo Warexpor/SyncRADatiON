@@ -27,7 +27,7 @@ namespace SyncRADation.Tests
                 foreach (Match m in Regex.Matches(File.ReadAllText(f), "(?:GetField|GetMethod|GetProperty|AccessTools\\.(?:Field|Method|Property))\\(\\s*\"(\\w+)\""))
                     lookups.Add(m.Groups[1].Value + " (" + Path.GetFileName(f) + ")");
             }
-            Assert.True(lookups.Count >= 6, "scanner found only " + lookups.Count + " reflected lookups: regex out of date?");
+            Assert.True(lookups.Count >= 5, "scanner found only " + lookups.Count + " reflected lookups: regex out of date?");
             var missing = lookups.Where(l => !audit.Contains("\"" + l.Substring(0, l.IndexOf(' ')) + "\"")).ToList();
             Assert.True(missing.Count == 0, "add to PatchAudit.Reflected: " + string.Join(", ", missing));
         }

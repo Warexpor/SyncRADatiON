@@ -219,10 +219,6 @@ namespace SyncRADation
             try { NetworkDamageSystem.TickRespawn(); }
             catch (System.Exception ex) { Guard.Swallow("ModRuntime.TickRespawn", ex); }
             HitchTrace.End("tickRespawn", tp);
-            tp = HitchTrace.Begin();
-            try { Cheats.EntitySpawner.Tick(); }
-            catch (System.Exception ex) { Guard.Swallow("ModRuntime.EntitySpawnerTick", ex); }
-            HitchTrace.End("entitySpawner", tp);
 
             if (net != null && net.IsConnected)
                 HitchTrace.Frame();

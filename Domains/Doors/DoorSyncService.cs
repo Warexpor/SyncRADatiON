@@ -35,6 +35,56 @@ namespace SyncRADation.Networking
         private const float ScanInterval = 0.3f;
         private static bool _ready;
 
+        // Local Unity instance id -> registry WorldId (never sent), rebuilt when WorldRegistry.Generation moves.
+        // The open/close hooks fire every frame per active door: no hierarchy hashing there.
+        private static readonly Dictionary<int, ulong> _doubleIdByInst = new Dictionary<int, ulong>();
+        private static readonly Dictionary<int, ulong> _slidingIdByInst = new Dictionary<int, ulong>();
+        private static int _idGeneration = -1;
+        // Last open flag each door instance reported through the per-frame hook (only edges go further).
+        private static readonly Dictionary<int, bool> _instOpen = new Dictionary<int, bool>();
+
+        static void EnsureIdMaps()
+        {
+            int g = WorldRegistry.Generation;
+            if (g == _idGeneration) return;
+            _idGeneration = g;
+            _doubleIdByInst.Clear();
+            _slidingIdByInst.Clear();
+            _instOpen.Clear();
+            foreach (var kvp in WorldRegistry.AllDoubleDoors())
+            {
+                try { if (kvp.Value != null) _doubleIdByInst[kvp.Value.GetInstanceID()] = kvp.Key; }
+                catch (System.Exception e) { Guard.Swallow(e); }
+            }
+            foreach (var kvp in WorldRegistry.AllSlidingDoors())
+            {
+                try { if (kvp.Value != null) _slidingIdByInst[kvp.Value.GetInstanceID()] = kvp.Key; }
+                catch (System.Exception e) { Guard.Swallow(e); }
+            }
+        }
+
+        static ulong DoubleDoorId(Doorway_Double d, int inst)
+        {
+            EnsureIdMaps();
+            ulong id;
+            if (_doubleIdByInst.TryGetValue(inst, out id)) return id;
+            // Not registered (instantiated after the scan): hash once and remember.
+            id = WorldId.FromGameObject(d.gameObject);
+            _doubleIdByInst[inst] = id;
+            return id;
+        }
+
+        static ulong SlidingDoorId(EventSlidingDoor sd)
+        {
+            EnsureIdMaps();
+            int inst = sd.GetInstanceID();
+            ulong id;
+            if (_slidingIdByInst.TryGetValue(inst, out id)) return id;
+            id = WorldId.FromGameObject(sd.gameObject);
+            _slidingIdByInst[inst] = id;
+            return id;
+        }
+
         public static void RefreshScene()
         {
             ResetScene();
@@ -85,6 +135,11 @@ namespace SyncRADation.Networking
             LastCdLocked.Clear();
             LastSdOpened.Clear();
             LastSdMoving.Clear();
+            _doubleIdByInst.Clear();
+            _slidingIdByInst.Clear();
+            _instOpen.Clear();
+            _idGeneration = -1;
+            SyncRADation.Patches.DoubleDoorOpenPatch.ResetScene();
             _scanTimer = 0f;
             _ready = false;
         }
@@ -98,7 +153,7 @@ namespace SyncRADation.Networking
                 return;
             }
 
-            _scanTimer += Mathf.Min(Time.deltaTime, 0.1f);
+            _scanTimer += Mathf.Min(Time.unscaledDeltaTime, 0.1f);
             if (_scanTimer < ScanInterval) return;
             _scanTimer = 0f;
 
@@ -172,9 +227,15 @@ namespace SyncRADation.Networking
         public static void NotifyDoubleDoor(Doorway_Double d, bool open)
         {
             if (d == null || NetGate.IsApplying) return;
-            var net = LanNetworkManager.Instance;
-            if (net == null || !net.IsConnected) return;
-            ulong id = WorldId.FromGameObject(d.gameObject);
+            if (!NetGate.Live) return;
+            int inst;
+            try { inst = d.GetInstanceID(); } catch { return; }
+            EnsureIdMaps();
+            // Per-frame hook: same flag as last frame = nothing happened. Lock edges ride the 0.3 s Tick poll.
+            bool was;
+            if (_instOpen.TryGetValue(inst, out was) && was == open) return;
+            _instOpen[inst] = open;
+            ulong id = DoubleDoorId(d, inst);
             if (id == 0) return;
             bool lo;
             LastDoubleOpen.TryGetValue(id, out lo);
@@ -196,9 +257,8 @@ namespace SyncRADation.Networking
         public static void NotifySlidingDoor(EventSlidingDoor sd)
         {
             if (sd == null || NetGate.IsApplying) return;
-            var net = LanNetworkManager.Instance;
-            if (net == null || !net.IsConnected) return;
-            ulong id = WorldId.FromGameObject(sd.gameObject);
+            if (!NetGate.Live) return;
+            ulong id = SlidingDoorId(sd);
             if (id == 0) return;
             bool lo, lm;
             LastSdOpened.TryGetValue(id, out lo);
@@ -451,6 +511,18 @@ namespace SyncRADation.Networking
             }
 
             var net = LanNetworkManager.Instance;
+            // The host echoes a client's own change back to it (DoorNetHandlers): already applied natively here,
+            // and re-running Unlock + ReleaseTraverse mid-traverse would re-arm the door's interactions.
+            if (net != null && net.Role == NetworkRole.Client && msg.SenderPlayerId == net.LocalPlayerId)
+            {
+                bool cur = msg.Locked;
+                try { cur = cd.locked; } catch (System.Exception ex) { PuzzleSyncService.WarnOnce("door-cd-read-echo", ex.Message); }
+                if (cur == msg.Locked)
+                {
+                    LastCdLocked[id] = cur;
+                    return true;
+                }
+            }
             if (net != null && net.Role == NetworkRole.Host && msg.Locked)
             {
                 bool hostLocked = true;

@@ -22,9 +22,13 @@ namespace SyncRADation.Networking
             = new Dictionary<long, (MonoBehaviour comp, BossType type)>();
 
         private END_Boss[] _endBosses = Array.Empty<END_Boss>();
-        private BOS_Adler[] _adlers = Array.Empty<BOS_Adler>();
         private LAB_ChimeraBoss[] _chimeras = Array.Empty<LAB_ChimeraBoss>();
         private MED_MynahBoss[] _mynahs = Array.Empty<MED_MynahBoss>();
+        // WorldIds per cached boss (parallel to the arrays above), taken once when the cache is built: the 15 Hz
+        // snapshot and every id lookup read these instead of re-hashing the hierarchy path.
+        private ulong[] _endIds = Array.Empty<ulong>();
+        private ulong[] _chimeraIds = Array.Empty<ulong>();
+        private ulong[] _mynahIds = Array.Empty<ulong>();
         private bool _bossCacheReady;
         private readonly List<BossSnapshotNet> _tickList = new List<BossSnapshotNet>(8);
         // Client: last host-confirmed Falke HP per WorldId. PlayerAttack mutates Hitbox.HP directly
@@ -43,73 +47,49 @@ namespace SyncRADation.Networking
         {
             if (_bossCacheReady) return;
             _endBosses = WorldLookup.All<END_Boss>() ?? Array.Empty<END_Boss>();
-            _adlers = WorldLookup.All<BOS_Adler>() ?? Array.Empty<BOS_Adler>();
             _chimeras = WorldLookup.All<LAB_ChimeraBoss>() ?? Array.Empty<LAB_ChimeraBoss>();
             _mynahs = WorldLookup.All<MED_MynahBoss>() ?? Array.Empty<MED_MynahBoss>();
+            _endIds = IdsOf(_endBosses);
+            _chimeraIds = IdsOf(_chimeras);
+            _mynahIds = IdsOf(_mynahs);
             _bossCacheReady = true;
         }
 
-        /// <summary>Host: retarget END/Adler Elster refs without per-tick FindObjectsOfType.</summary>
-        public void RetargetElsters(LanNetworkManager net, PlayerProxyManager pm)
+        static ulong[] IdsOf<T>(T[] bosses) where T : Component
         {
-            if (net == null || pm == null) return;
-            EnsureBossCache();
-            try
+            var ids = new ulong[bosses.Length];
+            for (int i = 0; i < bosses.Length; i++)
             {
-                var ends = _endBosses;
-                for (int i = 0; i < ends.Length; i++)
-                {
-                    var b = ends[i];
-                    if (b == null) continue;
-                    Transform bt;
-                    try { bt = b.transform; }
-                    catch { continue; }
-                    if (bt == null) continue;
-                    var n = FindNearest(bt.position, net, pm);
-                    if (n == null) continue;
-                    try { b.Elster = n; } catch (Exception e) { Guard.Swallow(e); }
-                    try { b.Target = n; } catch (Exception e) { Guard.Swallow(e); }
-                }
+                try { if ((Component)bosses[i] != null) ids[i] = Sync.WorldId.FromGameObject(bosses[i].gameObject); }
+                catch (Exception e) { Guard.Swallow(e); }
             }
-            catch (Exception e) { Guard.Swallow(e); }
-
-            try
-            {
-                var adlers = _adlers;
-                for (int i = 0; i < adlers.Length; i++)
-                {
-                    var a = adlers[i];
-                    if (a == null) continue;
-                    Transform at;
-                    try { at = a.transform; }
-                    catch { continue; }
-                    if (at == null) continue;
-                    var n = FindNearest(at.position, net, pm);
-                    if (n != null) { try { a.Elster = n; } catch (Exception e) { Guard.Swallow(e); } }
-                }
-            }
-            catch (Exception e) { Guard.Swallow(e); }
+            return ids;
         }
 
-        static Transform FindNearest(Vector3 fromPos, LanNetworkManager net, PlayerProxyManager pm)
+        static ulong IdIn<T>(T[] bosses, ulong[] ids, T b) where T : Component
         {
-            Transform best = null;
-            float bestDist = 40f * 40f;
-            var localPlayer = net.GetLocalPlayer();
-            if (localPlayer != null && !NetworkDamageSystem.IsDead)
-            {
-                float d = (localPlayer.transform.position - fromPos).sqrMagnitude;
-                if (d < bestDist) { bestDist = d; best = localPlayer.transform; }
-            }
-            foreach (int pid in net.GetRemotePlayerIds())
-            {
-                var proxy = pm.GetProxy(pid);
-                if (proxy == null || proxy.GameObject == null) continue;
-                if (PartyVitals.IsProxyDown(pid, proxy)) continue; // downed peers are not targets
-                float d = (proxy.GameObject.transform.position - fromPos).sqrMagnitude;
-                if (d < bestDist) { bestDist = d; best = proxy.GameObject.transform; }
-            }
-            return best;
+            // Component-typed compare: a generic T == T is a managed reference compare, not Unity's.
+            Component want = b;
+            if (want == null) return 0;
+            for (int i = 0; i < bosses.Length && i < ids.Length; i++)
+                if ((Component)bosses[i] == want) return ids[i];
+            // Not in this scene's boss cache (should not happen for scene bosses): hash it once.
+            try { return Sync.WorldId.FromGameObject(want.gameObject); }
+            catch (Exception e) { Guard.Swallow(e); return 0; }
+        }
+
+        /// <summary>Cached WorldId of a Falke controller.</summary>
+        public ulong BossId(END_Boss b)
+        {
+            EnsureBossCache();
+            return IdIn(_endBosses, _endIds, b);
+        }
+
+        /// <summary>Cached WorldId of a Chimera controller.</summary>
+        public ulong BossId(LAB_ChimeraBoss b)
+        {
+            EnsureBossCache();
+            return IdIn(_chimeras, _chimeraIds, b);
         }
 
         /// <summary>Client per-frame: forward local hits on puppeted bosses to the host.</summary>
@@ -287,7 +267,7 @@ namespace SyncRADation.Networking
             if (net.Role != NetworkRole.Host) return;
             if (!net.IsConnected) return;
 
-            _sendTimer += Mathf.Min(Time.deltaTime, 0.1f);
+            _sendTimer += Mathf.Min(Time.unscaledDeltaTime, 0.1f);
             if (_sendTimer < SendInterval && !_forceSend) return;
             _sendTimer = 0f;
             _forceSend = false;
@@ -329,7 +309,7 @@ namespace SyncRADation.Networking
                     BossType = (byte)BossType.END_Boss,
                     PosX = t.position.x, PosY = t.position.y, PosZ = t.position.z,
                     RotY = t.eulerAngles.y,
-                    WorldId = unchecked((long)Sync.WorldId.FromGameObject(b.gameObject)),
+                    WorldId = unchecked((long)_endIds[i]),
                     Alive = b.state != END_Boss.states.dead,
                     StateEnum = (byte)b.state,
                     Bool0 = b.started, Bool1 = b.survival, Bool2 = b.hit,
@@ -364,7 +344,7 @@ namespace SyncRADation.Networking
                     BossType = (byte)BossType.LAB_ChimeraBoss,
                     PosX = targetT.position.x, PosY = targetT.position.y, PosZ = targetT.position.z,
                     RotY = targetT.eulerAngles.y,
-                    WorldId = unchecked((long)Sync.WorldId.FromGameObject(b.gameObject)),
+                    WorldId = unchecked((long)_chimeraIds[i]),
                     Alive = b.inOperation && !b.done,
                     StateEnum = 0,
                     Bool0 = b.inOperation, Bool1 = b.done, Bool2 = b.isaUp,
@@ -393,7 +373,7 @@ namespace SyncRADation.Networking
                     BossType = (byte)BossType.MED_MynahBoss,
                     PosX = targetT.position.x, PosY = targetT.position.y, PosZ = targetT.position.z,
                     RotY = targetT.eulerAngles.y,
-                    WorldId = unchecked((long)Sync.WorldId.FromGameObject(b.gameObject)),
+                    WorldId = unchecked((long)_mynahIds[i]),
                     Alive = b.inProgress,
                     StateEnum = 0,
                     Bool0 = b.inProgress, Bool1 = b.phaseTwo, Bool2 = b.phaseThree,
@@ -733,7 +713,7 @@ namespace SyncRADation.Networking
             for (int i = 0; i < ends.Length; i++)
             {
                 var e = ends[i];
-                if (e != null && Sync.WorldId.FromGameObject(e.gameObject) == want)
+                if (e != null && _endIds[i] == want)
                 {
                     type = BossType.END_Boss;
                     return e;
@@ -744,7 +724,7 @@ namespace SyncRADation.Networking
             for (int i = 0; i < labs.Length; i++)
             {
                 var l = labs[i];
-                if (l != null && Sync.WorldId.FromGameObject(l.gameObject) == want)
+                if (l != null && _chimeraIds[i] == want)
                 {
                     type = BossType.LAB_ChimeraBoss;
                     return l;
@@ -755,7 +735,7 @@ namespace SyncRADation.Networking
             for (int i = 0; i < meds.Length; i++)
             {
                 var m = meds[i];
-                if (m != null && Sync.WorldId.FromGameObject(m.gameObject) == want)
+                if (m != null && _mynahIds[i] == want)
                 {
                     type = BossType.MED_MynahBoss;
                     return m;
@@ -845,9 +825,11 @@ namespace SyncRADation.Networking
             _spearTaker.Clear();
             _bossCacheReady = false;
             _endBosses = Array.Empty<END_Boss>();
-            _adlers = Array.Empty<BOS_Adler>();
             _chimeras = Array.Empty<LAB_ChimeraBoss>();
             _mynahs = Array.Empty<MED_MynahBoss>();
+            _endIds = Array.Empty<ulong>();
+            _chimeraIds = Array.Empty<ulong>();
+            _mynahIds = Array.Empty<ulong>();
             SyncRADation.Patches.KolibriAdlerAuthPatches.Clear();
         }
 

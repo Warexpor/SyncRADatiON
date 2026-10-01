@@ -6,21 +6,33 @@ using UnityEngine;
 
 namespace SyncRADation.Patches
 {
+    // Doorway_Double.Update calls openDoors / closeDoors EVERY frame (they lerp the leaves toward `open`, Ghidra
+    // Doorway_Double.c Update); the real state is the `open` flag. Both hooks stay per-frame cheap.
     [HarmonyPatch(typeof(Doorway_Double), "openDoors")]
     public static class DoubleDoorOpenPatch
     {
+        static readonly System.Collections.Generic.HashSet<int> _blockLogged = new System.Collections.Generic.HashSet<int>();
+
+        /// <summary>Scene change: the per-door "blocked" log may fire again.</summary>
+        internal static void ResetScene() => _blockLogged.Clear();
+
         [HarmonyPrefix]
         public static bool Prefix(Doorway_Double __instance, ref bool __state)
         {
             __state = true;
-            if (__instance == null || NetGate.IsApplying) return true;
+            // Solo / lone host: vanilla. ConnectedDoors traversal sets open=true without checking locked
+            // (Ghidra ConnectedDoors.c traverseAB), so blocking here would freeze that door.
+            if (__instance == null || NetGate.IsApplying || !NetGate.Party) return true;
             try
             {
                 if (!__instance.locked) return true;
             }
             catch { return true; }
             __state = false;
-            PlaytestLog.Event("Door", "block locked open " + __instance.gameObject.name);
+            int key = 0;
+            try { key = __instance.GetInstanceID(); } catch (System.Exception e) { Guard.Swallow(e); }
+            if (_blockLogged.Add(key))
+                PlaytestLog.Event("Door", "block locked open " + __instance.gameObject.name);
             return false;
         }
 

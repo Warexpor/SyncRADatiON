@@ -38,10 +38,12 @@ namespace SyncRADation.Networking
                 var w = new NetDataWriter();
                 w.Put((byte)NetMessageType.DoorState);
                 doorMsg.Serialize(w);
-                // A rejected client open comes back re-stamped with the host id and is sent to everyone,
-                // including the sender, so its door re-seals.
-                bool corrected = doorMsg.SenderPlayerId != senderId;
-                _net.RelayRaw(w, DeliveryMethod.ReliableOrdered, corrected ? -1 : senderId);
+                // The applied state goes to everyone, the sender included: two peers flipping the same door at once
+                // otherwise end split (each applied the other's change last, and open state is never polled). The
+                // host's ReliableOrdered stream orders it after any change the host sent before, so every peer ends
+                // on the host's order. Echo apply is idempotent: DoorNative returns when the door already matches,
+                // the hooks find Last* already at the applied state (no re-emit) and a client never relays.
+                _net.RelayRaw(w, DeliveryMethod.ReliableOrdered, -1);
             }
         }
     }

@@ -34,6 +34,9 @@ namespace SyncRADation.Patches
                 return false;
             }
 
+            // Host with nobody connected: vanilla spawner.
+            if (!NetGate.Party) return true;
+
             // Host FixedUpdate distances against Player (local Elster). When only a peer is
             // in radius, point Player at that proxy for this tick so the spawner still fires.
             TryRedirectPlayerForPeers(__instance, ref __state);
@@ -49,7 +52,9 @@ namespace SyncRADation.Patches
                 catch (System.Exception e) { Guard.Swallow(e); }
             }
 
-            if (!NetGate.Host || __instance == null) return;
+            // A lone host keeps the native child as is (no SR_Spawn_ rename, no template scan). The child is still
+            // _Child when a peer joins, so the first Party tick adopts and broadcasts it then.
+            if (!NetGate.Host || !NetGate.Party || __instance == null) return;
             TryAdoptNativeChild(__instance);
         }
 

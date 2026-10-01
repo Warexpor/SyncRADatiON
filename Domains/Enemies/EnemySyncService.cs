@@ -32,7 +32,11 @@ namespace SyncRADation.Networking
         private readonly List<EnemySnapshotNet> _snapList = new List<EnemySnapshotNet>(32);
         private BasicEnemy[] _basics = Array.Empty<BasicEnemy>();
         private EnemyCookBase[] _cooks = Array.Empty<EnemyCookBase>();
-        private bool _altAiCached;
+        // WorldRegistry.Generation the alt-AI arrays were taken under (-1 = none yet).
+        private int _altAiGeneration = -1;
+        // Client: last host-confirmed Hitbox.HP per enemy. PlayerAttack lowers the puppet's Hitbox.HP itself before
+        // calling TakeDamage (Ghidra PlayerAttack.c), so the drop below this value is the local hit's damage.
+        private readonly Dictionary<ulong, int> _lastSnapHp = new Dictionary<ulong, int>();
 
         public void RequestFullSend() => _forceSend = true;
 
@@ -51,7 +55,7 @@ namespace SyncRADation.Networking
             // than the 15 Hz snapshot gate below — and it early-outs when there are no remote proxies.
             ClientDamageService.TickHurtboxes(net);
 
-            _sendTimer += Mathf.Min(Time.deltaTime, 0.1f);
+            _sendTimer += Mathf.Min(Time.unscaledDeltaTime, 0.1f);
             if (_sendTimer < PluginInfo.EntitySendInterval && !_forceSend) return;
             _sendTimer = 0f;
             _forceSend = false;
@@ -77,9 +81,12 @@ namespace SyncRADation.Networking
                 if (e.state != EnemyController.enemystate.dead)
                 {
                     // The host's own room chunks are native; only a remote peer standing in a room the host
-                    // left asleep needs a wake. A level-disabled enemy is never a target.
-                    if (!EnemyVisiblyInChunk(e) && pm != null && PeerInEnemyRoom(e, et.position, net, pm))
-                        WakeForCombat(e, wakeAi: true);
+                    // left asleep needs a wake. A level-disabled enemy is never a target (and is not re-walked
+                    // every tick: a refused wake backs off).
+                    if (!EnemyVisiblyInChunk(e) && pm != null && !WakeBackedOff(e)
+                        && PeerInEnemyRoom(e, et.position, net, pm)
+                        && !WakeForCombat(e, wakeAi: true))
+                        NoteWakeRefused(e);
                     if (EnemyVisiblyInChunk(e))
                         nearest = FindNearestTarget(et.position, net, pm);
                 }
@@ -183,10 +190,12 @@ namespace SyncRADation.Networking
 
         void EnsureAltAiCache()
         {
-            if (_altAiCached) return;
+            // Rebuilt with the registry: spawns / scene changes after the first tick are picked up.
+            int g = WorldRegistry.Generation;
+            if (_altAiGeneration == g) return;
             _basics = WorldLookup.All<BasicEnemy>() ?? Array.Empty<BasicEnemy>();
             _cooks = WorldLookup.All<EnemyCookBase>() ?? Array.Empty<EnemyCookBase>();
-            _altAiCached = true;
+            _altAiGeneration = g;
         }
 
         private void RetargetAltAi(LanNetworkManager net, PlayerProxyManager pm)
@@ -239,7 +248,7 @@ namespace SyncRADation.Networking
             Transform best = null;
             float bestDist = 40f * 40f;
             var localPlayer = net.GetLocalPlayer();
-            if (localPlayer != null)
+            if (localPlayer != null && !NetworkDamageSystem.IsDead)
             {
                 float d = (localPlayer.transform.position - fromPos).sqrMagnitude;
                 if (d < bestDist) { bestDist = d; best = localPlayer.transform; }
@@ -248,6 +257,7 @@ namespace SyncRADation.Networking
             {
                 var proxy = pm.GetProxy(pid);
                 if (proxy == null || proxy.GameObject == null) continue;
+                if (PartyVitals.IsProxyDown(pid, proxy)) continue; // downed peers are not targets
                 float d = (proxy.GameObject.transform.position - fromPos).sqrMagnitude;
                 if (d < bestDist) { bestDist = d; best = proxy.GameObject.transform; }
             }
@@ -479,6 +489,7 @@ namespace SyncRADation.Networking
                     Puppet(enemy);
                     _clientPuppeted.Add(id);
                 }
+                _lastSnapHp[id] = snap.HP;
 
                 // Skip pose snaps for off-chunk enemies so they do not pop through walls.
                 if (!EnemyVisiblyInChunk(enemy))
@@ -596,14 +607,38 @@ namespace SyncRADation.Networking
             catch { return false; }
         }
 
-        /// <summary>Host applies damage from a remote player (legacy float dmg or native TakeDamage).</summary>
-        public bool ApplyDamageOnHost(ulong enemyId, float damage)
+        /// <summary>
+        /// Client, inside the TakeDamage prefix: the HP the local hit took off the puppet (PlayerAttack / Kolibri
+        /// feedback lower Hitbox.HP before TakeDamage). Restores the last host-confirmed HP so the next local hit
+        /// measures only its own damage; the host applies the returned amount. 0 when nothing was taken.
+        /// </summary>
+        public int TakeLocalHitDelta(ulong id, EnemyController enemy)
         {
-            return ApplyLegacyHpDamage(enemyId, damage);
+            if (enemy == null) return 0;
+            try
+            {
+                var hb = enemy.hitbox;
+                if (hb == null) return 0;
+                int cur = hb.HP;
+                int confirmed;
+                if (!_lastSnapHp.TryGetValue(id, out confirmed))
+                {
+                    // No snapshot yet: the puppet still has its native spawn HP.
+                    if (enemy.Preset == null) return 0;
+                    confirmed = enemy.Preset.HP;
+                }
+                if (cur >= confirmed) return 0;
+                hb.HP = confirmed;
+                return confirmed - cur;
+            }
+            catch (Exception ex) { Guard.Swallow(ex); return 0; }
         }
 
-        /// <summary>Preferred: call real EnemyController.TakeDamage chances (from PlayerAttack).</summary>
-        public bool ApplyNativeTakeDamageOnHost(ulong enemyId, float fire, float crit, float hurt, bool noSneak)
+        /// <summary>
+        /// Host: a client's hit. Lower the real Hitbox.HP by the damage the client's PlayerAttack computed (native
+        /// order: HP first, then TakeDamage, which reads HP &lt; 1 for the kill), then run native TakeDamage.
+        /// </summary>
+        public bool ApplyNativeTakeDamageOnHost(ulong enemyId, float damage, float fire, float crit, float hurt, bool noSneak)
         {
             EnemyController enemy;
             if (!WorldRegistry.TryGetEnemy(enemyId, out enemy) || enemy == null
@@ -617,49 +652,33 @@ namespace SyncRADation.Networking
             {
                 if (!WakeForCombat(enemy)) return false;
 
+                int dmg = 0;
+                var hb = enemy.hitbox;
+                if (hb != null && enemy.state != EnemyController.enemystate.dead
+                    && !float.IsNaN(damage) && damage > 0f)
+                {
+                    int maxHp = enemy.Preset != null ? enemy.Preset.HP : hb.HP;
+                    dmg = Mathf.Clamp(Mathf.RoundToInt(damage), 0, Mathf.Max(0, maxHp));
+                    hb.HP -= dmg;
+                }
+
                 enemy.TakeDamage(fire, crit, hurt, noSneak);
                 _forceSend = true;
 
                 PlaytestLog.Event("Enemy", "TakeDamage id=" + enemyId.ToString("X16")
+                    + " dmg=" + dmg
                     + " fire=" + fire.ToString("F2")
                     + " crit=" + crit.ToString("F2")
                     + " hurt=" + hurt.ToString("F2")
-                    + " hp=" + (enemy.hitbox != null ? enemy.hitbox.HP.ToString() : "?")
+                    + " hp=" + (hb != null ? hb.HP.ToString() : "?")
                     + " state=" + enemy.state);
                 return true;
             }
             catch (System.Exception ex)
             {
                 ModRuntime.Log?.Warning("[EnemySync] TakeDamage failed: " + ex.Message);
-                try { enemy.TakeDamage(); return true; }
-                catch { return false; }
-            }
-        }
-
-        private bool ApplyLegacyHpDamage(ulong enemyId, float damage)
-        {
-            EnemyController enemy;
-            if (!WorldRegistry.TryGetEnemy(enemyId, out enemy) || enemy == null
-                || enemy.gameObject == null)
-            {
-                PlaytestLog.Event("Enemy", "legacy dmg MISS id=" + enemyId.ToString("X16"));
                 return false;
             }
-            try
-            {
-                if (!WakeForCombat(enemy)) return false;
-                if (enemy.hitbox != null)
-                {
-                    enemy.hitbox.HP -= (int)damage;
-                    if (enemy.hitbox.HP <= 0)
-                        enemy.state = EnemyController.enemystate.dead;
-                }
-                else
-                    enemy.TakeDamage();
-                _forceSend = true;
-                return true;
-            }
-            catch { return false; }
         }
 
         private Transform FindNearestTarget(Vector3 fromPos, LanNetworkManager net, PlayerProxyManager pm)
@@ -746,18 +765,18 @@ namespace SyncRADation.Networking
         /// <summary>True when every inactive object between the enemy and its Room is that room's chunk object.</summary>
         static bool OnlyChunkAsleep(EnemyController enemy, out Room room)
         {
-            room = null;
+            room = RoomOfEnemy(enemy).Room;
             var inactive = _inactiveScratch;
             inactive.Clear();
+            if (room == null) return false;
+            Transform roomT = room.transform;
             Transform t = enemy.transform;
-            while (t != null)
+            while (t != null && t != roomT)
             {
-                var r = t.GetComponent<Room>();
-                if (r != null) { room = r; break; }
                 if (!t.gameObject.activeSelf) inactive.Add(t.gameObject);
                 t = t.parent;
             }
-            if (room == null || inactive.Count == 0) return false;
+            if (t == null || inactive.Count == 0) return false; // reparented out of the cached room
             if (!room.gameObject.activeInHierarchy) return false;
             GameObject chunk = null, instant = null, cell = null;
             try { chunk = room.chunk; } catch (Exception e) { Guard.Swallow(e); }
@@ -776,27 +795,80 @@ namespace SyncRADation.Networking
         static bool PeerInEnemyRoom(EnemyController enemy, Vector3 pos, LanNetworkManager net, PlayerProxyManager pm)
         {
             string roomName = null;
+            foreach (int pid in net.GetRemotePlayerIds())
+            {
+                var proxy = pm.GetProxy(pid);
+                if (proxy == null || proxy.GameObject == null) continue;
+                // Cheap distance first: the room lookup only runs for an enemy a peer is actually near.
+                if ((proxy.GameObject.transform.position - pos).sqrMagnitude >= 30f * 30f) continue;
+                if (PartyVitals.IsProxyDown(pid, proxy)) continue;
+                if (roomName == null)
+                {
+                    roomName = RoomOfEnemy(enemy).Name ?? "";
+                    if (roomName.Length == 0) return false;
+                }
+                if (PartyVitals.RoomOf(pid) == roomName) return true;
+            }
+            return false;
+        }
+
+        struct EnemyRoom
+        {
+            public Room Room;
+            public string Name;
+        }
+
+        // Host: enemy -> its Room (local instance id, never sent). Rooms do not change under a sleeping enemy;
+        // cleared per scene and on every registry rebuild.
+        static readonly Dictionary<int, EnemyRoom> _enemyRooms = new Dictionary<int, EnemyRoom>();
+        static int _enemyRoomsGeneration = -1;
+
+        static EnemyRoom RoomOfEnemy(EnemyController enemy)
+        {
+            var none = default(EnemyRoom);
+            if (enemy == null) return none;
+            int g = WorldRegistry.Generation;
+            if (g != _enemyRoomsGeneration)
+            {
+                _enemyRooms.Clear();
+                _wakeRefusedUntil.Clear();
+                _enemyRoomsGeneration = g;
+            }
+            int key;
+            try { key = enemy.GetInstanceID(); } catch { return none; }
+            EnemyRoom er;
+            if (_enemyRooms.TryGetValue(key, out er)) return er;
             try
             {
                 var t = enemy.transform;
                 while (t != null)
                 {
                     var r = t.GetComponent<Room>();
-                    if (r != null) { roomName = r.roomName; break; }
+                    if (r != null) { er.Room = r; er.Name = r.roomName ?? ""; break; }
                     t = t.parent;
                 }
             }
             catch (Exception e) { Guard.Swallow(e); }
-            if (string.IsNullOrEmpty(roomName)) return false;
-            foreach (int pid in net.GetRemotePlayerIds())
-            {
-                var proxy = pm.GetProxy(pid);
-                if (proxy == null || proxy.GameObject == null) continue;
-                if (PartyVitals.IsProxyDown(pid, proxy)) continue;
-                if (PartyVitals.RoomOf(pid) != roomName) continue;
-                if ((proxy.GameObject.transform.position - pos).sqrMagnitude < 30f * 30f) return true;
-            }
-            return false;
+            _enemyRooms[key] = er;
+            return er;
+        }
+
+        // Host: a chunk wake the level refused (enemy switched off by the level) is retried after a pause, not per tick.
+        static readonly Dictionary<int, float> _wakeRefusedUntil = new Dictionary<int, float>();
+        const float WakeRetrySeconds = 2f;
+
+        static bool WakeBackedOff(EnemyController e)
+        {
+            if (_wakeRefusedUntil.Count == 0) return false;
+            float until;
+            try { return _wakeRefusedUntil.TryGetValue(e.GetInstanceID(), out until) && Time.unscaledTime < until; }
+            catch { return false; }
+        }
+
+        static void NoteWakeRefused(EnemyController e)
+        {
+            try { _wakeRefusedUntil[e.GetInstanceID()] = Time.unscaledTime + WakeRetrySeconds; }
+            catch (Exception ex) { Guard.Swallow(ex); }
         }
 
         public void PuppetAllNow()
@@ -836,9 +908,13 @@ namespace SyncRADation.Networking
             _mapMisses = 0;
             _sendTimer = 0f;
             _snapList.Clear();
-            _altAiCached = false;
+            _lastSnapHp.Clear();
+            _altAiGeneration = -1;
             _basics = Array.Empty<BasicEnemy>();
             _cooks = Array.Empty<EnemyCookBase>();
+            _enemyRooms.Clear();
+            _wakeRefusedUntil.Clear();
+            _enemyRoomsGeneration = -1;
         }
 
         public void Reset()

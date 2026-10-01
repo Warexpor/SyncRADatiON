@@ -72,7 +72,7 @@ namespace SyncRADation.Networking
             writer.Put((byte)NetMessageType.EnemySpawn);
             msg.Serialize(writer);
             if (_net.Role == NetworkRole.Host)
-                HandleEnemySpawn(msg);
+                EntitySpawner.FinishSpawn(msg.TypeKey, new Vector3(msg.PosX, msg.PosY, msg.PosZ), msg.RotY, 0, true);
             else if (_net.TryGetPeer(0, out var peer) && peer.ConnectionState == ConnectionState.Connected)
                 peer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
@@ -93,6 +93,12 @@ namespace SyncRADation.Networking
             if (_net.Role == NetworkRole.Host)
             {
                 if (msg.Seq > 0) return;
+                // A client's F11 spawns for the whole party: only when the host allows client cheats.
+                if (ModConfig.AllowClientCheats?.Value != true)
+                {
+                    PlaytestLog.Warn("Spawn", "rejected client spawn " + msg.TypeKey + " (AllowClientCheats off)");
+                    return;
+                }
                 EntitySpawner.FinishSpawn(msg.TypeKey, new Vector3(msg.PosX, msg.PosY, msg.PosZ), msg.RotY, 0, true);
                 ClientDamageService.NoteSpawn();
                 return;
@@ -123,14 +129,16 @@ namespace SyncRADation.Networking
                 peer.Send(writer, DeliveryMethod.ReliableOrdered);
         }
 
-        internal void SendNativeEnemyHit(ulong enemyWorldId, float fire, float crit, float hurt, bool noSneak)
+        /// <summary>Client → host: a local hit on a puppet (HP the client's PlayerAttack took off + TakeDamage chances).</summary>
+        internal void SendNativeEnemyHit(ulong enemyWorldId, int damage, float fire, float crit, float hurt, bool noSneak)
         {
+            if (_net.Role != NetworkRole.Client) return;
             var msg = new EnemyDamageMessage
             {
                 AttackerPlayerId = _net.LocalPlayerId,
                 TargetPlayerId = -1,
                 EnemyWorldId = unchecked((long)enemyWorldId),
-                Damage = 0f,
+                Damage = damage,
                 IsStagger = false,
                 NativeTakeDamage = true,
                 FireChance = fire,
@@ -141,17 +149,8 @@ namespace SyncRADation.Networking
             var writer = new NetDataWriter();
             writer.Put((byte)NetMessageType.EnemyDamage);
             msg.Serialize(writer);
-
-            if (_net.Role == NetworkRole.Host)
-            {
-                if (!_net.EnemySync.ApplyNativeTakeDamageOnHost(enemyWorldId, fire, crit, hurt, noSneak))
-                    PlaytestLog.Event("Damage", "host hit miss id=" + enemyWorldId.ToString("X16"));
-            }
-            else if (_net.TryGetPeer(0, out var peer)
-                && peer.ConnectionState == ConnectionState.Connected)
-            {
+            if (_net.TryGetPeer(0, out var peer) && peer.ConnectionState == ConnectionState.Connected)
                 peer.Send(writer, DeliveryMethod.ReliableOrdered);
-            }
         }
 
         /// <summary>Client → host: stomp/push/burn/wake side effects the puppeted client cannot run itself.</summary>
@@ -233,16 +232,13 @@ namespace SyncRADation.Networking
                     + " from " + enemyId.ToString("X16"));
                 NetworkDamageSystem.ApplyDamage(msg.Damage, Vector3.zero, Vector3.zero);
             }
-            else if (msg.AttackerPlayerId >= 0 && msg.TargetPlayerId < 0 && _net.Role == NetworkRole.Host)
+            else if (msg.AttackerPlayerId >= 0 && msg.TargetPlayerId < 0 && _net.Role == NetworkRole.Host
+                && msg.NativeTakeDamage)
             {
-                if (msg.NativeTakeDamage)
-                {
-                    if (!_net.EnemySync.ApplyNativeTakeDamageOnHost(enemyId, msg.FireChance, msg.CriticalChance, msg.HurtChance, msg.NoSneak))
-                        PlaytestLog.Event("Damage", "client hit miss id=" + enemyId.ToString("X16")
-                            + " from=" + msg.AttackerPlayerId);
-                }
-                else
-                    _net.EnemySync.ApplyDamageOnHost(enemyId, msg.Damage);
+                // Damage = HP the client's own PlayerAttack took off its puppet (native mode only).
+                if (!_net.EnemySync.ApplyNativeTakeDamageOnHost(enemyId, msg.Damage, msg.FireChance, msg.CriticalChance, msg.HurtChance, msg.NoSneak))
+                    PlaytestLog.Event("Damage", "client hit miss id=" + enemyId.ToString("X16")
+                        + " from=" + msg.AttackerPlayerId);
             }
         }
     }

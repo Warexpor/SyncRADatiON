@@ -23,8 +23,6 @@ namespace SyncRADation
         /// </summary>
         private static readonly ReflectedMember[] Reflected =
         {
-            new ReflectedMember(typeof(Doorway_Double), "openDoors", MemberKind.Method, "DoorNative"),
-            new ReflectedMember(typeof(Doorway_Double), "closeDoors", MemberKind.Method, "DoorNative"),
             new ReflectedMember(typeof(EventSlidingDoor), "cycle", MemberKind.Method, "DoorNative"),
             new ReflectedMember(typeof(ThirdPersonCharacter), "m_ForwardAmount", MemberKind.FieldOrProperty, "AvatarNetHandlers"),
             new ReflectedMember(typeof(ThirdPersonCharacter), "m_TurnAmount", MemberKind.FieldOrProperty, "AvatarNetHandlers"),

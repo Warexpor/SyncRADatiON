@@ -26,6 +26,8 @@ namespace SyncRADation.Config
         public const int HardMaxPlayers = 8;
         /// <summary>Seconds a downed player waits before respawning next to a living teammate.</summary>
         public static MelonPreferences_Entry<float> DownedRespawnDelay;
+        /// <summary>Host: let clients use the F6 / F7 / F11 cheats that touch the shared world. Default off.</summary>
+        public static MelonPreferences_Entry<bool> AllowClientCheats;
 
         public static void Bind()
         {
@@ -53,6 +55,9 @@ namespace SyncRADation.Config
                 MaxPlayers.Value = System.Math.Max(MinMaxPlayers, System.Math.Min(HardMaxPlayers, MaxPlayers.Value));
             DownedRespawnDelay = Category.CreateEntry("DownedRespawnDelay", 20f,
                 "Seconds a downed player (host or client) waits before respawning next to the nearest living teammate. The party wipes (host reloads its last save) only when everyone is down.");
+
+            AllowClientCheats = Category.CreateEntry("AllowClientCheats", false,
+                "Host: allow clients' F6 (keys onto the party ring), F7 (chapter loads) and F11 (enemy spawns). Off = only the host can cheat.");
 
             if (!SyncPuzzles.Value && ExperimentalPuzzles.Value)
                 SyncPuzzles.Value = true;
