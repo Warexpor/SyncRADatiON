@@ -301,13 +301,19 @@ namespace SyncRADation.Networking
                 PlaytestLog.Verbose("FMOD", (play ? "Play" : "Stop")
                     + (string.IsNullOrEmpty(path) ? "" : " " + path)
                     + " id=" + id.ToString("X16") + "/" + key.Comp);
-            net.SendFmodEmitter(new FmodEmitterMessage
+            var outMsg = new FmodEmitterMessage
             {
                 WorldId = unchecked((long)id),
                 Play = play,
                 Kind = 0,
                 Comp = key.Comp
-            });
+            };
+            // A sound produced by applying a client's packet (its puzzle solve's onSolved) already played natively
+            // on that client: relay to everyone else only, or it hears it twice.
+            if (NetGate.IsApplying && NetGate.ApplySender >= 1)
+                net.FmodHandlers.SendFmodEmitterExcept(outMsg, NetGate.ApplySender);
+            else
+                net.SendFmodEmitter(outMsg);
         }
 
         /// <summary>

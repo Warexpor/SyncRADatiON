@@ -17,7 +17,17 @@ namespace SyncRADation.Sync
             if (_applying > 0) _applying--;
         }
 
-        public static void Reset() => _applying = 0;
+        public static void Reset()
+        {
+            _applying = 0;
+            ApplySender = -1;
+        }
+
+        /// <summary>
+        /// Host: the client whose packet is being applied right now (-1 when none). That client already ran the
+        /// action natively, so side effects relayed from this apply (emitter sounds) skip it.
+        /// </summary>
+        public static int ApplySender = -1;
 
         public static bool Live
         {

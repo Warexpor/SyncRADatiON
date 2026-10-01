@@ -1170,6 +1170,8 @@ namespace SyncRADation.Networking
                 _mutateWorld = cinematic;
                 NetGate.BeginApply();
                 ApplyingPeerPacket = isHost;
+                int prevSender = NetGate.ApplySender;
+                if (isHost && msg.SenderPlayerId >= 1) NetGate.ApplySender = msg.SenderPlayerId;
                 try
                 {
                     for (int i = 0; i < _applyScratch.Count; i++)
@@ -1177,6 +1179,7 @@ namespace SyncRADation.Networking
                 }
                 finally
                 {
+                    NetGate.ApplySender = prevSender;
                     ApplyingPeerPacket = false;
                     _mutateWorld = prevMutate;
                     NetGate.EndApply();

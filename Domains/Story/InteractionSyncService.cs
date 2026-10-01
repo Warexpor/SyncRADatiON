@@ -38,6 +38,9 @@ namespace SyncRADation.Networking
                 return;
             }
 
+            int prevSender = NetGate.ApplySender;
+            if (msg.SenderPlayerId >= 1 && msg.SenderPlayerId != net.LocalPlayerId)
+                NetGate.ApplySender = msg.SenderPlayerId;
             try
             {
                 switch (msg.Kind)
@@ -176,6 +179,10 @@ namespace SyncRADation.Networking
             {
                 reason = ex.Message;
                 ModRuntime.Log?.Warning("[Interact] " + msg.Kind + ": " + ex.Message);
+            }
+            finally
+            {
+                NetGate.ApplySender = prevSender;
             }
 
             if (msg.Kind != InteractionKind.Gunshot)
