@@ -1,13 +1,15 @@
-// SyncRADation � weapon model clone with mesh/material fix, damage cache from AnWeapon.Damage
+// A proxy's held weapon: script-free clones of the local Elster's weapon objects (IL2CPP mesh / material fix-up),
+// one per weapon type, toggled by the sender's equipped weapon; plus the shared AnWeapon.Damage table.
+using System.Collections.Generic;
 using SyncRADation.Networking;
 using SyncRADation.Sync;
-using System.Collections.Generic;
 using UnityEngine;
 
 namespace SyncRADation.Players
 {
     public sealed class RemoteWeaponSync
     {
+        // Game data, intentionally persistent: AnWeapon.Damage per type does not change between sessions.
         private static bool _damageCacheBuilt;
         private static readonly Dictionary<WeaponType, float> _weaponDamageCache = new Dictionary<WeaponType, float>();
 
@@ -17,8 +19,7 @@ namespace SyncRADation.Players
             _damageCacheBuilt = true;
             try
             {
-                var allWeapons = Resources.FindObjectsOfTypeAll<AnWeapon>();
-                foreach (var w in allWeapons)
+                foreach (var w in Resources.FindObjectsOfTypeAll<AnWeapon>())
                 {
                     if (w == null || w.parentItem == null) continue;
                     var wt = WeaponUtils.ItemToWeaponType(w.parentItem._item);
@@ -27,258 +28,236 @@ namespace SyncRADation.Players
                 }
                 PlaytestLog.Verbose("Weapon", "damage cache " + _weaponDamageCache.Count);
             }
-            catch (System.Exception e) { Guard.Swallow(e); }
+            catch (System.Exception e) { Guard.Swallow("Weapon.damageCache", e); }
         }
 
         public static float GetDamage(WeaponType wt)
         {
             BuildDamageCache();
-            if (_weaponDamageCache.TryGetValue(wt, out float d)) return d;
-            return 30f; // fallback
+            return _weaponDamageCache.TryGetValue(wt, out float d) ? d : 30f;
         }
+
+        // Fallback muzzle: chest height above the proxy's feet (SIGNALIS walks the XY plane, up is -Z).
+        private static readonly Vector3 MuzzleHeight = new Vector3(0f, 0f, -0.95f);
 
         private readonly GameObject _proxy;
         private readonly Dictionary<WeaponType, GameObject> _weapons = new Dictionary<WeaponType, GameObject>();
         private readonly Dictionary<WeaponType, RemoteWeaponEffects> _effects = new Dictionary<WeaponType, RemoteWeaponEffects>();
-        private readonly Dictionary<WeaponType, Transform> _sourceWeaponCache = new Dictionary<WeaponType, Transform>();
+        private readonly int _targetLayer;
         private WeaponType _currentWeapon = WeaponType.None;
-        private int _targetLayer;
-        private GameObject _source;
-        private Vector3 _facingDir = Vector3.forward;
-        private Vector3 _muzzlePos;
+
+        /// <summary>Secondary shot sounds (case land, shotgun pump) once the muzzle FX played.</summary>
+        public System.Action<WeaponType> OnShotFired;
 
         public RemoteWeaponSync(GameObject proxy)
         {
             _proxy = proxy;
-            FindTargetLayer();
-            _source = FindSourcePlayer();
-        }
-
-        private void FindTargetLayer()
-        {
-            var smrs = _proxy.GetComponentsInChildren<SkinnedMeshRenderer>(true);
-            foreach (var smr in smrs)
-                if (smr != null && smr.gameObject.layer != 0) { _targetLayer = smr.gameObject.layer; return; }
+            foreach (var smr in proxy.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+            {
+                if (smr != null && smr.gameObject.layer != 0)
+                {
+                    _targetLayer = smr.gameObject.layer;
+                    break;
+                }
+            }
         }
 
         public void ApplyWeapon(WeaponType weapon)
         {
             if (weapon == _currentWeapon) return;
-
-            HideCurrent();
-
-            if (weapon == WeaponType.None) { _currentWeapon = WeaponType.None; return; }
+            if (_currentWeapon != WeaponType.None && _weapons.TryGetValue(_currentWeapon, out var old) && old != null)
+                old.SetActive(false);
+            _currentWeapon = weapon;
+            if (weapon == WeaponType.None) return;
 
             if (!_weapons.TryGetValue(weapon, out var go) || go == null)
             {
                 float t0 = Time.realtimeSinceStartup;
                 go = CreateFromSource(weapon);
                 HitchTrace.Cost("weaponClone", (Time.realtimeSinceStartup - t0) * 1000f);
-                if (go != null) _weapons[weapon] = go;
+                if (go == null) return;
+                _weapons[weapon] = go;
             }
-
-            if (go != null)
-            {
-                go.SetActive(true);
-                // Stop auto-playing particles (PlayOnAwake on weapon switch)
-                if (_effects.TryGetValue(weapon, out var fx))
-                    fx.ResetAll();
-            }
-            _currentWeapon = weapon;
+            go.SetActive(true);
+            // Stop the particles PlayOnAwake starts on activation.
+            if (_effects.TryGetValue(weapon, out var fx))
+                fx.ResetAll();
         }
 
-        public System.Action<WeaponType> OnShotFired; // callback for secondary sounds (pump, eject)
-
-        // Fallback muzzle: chest height above the proxy's feet (SIGNALIS walks the XY plane, up is -Z).
-        private static readonly Vector3 MuzzleHeight = new Vector3(0f, 0f, -0.95f);
-
+        /// <summary>Every frame after the body pose: FX timers, the shot / reload cues and the laser of the drawn weapon.</summary>
         public void Tick(bool aiming, AvatarCue cues, Vector3 proxyPos, Vector3 aimDir)
         {
-            _facingDir = aimDir.sqrMagnitude > 0.0001f ? aimDir.normalized : Vector3.forward;
+            if (_currentWeapon == WeaponType.None || !_effects.TryGetValue(_currentWeapon, out var fx)) return;
 
-            RemoteWeaponEffects fx = null;
-            if (_currentWeapon != WeaponType.None)
-                _effects.TryGetValue(_currentWeapon, out fx);
-
-            if (fx != null)
+            // Shot ray from the posed muzzle (before the slide kick moves it), along the laser / barrel.
+            Vector3 muzzle = default, dir = default;
+            bool fire = (cues & AvatarCue.Fire) != 0;
+            if (fire)
             {
-                Vector3 m;
-                if (fx.TryGetMuzzleWorldPos(out m))
-                    _muzzlePos = m;
-                else
-                    _muzzlePos = proxyPos + MuzzleHeight + _facingDir * 0.35f;
-                Vector3 mdir;
-                if (fx.TryGetLaserForward(out mdir) || fx.TryGetMuzzleForward(out mdir))
-                    _facingDir = mdir;
+                dir = aimDir.sqrMagnitude > 0.0001f ? aimDir.normalized : Vector3.forward;
+                if (!fx.TryGetMuzzleWorldPos(out muzzle))
+                    muzzle = proxyPos + MuzzleHeight + dir * 0.35f;
+                if (fx.TryGetLaserForward(out var d) || fx.TryGetMuzzleForward(out d))
+                    dir = d;
             }
-            else
-                _muzzlePos = proxyPos + MuzzleHeight + _facingDir * 0.35f;
 
-            if (fx == null) return;
             fx.Tick(Time.unscaledDeltaTime);
-
-            // Only the ammo-spent Fire cue: one live round, one muzzle flash and impact.
-            if ((cues & AvatarCue.Fire) != 0)
+            if (fire)
             {
                 fx.OnShot();
-                fx.DoImpactRaycast(_muzzlePos, _facingDir);
+                fx.DoImpactRaycast(muzzle, dir);
                 OnShotFired?.Invoke(_currentWeapon);
             }
-
             if ((cues & AvatarCue.Reload) != 0)
                 fx.OnReload();
-
             fx.UpdateLaser(aiming);
-        }
-
-        private void HideCurrent()
-        {
-            if (_currentWeapon != WeaponType.None && _weapons.TryGetValue(_currentWeapon, out var old) && old != null)
-                old.SetActive(false);
         }
 
         private GameObject CreateFromSource(WeaponType weapon)
         {
-            if (_source == null) _source = FindSourcePlayer();
-            if (_source == null) return null;
-
-            Transform sourceWeaponTransform = FindSourceWeapon(weapon);
-
-            if (sourceWeaponTransform == null)
+            Transform source = FindSourceWeapon(weapon);
+            if (source == null)
             {
                 PlaytestLog.Warn("Weapon", "no source for " + weapon);
                 return null;
             }
 
-            Transform proxyParent = FindMatchingBone(sourceWeaponTransform.parent);
-            if (proxyParent == null)
-            {
-                PlaytestLog.Verbose("Weapon", "no matching parent, using proxy root (" + sourceWeaponTransform.parent.name + ")");
-                proxyParent = _proxy.transform;
-            }
-
+            // Same mount as on the local Elster (found by name in the clone), else the proxy root.
+            Transform parent = FindByName(_proxy.transform, source.parent.name) ?? _proxy.transform;
             GameObject clone;
-            try { clone = Object.Instantiate(sourceWeaponTransform.gameObject, proxyParent, false); }
-            catch (System.Exception ex) { PlaytestLog.Warn("Weapon", "instantiate failed: " + ex.Message); return null; }
+            try { clone = Object.Instantiate(source.gameObject, parent, false); }
+            catch (System.Exception ex)
+            {
+                PlaytestLog.Warn("Weapon", "instantiate " + weapon + " failed: " + ex.Message);
+                return null;
+            }
             clone.name = weapon.ToString();
+            CopyRenderAssets(source, clone.transform);
+            SetLayerRecursive(clone.transform, _targetLayer);
 
-            var srcSmrs = sourceWeaponTransform.GetComponentsInChildren<SkinnedMeshRenderer>(true);
-            var dstSmrs = clone.GetComponentsInChildren<SkinnedMeshRenderer>(true);
-            var srcMfs = sourceWeaponTransform.GetComponentsInChildren<MeshFilter>(true);
-            var dstMfs = clone.GetComponentsInChildren<MeshFilter>(true);
-            int fixedCount = 0;
-            for (int i = 0; i < srcSmrs.Length && i < dstSmrs.Length; i++)
+            // Effects first: they read the source's (and clone's) components before the clone's scripts go.
+            _effects[weapon] = new RemoteWeaponEffects(clone, source.gameObject);
+            // The clone's scripts would read null serialized fields and fight the manual effect driving.
+            foreach (var mb in clone.GetComponentsInChildren<MonoBehaviour>(true))
             {
-                if (srcSmrs[i] == null || dstSmrs[i] == null) continue;
-                if (dstSmrs[i].sharedMesh == null && srcSmrs[i].sharedMesh != null)
-                { dstSmrs[i].sharedMesh = srcSmrs[i].sharedMesh; fixedCount++; }
-                if (dstSmrs[i].sharedMaterial == null && srcSmrs[i].sharedMaterial != null)
-                    dstSmrs[i].sharedMaterial = srcSmrs[i].sharedMaterial;
+                if (mb != null) Object.DestroyImmediate(mb, true);
             }
-            for (int i = 0; i < srcMfs.Length && i < dstMfs.Length; i++)
-            {
-                if (srcMfs[i] == null || dstMfs[i] == null) continue;
-                if (dstMfs[i].sharedMesh == null && srcMfs[i].sharedMesh != null)
-                { dstMfs[i].sharedMesh = srcMfs[i].sharedMesh; fixedCount++; }
-                var mr = dstMfs[i].GetComponent<MeshRenderer>();
-                var srcMr = srcMfs[i].GetComponent<MeshRenderer>();
-                if (mr != null && srcMr != null && mr.sharedMaterial == null && srcMr.sharedMaterial != null)
-                    mr.sharedMaterial = srcMr.sharedMaterial;
-            }
-            // Fix MeshRenderers without MeshFilter (Quad, MuzzleFlash — IL2CPP nulls sharedMaterial)
-            var srcMrs = sourceWeaponTransform.GetComponentsInChildren<MeshRenderer>(true);
-            var dstMrs = clone.GetComponentsInChildren<MeshRenderer>(true);
-            for (int i = 0; i < srcMrs.Length && i < dstMrs.Length; i++)
-            {
-                if (srcMrs[i] == null || dstMrs[i] == null) continue;
-                if (dstMrs[i].sharedMaterial == null && srcMrs[i].sharedMaterial != null)
-                    dstMrs[i].sharedMaterial = srcMrs[i].sharedMaterial;
-            }
-            // Fix LineRenderer + ParticleSystemRenderer materials (null after IL2CPP Instantiate)
-            var srcLrs = sourceWeaponTransform.GetComponentsInChildren<LineRenderer>(true);
-            var dstLrs = clone.GetComponentsInChildren<LineRenderer>(true);
-            for (int i = 0; i < srcLrs.Length && i < dstLrs.Length; i++)
-            {
-                if (srcLrs[i] == null || dstLrs[i] == null) continue;
-                if (srcLrs[i].sharedMaterial != null)
-                    dstLrs[i].sharedMaterial = srcLrs[i].sharedMaterial;
-                if (srcLrs[i].materials != null && srcLrs[i].materials.Length > 0)
-                {
-                    try
-                    {
-                        var mats = srcLrs[i].sharedMaterials;
-                        if (mats != null && mats.Length > 0)
-                            dstLrs[i].sharedMaterials = mats;
-                    }
-                    catch (System.Exception e) { Guard.Swallow(e); }
-                }
-                dstLrs[i].useWorldSpace = false;
-                dstLrs[i].enabled = false;
-            }
-            var srcPsrs = sourceWeaponTransform.GetComponentsInChildren<ParticleSystemRenderer>(true);
-            var dstPsrs = clone.GetComponentsInChildren<ParticleSystemRenderer>(true);
-            for (int i = 0; i < srcPsrs.Length && i < dstPsrs.Length; i++)
-            {
-                if (srcPsrs[i] == null || dstPsrs[i] == null) continue;
-                if (dstPsrs[i].sharedMaterial == null && srcPsrs[i].sharedMaterial != null)
-                    dstPsrs[i].sharedMaterial = srcPsrs[i].sharedMaterial;
-                if (srcPsrs[i].sharedMaterials != null && srcPsrs[i].sharedMaterials.Length > 0)
-                {
-                    try { dstPsrs[i].sharedMaterials = srcPsrs[i].sharedMaterials; } catch (System.Exception e) { Guard.Swallow(e); }
-                }
-            }
-            // Path-matched renderer material pass (index order can diverge after IL2CPP Instantiate)
-            CopyMaterialsByPath(sourceWeaponTransform, clone.transform);
-            PlaytestLog.Verbose("Weapon", "cloned " + weapon + " from '" + sourceWeaponTransform.name + "' meshes=" + fixedCount);
-
-            SetLayerRecursive(clone, _targetLayer);
-
-            // Create effects BEFORE destroying MBs (needs component refs for precise finding)
-            var fx = new RemoteWeaponEffects(clone, sourceWeaponTransform.gameObject);
-
-            // Destroy all MBs on weapon clone — IL2CPP native methods (Awake/Start/Update)
-            // would try to read null serialized fields and interfere with manual effect driving
-            int mbsKilled = DestroyAllMBs(clone);
-            PlaytestLog.Verbose("Weapon", "stripped " + mbsKilled + " MBs on " + weapon);
-            _effects[weapon] = fx;
-
             clone.SetActive(false);
+            PlaytestLog.Verbose("Weapon", "cloned " + weapon + " from '" + source.name + "' under '" + parent.name + "'");
             return clone;
         }
 
-        private Transform FindMatchingBone(Transform sourceBone)
+        /// <summary>
+        /// IL2CPP Instantiate drops sharedMesh / materials: copy them from the source by index per renderer type, then
+        /// by path below the weapon root (index order can diverge).
+        /// </summary>
+        private static void CopyRenderAssets(Transform src, Transform dst)
         {
-            var all = _proxy.GetComponentsInChildren<Transform>(true);
-            string name = sourceBone.name;
-            foreach (var t in all)
+            var srcSmrs = src.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+            var dstSmrs = dst.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+            for (int i = 0; i < srcSmrs.Length && i < dstSmrs.Length; i++)
+            {
+                var s = srcSmrs[i];
+                var d = dstSmrs[i];
+                if (s == null || d == null) continue;
+                if (d.sharedMesh == null && s.sharedMesh != null) d.sharedMesh = s.sharedMesh;
+                if (d.sharedMaterial == null && s.sharedMaterial != null) d.sharedMaterial = s.sharedMaterial;
+            }
+            var srcMfs = src.GetComponentsInChildren<MeshFilter>(true);
+            var dstMfs = dst.GetComponentsInChildren<MeshFilter>(true);
+            for (int i = 0; i < srcMfs.Length && i < dstMfs.Length; i++)
+            {
+                var s = srcMfs[i];
+                var d = dstMfs[i];
+                if (s == null || d == null) continue;
+                if (d.sharedMesh == null && s.sharedMesh != null) d.sharedMesh = s.sharedMesh;
+            }
+            // Includes renderers without a MeshFilter (Quad, MuzzleFlash).
+            var srcMrs = src.GetComponentsInChildren<MeshRenderer>(true);
+            var dstMrs = dst.GetComponentsInChildren<MeshRenderer>(true);
+            for (int i = 0; i < srcMrs.Length && i < dstMrs.Length; i++)
+            {
+                var s = srcMrs[i];
+                var d = dstMrs[i];
+                if (s == null || d == null) continue;
+                if (d.sharedMaterial == null && s.sharedMaterial != null) d.sharedMaterial = s.sharedMaterial;
+            }
+            var srcLrs = src.GetComponentsInChildren<LineRenderer>(true);
+            var dstLrs = dst.GetComponentsInChildren<LineRenderer>(true);
+            for (int i = 0; i < srcLrs.Length && i < dstLrs.Length; i++)
+            {
+                var s = srcLrs[i];
+                var d = dstLrs[i];
+                if (s == null || d == null) continue;
+                var mats = s.sharedMaterials;
+                if (mats != null && mats.Length > 0) d.sharedMaterials = mats;
+                else if (s.sharedMaterial != null) d.sharedMaterial = s.sharedMaterial;
+                d.useWorldSpace = false;
+                d.enabled = false;
+            }
+            var srcPsrs = src.GetComponentsInChildren<ParticleSystemRenderer>(true);
+            var dstPsrs = dst.GetComponentsInChildren<ParticleSystemRenderer>(true);
+            for (int i = 0; i < srcPsrs.Length && i < dstPsrs.Length; i++)
+            {
+                var s = srcPsrs[i];
+                var d = dstPsrs[i];
+                if (s == null || d == null) continue;
+                var mats = s.sharedMaterials;
+                if (mats != null && mats.Length > 0) d.sharedMaterials = mats;
+                else if (d.sharedMaterial == null && s.sharedMaterial != null) d.sharedMaterial = s.sharedMaterial;
+            }
+
+            var dstByPath = new Dictionary<string, Renderer>();
+            foreach (var r in dst.GetComponentsInChildren<Renderer>(true))
+            {
+                if (r == null) continue;
+                string rel = RelativePath(r.transform, dst);
+                if (!dstByPath.ContainsKey(rel)) dstByPath[rel] = r;
+                if (!dstByPath.ContainsKey(r.name)) dstByPath[r.name] = r; // leaf-name fallback
+            }
+            foreach (var s in src.GetComponentsInChildren<Renderer>(true))
+            {
+                if (s == null || s.sharedMaterial == null) continue;
+                if (!dstByPath.TryGetValue(RelativePath(s.transform, src), out var d) && !dstByPath.TryGetValue(s.name, out d))
+                    continue;
+                if (d.sharedMaterial == null) d.sharedMaterial = s.sharedMaterial;
+                var mats = s.sharedMaterials;
+                if (mats != null && mats.Length > 0) d.sharedMaterials = mats;
+            }
+        }
+
+        private static string RelativePath(Transform t, Transform root)
+        {
+            if (t == root) return "";
+            string p = t.name;
+            for (var a = t.parent; a != null && a != root; a = a.parent)
+                p = a.name + "/" + p;
+            return p;
+        }
+
+        private static Transform FindByName(Transform root, string name)
+        {
+            foreach (var t in root.GetComponentsInChildren<Transform>(true))
+            {
                 if (t != null && t.name == name) return t;
+            }
             return null;
         }
 
-        private Transform FindSourceWeapon(WeaponType weapon)
+        /// <summary>The local Elster's object for this weapon type: an exact name ("Pistol", "Pistol(Clone)") wins.</summary>
+        private static Transform FindSourceWeapon(WeaponType weapon)
         {
-            if (_sourceWeaponCache.TryGetValue(weapon, out var cached) && cached != null)
-                return cached;
-            if (_source == null) return null;
-            var all = _source.GetComponentsInChildren<Transform>(true);
+            var player = PlayerState.player;
+            if (player == null) return null;
             Transform best = null;
             string wepLow = weapon.ToString().ToLowerInvariant();
-            for (int i = 0; i < all.Length; i++)
+            foreach (var t in player.GetComponentsInChildren<Transform>(true))
             {
-                var t = all[i];
                 if (t == null || !MatchesWeapon(t.name, weapon)) continue;
                 string low = t.name.ToLowerInvariant();
-                bool exact = low == wepLow || low == wepLow + "(clone)" || low.StartsWith(wepLow + "(");
-                if (best == null || exact)
-                {
-                    best = t;
-                    if (exact) break;
-                }
-            }
-            if (best != null)
-            {
-                _sourceWeaponCache[weapon] = best;
-                PlaytestLog.Verbose("Weapon", "source '" + best.name + "' for " + weapon);
+                if (low == wepLow || low.StartsWith(wepLow + "("))
+                    return t;
+                if (best == null) best = t;
             }
             return best;
         }
@@ -302,97 +281,11 @@ namespace SyncRADation.Players
             }
         }
 
-        private static void SetLayerRecursive(GameObject obj, int layer)
+        private static void SetLayerRecursive(Transform t, int layer)
         {
-            obj.layer = layer;
-            for (int i = 0; i < obj.transform.childCount; i++)
-                SetLayerRecursive(obj.transform.GetChild(i).gameObject, layer);
-        }
-
-        private static void CopyMaterialsByPath(Transform srcRoot, Transform dstRoot)
-        {
-            if (srcRoot == null || dstRoot == null) return;
-            var srcAll = srcRoot.GetComponentsInChildren<Renderer>(true);
-            var dstAll = dstRoot.GetComponentsInChildren<Renderer>(true);
-            var dstByRel = new Dictionary<string, Renderer>();
-            string dstRootPath = GetPath(dstRoot);
-            foreach (var r in dstAll)
-            {
-                if (r == null) continue;
-                string rel = GetPath(r.transform);
-                if (rel.StartsWith(dstRootPath))
-                    rel = rel.Length > dstRootPath.Length ? rel.Substring(dstRootPath.Length).TrimStart('/') : "";
-                if (!dstByRel.ContainsKey(rel))
-                    dstByRel[rel] = r;
-                // also key by leaf name as fallback
-                if (!dstByRel.ContainsKey(r.name))
-                    dstByRel[r.name] = r;
-            }
-            string srcRootPath = GetPath(srcRoot);
-            int copied = 0;
-            foreach (var sr in srcAll)
-            {
-                if (sr == null || sr.sharedMaterial == null) continue;
-                string rel = GetPath(sr.transform);
-                if (rel.StartsWith(srcRootPath))
-                    rel = rel.Length > srcRootPath.Length ? rel.Substring(srcRootPath.Length).TrimStart('/') : "";
-                Renderer dr = null;
-                if (!dstByRel.TryGetValue(rel, out dr))
-                    dstByRel.TryGetValue(sr.name, out dr);
-                if (dr == null) continue;
-                try
-                {
-                    if (dr.sharedMaterial == null)
-                        dr.sharedMaterial = sr.sharedMaterial;
-                    if (sr.sharedMaterials != null && sr.sharedMaterials.Length > 0)
-                        dr.sharedMaterials = sr.sharedMaterials;
-                    copied++;
-                }
-                catch (System.Exception e) { Guard.Swallow(e); }
-            }
-            if (copied > 0)
-                PlaytestLog.Verbose("Weapon", "path-matched materials " + copied);
-        }
-
-        private static int DestroyAllMBs(GameObject obj)
-        {
-            int count = 0;
-            var mbs = obj.GetComponentsInChildren<MonoBehaviour>(true);
-            foreach (var mb in mbs)
-            {
-                if (mb == null) continue;
-                Object.DestroyImmediate(mb, true);
-                count++;
-            }
-            return count;
-        }
-
-        private static string GetPath(Transform t)
-        {
-            if (t == null) return "";
-            string p = t.name;
-            while (t.parent != null) { t = t.parent; p = t.name + "/" + p; }
-            return p;
-        }
-
-        private static GameObject FindSourcePlayer()
-        {
-            try
-            {
-                var p = PlayerState.player;
-                if (p != null) return p;
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            return null;
-        }
-
-        public void Cleanup()
-        {
-            foreach (var fx in _effects.Values)
-                fx.Cleanup();
-            _effects.Clear();
-            _weapons.Clear();
-            _sourceWeaponCache.Clear();
+            t.gameObject.layer = layer;
+            for (int i = 0; i < t.childCount; i++)
+                SetLayerRecursive(t.GetChild(i), layer);
         }
     }
 }

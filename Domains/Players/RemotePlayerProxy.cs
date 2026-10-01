@@ -37,11 +37,6 @@ namespace SyncRADation.Players
             _weapon.OnShotFired = _audio.OnWeaponShot;
         }
 
-        public void Destroy()
-        {
-            _weapon.Cleanup();
-        }
-
         /// <summary>PlayerVital: the downed flag (the death pose itself arrives with the sender's bones).</summary>
         public void SetVital(bool dead)
         {

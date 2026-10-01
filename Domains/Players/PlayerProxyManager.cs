@@ -107,7 +107,6 @@ namespace SyncRADation.Players
                 catch (System.Exception e) { Guard.Swallow(e); }
             }
             if (!_proxies.TryGetValue(playerId, out var proxy)) return;
-            proxy.Destroy();
             if (proxy.GameObject != null)
                 Object.Destroy(proxy.GameObject);
             _proxies.Remove(playerId);
