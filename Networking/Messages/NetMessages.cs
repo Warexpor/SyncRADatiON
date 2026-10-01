@@ -381,6 +381,12 @@ namespace SyncRADation.Networking
         public bool WearHat;
         public float RootX;  // quat.x
         public float RootZ;  // quat.z
+        // Humanoid hips localPosition (v18). Bone sync is rotation-only, and the hips height otherwise comes from the
+        // proxy's own Animator, whose state/phase drifts from the sender's: the legs then miss the floor (lift-offs).
+        public bool HasHips;
+        public float HipsX;
+        public float HipsY;
+        public float HipsZ;
         public float[] BoneRotations;
 
         public void SetFacingWorld(Quaternion q)
@@ -433,6 +439,10 @@ namespace SyncRADation.Networking
             w.Put(WearHat);
             w.Put(RootX);
             w.Put(RootZ);
+            w.Put(HasHips);
+            w.Put(HipsX);
+            w.Put(HipsY);
+            w.Put(HipsZ);
             int bc = (BoneRotations != null) ? BoneRotations.Length : 0;
             bc = NetWire.ClampCount(bc, NetWire.MaxBones, "PlayerState bones");
             w.Put(bc);
@@ -471,7 +481,11 @@ namespace SyncRADation.Networking
                 ModelState = r.GetByte(),
                 WearHat = r.GetBool(),
                 RootX = r.GetFloat(),
-                RootZ = r.GetFloat()
+                RootZ = r.GetFloat(),
+                HasHips = r.GetBool(),
+                HipsX = r.GetFloat(),
+                HipsY = r.GetFloat(),
+                HipsZ = r.GetFloat()
             };
             int bc = NetWire.ReadCount(r, NetWire.MaxBones, "PlayerState bones");
             if (bc > 0)

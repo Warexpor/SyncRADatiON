@@ -13,7 +13,7 @@ namespace SyncRADation
         /// v14: v13 + PartyLife.Scene, Handshake GameBuildHash/GameBuild, ItemPickedUp.ClaimerPlayerId, FmodEmitter.Comp, FmodEmitterRequest (67), DropRekey (73),
         /// BonePose clamp 1023, Room as capped string, incremental StoryCommit carrying only dirty keys.
         /// v13: v12 + PuzzleStateEntry Seq/Mask, PuzzleType 78-81, StoryCmd 20-23 and WorldPickupDeny/AvatarOneShot/BossHit/EnemyAction (NetMessageType 60-63).</summary>
-        public const int ProtocolVersion = 17;
+        public const int ProtocolVersion = 18;
         public const int DefaultPort = 7777;
         /// <summary>Session capacity incl. host. Config-driven (2..8, default 4): ModConfig.MaxPlayers.</summary>
         public static int MaxPlayers => Config.ModConfig.MaxPlayersClamped;

@@ -4,7 +4,7 @@ Authority and behavior per area. Rows marked local are local by design (not park
 
 | Area | Authority | Notes |
 |------|-----------|--------|
-| Avatar proxy + anim/bones/weapons | Peer | ~30 Hz state + bones |
+| Avatar proxy + anim/bones/weapons | Peer | ~30 Hz state + bone rotations + humanoid hips position (the proxy's own Animator only fills what the sender does not send) |
 | Enemies | Host | WorldId snaps; **native TakeDamage**; client hits Harmony→host; host **wakes sleeping-chunk** enemies when a peer is near. Contact ram damage stays native. F11 spawn is host-authored (`EnemySpawn` + `SR_Spawn_*` WorldId) |
 | Doors (double / sliding) | Any peer emit, host relay | Visual open/close via native methods |
 | ConnectedDoors (room links) | Lock only | **Never** sync traverse / StartA/B — room entry is local. Unique key doors: one solve (party key ring **Key/Object only**), both walk |

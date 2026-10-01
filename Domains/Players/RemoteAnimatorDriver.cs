@@ -39,7 +39,17 @@ namespace SyncRADation.Players
         {
             public float Time;
             public float[] Eulers;
+            public bool HasHips;
+            public Vector3 Hips;
         }
+        // Sender's humanoid hips localPosition from the latest PlayerState; rides the next committed bone snapshot
+        // (same send frame: inline bones, or the chunks that follow the pose packet).
+        private bool _latestHasHips;
+        private Vector3 _latestHips;
+        private Transform _proxyHips;
+        private float _hipsLogAt;
+        private int _hipsFixes;
+        private float _hipsWorst;
         private readonly System.Collections.Generic.List<BoneSnap> _boneSnaps = new System.Collections.Generic.List<BoneSnap>(8);
         private readonly SnapClock _boneClock = new SnapClock(PluginInfo.SendInterval);
         private const int BoneSnapCap = 8;
@@ -77,9 +87,20 @@ namespace SyncRADation.Players
                 _boneSync.FindArmature(_facingPivot.gameObject);
             else
                 _boneSync.FindArmature(target);
+            _proxyHips = null;
+            for (int i = 0; _animators != null && i < _animators.Length && _proxyHips == null; i++)
+            {
+                try
+                {
+                    var a = _animators[i];
+                    if (a != null && a.isHuman) _proxyHips = a.GetBoneTransform(HumanBodyBones.Hips);
+                }
+                catch (System.Exception e) { Guard.Swallow(e); }
+            }
             PlaytestLog.Event("DRV", "init animators=" + (_animators != null ? _animators.Length.ToString() : "null")
                 + " sprites=" + (_spriteRenderers != null ? _spriteRenderers.Length.ToString() : "null")
-                + " facingPivot=" + (_facingPivot != null ? _facingPivot.name : "NULL"));
+                + " facingPivot=" + (_facingPivot != null ? _facingPivot.name : "NULL")
+                + " hips=" + (_proxyHips != null ? _proxyHips.name : "NULL"));
         }
 
         public void ApplyState(PlayerStateMessage state)
@@ -99,6 +120,8 @@ namespace SyncRADation.Players
             _weapon = state.Weapon;
             _facing = state.Facing;
             _targetFacing = state.RotY;
+            _latestHasHips = state.HasHips;
+            _latestHips = new Vector3(state.HipsX, state.HipsY, state.HipsZ);
             // Timestamped bone snapshot; sampled on the same delay as root pose.
             if (state.BoneRotations != null && state.BoneRotations.Length > 0)
             {
@@ -135,6 +158,8 @@ namespace SyncRADation.Players
                         _boneSync.ApplyRotationsSnap(state.BoneRotations);
                     anim.Update(0f);
                 }
+                if (_latestHasHips && _proxyHips != null)
+                    _proxyHips.localPosition = _latestHips;
 
                 ApplyFacing();
             }
@@ -189,7 +214,13 @@ namespace SyncRADation.Players
             else
                 copy = new float[data.Length];
             System.Array.Copy(data, copy, data.Length);
-            _boneSnaps.Add(new BoneSnap { Time = _boneClock.Stamp(Time.unscaledTime), Eulers = copy });
+            _boneSnaps.Add(new BoneSnap
+            {
+                Time = _boneClock.Stamp(Time.unscaledTime),
+                Eulers = copy,
+                HasHips = _latestHasHips,
+                Hips = _latestHips
+            });
             if (!_snappedToFirst && _boneSync != null)
                 _boneSync.ApplyRotationsSnap(copy);
         }
@@ -203,11 +234,13 @@ namespace SyncRADation.Players
             if (n == 1 || renderTime <= oldest.Time)
             {
                 _boneSync.ApplyRotationsSnap(oldest.Eulers);
+                if (oldest.HasHips) ApplyHips(oldest.Hips);
                 return;
             }
             if (renderTime >= newest.Time)
             {
                 _boneSync.ApplyRotationsSnap(newest.Eulers);
+                if (newest.HasHips) ApplyHips(newest.Hips);
                 return;
             }
             int hi = n - 1;
@@ -220,6 +253,67 @@ namespace SyncRADation.Players
             float span = b.Time - a.Time;
             float t = span > 0.0001f ? Mathf.Clamp01((renderTime - a.Time) / span) : 1f;
             _boneSync.ApplyRotationsInterpolated(a.Eulers, b.Eulers, t);
+            if (a.HasHips && b.HasHips) ApplyHips(Vector3.Lerp(a.Hips, b.Hips, t));
+            else if (b.HasHips) ApplyHips(b.Hips);
+        }
+
+        /// <summary>
+        /// Overwrites the hips position the proxy's own Animator just wrote. Logs (rate-limited) when that Animator
+        /// was far off: those frames were the visible lift-offs / sinks before v18.
+        /// </summary>
+        private void ApplyHips(Vector3 target)
+        {
+            if (_proxyHips == null) return;
+            var parent = _proxyHips.parent;
+            Vector3 off = _proxyHips.localPosition - target;
+            float d = parent != null ? parent.TransformVector(off).magnitude : off.magnitude;
+            _proxyHips.localPosition = target;
+            if (d < HipsLogMin) return;
+            _hipsFixes++;
+            if (d > _hipsWorst) _hipsWorst = d;
+            float now = Time.unscaledTime;
+            if (now - _hipsLogAt < 2f) return;
+            _hipsLogAt = now;
+            PlaytestLog.Event("Proxy", "hips corrected d=" + _hipsWorst.ToString("F2") + " n=" + _hipsFixes
+                + " proxyState=" + ProxyStateName() + " fwd=" + _smoothedForward.ToString("F2"));
+            _hipsFixes = 0;
+            _hipsWorst = 0f;
+        }
+
+        private const float HipsLogMin = 0.1f;
+
+        private string ProxyStateName()
+        {
+            try
+            {
+                if (_animators == null || _animators.Length == 0 || _animators[0] == null) return "?";
+                var a = _animators[0];
+                string s = StateName(a.GetCurrentAnimatorStateInfo(0).shortNameHash);
+                if (a.IsInTransition(0))
+                    s += ">" + StateName(a.GetNextAnimatorStateInfo(0).shortNameHash);
+                return s;
+            }
+            catch { return "?"; }
+        }
+
+        // ElsterNewController base-layer state names (decompile), for readable [Proxy] hips lines.
+        private static System.Collections.Generic.Dictionary<int, string> _stateNames;
+
+        private static string StateName(int hash)
+        {
+            if (_stateNames == null)
+            {
+                _stateNames = new System.Collections.Generic.Dictionary<int, string>();
+                const string names = "Unarmed|Pistol Uninjured|Shotgun|Rifle|SMG|Melee Uninjured|Hurt|Hurt Pistol|Hurt Shotgun"
+                    + "|Hurt Rifle|Hurt SMG|Hurt Melee|Hurt Pistol Aim|Hurt Shotgun Aim|Hurt SMG Aim|Hurt Melee Aim|Hurt Flare Aim"
+                    + "|Aim Pistol|Aim Shotgun|Aim Rifle|Aim SMG|Aim Machete|Aim Flare|Idle>Aim Transition|Aim>Idle Transition"
+                    + "|Down|Stay|Up|Drop|Drop Big|Getup|Hug|SnapTurn|Dying|Dying Handgun|Dying Rifle|Dying Shotgun"
+                    + "|Stomp Unarmed|Stomp Unarmed 0|Stomp Pistol|Stomp Pistol 0|Stomp Shotgun|Stomp Shotgun 0|Stomp Rifle"
+                    + "|Stomp Rifle 0|Stomp SMG|Stomp SMG 0|Stomp Melee|Stomp Melee 0|Idle Melee|Idle Taser|Idle Injector";
+                foreach (var n in names.Split('|'))
+                    _stateNames[Animator.StringToHash(n)] = n;
+            }
+            return _stateNames.TryGetValue(hash, out var s) ? s : hash.ToString();
         }
 
         public void PreTick()

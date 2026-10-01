@@ -23,6 +23,8 @@ namespace SyncRADation.Players
         private static bool _magReloadPulse;
         private static float _crawlCheckAt;
         private static bool _crawlActive;
+        private static Animator _hipsAnim;
+        private static Transform _hips;
 
         public static void ReadFromPlayer(GameObject player, ref PlayerStateMessage msg)
         {
@@ -172,6 +174,24 @@ namespace SyncRADation.Players
             if (_boneReader != null)
                 msg.BoneRotations = _boneReader.ReadRotations();
 
+            // Humanoid hips position: the one positional channel the Animator writes; rotations alone leave the
+            // proxy's hips at its own (drifting) Animator height.
+            if (_hipsAnim != anim)
+            {
+                _hipsAnim = anim;
+                _hips = null;
+                try { if (anim.isHuman) _hips = anim.GetBoneTransform(HumanBodyBones.Hips); }
+                catch (System.Exception e) { Guard.Swallow(e); }
+            }
+            if (_hips != null)
+            {
+                var hp = _hips.localPosition;
+                msg.HasHips = true;
+                msg.HipsX = hp.x;
+                msg.HipsY = hp.y;
+                msg.HipsZ = hp.z;
+            }
+
             // Detect triggers: if a bool changed from false→true, fire the trigger
             AnimTriggers triggers = 0;
             if (ammoShot)
@@ -256,6 +276,8 @@ namespace SyncRADation.Players
             _magReloadPulse = false;
             _crawlCheckAt = 0f;
             _crawlActive = false;
+            _hipsAnim = null;
+            _hips = null;
         }
 
         static bool CrawlMeshActive()

@@ -26,7 +26,7 @@ Read with `grep -a` (non-UTF8 bytes). Connected lines are prefixed `H ` (host) /
 
 **Always-on tags:** `[Story]` `[Interact]` `[KeyRing]` `[StorageBox]` `[Scene]` `[Damage]` `[Door]` `[Puzzle]` `[Pickup]` `[Harmony]` `[Hitch]` `[Spawn]` `[Enemy]` `[Proxy]` `[Weapon]` `[Session]` `[Bag]`.
 
-**Flicker trace** (`Sync/FlickerTrace.cs`, change-only, budgeted): `[Room] chunk ON|OFF … by=game|mod flips=N`, `[Room] enter`, `[Proxy] vis pN …` / `[Proxy] jump pN d=…`, client `[Enemy] client <id> active=…` / `client snap-jump` / `client unknown <id>`, host `[Enemy] wake ok|REFUSED`. A `flapping:` line means that tag toggled more than 25 times in 5 s.
+**Flicker trace** (`Sync/FlickerTrace.cs`, change-only, budgeted): `[Room] chunk ON|OFF … by=game|mod flips=N`, `[Room] enter`, `[Proxy] vis pN …` / `[Proxy] jump pN d=…` / `[Proxy] hips corrected d=… n=… proxyState=…` (the proxy Animator's hips were ≥ 0.1 m off the sender's and got overwritten; worst offset and count per 2 s), client `[Enemy] client <id> active=…` / `client snap-jump` / `client unknown <id>`, host `[Enemy] wake ok|REFUSED`. A `flapping:` line means that tag toggled more than 25 times in 5 s.
 
 **Event cam** (`Sync/EventCamTrace.cs`): `[EventCam] click …` explains every click in a zoom-in puzzle (inputs, cursor, zoom, interaction under the cursor, `MOD-KILLED`).
 

@@ -2,7 +2,7 @@
 
 LAN/VPN co-op for **SIGNALIS**, for **2 to 8 players** (default 4). One player hosts and owns the world and story. Everyone else plays as a real Elster and their actions go through the host.
 
-**Status: 0.5.65, protocol 17, pre-release.** This build is in the playtest phase. Nothing in it is proven in a real multi-player session yet, so expect bugs. Back up your saves before you try it.
+**Status: 0.5.65, protocol 18, pre-release.** This build is in the playtest phase. Nothing in it is proven in a real multi-player session yet, so expect bugs. Back up your saves before you try it.
 
 ## Requirements
 

@@ -1,6 +1,6 @@
 ## 0.5.65 — 2026-10-01
 
-Protocol **v17** (no wire layout change; puzzle entry fields gain meaning, and the version check keeps 0.5.64 out). Live shared puzzle screens.
+Protocol **v18** (`PlayerState` gains the humanoid hips position; puzzle entry fields gain meaning). Live shared puzzle screens.
 
 ### Added
 - **Live shared puzzles** — two players zoomed into the same puzzle see each other's input as it happens, with the native animation and sound:
@@ -13,6 +13,7 @@ Protocol **v17** (no wire layout change; puzzle entry fields gain meaning, and t
 - **Merged concurrent input** — pattern lock and key grid merge per light/node, tarot per slot, keypads and the evidence locker whole (no interleaved codes). A merge-type edit is never dropped as stale, the host relays every merge to everyone, and a client skips stale echoes of its own presses (`IsOwnStaleEcho`), so both screens end on the same state.
 
 ### Fixed
+- **Other player's model lifting off the floor now and then** (both directions, since the first co-op builds) — Elster's clips are humanoid (muscle curves + `RootT`), so the one position the Animator writes is the hips. Bone sync sent rotations only, and the proxy's hips came from its own Animator, which runs on its own clock and drifts in phase and state (walk bob, hurt / pickup / stomp states the proxy enters late, early or not at all) from the sender's. The sender's legs on a hips height that was not theirs left the feet floating. `PlayerState` now carries the sender's hips `localPosition` (`HasHips` + `HipsX/Y/Z`, protocol v18); it rides the bone snapshot timeline and overwrites the proxy Animator's hips after the bone rotations, so the proxy's pose is the sender's. A large correction logs `[Proxy] hips corrected d=… proxyState=…`.
 - **Incinerator peer solve failed** — the apply wrote A/B/C only: the knobs never turned and `StartShutdown` integrated the default 1/1/1 curve, so the peer got the error buzz and the hatch never opened. The curve (`Yspeed/Yacc1/Yacc2 = n/10`) and knob rotations are set like native `plusX/minusX`, and the shutdown runs once.
 - **Tarot slot prompt inverted on peers** — the apply turned the empty-slot placer on for a full slot and never showed the placed card; it now uses native `PlaceCard` / `TakeCard`.
 - **Elemental card locks never redrew on peers** — `MED/LAB_MultiLock` have no `Update`; cards, slot icons and red/green lights are painted like native `OnEnable` (the native insert coroutine runs as a cutscene and cannot be replayed on a player outside the screen).

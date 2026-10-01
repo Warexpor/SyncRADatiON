@@ -1,6 +1,6 @@
 # SyncRADation playtest / soak checklist
 
-Target build: **0.5.65, protocol 17**. The 0.5.57–0.5.65 work is compile- and unit-tested, and an unattended host+client join into `DET_Detention` / `MED_Medical` is smoke-tested (handshake, dump, matching WorldId checksum); nothing past that has been played, so this list is the gate. Run it on **two instances** first (host + client), then repeat the marked items with **three** (host + two clients, `MaxPlayers` >= 3).
+Target build: **0.5.65, protocol 18**. The 0.5.57–0.5.65 work is compile- and unit-tested, and an unattended host+client join into `DET_Detention` / `MED_Medical` is smoke-tested (handshake, dump, matching WorldId checksum); nothing past that has been played, so this list is the gate. Run it on **two instances** first (host + client), then repeat the marked items with **three** (host + two clients, `MaxPlayers` >= 3).
 
 Conventions:
 
