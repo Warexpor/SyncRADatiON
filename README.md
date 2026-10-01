@@ -136,7 +136,7 @@ Edited in `SIGNALIS/UserData/MelonPreferences.cfg` under `[SyncRADation]` (creat
 
 ## Building from source
 
-See `AGENTS.md` (Release / scripts section). Short form: `scripts/build.sh` builds without deploying, `scripts/package.sh` makes the release zip.
+See `AGENTS.md` (Build / test / deploy). Short form: `scripts/build.sh` builds without deploying, `scripts/package.sh` makes the release zip.
 
 ## Credits and license
 

@@ -1,8 +1,8 @@
-# Domains — where to fix what (0.5.61 / protocol 16)
+# Domains — where to fix what
 
 Composed `*SyncService` / `*NetHandlers` / `Patches/`. Namespaces stay `SyncRADation.Networking` / `.Patches` / `.Players` / `.ItemSystem`.
 
-Authority + reverse-check: repo root `AGENTS.md`. Protocol **16** wire in `Networking/Messages/NetMessages.cs` + `PartyMessages.cs` + `NetWire.cs` (schema hash). Version/protocol constants: `Bootstrap/PluginInfo.cs` (version is single-sourced from there).
+Authority: `docs/SYNC.md`; reverse-check rule: repo root `AGENTS.md`. Wire in `Networking/Messages/NetMessages.cs` + `PartyMessages.cs` + `NetWire.cs` (schema hash). Version/protocol constants: `Bootstrap/PluginInfo.cs` (version is single-sourced from there).
 
 ## Symptom → path
 
