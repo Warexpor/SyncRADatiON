@@ -170,22 +170,6 @@ namespace SyncRADation.Patches
             }
         }
 
-        /// <summary>Notes craft/grant <b>result</b> on AddItem. Ingredients: see CombineRecipesCraftPatch.</summary>
-        internal static void NoteCraftedKey(AnItem item)
-        {
-            if (NetGate.IsApplying || !NetGate.Live) return;
-            if (!PartyKeyRing.IsKeyOrObject(item)) return;
-            PartyKeyRing.OfferToHost(item);
-        }
-
-        /// <summary>Ring-drop Key/Object ingredients after a successful combine.</summary>
-        internal static void NoteCraftConsumed(AnItem itemA, AnItem itemB, AnItem result)
-        {
-            if (result == null) return;
-            if (NetGate.IsApplying || !NetGate.Live) return;
-            PartyKeyRing.ConsumeCraftIngredients(itemA, itemB);
-        }
-
         static bool IsInspect(ItemPickup p)
         {
             if (p == null) return false;
@@ -706,38 +690,4 @@ namespace SyncRADation.Patches
         }
     }
 
-    [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.AddItem), typeof(AnItem), typeof(int))]
-    public static class InventoryAddItemCountPatch
-    {
-        [HarmonyPostfix]
-        public static void Postfix(AnItem item)
-        {
-            ItemPickupPatches.NoteCraftedKey(item);
-        }
-    }
-
-    [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.AddItem), typeof(AnItem))]
-    public static class InventoryAddItemPatch
-    {
-        [HarmonyPostfix]
-        public static void Postfix(AnItem item)
-        {
-            ItemPickupPatches.NoteCraftedKey(item);
-        }
-    }
-
-    /// <summary>
-    /// CombineRecipes.combine success → PartyKeyRing.Remove ingredients (NoteCraftedKey
-    /// only Offers the result). Mirrors ConsumeKey / DetachDroppedKey ring drops.
-    /// </summary>
-    [HarmonyPatch(typeof(CombineRecipes), nameof(CombineRecipes.combine))]
-    public static class CombineRecipesCraftPatch
-    {
-        [HarmonyPostfix]
-        public static void Postfix(AnItem itemA, AnItem itemB, AnItem __result)
-        {
-            try { ItemPickupPatches.NoteCraftConsumed(itemA, itemB, __result); }
-            catch (System.Exception ex) { ModRuntime.Log?.Warning("[KeyRing] craft remove: " + ex.Message); }
-        }
-    }
 }

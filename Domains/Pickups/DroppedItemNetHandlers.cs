@@ -380,8 +380,6 @@ namespace SyncRADation.Networking
             return true;
         }
 
-        internal bool HasBagRoom(Items.itemlist itemEnum) => DroppedItemManager.BagHasRoom(itemEnum);
-
         internal void HandleDropItemSpawn(DropItemSpawnMessage msg)
         {
             int key = (msg.SenderID << 16) | msg.LocalIndex;
