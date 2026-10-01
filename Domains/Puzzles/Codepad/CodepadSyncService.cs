@@ -69,7 +69,7 @@ namespace SyncRADation.Networking
             try
             {
                 GameObject go = it.gameObject;
-                if (go == null || DroppedItemManager.IsDroppedGo(go)) return false;
+                if (go == null || DroppedItemRegistry.IsDroppedGo(go)) return false;
                 var pad = FindInParents<LAB_PatternLock>(go);
                 if (pad != null && (pad.solved || _host.IsHeld(PuzzleType.PatternLock, WorldId.FromGameObject(pad.gameObject))))
                     return true;

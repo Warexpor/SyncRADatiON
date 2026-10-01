@@ -461,7 +461,7 @@ namespace SyncRADation.Networking
             // recorded now would be sent to the joiner alone and never reach the other peers (3+ players).
             if (net.UnicastActive)
             {
-                if (_unicastFull && net.Role == NetworkRole.Host)
+                if (_unicastFull && NetGate.HostRole)
                 {
                     _unicastFull = false;
                     SendUnicastSnapshot(net);
@@ -504,7 +504,7 @@ namespace SyncRADation.Networking
             EnsureScanned();
             try
             {
-                if (net.Role != NetworkRole.Host)
+                if (!NetGate.HostRole)
                     TickClient(net);
                 else
                     TickHost(net, fullNow);
@@ -543,7 +543,7 @@ namespace SyncRADation.Networking
                     {
                         _dumpRetries++;
                         PlaytestLog.Event("Puzzle", "client dump retry " + _dumpRetries + " (waited " + waited.ToString("0.0") + "s)");
-                        net.RequestWorldSnapshot();
+                        net.SessionHandlers.RequestWorldSnapshot();
                     }
                     return;
                 }
@@ -563,7 +563,7 @@ namespace SyncRADation.Networking
                 HoldIfProgressed(_tickLocal[i]);
             if (ModRuntime.VerboseLogging)
                 PlaytestLog.Verbose("Puzzle", "client diff " + _tickLocal.Count + " " + Describe(_tickLocal));
-            net.SendPuzzleState(_tickLocal, false);
+            net.PuzzleHandlers.SendPuzzleState(_tickLocal, false);
         }
 
         /// <summary>
@@ -578,7 +578,7 @@ namespace SyncRADation.Networking
             float t0 = Time.realtimeSinceStartup;
             try
             {
-                if (net.Role == NetworkRole.Host) TickHost(net, false);
+                if (NetGate.HostRole) TickHost(net, false);
                 else if (_clientLive) SendClientDiff(net);
                 _sendTimer = 0f;
             }
@@ -600,7 +600,7 @@ namespace SyncRADation.Networking
             for (int i = 0; i < _tickEntries.Count; i++)
                 HoldIfProgressed(_tickEntries[i]);
             if (_tickEntries.Count == 0) return;
-            net.SendPuzzleState(_tickEntries, full);
+            net.PuzzleHandlers.SendPuzzleState(_tickEntries, full);
         }
 
         /// <summary>
@@ -624,7 +624,7 @@ namespace SyncRADation.Networking
                     _tickEntries[i] = e;
                 }
                 if (_tickEntries.Count > 0)
-                    net.SendPuzzleState(_tickEntries, true);
+                    net.PuzzleHandlers.SendPuzzleState(_tickEntries, true);
             }
             finally
             {
@@ -643,10 +643,10 @@ namespace SyncRADation.Networking
 
         /// <summary>Emit gate: a client stays silent until seeded by the host dump and only emits client types.</summary>
         bool MayEmit(LanNetworkManager net, PuzzleType type)
-            => net.Role == NetworkRole.Host || (_clientLive && ClientMayEmit(type));
+            => NetGate.HostRole || (_clientLive && ClientMayEmit(type));
 
         bool Unseeded(LanNetworkManager net, PuzzleType type)
-            => net.Role != NetworkRole.Host && !_clientLive && ClientMayEmit(type);
+            => !NetGate.HostRole && !_clientLive && ClientMayEmit(type);
 
         /// <summary>Client, unseeded: remember the latest local state of a key (first observation = its baseline).</summary>
         void RecordPending(PuzzleStateEntry entry, bool solvedEdge = false, bool explicitEdit = true)
@@ -717,7 +717,7 @@ namespace SyncRADation.Networking
         void FlushPending()
         {
             var net = LanNetworkManager.Instance;
-            if (net == null || net.Role == NetworkRole.Host || _pendingFlush.Count == 0) { _pendingFlush.Clear(); return; }
+            if (net == null || NetGate.HostRole || _pendingFlush.Count == 0) { _pendingFlush.Clear(); return; }
             _pendingOut.Clear();
             for (int i = 0; i < _pendingFlush.Count; i++)
             {
@@ -756,7 +756,7 @@ namespace SyncRADation.Networking
             _pendingFlush.Clear();
             if (_pendingOut.Count == 0) return;
             PlaytestLog.Event("Puzzle", "client pre-seed edits emitted n=" + _pendingOut.Count);
-            net.SendPuzzleState(_pendingOut, false);
+            net.PuzzleHandlers.SendPuzzleState(_pendingOut, false);
             _pendingOut.Clear();
         }
 
@@ -899,8 +899,7 @@ namespace SyncRADation.Networking
                 // the full dump.
                 if (entry.Type == PuzzleType.InteractiveLockSingle)
                 {
-                    var role = LanNetworkManager.Instance;
-                    if (firstIsBaseline || (role != null && role.Role == NetworkRole.Client))
+                    if (firstIsBaseline || NetGate.ClientRole)
                         entry.Bool1 = prev.Bool1;
                     else if (entry.Bool1 != prev.Bool1 && entry.Bool0 == prev.Bool0 && entry.Bool2 == prev.Bool2)
                         return false;
@@ -945,9 +944,9 @@ namespace SyncRADation.Networking
             var net = LanNetworkManager.Instance;
             // A live host edit supersedes a pre-seed local observation. A dump / held re-snap does not: the pending
             // record survives so PrimeClientBaseline can still flush a real local solve the dump left in place.
-            if (!keepPending && net != null && net.Role != NetworkRole.Host && !_clientLive)
+            if (!keepPending && net != null && !NetGate.HostRole && !_clientLive)
                 _pending.Remove(key);
-            if (net != null && net.Role != NetworkRole.Host && entry.Seq != 0 && entry.Seq > CurSeq(key))
+            if (net != null && !NetGate.HostRole && entry.Seq != 0 && entry.Seq > CurSeq(key))
                 _seq[key] = entry.Seq;
         }
 
@@ -957,7 +956,7 @@ namespace SyncRADation.Networking
             if (msg.Entries == null || msg.Entries.Length == 0) return;
             if (net != null && msg.SenderPlayerId == net.LocalPlayerId)
                 return;
-            bool isHost = net != null && net.Role == NetworkRole.Host;
+            bool isHost = net != null && NetGate.HostRole;
             bool canApply = !SceneFollowService.LocalIsTransient()
                 && !(net != null && net.SceneMismatch);
 
@@ -999,7 +998,7 @@ namespace SyncRADation.Networking
             if (_resync.Count > 0 && net != null && msg.SenderPlayerId >= 1)
             {
                 int prevUni = net.BeginUnicast(msg.SenderPlayerId);
-                try { net.SendPuzzleState(_resync, false); }
+                try { net.PuzzleHandlers.SendPuzzleState(_resync, false); }
                 finally { net.EndUnicast(prevUni); }
             }
             if (_applyScratch.Count == 0) return;
@@ -1052,9 +1051,9 @@ namespace SyncRADation.Networking
             if (isHost)
             {
                 if (_relayExcept.Count > 0)
-                    net.SendPuzzleState(_relayExcept, false, msg.SenderPlayerId);
+                    net.PuzzleHandlers.SendPuzzleState(_relayExcept, false, msg.SenderPlayerId);
                 if (_relayAll.Count > 0)
-                    net.SendPuzzleState(_relayAll, false);
+                    net.PuzzleHandlers.SendPuzzleState(_relayAll, false);
             }
             else if (msg.FullRefresh && !_hostDumpApplied && HostSceneMatches(net))
             {
@@ -1402,11 +1401,11 @@ namespace SyncRADation.Networking
         void SendEmit(LanNetworkManager net, PuzzleStateEntry entry, string what)
         {
             if (!ChangedOrFirst(ref entry, false)) return;
-            StampOutgoing(ref entry, net.Role == NetworkRole.Host, false);
+            StampOutgoing(ref entry, NetGate.HostRole, false);
             HoldIfProgressed(entry);
             PlaytestLog.Event("Puzzle", what + entry.Type + " id=" + unchecked((ulong)entry.WorldId).ToString("X16"));
             _emitScratch[0] = entry;
-            net.SendPuzzleState(_emitScratch, false);
+            net.PuzzleHandlers.SendPuzzleState(_emitScratch, false);
         }
 
         private T Get<T>(PuzzleType type, long worldId) where T : class

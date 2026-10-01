@@ -71,11 +71,11 @@ Authority: `docs/SYNC.md`; reverse-check rule: repo root `AGENTS.md`. Wire in `N
 2. **SyncService** — scan/tick/apply world state (often WorldId-keyed).
 3. **Patches** — Harmony emit/block; apply usually goes through SyncService/NetHandlers.
 
-**Dropped items:** Registry (lookup/lifecycle) + Spawner (clone/floor) + NetHandlers (drop/claim wire), called directly. `DroppedItemManager` keeps one forward (`IsDroppedGo`) for Puzzles/Codepad only.
+**Dropped items:** Registry (lookup/lifecycle) + Spawner (clone/floor) + NetHandlers (drop/claim wire), called directly.
 
 **Role checks:** domain code asks `Sync/NetGate` (`Host`/`Client`/`Party`/`Live` need the handshake; `HostRole`/`ClientRole`/`Active`/`WorldOwner` are the raw transport role for packet handlers and teardown). Only `LanNetworkManager` reads `_role` itself.
 
-**Net façade:** call the owning handler (`net.DoorHandlers.SendDoorState(...)`, `net.InteractionHandlers...`). `LanNetworkManager.PublicApi.cs` keeps only `SendPuzzleState` / `RequestWorldSnapshot` for PuzzleSyncService.
+**Sending:** call the owning handler (`net.DoorHandlers.SendDoorState(...)`, `net.PuzzleHandlers.SendPuzzleState(...)`, `net.SessionHandlers.RequestWorldSnapshot()`); `LanNetworkManager` has no forwarding façade.
 
 **Puzzles:** `PuzzleSyncService` = coordinator (scan, tick, held, `_mutateWorld`, host relay), driven by the `PuzzleSpecs` table. Domain SyncServices own family TryRead/Apply/snap; patches emit through `EnvEmit.Edge`.
 

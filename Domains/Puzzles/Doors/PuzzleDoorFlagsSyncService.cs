@@ -112,16 +112,16 @@ namespace SyncRADation.Networking
             var dbl = door.GetComponent<Doorway_Double>();
             if (dbl != null) dbl.locked = false;
             var cd = door.GetComponent<ConnectedDoors>();
-            if (cd != null && DoorNative.AllowUnlock(cd))
+            if (cd != null && DoorNative.HasUnlocker(cd))
                 DoorNative.ApplyConnectedDoors(cd, false);
         }
 
-        /// <summary>Unlock the ConnectedDoors link this object sits under (flavor seals stay gated by AllowUnlock).</summary>
+        /// <summary>Unlock the ConnectedDoors link this object sits under (flavor seals stay gated by HasUnlocker).</summary>
         internal static void TryUnlockDoors(GameObject go)
         {
             if (go == null) return;
             var cd = FindInParents<ConnectedDoors>(go);
-            if (cd != null && cd.locked && DoorNative.AllowUnlock(cd))
+            if (cd != null && cd.locked && DoorNative.HasUnlocker(cd))
                 DoorNative.ApplyConnectedDoors(cd, false);
         }
     }

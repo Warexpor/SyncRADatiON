@@ -46,7 +46,7 @@ namespace SyncRADation.Networking
             // The host counted any END writes of OnTryDone when it ran natively: a client sends its own pending
             // delta first and re-baselines after, so the replay is never added to the host's tally again.
             var net = LanNetworkManager.Instance;
-            var story = net != null && net.Role == NetworkRole.Client ? net.StorySync : null;
+            var story = net != null && NetGate.ClientRole ? net.StorySync : null;
             story?.FlushEndDelta(net);
             Native("multicondition-done", () => PuzzleEdge.Invoke(x.OnTryDone));
             story?.RebaseEnd();
