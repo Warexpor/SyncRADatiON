@@ -42,6 +42,9 @@ namespace SyncRADation.Patches
                 PlaytestLog.Event("PartySave", "host load — ring/claims/floor drops reset" + (wipe ? " (wipe reload)" : ""));
                 if (wipe)
                     SessionReset.RunAll(SessionReset.ReasonWipe);
+                // The snapshot sent at scene arrival was held back (HostReload.Pending) or pre-dates this reset:
+                // send the post-reset world once the host is out of the loading screen.
+                net?.SessionHandlers.DeferDump(-1);
             }
             catch (System.Exception ex)
             {

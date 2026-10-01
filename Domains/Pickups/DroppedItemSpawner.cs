@@ -18,6 +18,8 @@ namespace SyncRADation.ItemSystem
         {
             if (DroppedItemRegistry.TryGetExisting(netID, out var existing) && existing.Go != null)
                 return existing.Go;
+            // A new drop under this key supersedes any earlier claim record of it (ids/indices recycle).
+            SyncRADation.Patches.ItemPickupPatches.ForgetDropClaim(netID);
 
             GameObject go = null;
             try { go = TryCloneNative(item, count, netID, pos); }

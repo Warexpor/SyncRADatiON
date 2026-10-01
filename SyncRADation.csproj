@@ -11,6 +11,13 @@
     <DebugType>portable</DebugType>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
     <Deterministic>true</Deterministic>
+    <!-- NetSchema.Hash mixes in the module's MVID (handshake rejects a stale/modified dll). With Deterministic the MVID is a
+         content hash, but it also covers source paths (PDB, CallerFilePath): PathMap makes it independent of the checkout
+         directory, so the same commit built in two places yields the same dll and the two players are not rejected. -->
+    <PathMap>$(MSBuildProjectDirectory)=/src</PathMap>
+    <!-- SourceLink would embed the checkout's absolute path and the commit hash in the PDB id (and so the MVID). -->
+    <EnableSourceLink>false</EnableSourceLink>
+    <EnableSourceControlManagerQueries>false</EnableSourceControlManagerQueries>
     <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
   </PropertyGroup>
 

@@ -19,6 +19,16 @@ namespace SyncRADation.Patches
             _pendingItem = Items.itemlist.None;
             _pendingTime = 0f;
             _countBeforeDrop = 0;
+            ClearPendingDrop();
+        }
+
+        /// <summary>Forget the armed floor item (declined / session end) so a later AddItem cannot claim it.</summary>
+        internal static void ClearPendingDrop()
+        {
+            _pendingDropKey = -1;
+            _pendingDropItem = Items.itemlist.None;
+            _pendingDropCount = 0;
+            _countBeforeDrop = 0;
         }
 
         internal static void NoteTakenFromCallback(ItemPickup p)
@@ -30,6 +40,9 @@ namespace SyncRADation.Patches
                 if (!AnsweredYes())
                 {
                     PlaytestLog.Verbose("Drop", "take declined");
+                    // pickUp Prefix armed this drop; nothing consumes it on a "no", and a later AddItem of
+                    // anything would claim + despawn the floor item for everyone without granting it.
+                    ClearPendingDrop();
                     return;
                 }
                 TakeDropped(p);
@@ -302,6 +315,15 @@ namespace SyncRADation.Patches
             if (net == null || !net.IsConnected) return;
             if (Config.ModConfig.SyncWorldPickups?.Value != true) return;
 
+            // pickUp ran but opened no dialogue (refused / aborted): no release is coming, so the
+            // release-pending mark (and any hide held back behind it) must not linger.
+            try
+            {
+                if (__instance != null && !WorldPickupSyncService.DialogueOpenNow())
+                    net.PickupSync.ClearReleasePending(__instance);
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+
             try { if (__instance != null && __instance.slave) return; } catch (System.Exception e) { Guard.Swallow(e); }
 
             ulong id = 0;
@@ -317,11 +339,13 @@ namespace SyncRADation.Patches
                 try { inBag = InventoryManager.hasItem(_pendingItem); } catch (System.Exception e) { Guard.Swallow(e); }
             }
 
-            if (IsInspect(__instance) && !inBag)
+            if (IsInspect(__instance))
             {
                 bool gone = false;
                 try { gone = __instance == null; } catch { gone = true; }
-                if (!gone) return;
+                // Inspect pickups claim only on the yes answer (NoteTaken), host included: a claim here
+                // would hide the prop for everyone while the host's yes/no is still open.
+                if (!gone && (!inBag || net.Role == NetworkRole.Host)) return;
             }
 
             bool triggered = false;
@@ -450,7 +474,8 @@ namespace SyncRADation.Patches
                 net.PickupSync.RevertNativeGrantNow(item, takeCount, p);
                 return;
             }
-            if (WorldClaimNeedsBagRoom(item) && !BagHasRoomForWorld(item))
+            if (WorldClaimNeedsBagRoom(item) && !BagHasRoomForWorld(item)
+                && !WorldPickupSyncService.WouldMagFill(item))
             {
                 PlaytestLog.Event("Pickup", "deny bag full confirm item=" + item);
                 return;
@@ -505,8 +530,32 @@ namespace SyncRADation.Patches
         internal static void NoteDroppedGrant(AnItem item)
         {
             if (_pendingDropKey < 0) return;
+            // Only the armed drop's own item completes it; any other AddItem is unrelated.
+            if (_pendingDropItem != Items.itemlist.None)
+            {
+                Items.itemlist added = Items.itemlist.None;
+                try { if (item != null) added = item._item; } catch (System.Exception e) { Guard.Swallow(e); }
+                if (added != _pendingDropItem) return;
+            }
             FinishDroppedNative(null, true, ignoreCount: true);
         }
+
+        /// <summary>A drop spawned (local / remote / respawn) under this key: an old claim of the same key is stale.</summary>
+        internal static void ForgetDropClaim(int key)
+        {
+            _claimedDrops.Remove(key);
+        }
+
+        /// <summary>Owner left (ids recycle, index counter restarts): every claim record under its key space is stale.</summary>
+        internal static void PurgeDropClaimsOwnedBy(int ownerId)
+        {
+            if (_claimedDrops.Count == 0) return;
+            _purgeScratch.Clear();
+            foreach (var k in _claimedDrops)
+                if (((k >> 16) & 0xFF) == ownerId) _purgeScratch.Add(k);
+            for (int i = 0; i < _purgeScratch.Count; i++) _claimedDrops.Remove(_purgeScratch[i]);
+        }
+        static readonly System.Collections.Generic.List<int> _purgeScratch = new System.Collections.Generic.List<int>(4);
 
         static readonly System.Collections.Generic.HashSet<int> _claimedDrops
             = new System.Collections.Generic.HashSet<int>();
@@ -680,7 +729,11 @@ namespace SyncRADation.Patches
                 if (__instance != null && ItemSystem.DroppedItemManager.IsDropped(__instance))
                 {
                     // "no": native release skips the add and just restores play state.
-                    if (!ItemPickupPatches.AnsweredYes()) return true;
+                    if (!ItemPickupPatches.AnsweredYes())
+                    {
+                        ItemPickupPatches.ClearPendingDrop();
+                        return true;
+                    }
                     ItemPickupPatches.TakeDropped(__instance);
                     return false;
                 }

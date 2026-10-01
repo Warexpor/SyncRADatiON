@@ -27,11 +27,19 @@ namespace SyncRADation
         /// <summary>First missing items (capped) for F2.</summary>
         public static System.Collections.Generic.IReadOnlyList<string> PatchAuditMissing => _patchAuditMissing;
 
-        internal static void SetPatchAudit(bool ok, int okCount, int missingCount)
+        internal static void SetPatchAudit(bool ok, int okCount, int missingCount, long ms)
         {
             PatchAuditOk = ok;
-            PatchAuditSummary = "Harmony audit: " + okCount + " ok, " + missingCount + " missing";
+            PatchAuditSummary = "Harmony audit: " + okCount + " ok, " + missingCount + " missing, " + ms + " ms";
             _patchAuditMissing.Clear();
+        }
+
+        /// <summary>A late (first scene load) audit item went missing: show it in F2 like a boot one.</summary>
+        internal static void AddPatchAuditLate(string item)
+        {
+            PatchAuditOk = false;
+            PatchAuditSummary += " + late: 1 missing";
+            AddPatchAuditMissing(item);
         }
 
         internal static void AddPatchAuditMissing(string item)
@@ -41,6 +49,7 @@ namespace SyncRADation
 
         private static bool _lastLocalShooting;
         private static float _ffCooldown;
+        private static bool _lateAuditDone;
 
         public static void Start(MelonLogger.Instance log, HarmonyLib.Harmony harmony)
         {
@@ -246,11 +255,19 @@ namespace SyncRADation
             PlaytestLog.Event("Scene", "loaded '" + scene + "'");
             _lastLocalShooting = false;
             _ffCooldown = 0f;
+            if (!_lateAuditDone)
+            {
+                _lateAuditDone = true;
+                try { PatchAudit.RunLate(); }
+                catch (System.Exception e) { Guard.Swallow("ModRuntime.PatchAuditLate", e); }
+            }
             WorldRegistry.Rebuild();
             Cheats.EntitySpawner.HarvestLoaded();
-            Network?.OnSceneChanged();
+            // Before Network.OnSceneChanged: a wipe reload that has arrived resets the host's world state first, so the
+            // full snapshot Network.OnSceneChanged sends is the post-wipe one (clients reset locally on the Wipe message).
             try { HostReload.OnSceneArrived(scene); }
             catch (System.Exception e) { Guard.Swallow("ModRuntime.HostReloadArrived", e); }
+            Network?.OnSceneChanged();
         }
 
         private static int GetWallMask()

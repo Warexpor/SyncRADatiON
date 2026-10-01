@@ -137,6 +137,9 @@ namespace SyncRADation.Sync
                 + "): '" + a + "' vs '" + b + "' — keeping the stable-order winner");
         }
 
+        // PreferOver runs per registration (several rebuilds per scene load): one tie line per path.
+        static readonly HashSet<string> _loggedTies = new HashSet<string>();
+
         /// <summary>
         /// Deterministic duplicate resolution so host and clients bind the same object no matter what
         /// order FindObjectsOfType returns: lower hierarchy path, then lower component index, then lower position.
@@ -170,8 +173,10 @@ namespace SyncRADation.Sync
 
                 // Same scene, path and component slot: nothing stable separates them (position can differ per
                 // peer once things move), so keep the incumbent and say so.
-                PlaytestLog.Warn("World", "PreferOver tie on '" + WorldId.GetHierarchyPath(candidate.transform)
-                    + "' — keeping the first registered");
+                string tiePath = WorldId.GetHierarchyPath(candidate.transform);
+                if (_loggedTies.Count > 256) _loggedTies.Clear();
+                if (_loggedTies.Add(tiePath))
+                    PlaytestLog.Warn("World", "PreferOver tie on '" + tiePath + "' — keeping the first registered");
             }
             catch (Exception ex)
             {

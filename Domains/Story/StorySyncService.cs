@@ -28,6 +28,9 @@ namespace SyncRADation.Networking
         // party wipe; the host may send a pre-reload dump before the post-reload one, each is exact so the last wins).
         private float _authoritativeUntil;
         const float AuthoritativeWindow = 30f;
+        // Host: the next FULL commit carries the Authoritative bit (the live slot was replaced by SaveManager.Load /
+        // NewGame, so clients must drop keys the new slot does not have).
+        private bool _authFull;
 
         // --- Client-only: SProgress writes forwarded to the host (coalesced per key) ---------
         private readonly Dictionary<string, StoryFlagEntry> _outbox = new Dictionary<string, StoryFlagEntry>();
@@ -71,7 +74,7 @@ namespace SyncRADation.Networking
         public static void EndSuppressForward() { if (_suppressForward > 0) _suppressForward--; }
 
         /// <summary>
-        /// StopNetwork with a party dialogue on screen: its Continue / End came from the host and will never arrive, and
+        /// StopNetwork on a client with a party dialogue on screen: its Continue / End came from the host and will never arrive, and
         /// RestoreLocalControl only flips gameState back to play (the dialogue UI would stay up). Close it locally;
         /// loads are swallowed so an end callback cannot start one.
         /// </summary>
@@ -80,7 +83,9 @@ namespace SyncRADation.Networking
             try
             {
                 var net = LanNetworkManager.Instance;
-                if (net == null || net.Role == NetworkRole.Offline) return;
+                // Client only: a host stopping the network (F2 stop / EndSession) keeps its own native dialogue, and a
+                // zero-peer host must stay vanilla. The client's Continue / End came from a host that is now gone.
+                if (net == null || net.Role != NetworkRole.Client) return;
                 if (PlayerState.gameState != PlayerState.gameStates.dialogue) return;
                 NetGate.BeginApply();
                 SceneFollowService.BeginSuppressLoads();
@@ -101,6 +106,7 @@ namespace SyncRADation.Networking
             _dirty.Clear();
             _lastXml = "";
             _authoritativeUntil = 0f;
+            _authFull = false;
             _endingApply = false;
             _needSend = true;
             _fullDump = true;
@@ -129,6 +135,13 @@ namespace SyncRADation.Networking
             _fullDump = true;
         }
 
+        /// <summary>Host: the live slot was replaced wholesale (SaveManager.Load / NewGame): the next full dump is authoritative.</summary>
+        public void RequestAuthoritativeFull()
+        {
+            _authFull = true;
+            RequestFullSend();
+        }
+
         /// <summary>Host: flag-less change (END counters, ending id) that still needs a StoryCommit.</summary>
         public void MarkDirty() => _needSend = true;
 
@@ -139,6 +152,7 @@ namespace SyncRADation.Networking
             LastInt0 = 0;
             _endingBroadcast = false;
             _dlgActive = false;
+            DialoguerGate.OnSceneChanged(); // a held dialogue callback targets an object of the unloaded scene
             RequestFullSend();
         }
 
@@ -152,6 +166,8 @@ namespace SyncRADation.Networking
         private void Note(StoryFlagEntry e)
         {
             if (string.IsNullOrEmpty(e.Key)) return;
+            // Host per-player keys (enemy save, radio, minimap, inventory slot, help prompts) never ride the shared commit.
+            if (StoryWire.IsPerPlayerKey(e.Key)) return;
             _flags[e.Key] = e;
             _dirty.Add(e.Key);
             _needSend = true;
@@ -187,9 +203,11 @@ namespace SyncRADation.Networking
             if (_timer < 0.75f) return;
             _timer = 0f;
             bool full = _fullDump;
+            bool auth = full && _authFull;
             _fullDump = false;
+            if (full) _authFull = false;
             _needSend = false;
-            Send(net, full);
+            Send(net, full, false, auth);
         }
 
         // ------------------------------------------------------------------------------------
@@ -616,12 +634,13 @@ namespace SyncRADation.Networking
         {
             if (_endingBroadcast) return false;
             _endingBroadcast = true;
-            Send(net, false);
+            // A host with nobody connected still records the ending (a later joiner replays it); nothing to send yet.
+            if (net.HasReadyPeers) Send(net, false);
             BroadcastPresentation(StoryCmd.DetermineEnding, 0, SafeEnding(), "");
             return true;
         }
 
-        public void Send(LanNetworkManager net, bool full, bool replayPresentation = false)
+        public void Send(LanNetworkManager net, bool full, bool replayPresentation = false, bool authoritative = false)
         {
             // Full = the whole live table (join / resync / scene change). Incremental = only keys written since the
             // last send: re-sending every flag to N-1 peers on each 0.75 s commit was pure bandwidth.
@@ -688,13 +707,14 @@ namespace SyncRADation.Networking
                 Flags = arr,
                 ActiveGameState = gs,
                 ActiveWorldId = replay ? unchecked((long)LastWorldId) : 0,
-                ActiveStoryCmd = replay ? (byte)LastCmd : (byte)0
+                ActiveStoryCmd = replay ? (byte)LastCmd : (byte)0,
+                Authoritative = full && authoritative
             });
             if (full)
                 PlaytestLog.Event("Story", "commit full flags=" + arr.Length
                     + " xml=" + (xml != null ? xml.Length : 0)
                     + " cmd=" + (replay ? LastCmd.ToString() : "-")
-                    + " gs=" + gs);
+                    + " gs=" + gs + (authoritative ? " authoritative" : ""));
         }
 
         bool CanReplayPresentation(StoryCmd cmd, ulong id)
@@ -706,7 +726,6 @@ namespace SyncRADation.Networking
                 case StoryCmd.CutsceneProceed:
                 case StoryCmd.EventZoneFire:
                 case StoryCmd.MultiConditionFire:
-                case StoryCmd.DetermineEnding:
                 case StoryCmd.DialogueContinue:
                 case StoryCmd.DialogueEnd:
                 case StoryCmd.GoToPenny:
@@ -714,6 +733,10 @@ namespace SyncRADation.Networking
                 case StoryCmd.EndDelta:
                 case StoryCmd.EndGraves:
                     return false;
+                case StoryCmd.DetermineEnding:
+                    // The ending was settled and broadcast this scene: a late joiner replays determineEnding from the
+                    // commit's final END values (it starts the ending cutscene natively). Marker id, nothing to look up.
+                    return _endingBroadcast;
                 case StoryCmd.DialoguerStartId:
                 {
                     // Dialogue id is packed into LastWorldId (wire WorldId is always 0 for Dialoguer). LastCmd is not
@@ -757,6 +780,14 @@ namespace SyncRADation.Networking
                 DumpFloats(p);
                 DumpStrings(p);
                 DumpVectors(p);
+                // Host per-player keys (EnemyController.Save, radio, minimap, inventory slot, help prompts) stay out.
+                List<string> drop = null;
+                foreach (var k in _flags.Keys)
+                {
+                    if (StoryWire.IsPerPlayerKey(k)) (drop ?? (drop = new List<string>())).Add(k);
+                }
+                if (drop != null)
+                    for (int i = 0; i < drop.Count; i++) _flags.Remove(drop[i]);
             }
             catch (System.Exception ex)
             {
@@ -866,6 +897,8 @@ namespace SyncRADation.Networking
             // A newer FULL commit already is the whole table (union with an older full would keep keys the host since
             // dropped); an incremental one only adds to whatever was buffered.
             if (!msg.FullRefresh) msg.Flags = StoryWire.MergeFlags(old.Flags, msg.Flags);
+            // The Authoritative bit survives the merge: the result is a full table whenever the older commit was one.
+            if (old.FullRefresh && old.Authoritative) msg.Authoritative = true;
             if (old.FullRefresh && !msg.FullRefresh)
             {
                 msg.FullRefresh = true;
@@ -898,9 +931,12 @@ namespace SyncRADation.Networking
 
             // Party wipe: the host reverted to a save, this peer never loaded a slot. FULL commits inside the window
             // after it replace local progress exactly (keys absent on the host are removed, not kept).
-            bool authoritative = msg.FullRefresh && Time.unscaledTime < _authoritativeUntil;
+            // The host stamps the bit on the full that follows its SaveManager.Load / NewGame (survives buffering); the
+            // timed window after a PartyLife wipe stays as a fallback for a dump that predates the bit.
+            bool authoritative = msg.FullRefresh && (msg.Authoritative || Time.unscaledTime < _authoritativeUntil);
             if (authoritative)
-                PlaytestLog.Event("Story", "authoritative full commit: clearing local SProgress");
+                PlaytestLog.Event("Story", "authoritative full commit: clearing local SProgress"
+                    + (msg.Authoritative ? " (host bit)" : " (wipe window)"));
 
             // Unsent local END contributions survive the overwrite below (client increments between commits).
             var unsent = new int[7];
@@ -1000,7 +1036,19 @@ namespace SyncRADation.Networking
                 var replay = (StoryCmd)msg.ActiveStoryCmd;
                 if (IsLocalInspect(replay))
                     return;
-                if (replay == StoryCmd.DialoguerStartId)
+                if (replay == StoryCmd.DetermineEnding)
+                {
+                    // Late join into the finale: the commit above already holds the final END values; Int0 = the verdict.
+                    PlaytestLog.Event("Story", "late-join DetermineEnding replay ending=" + msg.EndingId);
+                    ApplyPresentation(new StoryPresentationMessage
+                    {
+                        WorldId = 0,
+                        Cmd = StoryCmd.DetermineEnding,
+                        Int0 = msg.EndingId,
+                        Text = "replay"
+                    });
+                }
+                else if (replay == StoryCmd.DialoguerStartId)
                 {
                     // ActiveWorldId carries packed dialogue id (presentation WorldId is 0).
                     int dialogueId = (int)msg.ActiveWorldId;
@@ -1048,7 +1096,9 @@ namespace SyncRADation.Networking
             if (IsLocalInspect(cmd)) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
+            // Bookkeeping (late-join replay target) runs on any live host; only the send needs a ready peer.
             NoteActivePresentation(cmd, worldId, int0);
+            if (!net.HasReadyPeers) return;
             PlaytestLog.Event("Story", "send " + cmd + " id=" + worldId.ToString("X16") + " i=" + int0
                 + (string.IsNullOrEmpty(text) ? "" : " '" + text + "'"));
             net.SendStoryPresentation(new StoryPresentationMessage
@@ -1080,6 +1130,14 @@ namespace SyncRADation.Networking
                     LastCmd = StoryCmd.DialoguerStartId;
                     LastWorldId = unchecked((ulong)(uint)LastInt0);
                 }
+                return;
+            }
+            if (cmd == StoryCmd.DetermineEnding)
+            {
+                // Replaces the ending cutscene's own CutsceneStart record; the replay re-runs determineEnding instead.
+                LastCmd = StoryCmd.DetermineEnding;
+                LastWorldId = 1; // non-zero marker (the commit replay branch needs one); the verdict rides EndingId
+                LastInt0 = int0;
                 return;
             }
             if (cmd == StoryCmd.DialogueEnd)
@@ -1147,24 +1205,38 @@ namespace SyncRADation.Networking
                             {
                                 if (cb != null) Dialoguer.StartDialogue(msg.Int0, cb);
                                 else Dialoguer.StartDialogue(msg.Int0);
+                                // After the start (its gate clears the held-callback flag): this peer's end runs the callback.
+                                if (cb != null) DialoguerGate.NoteActiveCallback(msg.Int0);
                             }
                             catch (System.Exception ex) { WarnOnce("Dialoguer.StartDialogue", ex); }
                         }
                         break;
                     case StoryCmd.DialogueContinue:
+                    {
                         if (!ClientDialogueAccept(msg.Cmd, msg.Text)) break;
+                        // The callback of a client-initiated start runs here (the host started without it), under apply:
+                        // author scope so the flags it writes still reach the host.
+                        bool author = DialoguerGate.HoldsCallback;
+                        if (author) BeginAuthorScope();
                         try
                         {
                             if (msg.Int0 != 0) Dialoguer.ContinueDialogue(msg.Int0);
                             else Dialoguer.ContinueDialogue();
                         }
                         catch (System.Exception ex) { WarnOnce("Dialoguer.ContinueDialogue", ex); }
+                        finally { if (author) EndAuthorScope(); }
                         break;
+                    }
                     case StoryCmd.DialogueEnd:
+                    {
                         if (!ClientDialogueAccept(msg.Cmd, msg.Text)) break;
+                        bool author = DialoguerGate.HoldsCallback;
+                        if (author) BeginAuthorScope();
                         try { Dialoguer.EndDialogue(); }
                         catch (System.Exception ex) { WarnOnce("Dialoguer.EndDialogue", ex); }
+                        finally { if (author) EndAuthorScope(); }
                         break;
+                    }
                     case StoryCmd.CutsceneStart:
                     {
                         var c = FindAlive<CutsceneManager>(id);

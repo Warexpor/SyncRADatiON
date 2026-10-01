@@ -460,12 +460,17 @@ namespace SyncRADation.Networking
             _clientDiffIds = missingTotal + extraTotal;
         }
 
+        // F2 polls this on every OnGUI event: rebuild the string only when (ids, peer) changed.
+        private int _statusIds = -1;
+        private int _statusWho = -1;
+        private string _statusText = "World: in sync";
+
         /// <summary>F2 status: "World: in sync" or "World: N ids differ" (host: lower bound from the counts, worst peer).</summary>
         internal string WorldSyncStatus()
         {
             string scene = SceneManager.GetActiveScene().name ?? "";
             int ids = 0;
-            string who = "";
+            int who = -1;
             if (_net.Role == NetworkRole.Client)
             {
                 if (_clientDiffScene == scene) ids = _clientDiffIds;
@@ -476,10 +481,18 @@ namespace SyncRADation.Networking
                 {
                     if (kvp.Value.Scene != scene || kvp.Value.Ids <= ids) continue;
                     ids = kvp.Value.Ids;
-                    who = " (p" + kvp.Key + ")";
+                    who = kvp.Key;
                 }
             }
-            return ids > 0 ? "World: " + ids + " ids differ" + who : "World: in sync";
+            if (ids != _statusIds || who != _statusWho)
+            {
+                _statusIds = ids;
+                _statusWho = who;
+                _statusText = ids > 0
+                    ? "World: " + ids + " ids differ" + (who >= 0 ? " (p" + who + ")" : "")
+                    : "World: in sync";
+            }
+            return _statusText;
         }
     }
 }

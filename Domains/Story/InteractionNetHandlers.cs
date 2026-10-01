@@ -121,7 +121,8 @@ namespace SyncRADation.Networking
             if (count < 1) count = 1;
             var item = InventoryManager.getItem((Items.itemlist)enumVal);
             if (item == null) return;
-            if (consume) InventoryManager.RemoveItem(item, count);
+            // Bag entries can be a different AnItem instance than the catalog one (ring-seeded copies).
+            if (consume) InventoryManager.RemoveItem(PartyKeyRing.FindInBag(item) ?? item, count);
             else
             {
                 int before = DroppedItemManager.CountInBag((Items.itemlist)enumVal);
@@ -154,10 +155,19 @@ namespace SyncRADation.Networking
         // complete the wrong in-flight transaction.
         static long _txnCounter;
         static long _txn;
-        // A put whose 6 s timeout already gave the bag copy back: a late OK ack means the host did box it.
-        static long _lateTxn;
-        static Items.itemlist _lateItem;
-        static int _lateCount;
+        // Puts whose 6 s timeout already gave the bag copy back: a late OK ack means the host did box it.
+        // Keyed by txn id so two consecutive timeouts keep both (a single slot lost the first late OK and
+        // left the item in the bag AND the box). Entries expire so a never-acked put cannot pile up.
+        struct LatePut
+        {
+            public Items.itemlist Item;
+            public int Count;
+            public float Until;
+        }
+        const float LateWindowSec = 120f;
+        static readonly System.Collections.Generic.Dictionary<long, LatePut> _late
+            = new System.Collections.Generic.Dictionary<long, LatePut>();
+        static readonly System.Collections.Generic.List<long> _lateScratch = new System.Collections.Generic.List<long>(2);
 
         internal static long NextTxn() => ++_txnCounter;
         internal static long CurrentTxn => _txn;
@@ -170,7 +180,7 @@ namespace SyncRADation.Networking
             _putReserved = false;
             _count = 0;
             _txn = 0;
-            _lateTxn = 0;
+            _late.Clear();
         }
 
         /// <summary>Returns false when the request must not be sent (busy / nothing to put / no room).</summary>
@@ -184,9 +194,8 @@ namespace SyncRADation.Networking
                 // Restore gives the reserved put back; remember it so a late OK ack can undo that again.
                 if (_putReserved)
                 {
-                    _lateTxn = _txn;
-                    _lateItem = _item;
-                    _lateCount = _count;
+                    PurgeLate();
+                    _late[_txn] = new LatePut { Item = _item, Count = _count, Until = Time.unscaledTime + LateWindowSec };
                 }
                 Restore();
             }
@@ -248,12 +257,13 @@ namespace SyncRADation.Networking
 
         internal static void Complete(InteractionKind kind, bool ok, long txn)
         {
-            if (_lateTxn != 0 && txn == _lateTxn && kind == InteractionKind.StoragePut)
+            LatePut late;
+            if (txn != 0 && kind == InteractionKind.StoragePut && _late.TryGetValue(txn, out late))
             {
                 // Late ack for a put we already rolled back: if the host boxed it, take the copy out
                 // again (otherwise the item exists in the bag and the box).
-                if (ok) RemoveLate();
-                _lateTxn = 0;
+                _late.Remove(txn);
+                if (ok && Time.unscaledTime <= late.Until) RemoveLate(late);
                 return;
             }
             if (txn != _txn || !_busy)
@@ -268,16 +278,26 @@ namespace SyncRADation.Networking
             _txn = 0;
         }
 
-        static void RemoveLate()
+        static void PurgeLate()
         {
-            if (_lateItem == Items.itemlist.None) return;
+            if (_late.Count == 0) return;
+            _lateScratch.Clear();
+            float now = Time.unscaledTime;
+            foreach (var kvp in _late)
+                if (now > kvp.Value.Until) _lateScratch.Add(kvp.Key);
+            for (int i = 0; i < _lateScratch.Count; i++) _late.Remove(_lateScratch[i]);
+        }
+
+        static void RemoveLate(LatePut late)
+        {
+            if (late.Item == Items.itemlist.None) return;
             NetGate.BeginApply();
             try
             {
-                var an = InventoryManager.getItem(_lateItem);
+                var an = InventoryManager.getItem(late.Item);
                 if (an != null)
-                    InventoryManager.RemoveItem(PartyKeyRing.FindInBag(an) ?? an, _lateCount > 0 ? _lateCount : 1);
-                PlaytestLog.Event("StorageBox", "late put ack — removed restored copy " + _lateItem + " x" + _lateCount);
+                    InventoryManager.RemoveItem(PartyKeyRing.FindInBag(an) ?? an, late.Count > 0 ? late.Count : 1);
+                PlaytestLog.Event("StorageBox", "late put ack — removed restored copy " + late.Item + " x" + late.Count);
             }
             catch (Exception ex)
             {

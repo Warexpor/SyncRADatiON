@@ -990,7 +990,18 @@ namespace SyncRADation.Networking
             // so two players reaching the finale at once start the ending a single time for everyone.
             if (net.StorySync.EndingBroadcasted) return;
             var f = FirstFinale();
-            if (f == null) return;
+            if (f == null)
+            {
+                // The host is not in the finale scene (a client reached it alone): there is no Finale to run, but the
+                // ending must still be settled from the host's own tally and handed to everyone, or the requester
+                // (whose native determineEnding is blocked and whose request is acked OK) waits forever.
+                NetGate.BeginApply();
+                try { END_Manager.CalculatePlaystyle(); }
+                catch (System.Exception ex) { StorySyncService.WarnOnce("Host CalculatePlaystyle", ex); }
+                finally { NetGate.EndApply(); }
+                net.StorySync.HostBroadcastEnding(net);
+                return;
+            }
             // Native first: CalculatePlaystyle settles Circle/Death/Ending here; the broadcast then carries them.
             NetGate.BeginApply();
             try { f.determineEnding(); }

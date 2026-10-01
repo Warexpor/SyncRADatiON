@@ -20,17 +20,6 @@ namespace SyncRADation.Networking
         private static readonly Dictionary<ulong, bool> HeldDoubleUnlock = new Dictionary<ulong, bool>();
         private static readonly Dictionary<ulong, bool> HeldCdUnlock = new Dictionary<ulong, bool>();
 
-        // Doors whose held unlock was already re-applied (local Unity instance id, never sent): a held unlock is
-        // applied once per door instance, so a later script relock of the same instance is not undone on the next
-        // room enter. A reloaded scene builds new instances and gets the solve back.
-        private static readonly Dictionary<ulong, int> ReappliedIds = new Dictionary<ulong, int>();
-
-        private static bool AlreadyReapplied(ulong id, Component c)
-        {
-            int inst;
-            return ReappliedIds.TryGetValue(id, out inst) && inst == c.GetInstanceID();
-        }
-
         // Client open of a still-locked door whose unlocker may simply not have been polled yet: judged again
         // after a short grace instead of being rejected at once.
         private struct PendingOpen
@@ -85,7 +74,6 @@ namespace SyncRADation.Networking
         {
             HeldDoubleUnlock.Clear();
             HeldCdUnlock.Clear();
-            ReappliedIds.Clear();
             ResetScene();
         }
 
@@ -114,8 +102,10 @@ namespace SyncRADation.Networking
             if (_scanTimer < ScanInterval) return;
             _scanTimer = 0f;
 
+            // Zero-peer host (or a client without a ready host): nothing to tell anyone, no poll work.
+            if (!NetGate.Party) return;
             var net = LanNetworkManager.Instance;
-            if (net == null || !net.IsConnected) return;
+            if (net == null) return;
 
             foreach (var kvp in WorldRegistry.AllConnectedDoors())
             {
@@ -261,10 +251,7 @@ namespace SyncRADation.Networking
         private static void NoteLockEdge(Dictionary<ulong, bool> held, ulong id, bool locked)
         {
             if (locked)
-            {
                 held.Remove(id);
-                ReappliedIds.Remove(id); // a fresh solve after a relock may be re-applied again
-            }
             else held[id] = true;
         }
 
@@ -275,6 +262,9 @@ namespace SyncRADation.Networking
         public static void HoldMessage(DoorStateMessage msg)
         {
             ulong id = unchecked((ulong)msg.WorldId);
+            // Host: only a client message reaches here, and a client can never drop a held unlock.
+            var net = LanNetworkManager.Instance;
+            if (net != null && net.Role == NetworkRole.Host && msg.Locked) return;
             switch (msg.Type)
             {
                 case DoorType.DoorwayDouble: NoteLockEdge(HeldDoubleUnlock, id, msg.Locked); break;
@@ -295,13 +285,10 @@ namespace SyncRADation.Networking
                 if (!WorldRegistry.TryGetDoubleDoor(id, out d) || d == null) continue;
                 try
                 {
-                    if (!d.locked) continue;
-                    // Once per instance: a script that relocked the door afterwards owns it.
-                    if (AlreadyReapplied(id, d)) continue;
+                    if (!d.locked) continue; // polled live: a door the script relocked and the poll dropped is not in the map
                     if (DoorNative.IsFlavorSeal(d.gameObject) || DoorNative.HasUnsolvedLock(d)) continue;
                     d.locked = false;
                     LastDoubleLocked[id] = false;
-                    ReappliedIds[id] = d.GetInstanceID();
                     PlaytestLog.Event("Door", "reapply unlock " + d.gameObject.name);
                 }
                 catch (System.Exception ex) { PuzzleSyncService.WarnOnce("door-reapply-double", ex.Message); }
@@ -313,10 +300,8 @@ namespace SyncRADation.Networking
                 try
                 {
                     if (!cd.locked) continue;
-                    if (AlreadyReapplied(id, cd)) continue;
                     DoorNative.ApplyConnectedDoors(cd, false);
                     LastCdLocked[id] = cd.locked;
-                    if (!cd.locked) ReappliedIds[id] = cd.GetInstanceID();
                 }
                 catch (System.Exception ex) { PuzzleSyncService.WarnOnce("door-reapply-cd", ex.Message); }
             }
@@ -332,7 +317,7 @@ namespace SyncRADation.Networking
             switch (msg.Type)
             {
                 case DoorType.DoorwayDouble: return ApplyDoorwayDouble(id, ref msg);
-                case DoorType.ConnectedDoors: ApplyConnectedDoors(id, msg); break;
+                case DoorType.ConnectedDoors: return ApplyConnectedDoors(id, ref msg);
                 case DoorType.EventSlidingDoor: ApplySlidingDoor(id, msg); break;
             }
             return true;
@@ -377,7 +362,17 @@ namespace SyncRADation.Networking
                     msg.Locked = true;
             }
             else if (net != null && net.Role == NetworkRole.Host)
+            {
                 _pendingOpens.Remove(id);
+                if (msg.Locked)
+                {
+                    // A client can never lock a door the host holds unlocked (a script relock on its side, a stale
+                    // flag): the host's flag wins and the corrected state goes back to everyone incl. the sender.
+                    PlaytestLog.Event("Door", "ignore client relock (host door unlocked) " + d.gameObject.name);
+                    msg.Locked = false;
+                    msg.SenderPlayerId = net.LocalPlayerId;
+                }
+            }
 
             DoorNative.ApplyDoubleDoor(d, msg.Open, msg.Locked);
             LastDoubleOpen[id] = msg.Open;
@@ -446,13 +441,28 @@ namespace SyncRADation.Networking
             }
         }
 
-        private static void ApplyConnectedDoors(ulong id, DoorStateMessage msg)
+        private static bool ApplyConnectedDoors(ulong id, ref DoorStateMessage msg)
         {
             ConnectedDoors cd;
             if (!WorldRegistry.TryGetConnectedDoor(id, out cd) || cd == null)
             {
                 HoldMessage(msg);
-                return;
+                return true;
+            }
+
+            var net = LanNetworkManager.Instance;
+            if (net != null && net.Role == NetworkRole.Host && msg.Locked)
+            {
+                bool hostLocked = true;
+                try { hostLocked = cd.locked; } catch (System.Exception ex) { PuzzleSyncService.WarnOnce("door-cd-read-host", ex.Message); }
+                if (!hostLocked)
+                {
+                    // Same rule as Doorway_Double: a client never locks a connected door the host holds unlocked.
+                    PlaytestLog.Event("Door", "ignore client relock (host connected door unlocked) " + cd.gameObject.name);
+                    msg.Locked = false;
+                    msg.SenderPlayerId = net.LocalPlayerId;
+                    return true;
+                }
             }
 
             // Ignore InProgress/Forwards — those must stay local (room entry).
@@ -463,6 +473,7 @@ namespace SyncRADation.Networking
             try { realLocked = cd.locked; } catch (System.Exception ex) { PuzzleSyncService.WarnOnce("door-cd-read", ex.Message); }
             NoteLockEdge(HeldCdUnlock, id, realLocked);
             LastCdLocked[id] = realLocked;
+            return true;
         }
 
         private static void ApplySlidingDoor(ulong id, DoorStateMessage msg)

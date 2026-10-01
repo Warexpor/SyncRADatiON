@@ -35,6 +35,8 @@ namespace SyncRADation.Networking
             public Items.itemlist Item;
             public int Count;
             public int BagBefore;
+            /// <summary>Weapon magazine before native release (-1 = not an ammo item with a loaded weapon): MagFill gains.</summary>
+            public int MagBefore;
             public float Time;
         }
 
@@ -43,6 +45,7 @@ namespace SyncRADation.Networking
             public Items.itemlist Item;
             public int Count;
             public int BagBefore;
+            public int MagBefore;
             public float Deadline;
             public ItemPickup Prop;
         }
@@ -63,6 +66,19 @@ namespace SyncRADation.Networking
         // Claims whose native release must be measured: what the bag really gained vs the claim count.
         private readonly Dictionary<ulong, NativePending> _gainCheck = new Dictionary<ulong, NativePending>();
 
+        // Client: remainder measured at native release, held until the host's grant confirms the claim
+        // (a deny must never leave a duplicate on the floor). Key = WorldId.
+        private struct WaitingOverflow
+        {
+            public Items.itemlist Item;
+            public int Remainder;
+            public float Time;
+        }
+        private readonly Dictionary<ulong, WaitingOverflow> _overflowWait = new Dictionary<ulong, WaitingOverflow>();
+        // Client: host grant that arrived before the native release measured its gain (value = arrival time).
+        private readonly Dictionary<ulong, float> _grantSeen = new Dictionary<ulong, float>();
+        private readonly List<ulong> _extendScratch = new List<ulong>(2);
+
         /// <summary>
         /// Native release runs ~0.1s after dialoguerCallback. Record the bag count now so a later
         /// deny can tell whether (and how much) native already added.
@@ -76,6 +92,7 @@ namespace SyncRADation.Networking
                 Item = item,
                 Count = count > 0 ? count : 1,
                 BagBefore = before,
+                MagBefore = MagAmmoOf(item),
                 Time = Time.unscaledTime
             };
             ExpectGain(worldId, item, count, before);
@@ -91,8 +108,43 @@ namespace SyncRADation.Networking
                 Item = item,
                 Count = count > 0 ? count : 1,
                 BagBefore = bagBefore,
+                MagBefore = MagAmmoOf(item),
                 Time = Time.unscaledTime
             };
+        }
+
+        /// <summary>
+        /// Magazine round count of the weapon that fires this ammo, or -1 when it is not ammo / no weapon is held.
+        /// Native release takes the MagFill branch when the bag is full: the ammo goes straight into the
+        /// magazine and never touches the bag, so a bag-count delta alone reads it as "gained nothing".
+        /// </summary>
+        static int MagAmmoOf(Items.itemlist kind)
+        {
+            try
+            {
+                var an = InventoryManager.getItem(kind);
+                if (an == null || an.type != AnItem.AnItemType.Ammo) return -1;
+                var w = InventoryManager.getWeaponFromAmmo(an);
+                if (w == null || w.parentItem == null || !InventoryManager.hasItem(w.parentItem)) return -1;
+                return w.magAmmo;
+            }
+            catch (System.Exception e) { Guard.Swallow(e); return -1; }
+        }
+
+        /// <summary>True when a full bag would still take this ammo into the weapon magazine (native MagFill).</summary>
+        public static bool WouldMagFill(Items.itemlist kind)
+        {
+            try
+            {
+                var an = InventoryManager.getItem(kind);
+                if (an == null || an.type != AnItem.AnItemType.Ammo) return false;
+                var settings = PlayerState.settings;
+                if (settings == null || !settings.allowMagfilling) return false;
+                var w = InventoryManager.getWeaponFromAmmo(an);
+                if (w == null || w.parentItem == null || !InventoryManager.hasItem(w.parentItem)) return false;
+                return w.magAmmo < w.MagSize;
+            }
+            catch (System.Exception e) { Guard.Swallow(e); return false; }
         }
 
         static ulong IdOf(ItemPickup p)
@@ -113,16 +165,44 @@ namespace SyncRADation.Networking
             _releasePending[id] = Time.unscaledTime + (callbackSeen ? ReleaseWaitCallback : ReleaseWaitOpen);
         }
 
+        /// <summary>The release Invoke runs on scaled time and the pickup state stays "dialogue" until it ran.</summary>
+        static bool ReleaseStillComing()
+        {
+            try
+            {
+                if (Time.timeScale <= 0.0001f) return true;
+                return PlayerState.gameState == PlayerState.gameStates.dialogue;
+            }
+            catch (System.Exception e) { Guard.Swallow(e); return false; }
+        }
+
         bool IsReleasePending(ulong id)
         {
             float until;
             if (!_releasePending.TryGetValue(id, out until)) return false;
             if (Time.unscaledTime > until)
             {
+                // Paused / dialogue still open: release has not had a chance to run, keep waiting.
+                if (ReleaseStillComing()) return true;
                 _releasePending.Remove(id);
                 return false;
             }
             return true;
+        }
+
+        /// <summary>pickUp produced no dialogue (refused / threw): no release will follow, so nothing to wait for.</summary>
+        public void ClearReleasePending(ItemPickup p)
+        {
+            ulong id = IdOf(p);
+            if (id == 0 || !_releasePending.Remove(id)) return;
+            if (_deferredHide.Remove(id) && p != null) HideOnePickup(p);
+        }
+
+        /// <summary>True when native pickUp opened its dialogue (state == dialogue), i.e. a release is coming.</summary>
+        public static bool DialogueOpenNow()
+        {
+            try { return PlayerState.gameState == PlayerState.gameStates.dialogue; }
+            catch (System.Exception e) { Guard.Swallow(e); return false; }
         }
 
         /// <summary>Native release finished: measure the gain, spawn any overflow, then hide.</summary>
@@ -143,7 +223,41 @@ namespace SyncRADation.Networking
             _gainCheck.Remove(id);
             int gained = DroppedItemManager.CountInBag(np.Item) - np.BagBefore;
             if (gained < 0) gained = 0;
-            SpawnOverflow(np.Item, np.Count - gained, "release");
+            if (np.MagBefore >= 0)
+            {
+                // Bag full: native MagFill put the ammo straight into the magazine.
+                int mag = MagAmmoOf(np.Item) - np.MagBefore;
+                if (mag > 0) gained += mag;
+            }
+            int remainder = np.Count - gained;
+            if (remainder <= 0 || np.Item == Items.itemlist.None) return;
+            // Key/Object ride the party key ring; they never stack or overflow.
+            if (PartyKeyRing.IsKeyOrObject(np.Item)) return;
+            var net = LanNetworkManager.Instance;
+            if (net == null || !net.IsConnected) return;
+
+            if (net.Role == NetworkRole.Host)
+            {
+                if (!NetGate.Party)
+                {
+                    // Lone host is vanilla: native release left the remainder on the prop (count = remainder,
+                    // not destroyed). Give the claim back so the prop stays, visible and takeable.
+                    ReleaseClaimIf(id, net.LocalPlayerId);
+                    PlaytestLog.Verbose("Pickup", "lone host partial " + np.Item + " x" + remainder + " stays on prop");
+                    return;
+                }
+                SpawnOverflow(np.Item, remainder, "release");
+                return;
+            }
+
+            // Client: only a host grant makes the claim real. Spawn the remainder after it (never before a
+            // deny could arrive), or right now when the grant already got here.
+            if (_grantSeen.Remove(id))
+            {
+                SpawnOverflow(np.Item, remainder, "release+grant");
+                return;
+            }
+            _overflowWait[id] = new WaitingOverflow { Item = np.Item, Remainder = remainder, Time = Time.unscaledTime };
         }
 
         /// <summary>AddItem/AddItemToMax cap at maxNumber: the part that did not fit goes on the floor.</summary>
@@ -163,7 +277,7 @@ namespace SyncRADation.Networking
         /// Take back a native bag add after the claim lost (host deny, or claimed while the
         /// yes/no dialogue was open). Safe to call before native release has run.
         /// </summary>
-        public void RevertNativeGrant(Items.itemlist item, int count, int bagBefore, ItemPickup prop)
+        public void RevertNativeGrant(Items.itemlist item, int count, int bagBefore, ItemPickup prop, int magBefore = -1)
         {
             if (item == Items.itemlist.None) return;
             var r = new PendingRevert
@@ -171,6 +285,7 @@ namespace SyncRADation.Networking
                 Item = item,
                 Count = count > 0 ? count : 1,
                 BagBefore = bagBefore,
+                MagBefore = magBefore,
                 Deadline = Time.unscaledTime + RevertWindow,
                 Prop = prop
             };
@@ -182,21 +297,38 @@ namespace SyncRADation.Networking
         public void RevertNativeGrantNow(Items.itemlist item, int count, ItemPickup prop)
         {
             int before = DroppedItemManager.CountInBag(item);
-            RevertNativeGrant(item, count, before, prop);
+            RevertNativeGrant(item, count, before, prop, MagAmmoOf(item));
         }
 
         bool TryRevert(ref PendingRevert r)
         {
             int have = DroppedItemManager.CountInBag(r.Item);
             int gained = have - r.BagBefore;
-            if (gained <= 0) return false;
+            int magGain = 0;
+            if (r.MagBefore >= 0)
+            {
+                // Native MagFill (bag full): the ammo went into the magazine, not the bag.
+                int magNow = MagAmmoOf(r.Item);
+                if (magNow > r.MagBefore) magGain = magNow - r.MagBefore;
+            }
+            if (gained <= 0 && magGain <= 0) return false;
             int take = gained < r.Count ? gained : r.Count;
             NetGate.BeginApply();
             try
             {
                 var an = InventoryManager.getItem(r.Item);
                 // Bag entries may be a different AnItem instance than the catalog one (ring-seeded copies).
-                if (an != null) InventoryManager.RemoveItem(PartyKeyRing.FindInBag(an) ?? an, take);
+                if (take > 0 && an != null) InventoryManager.RemoveItem(PartyKeyRing.FindInBag(an) ?? an, take);
+                if (magGain > 0 && an != null)
+                {
+                    var w = InventoryManager.getWeaponFromAmmo(an);
+                    if (w != null)
+                    {
+                        int undo = magGain < r.Count ? magGain : r.Count;
+                        w.magAmmo = System.Math.Max(r.MagBefore, w.magAmmo - undo);
+                        take += undo;
+                    }
+                }
             }
             catch (System.Exception ex)
             {
@@ -267,9 +399,19 @@ namespace SyncRADation.Networking
             if (_releasePending.Count > 0)
             {
                 float now = Time.unscaledTime;
+                // Paused (timeScale 0) or the pickup dialogue still open: the Invoke("release") has not had a
+                // chance to run, so the wait does not run out and a hide never lands under an open dialogue.
+                bool waiting = ReleaseStillComing();
                 _expiredScratch.Clear();
+                _extendScratch.Clear();
                 foreach (var kvp in _releasePending)
-                    if (now > kvp.Value) _expiredScratch.Add(kvp.Key);
+                {
+                    if (now <= kvp.Value) continue;
+                    if (waiting) _extendScratch.Add(kvp.Key);
+                    else _expiredScratch.Add(kvp.Key);
+                }
+                for (int i = 0; i < _extendScratch.Count; i++)
+                    _releasePending[_extendScratch[i]] = now + ReleaseWaitCallback;
                 for (int i = 0; i < _expiredScratch.Count; i++)
                 {
                     ulong id = _expiredScratch[i];
@@ -280,6 +422,20 @@ namespace SyncRADation.Networking
                         ItemPickup p;
                         if (_byId.TryGetValue(id, out p) && p != null) HideOnePickup(p);
                     }
+                }
+            }
+            if (_overflowWait.Count > 0 || _grantSeen.Count > 0)
+            {
+                float now = Time.unscaledTime;
+                _expiredScratch.Clear();
+                foreach (var kvp in _overflowWait)
+                    if (now - kvp.Value.Time > 30f) _expiredScratch.Add(kvp.Key);
+                foreach (var kvp in _grantSeen)
+                    if (now - kvp.Value > 30f) _expiredScratch.Add(kvp.Key);
+                for (int i = 0; i < _expiredScratch.Count; i++)
+                {
+                    _overflowWait.Remove(_expiredScratch[i]);
+                    _grantSeen.Remove(_expiredScratch[i]);
                 }
             }
         }
@@ -296,6 +452,9 @@ namespace SyncRADation.Networking
             try { if (p != null && p.gameObject == null) p = null; } catch { p = null; }
 
             _gainCheck.Remove(id);
+            // The claim lost: a remainder measured for it must never reach the floor.
+            _overflowWait.Remove(id);
+            _grantSeen.Remove(id);
             NativePending np;
             if (!_nativePending.TryGetValue(id, out np))
             {
@@ -304,7 +463,7 @@ namespace SyncRADation.Networking
             }
             _nativePending.Remove(id);
             PlaytestLog.Event("Pickup", "deny id=" + id.ToString("X16") + " undo native " + np.Item);
-            RevertNativeGrant(np.Item, np.Count, np.BagBefore, p);
+            RevertNativeGrant(np.Item, np.Count, np.BagBefore, p, np.MagBefore);
         }
 
         public void RefreshScene()
@@ -354,6 +513,8 @@ namespace SyncRADation.Networking
             _releasePending.Clear();
             _deferredHide.Clear();
             _gainCheck.Clear();
+            _overflowWait.Clear();
+            _grantSeen.Clear();
         }
 
         public void RequestFullSend() => _needFull = true;
@@ -379,6 +540,12 @@ namespace SyncRADation.Networking
             }
             catch (System.Exception e) { Guard.Swallow(e); }
             return Items.itemlist.None;
+        }
+
+        static bool IsLocalHost(int playerId)
+        {
+            var n = LanNetworkManager.Instance;
+            return n != null && n.Role == NetworkRole.Host && playerId == n.LocalPlayerId;
         }
 
         public bool IsClaimed(ulong worldId) => worldId != 0 && _claimed.Contains(worldId);
@@ -642,7 +809,11 @@ namespace SyncRADation.Networking
                 {
                     try
                     {
-                        triggered = p.triggered || triggered;
+                        // Native `triggered` stays true for the whole yes/no dialogue and until release ran.
+                        // While this host's own release is pending it is NOT a claim: auto-claiming it here
+                        // (without a claimer) would deny the host's own "yes" and strand the prop on a "no".
+                        bool nativeTrig = p.triggered && !(_releasePending.Count > 0 && IsReleasePending(id));
+                        triggered = nativeTrig || triggered;
                         active = p.gameObject.activeInHierarchy && p.enabled && !triggered;
                     }
                     catch
@@ -695,12 +866,19 @@ namespace SyncRADation.Networking
             if (_claimed.Contains(worldId))
             {
                 int who;
-                if (_claimerOf.TryGetValue(worldId, out who) && who == claimerPlayerId)
+                if (_claimerOf.TryGetValue(worldId, out who))
                 {
-                    HideClaimed(null);
-                    return true;
+                    if (who == claimerPlayerId)
+                    {
+                        HideClaimed(null);
+                        return true;
+                    }
+                    return false;
                 }
-                return false;
+                // Claimed with no claimer on record = the world marked it (native `triggered` seen by TickHost,
+                // or the prop is gone). Only the host's own in-flight pickup may take that over.
+                if (!IsLocalHost(claimerPlayerId)) return false;
+                _claimed.Remove(worldId);
             }
 
             ItemPickup p;
@@ -767,8 +945,12 @@ namespace SyncRADation.Networking
         {
             if (!_claimed.Contains(worldId)) return false;
             int who;
-            if (!_claimerOf.TryGetValue(worldId, out who) || who != claimerPlayerId)
-                return false;
+            if (_claimerOf.TryGetValue(worldId, out who))
+            {
+                if (who != claimerPlayerId) return false;
+            }
+            else if (!IsLocalHost(claimerPlayerId))
+                return false; // unowned claim: only the host's own pickup may give it back
             Items.itemlist noted = Items.itemlist.None;
             _claimedItemOf.TryGetValue(worldId, out noted);
             _claimed.Remove(worldId);
@@ -1061,6 +1243,16 @@ namespace SyncRADation.Networking
                         // Native release owns the add (and its onPickup Invoke): partial gains are
                         // measured there (CheckGain), and party onPickup must not fire a second time.
                         NoteOnPickupFired(id);
+                        // The host grant confirms the claim: spawn the remainder the release measured, or
+                        // tell CheckGain the grant is already in (release has not run yet).
+                        WaitingOverflow wo;
+                        if (_overflowWait.TryGetValue(id, out wo))
+                        {
+                            _overflowWait.Remove(id);
+                            pendingOverflow = new KeyValuePair<Items.itemlist, int>(wo.Item, wo.Remainder);
+                        }
+                        else
+                            _grantSeen[id] = Time.unscaledTime;
                     }
                     PartyKeyRing.Note(item);
                     PartyKeyRing.BindUseDialogue(item);

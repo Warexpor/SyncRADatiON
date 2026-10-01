@@ -139,7 +139,7 @@ namespace SyncRADation.Networking
             d[PuzzleType.DialLock] = (s, e, _) =>
                 LockSyncService.ApplyDial(s.Get<ROT_DialLock>(e.Type, e.WorldId), e);
             d[PuzzleType.FlipSwitch] = (s, e, _) =>
-                ChapterMachineSyncService.ApplyFlipSwitch(s.Get<FlipSwitch>(e.Type, e.WorldId), e, _mutateWorld);
+                ChapterMachineSyncService.ApplyFlipSwitch(s.Get<FlipSwitch>(e.Type, e.WorldId), e, ReplayWorld);
             d[PuzzleType.FloodControlSwitch] = (s, e, _) =>
                 PumpFloodSyncService.ApplyFloodSwitch(s.Get<FloodControlSwitch>(e.Type, e.WorldId), e);
             d[PuzzleType.FloodControls] = (s, e, _) =>

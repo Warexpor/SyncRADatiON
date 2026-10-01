@@ -1,6 +1,6 @@
 # SyncRADation — SIGNALIS Multiplayer Mod
 
-**Status:** v0.5.60 — protocol **v15**. Host-authoritative world/story + native presentation/FMOD. Dual-instance playtest required. Decompile: `~/Archive/Windows-Desktop/Dev/SIGNALIS DECOMPILED` (`~/Omarchy_Backup/Desktop/Dev/...` is gone on this machine).
+**Status:** v0.5.61 — protocol **v16**. Host-authoritative world/story + native presentation/FMOD. Dual-instance playtest required. Decompile: `~/Archive/Windows-Desktop/Dev/SIGNALIS DECOMPILED` (`~/Omarchy_Backup/Desktop/Dev/...` is gone on this machine).
 
 ## Product
 
@@ -17,7 +17,7 @@ LAN multiplayer MelonLoader mod for SIGNALIS (Unity IL2CPP / Unhollower-style Ma
 
 Walk up to a dropped prop for the native TAKE prompt (yes/no inspect, ammo count). There is no extra pickup key.
 
-## What is synced (0.5.60)
+## What is synced (0.5.61)
 
 | Area | Authority | Notes |
 |------|-----------|--------|
@@ -49,7 +49,7 @@ Bootstrap/                 # SyncRADationMod, ModRuntime, PluginInfo
 Networking/
   LanNetworkManager*.cs    # thin transport + HandlerRegistry + PublicApi
   Dispatch/                # TryDispatch* → domain NetHandlers
-  Messages/                # NetMessages (protocol 15)
+  Messages/                # NetMessages (protocol 16)
 Domains/
   Doors/ Enemies/ Bosses/ Story/ Scene/ Audio/
   Pickups/ Inventory/ Players/ Combat/ Puzzles/ Session/
@@ -78,6 +78,7 @@ UI/ Config/ Cheats/
 - v13: `PuzzleStateEntry` gains `Seq` + `Mask` (host-stamped version / client edit mask, cell-wise merge); PuzzleType 78–81 (`ROT_DiskManager`, `DET_WallCreature`, `MapReveal`, `MEM_ChecklistLogic`); StoryCmd 20–23 (`GoToPenny`, `PartyCheat`, `EndDelta`, `EndGraves`; requests ride `InspectFlag` Int0 = 100 + cmd); `WorldPickupDeny` 60, `AvatarOneShot` 61, `BossHit` 62, `EnemyAction` 63
 - v14: `PartyLife` gains `Scene` (wipe reload target); `Handshake` gains `GameBuildHash` + `GameBuild` (rejects a different game build); `ItemPickedUp.ClaimerPlayerId`; `FmodEmitter.Comp` (emitter keyed by WorldId + component index) + client→host `FmodEmitterRequest` 67; host-only `DropRekey` 73 (departed peer's floor drops move to the host key space); `BonePose` clamp 1023; `Room` is a capped string; incremental `StoryCommit` carries only dirty keys; `SchemaHash` mixes the dll MVID
 - v15: `SceneHello` + `SceneFollow` gain `Stats` (per WorldRegistry category: id count + FNV-1a64 checksum of the sorted WorldIds, `Sync/WorldChecksum.cs`); host-only `SceneDiff` 74 (host WorldIds of the differing categories, chunks of 256, at most 2048 per category). A mismatch logs one `[Scene] WorldId divergence` line, the client logs `[Scene] missing:` / `[Scene] extra:` (20 ids each) and requests one full dump; F2 shows `World: in sync` / `World: N ids differ`
+- v16: `StoryCommit` gains `Authoritative` (last field): a full commit after a host `SaveManager.Load` / `NewGame` replaces the client's `SProgress` (absent keys are removed). The handshake game-build tail read is guarded (`AvailableBytes`) so an older peer reaches the readable protocol-version reject; the bump keeps every 0.5.60 peer out
 
 ## This machine (dual-instance, Linux + Proton)
 
@@ -119,6 +120,8 @@ Role prefix on connected lines: `H ` = host, `C ` = client.
 | `pickup N.Nms` | WorldPickup TickHost ≥ 8ms |
 | `weaponClone N.Nms` | Remote weapon clone ≥ 8ms |
 | `5s sendHz=… cost=TAG Nms` | 5s anomaly summary (max gaps/dt + worst Cost tag) |
+| `phase=NAME Nms` | A mod update phase (`ModRuntime.Update`/`LateUpdate`) or a patched Update/LateUpdate/FixedUpdate (`Sync/HarmonyPhaseTiming`) took > 50 ms |
+| `stall dt=Nms modUpdate/gameScripts/modLate/modGui/renderGap/focus/background/vsync` | Frame ≥ 400 ms: where it went (render gap ~ dt means the frame was lost outside mod code: compositor / present / vsync) |
 
 Debug build copies the DLL to **both** `Mods/` folders. csproj names: `SignalisDir` = copy, `ClientSignalisDir` = Steam (deploy labels, not playtest roles).
 
@@ -174,6 +177,8 @@ secondsignalis
 | `scripts/build.sh` | Pins `DOTNET_ROOT` to the Unity SDK, Release build to `bin/stage/Release`, **no deploy** (`-p:NoDeploy=true` skips the csproj `CopyToMods` target). `--debug` = Debug config, `--deploy` = default csproj copy into `SignalisDir/Mods` + `ClientSignalisDir/Mods`. Prints DLL path + version and warns if the DLL file version differs from `PluginInfo.Version`. Env: `UNITY_DOTNET_SDK`, `MELONLOADER_DIR`, `OUT_DIR` |
 | `scripts/test.sh` | `dotnet test tests/SyncRADation.Tests` (prints a note and exits 0 if the folder does not exist) |
 | `scripts/package.sh` | Release build (no deploy) then `dist/SyncRADation-<ver>.zip`: `Mods/SyncRADation.dll`, `Mods/LiteNetLib.dll`, `INSTALL.md`, `LICENSE`, `CHANGELOG.md`, `LiteNetLib.LICENSE.txt`. `dist/` is gitignored |
+
+**Reproducible dll (MVID):** `NetSchema.Hash` mixes in the module's MVID, so the handshake rejects a stale/modified dll of the same version. The csproj builds `Deterministic` with `PathMap=$(MSBuildProjectDirectory)=/src` and `EnableSourceLink=false` (SourceLink would embed the checkout path + commit hash in the PDB id, hence the MVID), so the MVID depends on the source and references only, not on the checkout directory: the same commit built in two directories (or two worktrees) gives a byte-identical dll and two separately built installs are not rejected. Check with `md5sum` of the two dlls. A different dotnet SDK / reference set can still change it; give both players the same dll when in doubt.
 
 `LiteNetLib.dll` is **not** merged into the mod DLL; it is a separate reference (`Private=true`, from `lib/`) that ships next to it in `Mods/`.
 

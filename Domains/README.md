@@ -1,8 +1,8 @@
-# Domains — where to fix what (0.5.60 / protocol 15)
+# Domains — where to fix what (0.5.61 / protocol 16)
 
 Composed `*SyncService` / `*NetHandlers` / `Patches/`. Namespaces stay `SyncRADation.Networking` / `.Patches` / `.Players` / `.ItemSystem`.
 
-Authority + reverse-check: repo root `AGENTS.md`. Protocol **14** wire in `Networking/Messages/NetMessages.cs` + `PartyMessages.cs` + `NetWire.cs` (schema hash). Version/protocol constants: `Bootstrap/PluginInfo.cs` (version is single-sourced from there).
+Authority + reverse-check: repo root `AGENTS.md`. Protocol **16** wire in `Networking/Messages/NetMessages.cs` + `PartyMessages.cs` + `NetWire.cs` (schema hash). Version/protocol constants: `Bootstrap/PluginInfo.cs` (version is single-sourced from there).
 
 ## Symptom → path
 
@@ -49,6 +49,8 @@ Authority + reverse-check: repo root `AGENTS.md`. Protocol **14** wire in `Netwo
 | Session state that must not leak between sessions / wipe reloads | `Sync/SessionReset` + `Bootstrap/SessionResetRegistrations` | Register a clear, or comment why the static is persistent |
 | Client quit-to-menu / host→MainMenu ends the session | `Networking/LanNetworkManager.SessionEnd` (`EndSession`) | Uses `RejectPeer` / `RequestStop` / `_stopReason` |
 | Shared-RVA (folded) patch firing for a foreign `this` | `Sync/Il2CppRealType` (`Is<T>`) + `docs/RVA_FOLDING.md` | Guard first statement; `RvaFoldingTests` pins the list |
+| `[Hitch] phase=` / stall lines (per-phase ms, frame stall breakdown) | `Sync/HitchTrace` (`Begin`/`End`/`FrameBegin`) + `Sync/HarmonyPhaseTiming` | Phase markers in `ModRuntime.Update`/`LateUpdate`; `HarmonyPhaseTiming.Install` wraps every patched Update/LateUpdate/FixedUpdate |
+| Dialogue.CallDialogue (host-authored dialogue gate, unique RVA) | `Story/Patches/StoryPatches` (`DialogueCallDialoguePatch`) + `Story/DialoguerGate` | Not folded; `rva_fold_scan.py --check` |
 | Story wire helpers (dirty-key commit entries, caps) | `Networking/Messages/StoryWire` | `StoryWireTests` |
 | Handshake / roster | `Networking/LanNetworkManager` + `Dispatch/` | Peer map |
 | Join / resync dump | `Session/SessionNetHandlers` | `_unicastPlayerId` via BeginUnicast/EndUnicast; **Puzzle ForceFullSend** + **Boss RequestFullSend** so mid-join unicast is complete |

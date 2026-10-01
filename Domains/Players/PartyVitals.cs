@@ -27,7 +27,7 @@ namespace SyncRADation.Players
         /// A revived peer keeps reporting dead=true until it applies the revive (it defers while loading a scene).
         /// Ignore "dead" from it until it reports alive once, but never longer than this.
         /// </summary>
-        private const float AckTimeout = 15f;
+        private const float AckTimeout = 45f; // longer than a slow (cold-disk Proton) scene load
 
         private static readonly Dictionary<int, Entry> _entries = new Dictionary<int, Entry>();
         private static readonly List<int> _scratch = new List<int>(8);

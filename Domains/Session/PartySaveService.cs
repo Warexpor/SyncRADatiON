@@ -67,9 +67,14 @@ namespace SyncRADation.Networking
         // Run tracking (solo + hosted): which slot this run was last saved to / loaded from.
         private static int _runSlot;
         private static bool _runDirty;
-        // Client: only the first join of this process restores a bag from the join token (a reconnect mid-session
-        // must not roll the bag back to the last save). Persistent on purpose: not a session value.
-        private static bool _joinRestoreDone;
+        // Client: the join token restores a bag once per (host stamp, slot) (a reconnect to the same host and save mid-session
+        // must not roll the bag back; a different host or save is a different run). Persistent on purpose: not a session value.
+        private static bool _joinSeen;
+        private static long _joinStamp;
+        private static int _joinSlot;
+        // Solo: key/object items in the bag at the last solo save / load (in memory, no IO). A solo-saved run is
+        // minted into a token only when hosting starts, by which time PartyKeyRing.Reset() has emptied the ring.
+        private static ushort[] _soloKeys;
         // Per-process bag file slot (see BagPath): two client processes from one install never share a file.
         private static int _instanceSlot = -1;
         private static System.IO.FileStream _instanceLock;
@@ -304,15 +309,15 @@ namespace SyncRADation.Networking
         {
             _runSlot = CurrentSlot();
             _runDirty = false;
-            return Mint(_runSlot);
+            return Mint(_runSlot, PartyKeyRing.Export());
         }
 
-        private static PartySaveToken Mint(int slot)
+        private static PartySaveToken Mint(int slot, ushort[] ring)
         {
             EnsureHostLoaded();
             var token = new PartySaveToken { Slot = slot, Counter = ++_next, Stamp = _stamp };
             _slotTokens[slot] = token;
-            _rings[token.Key] = PartyKeyRing.Export();
+            _rings[token.Key] = ring ?? new ushort[0];
             PruneRings();
             SaveHostFile();
             Current = token;
@@ -325,6 +330,7 @@ namespace SyncRADation.Networking
         {
             _runSlot = CurrentSlot();
             _runDirty = true;
+            _soloKeys = CaptureBagKeys();
         }
 
         /// <summary>Hosted session: a real native SaveManager.Load happened. Session now runs from that slot's last token.</summary>
@@ -348,6 +354,7 @@ namespace SyncRADation.Networking
             _runSlot = CurrentSlot();
             _runDirty = false;
             Current = default(PartySaveToken);
+            _soloKeys = CaptureBagKeys();
         }
 
         /// <summary>SaveManager.NewGame (any role): this run has no save; a stale token must never be used for it.</summary>
@@ -356,6 +363,7 @@ namespace SyncRADation.Networking
             _runSlot = 0;
             _runDirty = false;
             Current = default(PartySaveToken);
+            _soloKeys = null;
         }
 
         /// <summary>
@@ -370,13 +378,21 @@ namespace SyncRADation.Networking
             if (_runDirty)
             {
                 _runDirty = false;
-                Mint(_runSlot);
+                // The ring the bag held when the solo save was made, not the (now empty / later) live ring.
+                Mint(_runSlot, _soloKeys);
                 return;
             }
             EnsureHostLoaded();
             PartySaveToken token;
             if (_slotTokens.TryGetValue(_runSlot, out token))
+            {
                 Current = token;
+            }
+            else if (_soloKeys != null)
+            {
+                // Loaded in solo from a slot that never had a party token: the keys the save restored are its ring.
+                Mint(_runSlot, _soloKeys);
+            }
         }
 
         /// <summary>Token of the last party save in a slot (invalid when none).</summary>
@@ -431,12 +447,14 @@ namespace SyncRADation.Networking
 
             if ((msg.Flags & PartySaveMessage.FlagJoin) != 0)
             {
-                if (_joinRestoreDone)
+                if (_joinSeen && _joinStamp == token.Stamp && _joinSlot == token.Slot)
                 {
                     PlaytestLog.Event("PartySave", "rejoin: keep bag (token " + token.Key + ")");
                     return;
                 }
-                _joinRestoreDone = true;
+                _joinSeen = true;
+                _joinStamp = token.Stamp;
+                _joinSlot = token.Slot;
                 BagEntry[] bag;
                 if (_bags.TryGetValue(token.Key, out bag))
                 {
@@ -537,6 +555,34 @@ namespace SyncRADation.Networking
             catch (Exception ex)
             {
                 ModRuntime.Log?.Warning("[PartySave] CaptureBag failed: " + ex.Message);
+            }
+            return list.ToArray();
+        }
+
+        /// <summary>Key/Object items currently in the bag (the keys a save made now would carry), in memory only.</summary>
+        private static ushort[] CaptureBagKeys()
+        {
+            var list = new List<ushort>(4);
+            try
+            {
+                var dict = InventoryManager.elsterItems;
+                if (dict == null) return list.ToArray();
+                var en = dict.GetEnumerator();
+                while (en.MoveNext())
+                {
+                    var item = en.Current.key;
+                    if (item == null || en.Current.value <= 0) continue;
+                    Items.itemlist e;
+                    try { e = item._item; }
+                    catch (Exception ex) { Guard.Swallow("PartySave.KeyItem", ex); continue; }
+                    if (e == Items.itemlist.None || !PartyKeyRing.IsKeyOrObject(item)) continue;
+                    if (!list.Contains((ushort)e)) list.Add((ushort)e);
+                }
+                en.Dispose();
+            }
+            catch (Exception ex)
+            {
+                Guard.Swallow("PartySave.CaptureBagKeys", ex);
             }
             return list.ToArray();
         }

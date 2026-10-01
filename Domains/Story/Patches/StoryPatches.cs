@@ -128,7 +128,7 @@ namespace SyncRADation.Patches
                 var story = LanNetworkManager.Instance?.StorySync;
                 story?.ResetEndBase();
                 // The live slot was replaced wholesale (wipe reload / Continue): clients get a FULL, authoritative dump.
-                if (NetGate.Host) story?.RequestFullSend();
+                if (NetGate.Host) story?.RequestAuthoritativeFull();
             }
             catch (System.Exception ex) { StorySyncService.WarnOnce("Load ResetEndBase", ex); }
         }
@@ -146,7 +146,7 @@ namespace SyncRADation.Patches
             {
                 var story = LanNetworkManager.Instance?.StorySync;
                 story?.ResetEndBase();
-                if (NetGate.Host) story?.RequestFullSend();
+                if (NetGate.Host) story?.RequestAuthoritativeFull();
             }
             catch (System.Exception ex) { StorySyncService.WarnOnce("NewGame ResetEndBase", ex); }
         }
@@ -280,8 +280,10 @@ namespace SyncRADation.Patches
     }
 
     // Ending start is party-wide: the host runs the native determineEnding FIRST (it calls CalculatePlaystyle, which
-    // mutates Circle/Death), then a postfix broadcasts the final END values + verdict; a client asks the host.
-    // `once` (per Finale) means a second call is a native no-op, so only the call that actually ran broadcasts.
+    // mutates Circle/Death), then a FINALIZER broadcasts the final END values + verdict (a finalizer, not a postfix:
+    // the native body sets `once` first and has a null-ref path after it, and a throw must not leave the ending
+    // unbroadcast and unrepeatable); a client asks the host. `once` (per Finale) means a second call is a native
+    // no-op, so only the call that actually ran broadcasts. A host with nobody connected only records the ending.
     [HarmonyPatch(typeof(Finale), nameof(Finale.determineEnding))]
     public static class FinaleDetermineEndingPatch
     {
@@ -289,7 +291,7 @@ namespace SyncRADation.Patches
         public static bool Prefix(Finale __instance, out bool __state)
         {
             __state = false;
-            if (NetGate.IsApplying || !NetGate.Party) return true;
+            if (NetGate.IsApplying || !NetGate.Live) return true;
             var net = LanNetworkManager.Instance;
             if (NetGate.Host)
             {
@@ -297,16 +299,21 @@ namespace SyncRADation.Patches
                 catch (Exception e) { Guard.Swallow(e); __state = true; }
                 return true;
             }
+            if (!NetGate.Party) return true;
             net.SendInteractionRequest(0, InteractionKind.InspectFlag, 100 + (int)StoryCmd.DetermineEnding);
             return false;
         }
 
-        [HarmonyPostfix]
-        public static void Postfix(bool __state)
+        [HarmonyFinalizer]
+        public static void Finalizer(bool __state)
         {
             if (!__state || !NetGate.Host || NetGate.IsApplying) return;
-            var net = LanNetworkManager.Instance;
-            net.StorySync.HostBroadcastEnding(net);
+            try
+            {
+                var net = LanNetworkManager.Instance;
+                net.StorySync.HostBroadcastEnding(net);
+            }
+            catch (Exception e) { Guard.Swallow(e); }
         }
     }
 
@@ -546,6 +553,27 @@ namespace SyncRADation.Patches
         {
             _flavorActive = false;
             _flavorId = 0;
+            // The dialogue (and its end callback) is over or replaced. NOT _pendingCb: a client request for the next
+            // start can be in flight while an unrelated End finalizer runs this.
+            _activeCb = false;
+        }
+
+        /// <summary>SessionReset (session scope): flavor + every held callback + the re-entrancy / local-end counters.</summary>
+        internal static void ResetSession()
+        {
+            ClearFlavor();
+            _pendingCb = null;
+            _pendingCbId = 0;
+            _depth = 0;
+            _localEnd = 0;
+        }
+
+        /// <summary>Scene change: a held callback targets an object (Dialogue component) of the unloaded scene.</summary>
+        internal static void OnSceneChanged()
+        {
+            _pendingCb = null;
+            _pendingCbId = 0;
+            _activeCb = false;
         }
 
         // --- Re-entrancy (finding 1) ---------------------------------------------------------------------
@@ -570,8 +598,29 @@ namespace SyncRADation.Patches
             bool ok = cb != null && _pendingCbId == dialogueId && Time.unscaledTime - _pendingCbAt < 15f;
             _pendingCb = null;
             _pendingCbId = 0;
-            return ok ? cb : null;
+            // A destroyed target would throw inside native code when the end callback runs.
+            return ok && CallbackTargetAlive(cb) ? cb : null;
         }
+
+        static bool CallbackTargetAlive(DialoguerCallback cb)
+        {
+            try
+            {
+                var target = cb.m_target;
+                if (target == null) return true; // static callback
+                var uo = target.TryCast<UnityEngine.Object>();
+                if ((object)uo == null) return true; // plain managed target, nothing Unity-destroyable
+                return uo != null; // overloaded != : false once the native object is destroyed
+            }
+            catch (Exception e) { Guard.Swallow(e); return false; }
+        }
+
+        // The callback of a client-initiated start is running on this peer: its Continue / End apply runs it under
+        // apply, so the apply gets an author scope (its SProgress writes are the dialogue's consequences, and the host
+        // started the dialogue without the callback).
+        static bool _activeCb;
+        public static bool HoldsCallback => _activeCb;
+        public static void NoteActiveCallback(int dialogueId) => _activeCb = true;
 
         static int _localEnd;
         /// <summary>Scope: this peer alone leaves the dialogue (damage cancel); never forwarded to the host / party.</summary>
@@ -583,6 +632,11 @@ namespace SyncRADation.Patches
             entered = false;
             if (_depth > 0 && _depthId == dialogueId && Time.unscaledTime - _depthAt < 2f)
                 return true;
+            // One line per start that reaches the gate: confirms in-game that the DialoguerDialogues overloads (same
+            // native function as the int ones, only the int ones are patched) go through this detour as well.
+            if (NetGate.Live && !NetGate.IsApplying)
+                PlaytestLog.Event("Story", "StartDialogue gate id=" + dialogueId
+                    + (callback != null ? " cb" : "") + " role=" + (NetGate.Host ? "host" : "client"));
             bool run = StartCore(dialogueId, callback);
             if (run)
             {
@@ -609,8 +663,9 @@ namespace SyncRADation.Patches
                 ClearFlavor();
                 return true;
             }
-            // Host with nobody connected is vanilla: no dedupe window, no broadcast, no bookkeeping.
-            if (!NetGate.Party) return true;
+            // Offline is vanilla. A host with nobody connected still does the replay bookkeeping (a later joiner replays
+            // the dialogue) but never swallows a start and sends nothing (BroadcastPresentation only notes it).
+            if (!NetGate.Live) return true;
             if (LocalInspect.DialoguerFlavor(dialogueId) || LocalInspect.InspectScreen())
             {
                 _flavorId = dialogueId;
@@ -626,11 +681,12 @@ namespace SyncRADation.Patches
             {
                 var story = LanNetworkManager.Instance.StorySync;
                 // Duplicate Start of the same dialogue (a client request landed just before) is swallowed.
-                if (!story.HostDialogueStart(dialogueId))
+                if (!story.HostDialogueStart(dialogueId) && NetGate.Party)
                     return false;
                 story.BroadcastPresentation(StoryCmd.DialoguerStartId, 0, dialogueId, story.DialogueTag());
                 return true;
             }
+            if (!NetGate.Party) return true;
             PlaytestLog.Event("Story", "request Dialoguer " + dialogueId);
             if (callback != null)
             {
@@ -644,7 +700,7 @@ namespace SyncRADation.Patches
 
         public static bool Continue(int choice)
         {
-            if (NetGate.IsApplying || !NetGate.Party) return true;
+            if (NetGate.IsApplying || !NetGate.Live) return true;
             if (_flavorActive || LocalInspect.InspectScreen())
             {
                 if (_flavorId == (int)DialoguerDialogues.useItemDialogue)
@@ -661,6 +717,7 @@ namespace SyncRADation.Patches
                 story.BroadcastPresentation(StoryCmd.DialogueContinue, 0, choice, story.DialogueTag());
                 return true;
             }
+            if (!NetGate.Party) return true;
             // Carry the step this peer is on: with N players any of them may press, the host applies the first
             // request for a step and drops the rest as stale.
             LanNetworkManager.Instance.SendInteractionRequest(0, InteractionKind.DialogueContinue, choice,
@@ -670,7 +727,7 @@ namespace SyncRADation.Patches
 
         public static bool End()
         {
-            if (NetGate.IsApplying || !NetGate.Party) return true;
+            if (NetGate.IsApplying || !NetGate.Live) return true;
             if (_localEnd > 0) return true; // damage cancel: only this peer leaves the dialogue
             if (_flavorActive || LocalInspect.InspectScreen())
             {
@@ -684,6 +741,7 @@ namespace SyncRADation.Patches
                 story.BroadcastPresentation(StoryCmd.DialogueEnd, 0, 0, story.DialogueTag());
                 return true;
             }
+            if (!NetGate.Party) return true;
             LanNetworkManager.Instance.SendInteractionRequest(0, InteractionKind.DialogueEnd,
                 0, 0, 0f, 0f, 0f, story.DialogueTag());
             return false;
@@ -737,6 +795,32 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static bool Prefix(int dialogueId, DialoguerCallback callback, out bool __state) =>
             DialoguerGate.Start(dialogueId, callback, out __state);
+
+        [HarmonyFinalizer]
+        public static void Finalizer(Exception __exception, bool __state)
+        {
+            DialoguerGate.Exit(__state);
+            if (__exception != null) DialoguerGate.ClearFlavor();
+        }
+    }
+
+    // Dialogue.CallDialogue (unique RVA 0x423F30) calls DialoguerDialogueManager.startDialogue directly, so neither
+    // Dialoguer.StartDialogue detour sees it (a scene UnityEvent / EventScreen can call it). Same start gate: a client
+    // asks the host (native body skipped, no half-set dialogue state), the host dedupes + broadcasts; flavor / EventScreen
+    // lines stay local through the gate's own checks.
+    [HarmonyPatch(typeof(Dialogue), nameof(Dialogue.CallDialogue))]
+    public static class DialogueCallDialoguePatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(Dialogue __instance, out bool __state)
+        {
+            __state = false;
+            if (__instance == null) return true;
+            int id;
+            try { id = (int)__instance._dialogue; }
+            catch (Exception e) { Guard.Swallow(e); return true; }
+            return DialoguerGate.Start(id, null, out __state);
+        }
 
         [HarmonyFinalizer]
         public static void Finalizer(Exception __exception, bool __state)

@@ -14,6 +14,13 @@ namespace SyncRADation.Networking
         private readonly LanNetworkManager _net;
         private ushort _nextItemIndex = 1;
 
+        // Host: old key -> new key of a departed peer's rehomed drop. A claim that left a client before it
+        // saw the DropRekey still names the old key; the host maps it instead of denying a drop that exists.
+        private struct RekeyedTo { public int NewKey; public float Until; }
+        private readonly System.Collections.Generic.Dictionary<int, RekeyedTo> _rekeyed
+            = new System.Collections.Generic.Dictionary<int, RekeyedTo>();
+        private const float RekeyMapSeconds = 60f;
+
         internal DroppedItemNetHandlers(LanNetworkManager net)
         {
             _net = net ?? throw new ArgumentNullException(nameof(net));
@@ -22,6 +29,7 @@ namespace SyncRADation.Networking
         internal void Reset()
         {
             _nextItemIndex = 1;
+            _rekeyed.Clear();
             // Player ids + local indices recycle; stale FinishDroppedNative dedupe soft-locks take.
             try { SyncRADation.Patches.ItemPickupPatches.ResetDropClaims(); } catch (Exception e) { Guard.Swallow(e); }
             // Session end: an in-flight storage ack will never arrive.
@@ -74,12 +82,17 @@ namespace SyncRADation.Networking
             {
                 if (((d.Key >> 16) & 0xFF) == playerId) old.Add(d.Key);
             }
+            // The id is about to be recycled with an index counter back at 1: claim records of its key space
+            // (host side) are stale whether or not it left drops behind.
+            SyncRADation.Patches.ItemPickupPatches.PurgeDropClaimsOwnedBy(playerId);
             for (int i = 0; i < old.Count; i++)
             {
                 int oldKey = old[i];
                 ushort idx = AllocateItemIndex();
                 int newKey = (_net.LocalPlayerId << 16) | idx;
                 if (!DroppedItemManager.Rekey(oldKey, newKey)) continue;
+                SyncRADation.Patches.ItemPickupPatches.ForgetDropClaim(newKey);
+                _rekeyed[oldKey] = new RekeyedTo { NewKey = newKey, Until = Time.unscaledTime + RekeyMapSeconds };
                 SendDropRekey(new DropRekeyMessage
                 {
                     OldOwner = (byte)((oldKey >> 16) & 0xFF),
@@ -104,7 +117,25 @@ namespace SyncRADation.Networking
             // Host-authored only (dispatch drops client-originated copies).
             int oldKey = (msg.OldOwner << 16) | msg.OldIndex;
             int newKey = (msg.NewOwner << 16) | msg.NewIndex;
+            // Owner is gone and its id will be recycled: drop every stale claim record of that key space,
+            // plus any under the new key (index re-use), so the next drop with that key is claimable.
+            SyncRADation.Patches.ItemPickupPatches.PurgeDropClaimsOwnedBy(msg.OldOwner);
+            SyncRADation.Patches.ItemPickupPatches.ForgetDropClaim(newKey);
             DroppedItemManager.Rekey(oldKey, newKey);
+        }
+
+        /// <summary>Host: the key a claim should hit, following a recent rekey of the drop it names.</summary>
+        int ResolveRekeyed(int key)
+        {
+            if (_rekeyed.Count == 0) return key;
+            RekeyedTo to;
+            if (!_rekeyed.TryGetValue(key, out to)) return key;
+            if (Time.unscaledTime > to.Until)
+            {
+                _rekeyed.Remove(key);
+                return key;
+            }
+            return to.NewKey;
         }
 
         /// <summary>
@@ -113,6 +144,9 @@ namespace SyncRADation.Networking
         /// </summary>
         internal bool AcceptClientPickedUp(ref ItemPickedUpMessage msg, int senderId)
         {
+            // ClaimerPlayerId is host-authored (TryClaimDropped stamps it; relayed client copies are
+            // re-stamped here). A client that names a different claimer is lying about who took it.
+            if (msg.ClaimerPlayerId != 0 && msg.ClaimerPlayerId != senderId) return false;
             msg.ClaimerPlayerId = (byte)senderId;
             if (msg.GrantToReceiver) return false;
             return msg.SenderID == senderId;
@@ -286,7 +320,15 @@ namespace SyncRADation.Networking
             Items.itemlist itemEnum;
             int storedCount;
             if (!DroppedItemManager.TryGet(itemKey, out itemEnum, out storedCount))
-                return false;
+            {
+                // The claim was sent under a key that the host has since rekeyed (departed owner's drop):
+                // follow it to the drop's new key and grant, instead of denying an item that is on the floor.
+                int mapped = ResolveRekeyed(itemKey);
+                if (mapped == itemKey || !DroppedItemManager.TryGet(mapped, out itemEnum, out storedCount))
+                    return false;
+                PlaytestLog.Event("Pickup", "claim " + itemKey + " followed rekey -> " + mapped);
+                itemKey = mapped;
+            }
 
             var item = InventoryManager.getItem(itemEnum);
             if (item == null) return false;
@@ -355,6 +397,7 @@ namespace SyncRADation.Networking
                 return;
             }
             var pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            SyncRADation.Patches.ItemPickupPatches.ForgetDropClaim(key);
             try
             {
                 var go = DroppedItemManager.SpawnLocalItem((Items.itemlist)msg.ItemEnum, msg.Count, key, pos);
@@ -378,6 +421,9 @@ namespace SyncRADation.Networking
         {
             int key = (msg.SenderID << 16) | msg.LocalIndex;
             DroppedItemManager.DespawnWhenIdle(key);
+            // ClaimerPlayerId (host-authored) is informational on receivers: the claimer already took the
+            // item natively / via ack, everyone else only retires the floor object. Kept for the log.
+            PlaytestLog.Verbose("Pickup", "drop " + key + " taken by p" + msg.ClaimerPlayerId);
 
             if (msg.GrantToReceiver)
             {

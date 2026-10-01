@@ -589,7 +589,7 @@ namespace SyncRADation.Networking
                     if (v > 4) v = 4;
                     int cur = 0;
                     try { cur = positions[i]; } catch (System.Exception e) { Guard.Swallow(e); }
-                    if (cur == v && PuzzleSyncService.MutateWorld) continue;
+                    if (cur == v && PuzzleSyncService.ReplayWorld) continue;
                     try { positions[i] = v; } catch (System.Exception e) { Guard.Swallow(e); }
                 }
                 // Prefer native Update lerp of Rods from positions (Dig AG) —
@@ -664,7 +664,7 @@ namespace SyncRADation.Networking
             // coincidentally matches after LoadState.
             bool same = false;
             try { same = finger.state == desired; } catch (System.Exception e) { Guard.Swallow(e); }
-            if (same && PuzzleSyncService.MutateWorld) return;
+            if (same && PuzzleSyncService.ReplayWorld) return;
             try { finger.state = desired; } catch (System.Exception e) { Guard.Swallow(e); }
             // Native LoadState → loadFinger(string) → setStates; place/take also
             // end in setStates for Pickup*/MultiInter visuals. Prefer setStates

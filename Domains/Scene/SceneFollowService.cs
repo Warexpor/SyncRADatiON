@@ -187,8 +187,10 @@ namespace SyncRADation.Networking
         static void QueueRequest(string sceneName, string reason)
         {
             PlaytestLog.Event("Scene", "queue peer '" + sceneName + "' (" + reason + ")");
+            // The cap is absolute: a client re-requesting every ~25 s replaces the scene but must not refresh the clock,
+            // or the queue would never expire while the requester keeps retrying.
+            if (string.IsNullOrEmpty(_queued)) _queuedAt = Time.unscaledTime;
             _queued = sceneName;
-            _queuedAt = Time.unscaledTime;
         }
 
         /// <summary>Host tick: run the queued peer request once the host is arrived / alive.</summary>

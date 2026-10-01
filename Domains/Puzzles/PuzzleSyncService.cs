@@ -85,13 +85,19 @@ namespace SyncRADation.Networking
         {
             public PuzzleStateEntry First;
             public PuzzleStateEntry Latest;
+            // Set by a Harmony-hook emit (an explicit local action), not by the 0.5 s observation poll: only those
+            // may flush a float-only change (a polled Float0 can be a self-animating drift, not an edit).
+            public bool Explicit;
         }
         private struct PendingFlush
         {
+            public PuzzleStateEntry First;
             public PuzzleStateEntry Latest;
-            public PuzzleStateEntry Base;
+            public PuzzleStateEntry HostBase;
             public bool HaveHostBase;
+            public bool Explicit;
         }
+        private const int FloatMask = 128 | 256;
         private readonly Dictionary<PKey, PendingLocal> _pending = new Dictionary<PKey, PendingLocal>();
         private readonly List<PendingFlush> _pendingFlush = new List<PendingFlush>(8);
         private readonly List<PuzzleStateEntry> _pendingOut = new List<PuzzleStateEntry>(8);
@@ -125,6 +131,16 @@ namespace SyncRADation.Networking
         private static bool _mutateWorld = true;
 
         internal static bool MutateWorld => _mutateWorld;
+
+        private static bool _reapplying;
+        /// <summary>
+        /// True while ReapplyHeld re-snaps held entries (never a live event). MutateWorld stays true there on purpose
+        /// (UseItem NoteRemoteUnlock / unlock latch, RevealPickups need it); the replay-prone consumers (FlipSwitch.Flip,
+        /// pin / ring / reaktor visual refresh) read <see cref="ReplayWorld"/> instead.
+        /// </summary>
+        internal static bool Reapplying => _reapplying;
+        /// <summary>MutateWorld for a live or join apply, false during a held re-snap.</summary>
+        internal static bool ReplayWorld => _mutateWorld && !_reapplying;
 
         readonly CryoSyncService _cryo;
         readonly CodepadSyncService _codepad;
@@ -393,7 +409,7 @@ namespace SyncRADation.Networking
         /// the current Seq) so the caller can send it back to the sender. merged = true when only the client's
         /// cells were overlaid.
         /// </summary>
-        bool ResolveClientEntry(ref PuzzleStateEntry e, int sender, out bool merged)
+        bool ResolveClientEntry(ref PuzzleStateEntry e, int sender, bool canApply, out bool merged)
         {
             merged = false;
             PKey key = Key(e);
@@ -427,7 +443,8 @@ namespace SyncRADation.Networking
                 // _lastSent lags the live component by up to one poll: merge onto the live state so a cell the
                 // host changed in the meantime is not reverted.
                 PuzzleStateEntry baseEntry = cur;
-                if (e.WorldId != 0)
+                // While the host is transient (loading / other scene) the live scan is half-built: use _lastSent.
+                if (e.WorldId != 0 && canApply)
                 {
                     var live = Get<Component>(e.Type, e.WorldId);
                     PuzzleStateEntry fresh;
@@ -466,6 +483,7 @@ namespace SyncRADation.Networking
             ApplyingPeerPacket = false;
             _liveEdge = false;
             _mutateWorld = true;
+            _reapplying = false;
         }
 
         public void Reset()
@@ -523,6 +541,7 @@ namespace SyncRADation.Networking
         {
             if (net == null || !net.IsConnected) return;
             if (!Config.ModConfig.PuzzlesEnabled) return;
+            if (!net.HasReadyPeers) return; // zero-peer host: nothing to sync, no read/diff work
 
             if (_pendingReapply)
             {
@@ -627,7 +646,7 @@ namespace SyncRADation.Networking
             => net.Role != NetworkRole.Host && !_clientLive && ClientMayEmit(type);
 
         /// <summary>Client, unseeded: remember the latest local state of a key (first observation = its baseline).</summary>
-        void RecordPending(PuzzleStateEntry entry, bool solvedEdge = false)
+        void RecordPending(PuzzleStateEntry entry, bool solvedEdge = false, bool explicitEdit = true)
         {
             PKey key = Key(entry);
             PendingLocal p;
@@ -638,6 +657,7 @@ namespace SyncRADation.Networking
                 if (solvedEdge) p.First.Bool0 = false;
             }
             p.Latest = entry;
+            if (explicitEdit) p.Explicit = true;
             _pending[key] = p;
         }
 
@@ -654,7 +674,7 @@ namespace SyncRADation.Networking
                 {
                     if (kvp.Value == null || !IsActiveInScene(kvp.Value)) continue;
                     PuzzleStateEntry entry;
-                    if (TryRead(type, kvp.Key, kvp.Value, out entry)) RecordPending(entry);
+                    if (TryRead(type, kvp.Key, kvp.Value, out entry)) RecordPending(entry, false, explicitEdit: false);
                 }
             }
         }
@@ -668,10 +688,10 @@ namespace SyncRADation.Networking
             _pendingFlush.Clear();
             foreach (var kvp in _pending)
             {
-                var f = new PendingFlush { Latest = kvp.Value.Latest };
+                var f = new PendingFlush { First = kvp.Value.First, Latest = kvp.Value.Latest, Explicit = kvp.Value.Explicit };
                 PuzzleStateEntry hostBase = default(PuzzleStateEntry);
                 f.HaveHostBase = _hostDumpApplied && _lastSent.TryGetValue(kvp.Key, out hostBase);
-                f.Base = f.HaveHostBase ? hostBase : kvp.Value.First;
+                f.HostBase = hostBase;
                 _pendingFlush.Add(f);
             }
             _pending.Clear();
@@ -686,9 +706,12 @@ namespace SyncRADation.Networking
 
         /// <summary>
         /// A solve/edit the client made before it was seeded: emit it as a normal client edit (base = the host's
-        /// stamped Seq, Mask = diff vs the baseline). Nothing to do when it is not progressed, does not differ,
-        /// or the host baseline already holds a progressed state (merge types still send their changed cells).
-        /// After a host dump the live component was reset to the host state: restore the local edit first.
+        /// stamped Seq). Only keys whose latest local state differs from the FIRST local observation count (a real
+        /// local change: a merge type's untouched default, e.g. PEN_Reaktor Int0=736, never flushes), and a float-only
+        /// difference counts only for an explicit hook emit (a polled Float0 can be self-animating drift). The mask is
+        /// the cells the client itself changed (First vs Latest); a host dump base only narrows it to the cells that
+        /// still differ from the host. After a host dump the live component was reset to the host state: the local
+        /// edit is restored first (cell-merged onto the host base for merge types).
         /// </summary>
         void FlushPending()
         {
@@ -700,27 +723,31 @@ namespace SyncRADation.Networking
                 var f = _pendingFlush[i];
                 var e = f.Latest;
                 if (!IsProgressed(e)) continue;
-                int mask = DiffMask(f.Base, e);
+                int mask = DiffMask(f.First, e);
+                if (f.HaveHostBase) mask &= DiffMask(f.HostBase, e);
                 if (mask == 0) continue;
-                if (f.HaveHostBase && IsProgressed(f.Base) && !IsMergeType(e.Type)) continue;
+                if (!f.Explicit && (mask & ~FloatMask) == 0) continue;
+                if (f.HaveHostBase && IsProgressed(f.HostBase) && !IsMergeType(e.Type)) continue;
                 PKey key = Key(e);
+                e.Seq = CurSeq(key);
+                e.Mask = mask;
+                PuzzleStateEntry local = e;
                 if (f.HaveHostBase)
                 {
-                    e.Seq = CurSeq(key);
+                    if (IsMergeType(e.Type)) local = MergeEdit(f.HostBase, e);
+                    local.Seq = CurSeq(key);
                     bool prevMutate = _mutateWorld;
                     _mutateWorld = false;
                     NetGate.BeginApply();
-                    try { ApplyEntry(e, cinematic: false); }
+                    try { ApplyEntry(local, cinematic: false); }
                     finally
                     {
                         _mutateWorld = prevMutate;
                         NetGate.EndApply();
                     }
                 }
-                e.Seq = CurSeq(key);
-                e.Mask = mask;
-                _lastSent[key] = e;
-                HoldIfProgressed(e);
+                _lastSent[key] = local;
+                HoldIfProgressed(local);
                 _pendingOut.Add(e);
             }
             _pendingFlush.Clear();
@@ -867,13 +894,15 @@ namespace SyncRADation.Networking
             return Describe((IList<PuzzleStateEntry>)entries);
         }
 
-        private void NoteApplied(PuzzleStateEntry entry)
+        private void NoteApplied(PuzzleStateEntry entry, bool keepPending)
         {
             PKey key = Key(entry);
             _lastSent[key] = entry;
             var net = LanNetworkManager.Instance;
-            if (net != null && net.Role != NetworkRole.Host && !_clientLive)
-                _pending.Remove(key); // a host-applied state is the new first observation, not a local edit
+            // A live host edit supersedes a pre-seed local observation. A dump / held re-snap does not: the pending
+            // record survives so PrimeClientBaseline can still flush a real local solve the dump left in place.
+            if (!keepPending && net != null && net.Role != NetworkRole.Host && !_clientLive)
+                _pending.Remove(key);
             if (net != null && net.Role != NetworkRole.Host && entry.Seq != 0 && entry.Seq > CurSeq(key))
                 _seq[key] = entry.Seq;
         }
@@ -1044,7 +1073,7 @@ namespace SyncRADation.Networking
                     if (e.Type == PuzzleType.DET_RadioCodeLock && !e.Bool0)
                         continue;
                     bool merged;
-                    if (!ResolveClientEntry(ref e, msg.SenderPlayerId, out merged))
+                    if (!ResolveClientEntry(ref e, msg.SenderPlayerId, canApply, out merged))
                     {
                         _resync.Add(e); // dropped as stale: tell the sender what the host actually holds
                         continue;
@@ -1194,11 +1223,13 @@ namespace SyncRADation.Networking
                 return;
             }
             PlaytestLog.Event("Puzzle", "reapply held " + _held.Count + " " + Describe(_held));
-            // MutateWorld stays true on purpose: UseItem (per-player airlock card) and the native-call appliers
-            // latch their durable state only when it is set. The replay-prone consumers key off LiveEdge
-            // (false here), so a reapply never re-runs a rising-edge consequence.
+            // MutateWorld stays true on purpose: UseItem (per-player airlock card latch) and RevealPickups need it.
+            // The replay-prone consumers (FlipSwitch.Flip, DET_ServiceLock pins, PEN_Reaktor positions, LAB_Rings
+            // fingers) read ReplayWorld, which is false here, so a reapply never re-runs a rising-edge consequence.
             bool prevMutate = _mutateWorld;
+            bool prevReapplying = _reapplying;
             _mutateWorld = true;
+            _reapplying = true;
             NetGate.BeginApply();
             try
             {
@@ -1214,6 +1245,7 @@ namespace SyncRADation.Networking
             finally
             {
                 _mutateWorld = prevMutate;
+                _reapplying = prevReapplying;
                 NetGate.EndApply();
             }
             try { DoorNative.ReassertLockVisuals(); } catch (Exception ex) { WarnOnce("reapply-locks", ex.Message); }
@@ -1231,7 +1263,7 @@ namespace SyncRADation.Networking
         /// Track the latest state per entry: progressed entries replace the held one, a falling edge drops it
         /// (ReapplyHeld must never re-snap a state the puzzle has since left).
         /// </summary>
-        private void HoldIfProgressed(PuzzleStateEntry e)
+        private void HoldIfProgressed(PuzzleStateEntry e, bool authored = false)
         {
             bool progressed = IsProgressed(e);
             PKey pk = Key(e);
@@ -1247,11 +1279,14 @@ namespace SyncRADation.Networking
             bool durable = IsDurableMemoryType(e.Type) && e.WorldId != 0;
             // Default-unlocked doors are "progressed" from load: only hold one after it was seen locked, so a script
             // that relocks it (boss arena) is not undone by a held re-snap / durable memory after a reload.
+            // A host-authored entry (ApplyEntry: dump / live apply / held re-snap) is always held: a client or late
+            // joiner never reads the locked state itself, so the unlocked entry would otherwise be re-snapped away
+            // on a chunk remount. The rule only guards local reads.
             bool hold = progressed;
             if (NeedsLockTransition(e.Type))
             {
                 if (!progressed) _sawLocked.Add(pk);
-                else if (!_sawLocked.Contains(pk) && found < 0 && !_memory.ContainsKey(pk))
+                else if (!authored && !_sawLocked.Contains(pk) && found < 0 && !_memory.ContainsKey(pk))
                     hold = false;
             }
             if (hold)
@@ -1278,7 +1313,7 @@ namespace SyncRADation.Networking
         {
             if (c == null || NetGate.IsApplying) return;
             var net = LanNetworkManager.Instance;
-            if (net == null || !net.IsConnected) return;
+            if (net == null || !net.IsConnected || !net.HasReadyPeers) return;
             if (!MayEmit(net, type))
             {
                 PuzzleStateEntry pe;
@@ -1300,7 +1335,7 @@ namespace SyncRADation.Networking
         {
             if (NetGate.IsApplying) return;
             var net = LanNetworkManager.Instance;
-            if (net == null || !net.IsConnected) return;
+            if (net == null || !net.IsConnected || !net.HasReadyPeers) return;
             if (!MayEmit(net, entry.Type))
             {
                 if (Unseeded(net, entry.Type)) RecordPending(entry);
@@ -1324,7 +1359,7 @@ namespace SyncRADation.Networking
         {
             if (worldId == 0 || NetGate.IsApplying) return;
             var net = LanNetworkManager.Instance;
-            if (net == null || !net.IsConnected) return;
+            if (net == null || !net.IsConnected || !net.HasReadyPeers) return;
             bool gated = !MayEmit(net, type);
             if (gated && !Unseeded(net, type)) return;
             PuzzleStateEntry entry;
@@ -1377,8 +1412,8 @@ namespace SyncRADation.Networking
 
         private void ApplyEntry(PuzzleStateEntry e, bool cinematic)
         {
-            HoldIfProgressed(e);
-            NoteApplied(e);
+            HoldIfProgressed(e, authored: true);
+            NoteApplied(e, keepPending: !cinematic);
             bool prevLive = _liveEdge;
             _liveEdge = cinematic;
             try

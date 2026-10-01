@@ -17,6 +17,12 @@ namespace SyncRADation.Sync
         private static string _sceneName = "";
 
         public static string SceneName => _sceneName;
+        /// <summary>
+        /// Bumped by every Rebuild / Clear. WorldId hashes the sibling index, so an id cached per Unity instance (EnvEmit,
+        /// FmodEmitterSync) goes stale when siblings are added or destroyed: those caches compare against this and
+        /// recompute after a rebuild.
+        /// </summary>
+        public static int Generation { get; private set; }
         public static int EnemyCount => Enemies.Count;
         public static int DoorCount => DoubleDoors.Count + ConnectedDoorMap.Count + SlidingDoors.Count;
 
@@ -39,7 +45,19 @@ namespace SyncRADation.Sync
 
         /// <summary>Scene the cached checksum was taken in ("" = none yet).</summary>
         public static string ChecksumScene => _checksumScene;
-        public static bool HasChecksum => _checksumScene.Length > 0;
+        /// <summary>
+        /// True when a checksum of the current registry exists. Solo play never pays for it: Rebuild only computes it on
+        /// a live session, and this getter computes it lazily (once per Rebuild) for a session that started afterwards.
+        /// </summary>
+        public static bool HasChecksum
+        {
+            get
+            {
+                if (_checksumScene.Length == 0 && _sceneName.Length > 0 && NetGate.Live)
+                    TryComputeChecksum();
+                return _checksumScene.Length > 0;
+            }
+        }
         /// <summary>Per-category id counts of the last Rebuild. Shared array: copy, do not mutate.</summary>
         public static int[] ChecksumCounts => ChecksumCountsArr;
         /// <summary>Per-category WorldId checksums of the last Rebuild. Shared array: copy, do not mutate.</summary>
@@ -100,6 +118,12 @@ namespace SyncRADation.Sync
             catch (System.Exception ex) { Guard.Swallow(ex); return false; }
         }
 
+        static void TryComputeChecksum()
+        {
+            try { ComputeChecksum(); }
+            catch (System.Exception ex) { ClearChecksum(); ModRuntime.Log?.Warning("[WorldRegistry] checksum failed: " + ex.Message); }
+        }
+
         static void ClearChecksum()
         {
             for (int i = 0; i < ChecksumIds.Length; i++)
@@ -143,6 +167,7 @@ namespace SyncRADation.Sync
 
         public static void Rebuild()
         {
+            Generation++;
             WorldLookup.Invalidate();
             Enemies.Clear();
             EnemyIds.Clear();
@@ -220,20 +245,22 @@ namespace SyncRADation.Sync
                 ModRuntime.Log?.Error("[WorldRegistry] Rebuild failed: " + ex);
             }
 
-            try { ComputeChecksum(); }
-            catch (System.Exception ex) { ClearChecksum(); ModRuntime.Log?.Warning("[WorldRegistry] checksum failed: " + ex.Message); }
+            // Checksum only for a live session (the gameObject.name marshal per enemy is not free); solo stays vanilla-cost.
+            ClearChecksum();
+            if (NetGate.Live) TryComputeChecksum();
 
             ModRuntime.Log?.Msg("[WorldRegistry] scene='" + _sceneName
                 + "' enemies=" + Enemies.Count
                 + " doubleDoors=" + DoubleDoors.Count
                 + " connectedDoors=" + ConnectedDoorMap.Count
                 + " slidingDoors=" + SlidingDoors.Count
-                + " checksum=" + WorldChecksum.Combine(ChecksumSumsArr).ToString("X16"));
+                + (_checksumScene.Length > 0 ? " checksum=" + WorldChecksum.Combine(ChecksumSumsArr).ToString("X16") : " checksum=-"));
 
         }
 
         public static void Clear()
         {
+            Generation++;
             WorldLookup.Invalidate();
             Enemies.Clear();
             EnemyIds.Clear();

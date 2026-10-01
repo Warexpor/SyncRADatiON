@@ -43,7 +43,22 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static bool Prefix(CutsceneManager __instance)
         {
-            if (!NetGate.Party) return true;
+            if (!NetGate.Party)
+            {
+                // A host with nobody connected stays vanilla (no dedupe, no skip checks) but records the start so a
+                // peer joining mid-cutscene gets it replayed.
+                if (NetGate.Host && !NetGate.IsApplying && __instance != null)
+                {
+                    try
+                    {
+                        if (!LocalInspect.AirlockCinematic(__instance.gameObject))
+                            LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.CutsceneStart,
+                                WorldId.FromGameObject(__instance.gameObject), 0, "");
+                    }
+                    catch (System.Exception e) { Guard.Swallow(e); }
+                }
+                return true;
+            }
             if (NetGate.IsApplying)
             {
                 // A client replaying the host's DetermineEnding runs Finale.determineEnding natively, which starts the

@@ -25,6 +25,36 @@ namespace SyncRADation.Networking
             return true;
         }
 
+        /// <summary>
+        /// SProgress keys the game writes per player outside the shared story (Ghidra-verified writers: EnemyController.Save
+        /// "enemy &lt;name&gt; hp/rp/pos/rot/ded/burn", RadioManager "RadioFreq", HelpInputPrompts "showHelp", InventoryBase
+        /// "InventorySlot", MinimapPOIManager "mPOI&lt;id&gt;", PersistentMinimapManager "MMSet" / "F&lt;n&gt;R &lt;..&gt;",
+        /// SaveGameScreenshotMaker "Screenshot"). The host never commits them: they would overwrite each client's own.
+        /// </summary>
+        public static bool IsPerPlayerKey(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return false;
+            if (key.StartsWith("enemy ", System.StringComparison.Ordinal)) return true;
+            if (key.StartsWith("mPOI", System.StringComparison.Ordinal)) return true;
+            switch (key)
+            {
+                case "RadioFreq":
+                case "showHelp":
+                case "InventorySlot":
+                case "Screenshot":
+                case "MMSet":
+                    return true;
+            }
+            // PersistentMinimapManager.Save: "F" + <int> + "R " + <cells>.
+            if (key.Length > 3 && key[0] == 'F' && char.IsDigit(key[1]))
+            {
+                int i = 1;
+                while (i < key.Length && char.IsDigit(key[i])) i++;
+                if (i + 1 < key.Length && key[i] == 'R' && key[i + 1] == ' ') return true;
+            }
+            return false;
+        }
+
         public static string DialogueTag(int id, int step) => id + ":" + step;
 
         public static bool TryParseDialogueTag(string tag, out int id, out int step)

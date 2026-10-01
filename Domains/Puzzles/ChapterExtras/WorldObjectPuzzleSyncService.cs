@@ -155,7 +155,11 @@ namespace SyncRADation.Networking
             // Live: damage only moves HP down, concurrent hits from several players merge as min().
             // Dump / held re-snap (not a live edge) is the host's settled state: set it exactly, so a
             // heal / re-arm the host already did reaches late joiners and remounts.
+            // The undamaged HP is the component's own value before the first apply (a late joiner's dump already
+            // carries the damaged HP, so the dump alone would make partial damage look like the maximum).
             int seenMax;
+            int localHp = x.hitb.HP;
+            if (!_wallMaxHp.TryGetValue(e.WorldId, out seenMax) || localHp > seenMax) _wallMaxHp[e.WorldId] = localHp;
             if (!_wallMaxHp.TryGetValue(e.WorldId, out seenMax) || e.Int0 > seenMax) _wallMaxHp[e.WorldId] = e.Int0;
             if (e.Int0 < x.hitb.HP || (e.Int0 != x.hitb.HP && !PuzzleSyncService.LiveEdge))
                 x.hitb.HP = e.Int0;

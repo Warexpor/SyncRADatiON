@@ -7,7 +7,10 @@
 //   NewGame No usable save (new game that was never saved, or an empty slot): the vanilla new-game path,
 //           ResetNow + SaveManager.NewGame() + AsyncLoader.LoadLevel(<start scene the game loaded after NewGame>).
 //   Retry   Not even a recorded start scene (e.g. session began on a cheat-teleported level): reload the current
-//           scene, nothing is reset, nobody loses items; the wipe degrades to a full-HP retry.
+//           scene. The host resets what clients reset (floor drops, pickup claims) and gets its bag-at-down back, so
+//           nobody loses items and the world matches on every peer; the wipe degrades to a full-HP retry.
+// NewGame is only chosen for a run that really is fresh (never saved / loaded); a stale start scene must never
+// destroy a saved run.
 // Clients are dragged by SceneFollow: the host's AsyncLoader.LoadLevel goes through SceneLoadGate, which
 // broadcasts SceneFollow. Ring / floor-drop / claim resets run only once SaveManager.Load actually executed
 // (DeathPatches postfix, guarded by "loading was true on entry"), via OnLoadFinished.
@@ -33,12 +36,18 @@ namespace SyncRADation.Networking
 
         /// <summary>SProgress string key SaveManager.Save writes the active scene name to (string literal 8527).</summary>
         private const string SceneKey = "SceneName";
+        /// <summary>Non-transient time (LoadingScreen does not count) a reload may take before it is retried / abandoned.</summary>
         private const float PendingTimeout = 45f;
+        /// <summary>Absolute cap, loading screen included: a reload that never leaves the LoadingScreen is abandoned.</summary>
+        private const float HardTimeout = 240f;
 
         private static bool _pending;
         private static bool _wipeReload;
         private static bool _setLoading;
         private static float _startedAt;
+        private static float _issuedAt;
+        private static bool _retried;
+        private static BagEntry[] _retryBag;
         private static Mode _mode;
         private static string _targetScene = "";
 
@@ -47,6 +56,10 @@ namespace SyncRADation.Networking
         private static bool _freshRun;
         private static bool _newGameArmed;
         private static string _newGameScene = "";
+        // Scene the run's slot last saved / loaded (read from SProgress in memory at that moment: a disk read
+        // at wipe time would clobber the live progress when the wipe ends up as a Retry).
+        private static string _savedScene = "";
+        private static int _savedSlot;
 
         /// <summary>A reload was started and SaveManager.Load has not run yet.</summary>
         public static bool Pending => _pending;
@@ -66,6 +79,17 @@ namespace SyncRADation.Networking
         public static void NoteSlotBound()
         {
             _freshRun = false;
+            NoteSavedScene();
+        }
+
+        private static void NoteSavedScene()
+        {
+            try
+            {
+                _savedSlot = SaveManager.slotID;
+                _savedScene = SProgress.GetString(SceneKey, "") ?? "";
+            }
+            catch (Exception ex) { Guard.Swallow("HostReload.NoteSavedScene", ex); }
         }
 
         /// <summary>AsyncLoader.LoadLevel(string) postfix: the first real level load after NewGame is the new-game start.</summary>
@@ -94,6 +118,12 @@ namespace SyncRADation.Networking
         {
             var plan = new Plan { Scene = "", Mode = Mode.None };
             if (_pending) return plan;
+            // The gate would swallow our LoadLevel (GateLevel -> false) after ResetNow already emptied the host.
+            if (SceneFollowService.LoadsSuppressed)
+            {
+                PlaytestLog.Warn("Damage", "wipe: scene loads are suppressed - retry later");
+                return plan;
+            }
 
             int slot = SafeSlot();
             string scene = "";
@@ -101,14 +131,15 @@ namespace SyncRADation.Networking
 
             if (!_freshRun && slot > 0)
             {
-                string saved = ReadSavedScene(slot);
+                string saved = SavedSceneFor(slot);
                 if (IsLoadable(saved))
                 {
                     scene = saved;
                     mode = Mode.Save;
                 }
             }
-            if (mode == Mode.None && IsLoadable(_newGameScene))
+            // NewGame wipes the run: only for a run that has no save at all.
+            if (mode == Mode.None && _freshRun && IsLoadable(_newGameScene))
             {
                 scene = _newGameScene;
                 mode = Mode.NewGame;
@@ -128,6 +159,8 @@ namespace SyncRADation.Networking
                 return plan;
             }
 
+            string bagSource;
+            _retryBag = mode == Mode.Retry ? PartySaveService.ResolveWipeBag(default(PartySaveToken), out bagSource) : null;
             try
             {
                 if (mode != Mode.Retry)
@@ -165,6 +198,8 @@ namespace SyncRADation.Networking
             _mode = mode;
             _targetScene = scene;
             _startedAt = Time.unscaledTime;
+            _issuedAt = _startedAt;
+            _retried = false;
             plan.Started = true;
             plan.Mode = mode;
             plan.Scene = scene;
@@ -191,6 +226,7 @@ namespace SyncRADation.Networking
             _wipeReload = false;
             _setLoading = false;
             _freshRun = false;
+            NoteSavedScene();
             return wipe;
         }
 
@@ -213,14 +249,29 @@ namespace SyncRADation.Networking
                     ResetHostWorldState(ModRuntime.Network); // fresh run: Current is invalid, so the ring becomes empty
                     PlaytestLog.Event("Damage", "wipe reload NewGame arrived '" + scene + "'");
                 }
-                else
+                else if (NetGate.Host)
                 {
-                    PlaytestLog.Event("Damage", "wipe reload Retry arrived '" + scene + "' (nothing reset)");
+                    ResetRetryWorldState(ModRuntime.Network);
+                    PlaytestLog.Event("Damage", "wipe reload Retry arrived '" + scene + "' (drops/claims reset, bag restored)");
                 }
                 if (wipe && NetGate.Host)
                     SessionReset.RunAll(SessionReset.ReasonWipe);
             }
             catch (Exception ex) { Guard.Swallow("HostReload.OnSceneArrived", ex); }
+        }
+
+        /// <summary>
+        /// Retry wipe, host: the same local reset clients run (floor drops, claims) and the bag it held when it went
+        /// down (drops may have taken it off the floor-dropped bag; ClearAll would destroy it). Ring and story untouched.
+        /// </summary>
+        private static void ResetRetryWorldState(LanNetworkManager net)
+        {
+            DroppedItemManager.ClearAll();
+            ItemPickupPatches.ResetDropClaims();
+            net?.PickupSync.Reset();
+            var bag = _retryBag;
+            _retryBag = null;
+            if (bag != null) PartySaveService.RestoreBag(bag);
         }
 
         /// <summary>
@@ -236,13 +287,50 @@ namespace SyncRADation.Networking
             net?.PickupSync.Reset();
         }
 
-        /// <summary>Per-frame watchdog: a reload whose Load never ran must not leave loading == true behind.</summary>
+        /// <summary>
+        /// Per-frame watchdog. Only non-transient time counts (a cold-disk load sits in LoadingScreen for a long
+        /// time). A reload whose Load / arrival never happened is retried once; only then abandoned, so the host is
+        /// never left reset (ResetNow already ran) without a restore if it can be helped.
+        /// </summary>
         public static void Tick()
         {
             if (!_pending) return;
-            if (Time.unscaledTime - _startedAt < PendingTimeout) return;
-            PlaytestLog.Warn("Damage", "wipe reload " + _mode + " never reached SaveManager.Load - giving up");
+            float now = Time.unscaledTime;
+            if (SceneFollowService.LocalIsTransient())
+            {
+                _startedAt = now;
+                if (now - _issuedAt < HardTimeout) return;
+                PlaytestLog.Warn("Damage", "wipe reload " + _mode + " stuck in the loading screen - giving up");
+                Abort("hard timeout");
+                return;
+            }
+            if (now - _startedAt < PendingTimeout) return;
+            if (_mode != Mode.Retry && !_retried && ReissueLoad()) return;
+            PlaytestLog.Warn("Damage", "wipe reload " + _mode + " never completed - giving up");
             Abort("timeout");
+        }
+
+        /// <summary>Second (and last) attempt at the load the watchdog saw not complete.</summary>
+        private static bool ReissueLoad()
+        {
+            _retried = true;
+            PlaytestLog.Warn("Damage", "wipe reload " + _mode + " '" + _targetScene + "' did not complete - retrying once");
+            try
+            {
+                if (_mode == Mode.Save)
+                {
+                    SaveManager.loading = true;
+                    _setLoading = true;
+                }
+                AsyncLoader.LoadLevel(_targetScene);
+                _startedAt = Time.unscaledTime;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Guard.Swallow("HostReload.Reissue", ex);
+                return false;
+            }
         }
 
         private static void Abort(string why)
@@ -255,7 +343,11 @@ namespace SyncRADation.Networking
             _setLoading = false;
             _pending = false;
             _wipeReload = false;
+            _retryBag = null;
             PlaytestLog.Event("Damage", "wipe reload aborted (" + why + ")");
+            // Dumps held back while pending must not stay queued forever (the world is whatever it is now).
+            try { ModRuntime.Network?.SessionHandlers.DeferDump(-1); }
+            catch (Exception ex) { Guard.Swallow("HostReload.abortDump", ex); }
         }
 
         // ------------------------------------------------------------------ helpers
@@ -266,12 +358,17 @@ namespace SyncRADation.Networking
             catch (Exception ex) { Guard.Swallow("HostReload.slotID", ex); return 0; }
         }
 
-        /// <summary>The scene name the slot's last save recorded ("" when the slot is empty).</summary>
-        private static string ReadSavedScene(int slot)
+        /// <summary>
+        /// The scene name the slot's last save recorded ("" when unknown). Memory first (captured at the last Save /
+        /// Load of this slot). Only when this process never saved or loaded the slot is the file read, which
+        /// overwrites the live SProgress - acceptable there: nothing of this run is in memory to lose.
+        /// </summary>
+        private static string SavedSceneFor(int slot)
         {
+            if (_savedSlot == slot && !string.IsNullOrEmpty(_savedScene)) return _savedScene;
             try
             {
-                SProgress.Load(slot); // the same call SaveManager.Load starts with; the reload overwrites progress anyway
+                SProgress.Load(slot);
                 return SProgress.GetString(SceneKey, "") ?? "";
             }
             catch (Exception ex)

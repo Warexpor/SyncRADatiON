@@ -1,3 +1,54 @@
+## 0.5.61 — 2026-10-01
+
+Protocol **v16**. Second-pass review of the 0.5.59 / 0.5.60 fix code: 45 findings fixed across net/session, puzzles/doors/audio, pickups/combat/bosses and story/scene. The first real boot smoke test passed: handshake, join dump and WorldId checksum all OK, patch audit 192 ok / 0 missing, zero `[Guard]` lines. The ~1 s/frame menu stall seen in that run was an environment artifact (compositor / present, not reproducible), so no code change for it; stall diagnostics were added so a recurrence is attributable. **Still not playtested beyond boot and handshake**: compile- and unit-tested only (Release 0 errors / 0 warnings, 511 tests).
+
+### Added
+- **Hitch phase / stall diagnostics** — `Sync/HitchTrace.cs` times every mod update phase (`dropTick`, `guard`, `friendlyFire`, `tickRespawn`, `entitySpawner`, `net.Update`, `proxyPreTick`, `net.LateUpdate`) and prints `[Hitch] phase=<name> Nms` only above 50 ms. A frame >= 400 ms prints one stall line (`modUpdate / gameScripts / modLate / modGui / renderGap / focus / background / vsync`) so a compositor or present stall is distinguishable from mod CPU.
+- **`Sync/HarmonyPhaseTiming.cs`** — wraps every patched `Update` / `LateUpdate` / `FixedUpdate` of the mod's patch classes with the same phase timer (logged once: `[Hitch] phase timing on N Update-family patches`).
+- **`StoryCommit.Authoritative`** (bool, appended last): a full commit after a host `SaveManager.Load` / `NewGame` replaces the client's `SProgress` (absent keys are removed) instead of merging into it.
+- **`Dialogue.CallDialogue` gate** — patched on its unique RVA (0x423F30); it calls `DialoguerDialogueManager.startDialogue` directly and bypassed the `Dialoguer.StartDialogue` gate. `rva_fold_scan.py --check`: 206 targets, 0 unresolved, 8 folded (unchanged list). The StartDialogue gate also logs one line when it blocks.
+- **Deterministic MVID build** — csproj `PathMap=$(MSBuildProjectDirectory)=/src`, `EnableSourceLink=false`, `EnableSourceControlManagerQueries=false`: the same commit built in two directories or worktrees gives a byte-identical dll, so two separately built installs are no longer rejected by `SchemaHash`.
+- F2 status draws the patch-audit and game-build lines; the audit line shows its duration (`T ms`) and a late (first scene load) audit failure.
+- Tests: +18 story / wire tests (`StoryWireTests`), golden schema hash recomputed.
+
+### Fixed
+**Net & session**
+- **Wipe snapshot ordering**: `HostReload.OnSceneArrived` now runs before `Network.OnSceneChanged`, and the dump is deferred (`DeferDump`) while `HostReload.Pending`, so clients receive the post-wipe world, not the pre-wipe one.
+- **Wipe watchdog**: counts non-transient time only and retries instead of giving up after one 45 s window; a wipe-scene mismatch goes through `SceneFollowService.Apply`.
+- **NewGame**: `SaveSlot = -1` and `RestoreBag(empty)`, so a new game no longer inherits the previous bag or slot.
+- Solo-save token built from the in-memory bag keys; join restore is keyed by (stamp, slot); `AckTimeout` 45 s; the handshake game-build tail read is guarded (`AvailableBytes >= 4`) so an old peer gets the readable protocol reject; `GameBuild.Hash = 0` when the build could not be hashed; cached animator hashes; PatchAudit shader check runs in `RunLate`; WorldRegistry checksum is only computed on a live session (solo pays nothing; `HasChecksum` computes lazily if a session starts later).
+
+**Puzzles, doors, audio**
+- Pending (pre-gate) puzzle flush survives a full dump; `_reapplying` flag so held `ReapplyHeld` is not treated as live; authored door holds respected; `ReappliedIds` removed; **a client can no longer lock a door the host has unlocked** (host ignores client `Locked=true`); FMOD rescan bounds; `_okKeys`; HostEmit / puzzle emits / door poll gated on `NetGate.Party`; emitter and env-emit caches invalidated by `WorldRegistry.Generation`.
+
+**Pickups, combat, bosses**
+- **Host inspect pickups** (yes / no prompt) and **drop decline** now work for the host; `_claimedDrops` purge; `DropRekey` mapping kept 60 s; hurtbox list cached with a 0.25 s near refresh, `NoteSpawn` in `BroadcastEnemySpawn`; overflow drop only after the grant and MagFill; release-pending hide uses unscaled time and survives pause; spear ack uses `FindInBag`, `BossSyncService.ResetSession()` registered (first-taker per spear no longer leaks across sessions); `HitFinalizer`; `_lateTxn` is a dictionary; the host rejects an `ItemPickedUp` whose claimer does not match the sender.
+
+**Story & scene**
+- **`HostDetermineEnding` without a Finale** (host elsewhere) and an ending-broadcast finalizer: the finale no longer hangs when the host is in another room; `DetermineEnding` is replayable.
+- **`CloseStickyDialogue` is client-only** (the host no longer closes its own dialogue); dialogue-callback author scope and `_pendingCb` reset (`DialoguerGate.ResetSession` replaces `ClearFlavor` in the session-reset table).
+- **Per-player keys denylisted** (`StoryWire.IsPerPlayerKey`) so one player's local flags are not forced on everybody; bookkeeping runs on `Live`, sends on `Party`; `Il2CppRealType.Is` fails closed; `ResetGame.ResetNow` skipped on clients in EndCredits; absolute 90 s cap on the follow queue.
+
+### Changed
+- Protocol **15 → 16** (`StoryCommit.Authoritative`; the handshake tail guard is read-side only, the bump keeps every 0.5.60 peer out). A 0.5.60 peer is rejected by the handshake.
+- Build: `PathMap` + SourceLink / SCM queries off (see Added); `AGENTS.md` documents the reproducible dll.
+
+### Before → After (player)
+- Party wipe: **before** clients could receive the pre-wipe world snapshot and a stuck reload gave up; **after** the post-wipe snapshot is sent and the reload retries.
+- New game after a session: **before** the old bag and slot could leak; **after** empty bag, no slot.
+- Host picking up a dropped item: **before** the prop could hide on a "no" or the host's own "yes" was denied (suspected, from review); **after** the host claim is recorded, a decline leaves the item.
+- Door the host unlocked: **before** a client could re-lock it; **after** it stays open for everyone.
+- Finale with the host elsewhere: **before** a client could sit at the finale forever (no broadcast went out); **after** the host computes the playstyle and broadcasts the ending.
+- Two separately built installs of the same commit: **before** rejected by the schema hash; **after** accepted.
+
+### Open risks / untested
+- **Not playtested beyond boot and handshake.** The wipe reload path (`HostReload` ordering, retry) is still unverified in a running game; so are the host inspect/decline prompt, the finale-with-host-elsewhere path and `StoryCommit.Authoritative` on a real Load / NewGame.
+- Deterministic MVID holds only for the same SDK and reference set; give both players the same dll when in doubt.
+- The 1 s/frame stall was not reproduced, so its cause is unknown; if it returns, send the `[Hitch] stall` lines.
+
+Protocol **16**. Product **0.5.61** (not 1.0).
+
+
 ## 0.5.60 — 2026-10-01
 
 Protocol **v15**. WorldId divergence between peers (different hierarchy order, save-dependent spawns, renamed objects) is now visible and self-reporting instead of scattered `MISS` lines. **Not playtested**: compile- and unit-tested only.

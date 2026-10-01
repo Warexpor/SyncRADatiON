@@ -1,8 +1,10 @@
 // Boot-time audit: does every Harmony patch target still resolve, and does every member the mod looks up
 // by name via reflection still exist? A game update (or an Il2Cpp-unhollower naming quirk) that renames
 // something otherwise fails silently: the patch class is skipped / the lookup returns null and the feature
-// is just dead. Output: ONE "[Harmony] audit: N ok, M missing" line plus one line per missing item.
-// Never throws; a couple of ms (resolution only, nothing is invoked except [HarmonyTargetMethod] providers).
+// is just dead. Output: ONE "[Harmony] audit: N ok, M missing, T ms" line plus one line per missing item.
+// Never throws. Cost is measured and logged (T): resolution only, nothing is invoked except [HarmonyTargetMethod]
+// providers, but it reads custom attributes of every patch method, so it is not "a couple of ms".
+// The name-keyed Shader.Find check runs later (RunLate, first scene load): the shader table is not ready at boot.
 using System;
 using System.Collections.Generic;
 using System.Reflection;
@@ -58,6 +60,7 @@ namespace SyncRADation
 
         public static void Run(Type[] types)
         {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
             int ok = 0;
             var missing = new List<string>();
             try
@@ -79,8 +82,9 @@ namespace SyncRADation
                 missing.Add("audit of reflected members aborted: " + ex.Message);
             }
 
-            ModRuntime.SetPatchAudit(missing.Count == 0, ok, missing.Count);
-            ModRuntime.Log?.Msg("[Harmony] audit: " + ok + " ok, " + missing.Count + " missing");
+            clock.Stop();
+            ModRuntime.SetPatchAudit(missing.Count == 0, ok, missing.Count, clock.ElapsedMilliseconds);
+            ModRuntime.Log?.Msg("[Harmony] audit: " + ok + " ok, " + missing.Count + " missing, " + clock.ElapsedMilliseconds + " ms");
             for (int i = 0; i < missing.Count; i++)
             {
                 ModRuntime.Log?.Warning("[Harmony] audit missing: " + missing[i]);
@@ -289,10 +293,13 @@ namespace SyncRADation
                 if (found) ok++;
                 else missing.Add("reflect " + r.Owner.Name + "." + r.Name + " (" + r.Kind + ", used by " + r.UsedBy + ")");
             }
-            AuditShaders(ref ok, missing);
         }
 
-        private static void AuditShaders(ref int ok, List<string> missing)
+        /// <summary>
+        /// First scene load (Shader.Find resolves against the loaded shader table; at OnInitializeMelon it can be null and
+        /// would report a false "missing"). Informational: only "none resolves" is reported, never fails a patch.
+        /// </summary>
+        public static void RunLate()
         {
             bool found = false;
             try
@@ -304,8 +311,14 @@ namespace SyncRADation
             {
                 Guard.Swallow("PatchAudit.shaders", ex);
             }
-            if (found) ok++;
-            else missing.Add("shader " + string.Join(" or ", ShaderAnyOf) + " (used by RemoteWeaponEffects laser dot)");
+            if (found)
+            {
+                ModRuntime.Log?.Msg("[Harmony] audit (late): shaders ok");
+                return;
+            }
+            string item = "shader " + string.Join(" or ", ShaderAnyOf) + " (used by RemoteWeaponEffects laser dot)";
+            ModRuntime.Log?.Warning("[Harmony] audit missing: " + item);
+            ModRuntime.AddPatchAuditLate(item);
         }
 
         private static string Short(Exception ex)

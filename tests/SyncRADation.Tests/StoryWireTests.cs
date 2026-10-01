@@ -72,5 +72,42 @@ namespace SyncRADation.Tests
             Assert.False(StoryWire.TryParseDialogueTag(":3", out _, out _));
             Assert.False(StoryWire.TryParseDialogueTag("a:b", out _, out _));
         }
+
+        [Theory]
+        [InlineData("enemy Tuber3 hp", true)]
+        [InlineData("enemy Falke_1 pos", true)]
+        [InlineData("RadioFreq", true)]
+        [InlineData("showHelp", true)]
+        [InlineData("InventorySlot", true)]
+        [InlineData("Screenshot", true)]
+        [InlineData("MMSet", true)]
+        [InlineData("mPOI12", true)]
+        [InlineData("F3R 0101", true)]
+        [InlineData("F12R x", true)]
+        [InlineData("Fuse", false)]
+        [InlineData("F3", false)]
+        [InlineData("FR 1", false)]
+        [InlineData("enemies", false)]
+        [InlineData("PEN_Door_open", false)]
+        [InlineData("", false)]
+        [InlineData(null, false)]
+        public void IsPerPlayerKey_denylists_only_the_host_per_player_writers(string key, bool expected)
+        {
+            Assert.Equal(expected, StoryWire.IsPerPlayerKey(key));
+        }
+
+        [Fact]
+        public void StoryCommit_authoritative_bit_round_trips()
+        {
+            foreach (bool a in new[] { false, true })
+            {
+                var back = (StoryCommitMessage)WireFuzz.RoundTrip(
+                    new StoryCommitMessage { FullRefresh = true, Authoritative = a, ActiveStoryCmd = 9, EndingId = 2 }, out var r, out _);
+                Assert.Equal(a, back.Authoritative);
+                Assert.Equal(9, back.ActiveStoryCmd);
+                Assert.Equal(2, back.EndingId);
+                Assert.True(r.EndOfData);
+            }
+        }
     }
 }

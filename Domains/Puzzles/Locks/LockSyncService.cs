@@ -491,14 +491,14 @@ namespace SyncRADation.Networking
                     if (v > prec) v = prec;
                     int cur = 0;
                     try { cur = pins[i]; } catch (System.Exception e) { Guard.Swallow(e); }
-                    if (cur == v && PuzzleSyncService.MutateWorld) continue;
+                    if (cur == v && PuzzleSyncService.ReplayWorld) continue;
                     try { pins[i] = v; changed = true; } catch (System.Exception e) { Guard.Swallow(e); }
                 }
                 // Native FlipButton ends in SetPins + AdjustCrown for pin/crown visuals.
                 // Call those directly — avoid FlipButton coroutine side effects (SFX/anim).
                 // FullRefresh (!MutateWorld) always refreshes visuals even if values match
                 // (remount / late-join OnEnable may leave wrong transforms).
-                if (!changed && PuzzleSyncService.MutateWorld) return;
+                if (!changed && PuzzleSyncService.ReplayWorld) return;
             }
             catch { return; }
             try { x.SetPins(); } catch (System.Exception e) { Guard.Swallow(e); }

@@ -80,6 +80,8 @@ namespace SyncRADation.Networking
         internal void BroadcastEnemySpawn(EnemySpawnMessage msg)
         {
             if (_net.Role != NetworkRole.Host) return;
+            // Host just spawned/adopted an enemy (spawner child, F11): its hurtboxes join the damage scan now.
+            ClientDamageService.NoteSpawn();
             var writer = new NetDataWriter();
             writer.Put((byte)NetMessageType.EnemySpawn);
             msg.Serialize(writer);

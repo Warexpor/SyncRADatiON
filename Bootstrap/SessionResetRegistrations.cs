@@ -27,10 +27,11 @@ namespace SyncRADation
             SessionReset.Register("BossAuth", KolibriAdlerAuthPatches.Clear);           // held Kolibri/Adler snapshots
             SessionReset.Register("SourceAnim", SourceAnimReader.Reset);
             SessionReset.Register("Airlock", AirlockCinematic.Reset);
-            SessionReset.Register("DialoguerFlavor", DialoguerGate.ClearFlavor);
+            SessionReset.Register("DialoguerFlavor", DialoguerGate.ResetSession);   // flavor + held dialogue callbacks + _depth/_localEnd
             SessionReset.Register("EventZone", EventZonePatch.OnSceneChanged);          // fired sets, keypad/use-item dedupe
             SessionReset.Register("DropClaims", ItemPickupPatches.ResetDropClaims);
             SessionReset.Register("ClientDamage", ClientDamageService.OnSceneChanged);
+            SessionReset.Register("BossSpear", () => Net()?.BossSync.ResetSession());  // _spearTaker (first taker per spear)
             SessionReset.Register("PuzzleSync", () => Net()?.PuzzleSync.Reset());       // durable solve memory + held entries
             SessionReset.Register("PuzzleFlags", PuzzleSyncService.ResetFlags);         // ApplyingPeerPacket, _liveEdge, _mutateWorld
             SessionReset.Register("ItemPickup", ItemPickupPatches.ResetSession);        // _pendingId/_pendingItem/_pendingTime/_countBeforeDrop

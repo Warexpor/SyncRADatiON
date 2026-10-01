@@ -17,8 +17,13 @@ namespace SyncRADation.Patches
             static readonly System.Collections.Generic.Dictionary<int, ulong> _ids
                 = new System.Collections.Generic.Dictionary<int, ulong>();
 
+            static int _idGeneration = -1;
+
             static ulong IdOf(Component c)
             {
+                // WorldId includes the sibling index: recompute after every WorldRegistry rebuild.
+                int gen = SyncRADation.Sync.WorldRegistry.Generation;
+                if (gen != _idGeneration) { _idGeneration = gen; _ids.Clear(); }
                 int iid = c.GetInstanceID();
                 ulong id;
                 if (_ids.TryGetValue(iid, out id)) return id;
@@ -45,6 +50,7 @@ namespace SyncRADation.Patches
             {
                 _once.Clear();
                 _ids.Clear();
+                _idGeneration = SyncRADation.Sync.WorldRegistry.Generation;
             }
 
             public static void LabRings(LAB_Rings x)

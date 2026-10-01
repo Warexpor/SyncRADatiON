@@ -39,13 +39,22 @@ namespace SyncRADation
                 h = Mix(h, unity);
 
                 string path = FindGameAssembly();
+                bool hashed = false;
                 if (path != null)
                 {
-                    h = HashFile(h, path);
+                    hashed = HashFile(ref h, path);
                 }
                 else
                 {
-                    ModRuntime.Log?.Warning("[GameBuild] GameAssembly.dll not found - build hash covers version strings only");
+                    ModRuntime.Log?.Warning("[GameBuild] GameAssembly.dll not found - build unknown, handshake check skipped");
+                }
+                if (!hashed)
+                {
+                    // A hash over the version strings alone would never match a peer that did hash the file
+                    // (and reject a good peer): unknown means "skip the comparison" (Hash == 0).
+                    Hash = 0;
+                    Label = Version + " (unhashed)";
+                    return;
                 }
                 if (h == 0) h = 1;
                 Hash = h;
@@ -98,7 +107,8 @@ namespace SyncRADation
             return null;
         }
 
-        private static uint HashFile(uint h, string path)
+        /// <summary>True when the whole head/tail read succeeded and <paramref name="h"/> covers the file.</summary>
+        private static bool HashFile(ref uint h, string path)
         {
             try
             {
@@ -115,13 +125,14 @@ namespace SyncRADation
                         h = HashRange(h, fs, len - tail, tail, buf);
                     }
                 }
+                return true;
             }
             catch (Exception ex)
             {
                 ModRuntime.Log?.Warning("[GameBuild] could not read " + path + ": " + ex.Message);
                 Guard.Swallow("GameBuild.HashFile", ex);
+                return false;
             }
-            return h;
         }
 
         private static uint HashRange(uint h, FileStream fs, long offset, long count, byte[] buf)

@@ -27,11 +27,29 @@ namespace SyncRADation.Networking
 
         // Dedicated hurtbox list. WorldLookup.All<Hurtbox> is cached per scene and never sees enemies,
         // projectiles or adopted spawns created after the load, so the host keeps its own list: rescanned
-        // about once a second, and immediately after a spawn hook (NoteSpawn).
-        private static readonly List<Hurtbox> _hurtboxes = new List<Hurtbox>(64);
+        // about once a second, immediately after a spawn hook (NoteSpawn), and every 0.25 s while a remote
+        // proxy is within HotRange of a hurtbox (chunk loads and runtime-instantiated hurtboxes have no hook;
+        // the enemy spawner, EnemySpawn adoption and host F11 spawns do call NoteSpawn).
+        // hid / damage / pulse / collider are cached here: they are read-only for the scan, so the per-frame
+        // pass only touches the three live toggles (Hurtbox.enabled, activeInHierarchy, Collider.enabled).
+        private struct Hb
+        {
+            public Hurtbox H;
+            public GameObject Go;
+            public Collider Col;
+            public int Hid;
+            public int Damage;
+            public float Pulse;
+            public bool NoClosest;
+        }
+
+        private static readonly List<Hb> _hurtboxes = new List<Hb>(64);
         private static float _nextRefresh;
         private static bool _forceRefresh = true;
         private const float RefreshInterval = 1f;
+        private const float HotRefreshInterval = 0.25f;
+        private const float HotRange = 30f;
+        private static bool _hot;
 
         /// <summary>An enemy / spawner child appeared: rescan hurtboxes on the next tick.</summary>
         public static void NoteSpawn() => _forceRefresh = true;
@@ -41,8 +59,8 @@ namespace SyncRADation.Networking
             float now = Time.unscaledTime;
             if (!_forceRefresh && now < _nextRefresh) return;
             _forceRefresh = false;
-            _nextRefresh = now + RefreshInterval;
             _hurtboxes.Clear();
+            _hot = false;
             // Per-collider caches are keyed by local instance ids; projectiles churn them, so cap growth.
             if (_colliders.Count > 512)
             {
@@ -52,19 +70,53 @@ namespace SyncRADation.Networking
             Hurtbox[] found = null;
             try { found = Object.FindObjectsOfType<Hurtbox>(true); }
             catch (System.Exception ex) { WarnOnce("hurtbox scan", ex); }
-            if (found == null) return;
-            for (int i = 0; i < found.Length; i++)
+            if (found != null)
             {
-                var h = found[i];
-                if (h == null) continue;
-                try
+                for (int i = 0; i < found.Length; i++)
                 {
-                    // Player melee/stomp boxes (canDamageEnemies) are the local Elster's weapons.
-                    if (h.canDamageEnemies) continue;
+                    var h = found[i];
+                    if (h == null) continue;
+                    var e = new Hb { H = h };
+                    try
+                    {
+                        // Player melee/stomp boxes (canDamageEnemies) are the local Elster's weapons.
+                        if (h.canDamageEnemies) continue;
+                        e.Damage = h.damage;
+                        if (e.Damage <= 0) continue;
+                        e.Go = h.gameObject;
+                        if (e.Go == null) continue;
+                        e.Hid = h.GetInstanceID();
+                        e.Pulse = h.pulseTime > 0.25f ? h.pulseTime : 0.5f;
+                    }
+                    catch { continue; }
+
+                    Collider col;
+                    if (!_colliders.TryGetValue(e.Hid, out col) || col == null)
+                    {
+                        try { col = e.Go.GetComponent<Collider>(); }
+                        catch (System.Exception ex) { WarnOnce("hurtbox collider", ex); col = null; }
+                        _colliders[e.Hid] = col;
+                        if (col != null && !SupportsClosestPoint(col))
+                            _noClosestPoint.Add(e.Hid);
+                    }
+                    if (col == null) continue;
+                    e.Col = col;
+                    e.NoClosest = _noClosestPoint.Contains(e.Hid);
+                    _hurtboxes.Add(e);
+
+                    if (!_hot && _targets.Count > 0)
+                    {
+                        try
+                        {
+                            var hp = e.Go.transform.position;
+                            for (int t = 0; t < _targets.Count; t++)
+                                if ((_targets[t].Pos - hp).sqrMagnitude <= HotRange * HotRange) { _hot = true; break; }
+                        }
+                        catch (System.Exception ex) { WarnOnce("hurtbox position", ex); }
+                    }
                 }
-                catch { continue; }
-                _hurtboxes.Add(h);
             }
+            _nextRefresh = now + (_hot ? HotRefreshInterval : RefreshInterval);
         }
 
         static bool SupportsClosestPoint(Collider col)
@@ -98,11 +150,29 @@ namespace SyncRADation.Networking
         {
             _hurtboxes.Clear();
             _forceRefresh = true;
+            _hot = false;
+            _peerSceneOk.Clear();
             _inside.Clear();
             _seen.Clear();
             _colliders.Clear();
             _noClosestPoint.Clear();
             _swingTime.Clear();
+        }
+
+        // PeerInHostScene reads (and allocates) the active scene name on every call; the verdict only
+        // changes on a scene change, so cache it per peer for a short window (cleared in OnSceneChanged).
+        private struct SceneVerdict { public bool Ok; public float Until; }
+        private static readonly Dictionary<int, SceneVerdict> _peerSceneOk = new Dictionary<int, SceneVerdict>();
+        private const float SceneVerdictSeconds = 0.5f;
+
+        static bool PeerSameScene(LanNetworkManager net, int pid)
+        {
+            float now = Time.unscaledTime;
+            SceneVerdict v;
+            if (_peerSceneOk.TryGetValue(pid, out v) && now < v.Until) return v.Ok;
+            v = new SceneVerdict { Ok = net.PeerInHostScene(pid), Until = now + SceneVerdictSeconds };
+            _peerSceneOk[pid] = v;
+            return v.Ok;
         }
 
         static bool CollectTargets(LanNetworkManager net)
@@ -115,7 +185,7 @@ namespace SyncRADation.Networking
             for (int i = 0; i < ids.Length; i++)
             {
                 int pid = ids[i];
-                if (!net.PeerInHostScene(pid)) continue;
+                if (!PeerSameScene(net, pid)) continue;
                 if (PartyVitals.IsDown(pid)) continue; // downed peers are not targets (0.5.57)
                 var proxy = pm.GetProxy(pid);
                 if (proxy == null || proxy.GameObject == null || proxy.LastDead) continue;
@@ -159,53 +229,32 @@ namespace SyncRADation.Networking
             _seen.Clear();
             for (int i = 0; i < all.Count; i++)
             {
-                var h = all[i];
-                if (h == null) continue;
-                GameObject go;
-                int hid;
+                var hb = all[i];
+                Bounds b;
                 try
                 {
-                    if (h.damage <= 0) continue;
-                    go = h.gameObject;
-                    if (go == null || !h.enabled || !go.activeInHierarchy) continue;
-                    hid = h.GetInstanceID();
+                    if (hb.H == null || hb.Go == null || hb.Col == null) continue;
+                    if (!hb.H.enabled || !hb.Go.activeInHierarchy || !hb.Col.enabled) continue;
+                    // Once per hurtbox, not once per target.
+                    b = hb.Col.bounds;
+                    b.Expand(0.4f);
                 }
                 catch { continue; }
-
-                Collider col;
-                if (!_colliders.TryGetValue(hid, out col) || col == null)
-                {
-                    try { col = go.GetComponent<Collider>(); }
-                    catch (System.Exception ex) { WarnOnce("hurtbox collider", ex); col = null; }
-                    _colliders[hid] = col;
-                    if (col != null && !SupportsClosestPoint(col))
-                        _noClosestPoint.Add(hid);
-                }
-                if (col == null) continue;
-                try { if (!col.enabled) continue; } catch { continue; }
 
                 for (int t = 0; t < _targets.Count; t++)
                 {
                     var tg = _targets[t];
-                    if (!Overlaps(col, hid, tg.Pos)) continue;
+                    if (!Overlaps(hb.Col, b, hb.NoClosest, hb.Hid, tg.Pos)) continue;
 
-                    long key = (long)hid * 256L + tg.Pid;
+                    long key = (long)hb.Hid * 256L + tg.Pid;
                     _seen.Add(key);
                     float next;
                     bool wasInside = _inside.TryGetValue(key, out next);
                     if (wasInside && now < next) continue;
 
-                    float pulse = 2f;
-                    int dmg = 0;
-                    try
-                    {
-                        pulse = h.pulseTime > 0.25f ? h.pulseTime : 0.5f;
-                        dmg = h.damage;
-                    }
-                    catch (System.Exception ex) { WarnOnce("hurtbox fields", ex); }
-                    _inside[key] = now + pulse;
-                    net.SendEnemyDamage(tg.Pid, 0, dmg, true);
-                    PlaytestLog.Verbose("Damage", "hurtbox " + go.name + " dmg=" + dmg + " -> p" + tg.Pid);
+                    _inside[key] = now + hb.Pulse;
+                    net.SendEnemyDamage(tg.Pid, 0, hb.Damage, true);
+                    PlaytestLog.Verbose("Damage", "hurtbox " + hb.Go.name + " dmg=" + hb.Damage + " -> p" + tg.Pid);
                 }
             }
 
@@ -222,16 +271,14 @@ namespace SyncRADation.Networking
             }
         }
 
-        static bool Overlaps(Collider col, int hid, Vector3 feet)
+        static bool Overlaps(Collider col, Bounds b, bool noClosest, int hid, Vector3 feet)
         {
             try
             {
                 // Proxy root sits at the feet; test roughly chest height so low/flat volumes still connect.
                 var mid = feet + new Vector3(0f, 0.9f, 0f);
-                var b = col.bounds;
-                b.Expand(0.4f);
                 if (!b.Contains(mid) && !b.Contains(feet)) return false;
-                if (_noClosestPoint.Contains(hid)) return true;
+                if (noClosest) return true;
                 try
                 {
                     var cp = col.ClosestPoint(mid);

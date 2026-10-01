@@ -45,6 +45,9 @@ namespace SyncRADation.Players
         private static float _wipeBlockedLog = -99f;
         private static Animator _deathAnim;
         private static GameObject _deathAnimFor;
+        // Animator.StringToHash once: ApplyDownedLocal polls the Dead bool every frame while downed.
+        private static readonly int DeadHash = Animator.StringToHash("Dead");
+        private static readonly int DieHash = Animator.StringToHash("Die");
 
         public static bool IsDead => _isDead;
 
@@ -214,10 +217,10 @@ namespace SyncRADation.Players
             try
             {
                 var anim = DeathAnimator();
-                if (anim != null && !anim.GetBool("Dead"))
+                if (anim != null && !anim.GetBool(DeadHash))
                 {
-                    anim.SetTrigger("Die");
-                    anim.SetBool("Dead", true);
+                    anim.SetTrigger(DieHash);
+                    anim.SetBool(DeadHash, true);
                 }
             }
             catch (System.Exception ex) { LogOnce("down anim", ex); }
@@ -425,8 +428,10 @@ namespace SyncRADation.Players
             WipeWorldLocal(net);
             FollowWipeReload(msg.Scene);
 
-            string source;
-            var bag = PartySaveService.ResolveWipeBag(token, out source);
+            string source = "none";
+            // SaveSlot -1 = the host started a new game: nothing carries over, the bag is emptied like the host's.
+            var bag = msg.SaveSlot < 0 ? new BagEntry[0] : PartySaveService.ResolveWipeBag(token, out source);
+            if (msg.SaveSlot < 0) source = "new game (empty bag)";
             if (bag != null)
             {
                 PlaytestLog.Event("PartySave", "wipe bag restore from " + source);
@@ -457,7 +462,17 @@ namespace SyncRADation.Players
             try
             {
                 if (SceneFollowService.LocalIsTransient() || SceneFollowService.AlreadyGoingTo(scene)) return;
-                if (!SceneMatches(scene)) return; // SceneFollow loads it
+                if (!SceneMatches(scene))
+                {
+                    // The wipe is authoritative. The host's SceneFollow normally already dragged us here, but it is not
+                    // reliable (airlock wreck<->hole split ignores it, personal chapter loads skip the broadcast, or
+                    // loads were suppressed when it arrived), and the host's world is a reverted one: be in its scene.
+                    // The wreck<->hole rule (ShouldIgnoreHostFollow) stays in force for ordinary follows only; a wipe
+                    // voids the airlock split (everyone is reloaded from one save / new game).
+                    PlaytestLog.Event("Damage", "wipe: scene mismatch, following directly '" + scene + "'");
+                    SceneFollowService.Apply(scene);
+                    return;
+                }
                 SceneFollowService.NoteGoingTo(scene);
                 try { DroppedItemManager.RestorePlayForLoad(); }
                 catch (System.Exception ex) { LogOnce("wipe restore play", ex); }
@@ -637,6 +652,8 @@ namespace SyncRADation.Players
             }
 
             var token = plan.Mode == HostReload.Mode.Save ? PartySaveService.TokenForSlot(plan.Slot) : default(PartySaveToken);
+            // NewGame: SaveSlot = -1 tells clients the world is brand new (empty bag), not "restore bag at down".
+            if (plan.Mode == HostReload.Mode.NewGame) token.Slot = -1;
             PlaytestLog.Event("Damage", "party wipe — " + plan.Mode + " reload '" + plan.Scene + "'"
                 + (token.Valid ? " token=" + token.Key : " (no party snapshot)"));
 
@@ -743,8 +760,8 @@ namespace SyncRADation.Players
                 var anim = DeathAnimator();
                 if (anim != null)
                 {
-                    anim.SetBool("Dead", false);
-                    anim.ResetTrigger("Die");
+                    anim.SetBool(DeadHash, false);
+                    anim.ResetTrigger(DieHash);
                 }
             }
             catch (System.Exception ex) { LogOnce("clear anim", ex); }

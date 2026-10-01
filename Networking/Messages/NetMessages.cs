@@ -264,15 +264,26 @@ namespace SyncRADation.Networking
 
         public static HandshakeMessage Deserialize(NetDataReader r)
         {
-            return new HandshakeMessage
+            var h = new HandshakeMessage
             {
                 ProtocolVersion = r.GetInt(),
                 AssignedPlayerId = r.GetInt(),
                 SchemaHash = r.GetUInt(),
-                ModVersion = r.GetString(),
-                GameBuildHash = r.GetUInt(),
-                GameBuild = r.GetString()
+                ModVersion = r.GetString()
             };
+            // The game-build tail is new in protocol 14: an older peer's handshake ends after ModVersion. Reading
+            // past it would throw (dispatch swallows it, the peer only sees a timeout) instead of reaching the
+            // protocol-version reject with a readable reason.
+            if (r.AvailableBytes >= 4)
+            {
+                h.GameBuildHash = r.GetUInt();
+                h.GameBuild = r.AvailableBytes >= 2 ? r.GetString() : "";
+            }
+            else
+            {
+                h.GameBuild = "";
+            }
+            return h;
         }
     }
 
@@ -1573,6 +1584,8 @@ namespace SyncRADation.Networking
         public byte ActiveGameState;
         public long ActiveWorldId;
         public byte ActiveStoryCmd;
+        /// <summary>Full commit after a host SaveManager.Load / NewGame: the table replaces the client's SProgress (absent keys are removed).</summary>
+        public bool Authoritative;
 
         public void Serialize(NetDataWriter w)
         {
@@ -1596,6 +1609,7 @@ namespace SyncRADation.Networking
             w.Put(ActiveGameState);
             w.Put(ActiveWorldId);
             w.Put(ActiveStoryCmd);
+            w.Put(Authoritative);
         }
 
         public static StoryCommitMessage Deserialize(NetDataReader r)
@@ -1625,6 +1639,7 @@ namespace SyncRADation.Networking
             msg.ActiveGameState = r.GetByte();
             msg.ActiveWorldId = r.GetLong();
             msg.ActiveStoryCmd = r.GetByte();
+            msg.Authoritative = r.GetBool();
             return msg;
         }
     }

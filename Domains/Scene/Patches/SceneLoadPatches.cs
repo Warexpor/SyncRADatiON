@@ -133,6 +133,28 @@ namespace SyncRADation.Patches
         }
     }
 
+    // CreditsEnd.Update (every frame after the fade) runs ResetGame.ResetNow, then LoadLevel(MainMenu2). On a client in
+    // the party that load is gated into a request, so ResetNow ran natively every frame (statics wiped repeatedly)
+    // until the host's own credits end. The host's follow runs ResetNow itself (SceneFollowService.Apply, apply scope).
+    // ResetGame.ResetNow is a unique RVA (0x776050); only the client's own un-applied call from the EndCredits scene is skipped.
+    [HarmonyPatch(typeof(ResetGame), nameof(ResetGame.ResetNow))]
+    public static class ResetNowCreditsPatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix()
+        {
+            if (NetGate.IsApplying || !NetGate.Client || !NetGate.Party) return true;
+            try
+            {
+                if (!string.Equals(UnityEngine.SceneManagement.SceneManager.GetActiveScene().name,
+                        SceneFollowService.EndCreditsScene, System.StringComparison.Ordinal))
+                    return true;
+            }
+            catch (System.Exception e) { Guard.Swallow(e); return true; }
+            return false;
+        }
+    }
+
     [HarmonyPatch(typeof(UnityEngine.SceneManagement.SceneManager), nameof(UnityEngine.SceneManagement.SceneManager.LoadScene), new[] { typeof(string) })]
     public static class SceneManagerLoadStringPatch
     {

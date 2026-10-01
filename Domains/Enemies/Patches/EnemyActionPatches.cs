@@ -61,11 +61,20 @@ namespace SyncRADation.Patches
             }
         }
 
-        [HarmonyPostfix, HarmonyPatch(nameof(EnemyController.Hit))]
-        public static void HitPostfix(EnemyController __instance, Transform __state)
+        /// <summary>
+        /// Finalizer, not a Postfix: it also runs when native Hit throws, so playerPos is always put back
+        /// (a skipped Postfix would leave the enemy chasing the scratch transform). The exception is passed
+        /// through unchanged.
+        /// </summary>
+        [HarmonyFinalizer, HarmonyPatch(nameof(EnemyController.Hit))]
+        public static System.Exception HitFinalizer(EnemyController __instance, Transform __state, System.Exception __exception)
         {
-            if (__state == null || __instance == null) return;
-            __instance.playerPos = __state;
+            if (__state != null && __instance != null)
+            {
+                try { __instance.playerPos = __state; }
+                catch (System.Exception e) { Guard.Swallow(e); }
+            }
+            return __exception;
         }
     }
 }

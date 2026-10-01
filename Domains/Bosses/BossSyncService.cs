@@ -830,6 +830,13 @@ namespace SyncRADation.Networking
                     if (meds[i] != null) meds[i].enabled = true;
         }
 
+        /// <summary>SessionReset (also after a wipe reload in the same scene): the spears are back on the floor, so a
+        /// stale first taker must not suppress the next race's duplicate-spear ack.</summary>
+        public void ResetSession()
+        {
+            _spearTaker.Clear();
+        }
+
         public void OnSceneChanged()
         {
             _clientDisabled = false;

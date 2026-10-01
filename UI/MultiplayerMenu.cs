@@ -44,9 +44,10 @@ namespace SyncRADation.UI
             // Roster rows (remote players only; the local line is part of the role row).
             List<int> roster = net.Role != NetworkRole.Offline ? net.GetSessionPlayerIdsSorted() : null;
             int rows = roster != null ? roster.Count : 0;
-            int auditRows = ModRuntime.PatchAuditOk ? 0 : 1 + ModRuntime.PatchAuditMissing.Count;
+            // Two footer rows (game build, audit summary) + one per missing audit item.
+            int footerRows = 2 + ModRuntime.PatchAuditMissing.Count;
             _windowRect.height = BaseHeight + (rows > 0 ? (rows + 1) * RowHeight : 0f)
-                + 2 * RowHeight + auditRows * RowHeight
+                + footerRows * RowHeight
                 + (net.Role != NetworkRole.Offline ? RowHeight : 0f);
 
             GUI.Box(_windowRect, "SyncRADation v" + PluginInfo.Version);
@@ -132,6 +133,18 @@ namespace SyncRADation.UI
 
             GUI.Label(CR(10, y, 330, 20), "LAN | protocol v" + PluginInfo.ProtocolVersion
                 + " | HP " + Players.NetworkDamageSystem.PlayerHP.ToString("F0"));
+            y += RowHeight + 2f;
+
+            GUI.Label(CR(10, y, 340, 20), "Game " + GameBuild.Label);
+            y += RowHeight;
+            GUI.Label(CR(10, y, 340, 20), ModRuntime.PatchAuditSummary);
+            y += RowHeight;
+            var missing = ModRuntime.PatchAuditMissing;
+            for (int i = 0; i < missing.Count; i++)
+            {
+                GUI.Label(CR(20, y, 330, 20), "missing: " + missing[i]);
+                y += RowHeight;
+            }
         }
 
         private static Rect CR(float x, float y, float w, float h)

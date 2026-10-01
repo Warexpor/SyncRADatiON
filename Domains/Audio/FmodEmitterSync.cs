@@ -34,6 +34,11 @@ namespace SyncRADation.Networking
         // consecutive frames still goes out.
         static readonly Dictionary<EmitKey, int> _lastPlayFrame = new Dictionary<EmitKey, int>();
         static readonly HashSet<EmitKey> _skipIds = new HashSet<EmitKey>();
+        // Client: keys that already passed the (hierarchy-walking) local-only check. Only the cheap dynamic
+        // Cinematic test is repeated per Play. Cleared in Reset and when WorldRegistry rebuilds.
+        static readonly HashSet<EmitKey> _okKeys = new HashSet<EmitKey>();
+        // Host: when a Stop for a key last went out, so a client Play that crossed it on the wire does not restart the loop.
+        static readonly Dictionary<EmitKey, float> _lastHostStopAt = new Dictionary<EmitKey, float>();
         static readonly Dictionary<EmitKey, StudioEventEmitter> _byId = new Dictionary<EmitKey, StudioEventEmitter>();
         // Host: when a Play for a key last went out, so a client request for the same sound is not doubled.
         static readonly Dictionary<EmitKey, float> _lastHostPlayAt = new Dictionary<EmitKey, float>();
@@ -48,6 +53,13 @@ namespace SyncRADation.Networking
         static float _lastRebuildAt = -999f;
         const float RebuildMinInterval = 1f;
         const float MissTtl = 3f;
+        // The full FindObjectsOfType rescan (Invalidate) is the expensive part: at most once per window. A persistent
+        // unknown id (client-only emitter, runtime clone) must not turn every request into a scene scan.
+        static float _lastInvalidateAt = -999f;
+        const float InvalidateMinInterval = 5f;
+        // WorldRegistry.Generation the id caches were built under (WorldId includes the sibling index, which drifts
+        // when objects are added or destroyed; a registry rebuild is the point where the ids are recomputed).
+        static int _idGeneration = -1;
 
         // Client-originated world sound (client -> host -> everyone but the sender).
         static float _sceneStartAt;
@@ -72,8 +84,25 @@ namespace SyncRADation.Networking
             return true;
         }
 
+        static void CheckGeneration()
+        {
+            int g = WorldRegistry.Generation;
+            if (g == _idGeneration) return;
+            _idGeneration = g;
+            _idCache.Clear();
+            _compCache.Clear();
+            _byId.Clear();
+            _missUntil.Clear();
+            _skipIds.Clear();
+            _okKeys.Clear();
+            // The scene registry was rebuilt (everything was invalidated): the next miss may scan right away.
+            _lastRebuildAt = -999f;
+            _lastInvalidateAt = -999f;
+        }
+
         static ulong IdOf(StudioEventEmitter e)
         {
+            CheckGeneration();
             int iid = e.GetInstanceID();
             ulong id;
             if (_idCache.TryGetValue(iid, out id)) return id;
@@ -85,6 +114,7 @@ namespace SyncRADation.Networking
 
         static byte CompIndex(StudioEventEmitter e)
         {
+            CheckGeneration();
             int iid = e.GetInstanceID();
             byte idx;
             if (_compCache.TryGetValue(iid, out idx)) return idx;
@@ -108,6 +138,7 @@ namespace SyncRADation.Networking
 
         static StudioEventEmitter FindCached(EmitKey key)
         {
+            CheckGeneration();
             StudioEventEmitter e;
             if (_byId.TryGetValue(key, out e) && e != null)
                 return e;
@@ -118,7 +149,15 @@ namespace SyncRADation.Networking
             // Throttled: a burst of unknown ids shares one rebuild.
             if (now - _lastRebuildAt < RebuildMinInterval)
                 return null;
+            // Rescanning without a fresh scan cannot find anything new: remember the miss and wait for the window.
+            if (now - _lastInvalidateAt < InvalidateMinInterval)
+            {
+                if (_missUntil.Count > 2048) _missUntil.Clear();
+                _missUntil[key] = now + MissTtl;
+                return null;
+            }
             // The cached scan predates emitters instantiated since the scene loaded: rescan on a real miss.
+            _lastInvalidateAt = now;
             WorldLookup.Invalidate<StudioEventEmitter>();
             RebuildCache();
             if (_byId.TryGetValue(key, out e) && e != null)
@@ -129,8 +168,11 @@ namespace SyncRADation.Networking
 
         static void RebuildCache()
         {
+            // _missUntil is kept: clearing it let every persistent unknown id force a rescan once per window.
+            // The sibling-index based ids and the component index may have moved: recompute them.
             _byId.Clear();
-            _missUntil.Clear();
+            _idCache.Clear();
+            _compCache.Clear();
             _lastRebuildAt = Time.unscaledTime;
             var all = WorldLookup.All<StudioEventEmitter>();
             if (all == null) return;
@@ -215,7 +257,7 @@ namespace SyncRADation.Networking
         public static void EmitterChanged(StudioEventEmitter emitter, bool play)
         {
             if (emitter == null) return;
-            if (NetGate.Host) HostEmit(emitter, play);
+            if (NetGate.Host) { if (NetGate.Party) HostEmit(emitter, play); }
             else if (NetGate.Client && !NetGate.IsApplying) ClientEmit(emitter, play);
         }
 
@@ -254,6 +296,7 @@ namespace SyncRADation.Networking
             _skipIds.Remove(key);
             _sentPlaying[key] = play;
             if (play) _lastHostPlayAt[key] = Time.unscaledTime;
+            else _lastHostStopAt[key] = Time.unscaledTime;
             if (ModRuntime.VerboseLogging)
                 PlaytestLog.Verbose("FMOD", (play ? "Play" : "Stop")
                     + (string.IsNullOrEmpty(path) ? "" : " " + path)
@@ -303,11 +346,26 @@ namespace SyncRADation.Networking
                 _lastPlayFrame[key] = frame;
             }
             string path = "";
-            try { path = emitter.Event; } catch (Exception e) { Guard.Swallow(e); }
-            if (IsClientLocalOnly(emitter, path))
+            if (_okKeys.Contains(key))
             {
-                _skipIds.Add(key);
-                return;
+                // Static checks passed before; Cinematic is the one dynamic part (airlock / event camera starts).
+                try { if (LocalInspect.Cinematic(emitter.gameObject)) return; }
+                catch (Exception e) { Guard.Swallow(e); }
+                if (ModRuntime.VerboseLogging)
+                {
+                    try { path = emitter.Event; } catch (Exception e) { Guard.Swallow(e); }
+                }
+            }
+            else
+            {
+                try { path = emitter.Event; } catch (Exception e) { Guard.Swallow(e); }
+                if (IsClientLocalOnly(emitter, path))
+                {
+                    _skipIds.Add(key);
+                    return;
+                }
+                if (_okKeys.Count > 4096) _okKeys.Clear();
+                _okKeys.Add(key);
             }
             if (!TakeToken(ref _clientBucket, ClientRatePerSec, ClientBurst, Time.unscaledTime)) return;
             _sentPlaying[key] = play;
@@ -370,6 +428,8 @@ namespace SyncRADation.Networking
             {
                 float at;
                 if (_lastHostPlayAt.TryGetValue(key, out at) && now - at < HostDupWindow) return; // host just authored it
+                // A client Play that crossed the host's Stop on the wire must not restart the loop for everyone.
+                if (_lastHostStopAt.TryGetValue(key, out at) && now - at < HostDupWindow) return;
                 int frame = Time.frameCount;
                 int last;
                 if (_lastPlayFrame.TryGetValue(key, out last) && last == frame) return;
@@ -386,7 +446,8 @@ namespace SyncRADation.Networking
                 if (req.Play)
                 {
                     try { playing = e.IsPlaying(); } catch (Exception ex) { Guard.Swallow(ex); }
-                    if (playing) return; // already audible on the host: loops / machine hum the host runs itself
+                    // Already audible on the host (loops / machine hum the host runs itself): do not restart it, but
+                    // the other clients have not heard it yet, so the relay below still goes out.
                 }
                 bool near = true;
                 if (req.Play)
@@ -398,7 +459,7 @@ namespace SyncRADation.Networking
                     }
                     catch (Exception ex) { Guard.Swallow(ex); }
                 }
-                if (near)
+                if (near && !playing)
                 {
                     _suppressEmit++;
                     NetGate.BeginApply();
@@ -591,7 +652,9 @@ namespace SyncRADation.Networking
             _sentPlaying.Clear();
             _lastPlayFrame.Clear();
             _lastHostPlayAt.Clear();
+            _lastHostStopAt.Clear();
             _skipIds.Clear();
+            _okKeys.Clear();
             _byId.Clear();
             _missUntil.Clear();
             _idCache.Clear();
@@ -600,6 +663,8 @@ namespace SyncRADation.Networking
             _clientBucket = default(Bucket);
             _suppressEmit = 0;
             _lastRebuildAt = -999f;
+            _lastInvalidateAt = -999f;
+            _idGeneration = -1;
             _sceneStartAt = Time.unscaledTime;
         }
 
@@ -607,6 +672,7 @@ namespace SyncRADation.Networking
         {
             var net = LanNetworkManager.Instance;
             if (net == null || net.Role != NetworkRole.Host || !net.IsConnected) return;
+            _lastInvalidateAt = Time.unscaledTime;
             WorldLookup.Invalidate<StudioEventEmitter>();
             RebuildCache();
             foreach (var kvp in _byId)
