@@ -126,12 +126,80 @@ namespace SyncRADation.Tests
             finally { SceneManager.ActiveSceneName = old; }
         }
 
+        // ------------------------------------------------------------------ scene cache (pinned at load)
+
         [Fact]
-        public void DebugLabel_is_16_digit_upper_hex_then_path()
+        public void Warm_gives_exactly_the_live_id_for_every_node()
         {
-            var go = new GameObject("X", "S", null, 0);
-            Assert.Equal("00000000000000FF X[0]", WorldId.DebugLabel(0xFF, go.transform));
-            Assert.Equal("00000000000000FF ?", WorldId.DebugLabel(0xFF, null));
+            WorldId.BeginScene("WarmScene");
+            var level = new GameObject("Level", "WarmScene", null, 2);
+            var room = new GameObject("Room", "WarmScene", level.transform);
+            var a = new GameObject("Pickup", "WarmScene", room.transform);
+            var b = new GameObject("Pickup", "WarmScene", room.transform);
+            var deep = new GameObject("Handle", "WarmScene", b.transform);
+            var spawn = new GameObject("SR_Spawn_3_EULR", "WarmScene", room.transform);
+            var spawnChild = new GameObject("Body", "WarmScene", spawn.transform);
+            var nodes = new[] { level, room, a, b, deep, spawn, spawnChild };
+            var expected = new ulong[nodes.Length];
+            for (int i = 0; i < nodes.Length; i++)
+                expected[i] = WorldId.ComputeLive(nodes[i].transform);
+
+            var pass = new WorldId.WarmPass();
+            // Leaves first: ancestors are filled from the memo, not re-read.
+            for (int i = nodes.Length - 1; i >= 0; i--)
+                WorldId.Warm(nodes[i], pass);
+
+            Assert.Equal(nodes.Length, pass.Added);
+            for (int i = 0; i < nodes.Length; i++)
+                Assert.Equal(expected[i], WorldId.FromGameObject(nodes[i]));
+            Assert.Equal(WorldId.Compute("spawn", "SR_Spawn_3_EULR"), WorldId.FromGameObject(spawn));
+            Assert.Equal(WorldId.Compute("WarmScene", "Level[2]/Room[0]/SR_Spawn_3_EULR[2]/Body[0]"), WorldId.FromGameObject(spawnChild));
+        }
+
+        [Fact]
+        public void Pinned_id_survives_a_destroyed_earlier_sibling()
+        {
+            WorldId.BeginScene("PinScene");
+            var room = new GameObject("Room", "PinScene", null, 0);
+            var first = new GameObject("Pickup", "PinScene", room.transform);
+            var second = new GameObject("Pickup", "PinScene", room.transform);
+            var pass = new WorldId.WarmPass();
+            WorldId.Warm(first, pass);
+            WorldId.Warm(second, pass);
+            ulong pinned = WorldId.FromGameObject(second);
+
+            first.transform.DestroyForTest(); // the taker's native ItemPickup.release
+            Assert.NotEqual(pinned, WorldId.ComputeLive(second.transform)); // the live path shifted: Pickup[1] -> Pickup[0]
+            Assert.Equal(pinned, WorldId.FromGameObject(second));
+            Assert.Equal(pinned, WorldId.FromTransform(second.transform));
+        }
+
+        [Fact]
+        public void Forget_recomputes_and_Pin_overrides()
+        {
+            WorldId.BeginScene("ForgetScene");
+            var go = new GameObject("Enemy", "ForgetScene", null, 0);
+            ulong live = WorldId.FromGameObject(go);
+            go.transform.name = "SR_Spawn_9_STAR"; // adoption rename
+            Assert.Equal(live, WorldId.FromGameObject(go));
+            WorldId.Forget(go);
+            Assert.Equal(WorldId.Compute("spawn", "SR_Spawn_9_STAR"), WorldId.FromGameObject(go));
+            WorldId.Pin(go, 0x1234UL);
+            Assert.Equal(0x1234UL, WorldId.FromGameObject(go));
+        }
+
+        [Fact]
+        public void A_new_scene_drops_pinned_ids_and_a_warm_never_overwrites_one()
+        {
+            WorldId.BeginScene("SceneOne");
+            var go = new GameObject("X", "SceneOne", null, 0);
+            WorldId.Pin(go, 42UL);
+            WorldId.Warm(go, new WorldId.WarmPass());
+            Assert.Equal(42UL, WorldId.FromGameObject(go)); // second warm (mid-scene rescan) keeps the load-time id
+            WorldId.BeginScene("SceneOne");
+            Assert.Equal(42UL, WorldId.FromGameObject(go)); // same scene (additive load / reload): kept
+            WorldId.BeginScene("SceneTwo");
+            Assert.Equal(WorldId.ComputeLive(go.transform), WorldId.FromGameObject(go));
         }
     }
 }

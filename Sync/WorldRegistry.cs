@@ -24,9 +24,8 @@ namespace SyncRADation.Sync
 
         public static string SceneName => _sceneName;
         /// <summary>
-        /// Bumped by every Rebuild / Clear. WorldId hashes the sibling index, so an id cached per Unity instance (EnvEmit,
-        /// FmodEmitterSync) goes stale when siblings are added or destroyed: those caches compare against this and
-        /// recompute after a rebuild.
+        /// Bumped by every Rebuild. Per-instance id caches (EnvEmit, FmodEmitterSync, PuzzleFx) compare against this and
+        /// drop their entries after a rebuild; the recomputed id is the one WorldId pinned at scene load.
         /// </summary>
         public static int Generation { get; private set; }
         public static int EnemyCount => Enemies.Count;
@@ -171,10 +170,14 @@ namespace SyncRADation.Sync
                 map[id] = c;
         }
 
-        public static void Rebuild()
+        /// <summary>
+        /// rescan=false reuses the current scene scan (scene load: ModRuntime just scanned and pinned ids). A mid-scene
+        /// rebuild (handshake / dump) rescans so enemies the game spawned since are registered.
+        /// </summary>
+        public static void Rebuild(bool rescan = true)
         {
             Generation++;
-            WorldLookup.Invalidate();
+            if (rescan) WorldLookup.Invalidate();
             Enemies.Clear();
             EnemyIds.Clear();
             DoubleDoors.Clear();
@@ -296,32 +299,6 @@ namespace SyncRADation.Sync
             return sticky;
         }
 
-        /// <summary>Pinned id of a live enemy instance (0 when it was never registered in this scene).</summary>
-        public static ulong PinnedEnemyId(EnemyController e)
-        {
-            if (e == null) return 0;
-            ulong id;
-            try { return StickyEnemyIds.TryGetValue(e.GetInstanceID(), out id) ? id : 0; }
-            catch (System.Exception ex) { Guard.Swallow(ex); return 0; }
-        }
-
-        public static void Clear()
-        {
-            Generation++;
-            WorldLookup.Invalidate();
-            Enemies.Clear();
-            EnemyIds.Clear();
-            StickyEnemyIds.Clear();
-            _driftLogged.Clear();
-            _stickyScene = "";
-            DoubleDoors.Clear();
-            ConnectedDoorMap.Clear();
-            SlidingDoors.Clear();
-            _sceneName = "";
-            _lastRebuildScene = "";
-            ClearChecksum();
-        }
-
         public static void RegisterEnemy(ulong id, EnemyController enemy)
         {
             if (id == 0 || enemy == null) return;
@@ -330,6 +307,14 @@ namespace SyncRADation.Sync
                 EnemyIds.Remove(old.GetInstanceID());
             Enemies[id] = enemy;
             EnemyIds[enemy.GetInstanceID()] = id;
+            // Registration is the identity (adopted SR_Spawn_* rename, F11 spawn): every WorldId lookup of this object and
+            // a later Rebuild (StickyEnemyId) must answer the same id, not the hierarchy id pinned at scene load.
+            try
+            {
+                WorldId.Pin(enemy.gameObject, id);
+                StickyEnemyIds[enemy.GetInstanceID()] = id;
+            }
+            catch (System.Exception ex) { Guard.Swallow(ex); }
             // Destroyed enemies never unregister: rebuild the reverse map from the live forward map once it
             // has drifted, so it stays bounded by the live enemy set.
             if (EnemyIds.Count > Enemies.Count + 64)

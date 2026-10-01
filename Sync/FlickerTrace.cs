@@ -13,6 +13,10 @@ namespace SyncRADation.Sync
         const float Window = 5f;
         const int Budget = 25;
         const float ProxyJump = 2f;
+        /// <summary>Proxy visibility check (renderers + Camera.main) at ~5 Hz; the jump check stays per frame.</summary>
+        const float ProxyVisInterval = 0.2f;
+        /// <summary>A proxy without renderers yet (clone still building) is re-fetched at most this often.</summary>
+        const float ProxyRendRefetch = 1f;
 
         sealed class TagBudget
         {
@@ -31,6 +35,8 @@ namespace SyncRADation.Sync
             public int State = -1;
             public Vector3 LastPos;
             public bool HavePos;
+            public float NextVisAt;
+            public float RendsAt = -999f;
         }
         static readonly Dictionary<int, ProxyVis> _proxy = new Dictionary<int, ProxyVis>();
 
@@ -140,8 +146,18 @@ namespace SyncRADation.Sync
             v.LastPos = pos;
             v.HavePos = true;
 
-            if (v.Rends == null || v.Rends.Length == 0 || v.Rends[0] == null)
+            // Everything below is per-renderer interop + Camera.main: ~5 Hz is plenty to catch a hide.
+            float now = Time.unscaledTime;
+            if (now < v.NextVisAt) return;
+            v.NextVisAt = now + ProxyVisInterval;
+
+            bool stale = v.Rends == null || v.Rends.Length == 0 || v.Rends[0] == null;
+            if (stale && now - v.RendsAt >= ProxyRendRefetch)
+            {
                 v.Rends = go.GetComponentsInChildren<Renderer>(true);
+                v.RendsAt = now;
+            }
+            if (v.Rends == null) return;
 
             bool active = go.activeInHierarchy;
             int enabled = 0, visible = 0;

@@ -26,34 +26,36 @@ namespace SyncRADation.Networking
                 AvatarHandlers.HandlePlayerVital(vital, senderId);
                 return true;
             }
+            // Host relays (3+ players) go out BEFORE the host's own apply: a throwing local handler must not drop the
+            // message for every other client. The local apply is isolated for the same reason.
             case NetMessageType.DropItemSpawn:
             {
                 var dropMsg = DropItemSpawnMessage.Deserialize(reader);
-                if (_role == NetworkRole.Host) dropMsg.SenderID = (byte)senderId; // owner namespace of the item key
-                DroppedItemHandlers.HandleDropItemSpawn(dropMsg);
                 if (_role == NetworkRole.Host)
                 {
+                    dropMsg.SenderID = (byte)senderId; // owner namespace of the item key
                     var w = new NetDataWriter();
                     w.Put((byte)NetMessageType.DropItemSpawn);
                     dropMsg.Serialize(w);
                     RelayRaw(w, DeliveryMethod.ReliableOrdered, senderId);
                 }
+                ApplyLocal("DropItemSpawn", () => DroppedItemHandlers.HandleDropItemSpawn(dropMsg));
                 return true;
             }
             case NetMessageType.ItemPickedUp:
             {
                 var pickMsg = ItemPickedUpMessage.Deserialize(reader);
-                // Host is the only author of a floor-item claim; a client may only retire its own drop.
-                if (_role == NetworkRole.Host && !DroppedItemHandlers.AcceptClientPickedUp(ref pickMsg, senderId))
-                    return true;
-                DroppedItemHandlers.HandleItemPickedUp(pickMsg);
                 if (_role == NetworkRole.Host)
                 {
+                    // Host is the only author of a floor-item claim; a client may only retire its own drop.
+                    if (!DroppedItemHandlers.AcceptClientPickedUp(ref pickMsg, senderId))
+                        return true;
                     var w = new NetDataWriter();
                     w.Put((byte)NetMessageType.ItemPickedUp);
                     pickMsg.Serialize(w);
                     RelayRaw(w, DeliveryMethod.ReliableOrdered, senderId);
                 }
+                ApplyLocal("ItemPickedUp", () => DroppedItemHandlers.HandleItemPickedUp(pickMsg));
                 return true;
             }
             case NetMessageType.DropRekey:
@@ -68,7 +70,7 @@ namespace SyncRADation.Networking
                 if (_role == NetworkRole.Host)
                 {
                     // Host forwards FF to the target peer: refuse when FF is off or the claim is self/forged.
-                    if (ModConfig.FriendlyFire?.Value != true || ff.TargetPlayerId == senderId)
+                    if (!ModConfig.FriendlyFireEnabled || ff.TargetPlayerId == senderId)
                         return true;
                     ff.AttackerPlayerId = senderId;
                 }
@@ -79,7 +81,6 @@ namespace SyncRADation.Networking
             {
                 var dp = DeathPolicyMessage.Deserialize(reader);
                 if (_role == NetworkRole.Host) dp.SenderPlayerId = senderId;
-                CombatHandlers.HandleDeathPolicy(dp);
                 if (_role == NetworkRole.Host && dp.Kind == DeathKind.ClientDowned)
                 {
                     // Relay (3+ players): every other client learns at once that this one is down, instead of waiting
@@ -89,6 +90,7 @@ namespace SyncRADation.Networking
                     dp.Serialize(w);
                     RelayRaw(w, DeliveryMethod.ReliableOrdered, senderId);
                 }
+                ApplyLocal("DeathPolicy", () => CombatHandlers.HandleDeathPolicy(dp));
                 return true;
             }
             case NetMessageType.PartyLife:
@@ -103,6 +105,13 @@ namespace SyncRADation.Networking
             default:
                 return false;
             }
+        }
+
+        /// <summary>Local apply of an already-relayed message: a throw is logged (throttled), never propagated.</summary>
+        static void ApplyLocal(string what, System.Action apply)
+        {
+            try { apply(); }
+            catch (System.Exception ex) { Guard.Swallow("Dispatch." + what, ex); }
         }
     }
 }

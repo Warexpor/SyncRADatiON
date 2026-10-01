@@ -95,31 +95,6 @@ namespace SyncRADation
             }
         }
 
-        public static void Try(string tag, Action a)
-        {
-            try
-            {
-                a();
-            }
-            catch (Exception e)
-            {
-                Swallow(tag, e);
-            }
-        }
-
-        public static T Try<T>(string tag, Func<T> f, T fallback)
-        {
-            try
-            {
-                return f();
-            }
-            catch (Exception e)
-            {
-                Swallow(tag, e);
-                return fallback;
-            }
-        }
-
         static bool ShouldLog(Key key, out int suppressed)
         {
             suppressed = 0;

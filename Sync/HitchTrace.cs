@@ -28,9 +28,10 @@ namespace SyncRADation.Sync
         private static float _maxCostMs;
         private static string _maxCostWhat = "";
         private static bool _hadAnomaly;
-        private static int _gcIl2;
-        private static int _gcMono;
-        private static bool _gcSeen;
+        // GC collection counts sampled once per frame (FrameBegin, connected only); -1 = not sampled this frame.
+        private static int _gcIl2Frame = -1;
+        private static int _gcMonoFrame = -1;
+        private static bool _gcIl2Broken; // Il2CppSystem.GC unavailable: stop asking (per process)
 
         // Phase cost (spike-only): "[Hitch] phase=<name> Nms" when one top-level per-frame phase of the mod takes >= PhaseWarnMs.
         private const float PhaseWarnMs = 50f;
@@ -123,6 +124,29 @@ namespace SyncRADation.Sync
             _prevGuiMs = _guiMs;
             _guiMs = 0f;
             _tUpdBegin = now;
+            SampleGc(report);
+        }
+
+        /// <summary>Frame-start GC counts: a Cost spike reports the collections since then (two calls per frame, not per Cost).</summary>
+        static void SampleGc(bool report)
+        {
+            _gcMonoFrame = -1;
+            _gcIl2Frame = -1;
+            if (!report) return;
+            _gcMonoFrame = System.GC.CollectionCount(0);
+            _gcIl2Frame = Il2GcCount();
+        }
+
+        static int Il2GcCount()
+        {
+            if (_gcIl2Broken) return -1;
+            try { return Il2CppSystem.GC.CollectionCount(0); }
+            catch (System.Exception e)
+            {
+                _gcIl2Broken = true;
+                Guard.Swallow("HitchTrace.il2cppGc", e);
+                return -1;
+            }
         }
 
         public static void FrameEnd()
@@ -231,20 +255,21 @@ namespace SyncRADation.Sync
                 _maxCostMs = ms;
                 _maxCostWhat = what;
             }
-            // GC counts since the previous Cost call (same or previous frame): a spike with gc=il2cpp+N / mono+N is a
-            // collection that landed in this tick, not the tick's own work.
-            int il2 = -1, mono = System.GC.CollectionCount(0);
-            try { il2 = Il2CppSystem.GC.CollectionCount(0); } catch { }
-            if (ms >= CostWarnMs)
+            if (ms < CostWarnMs) return;
+            // GC counts since this frame started: a spike with gc=il2cpp+N / mono+N had a collection land inside the
+            // frame (likely inside this tick), not only the tick's own work. Counts are read only on a spike.
+            string gc = "";
+            if (_gcIl2Frame >= 0)
             {
-                string gc = "";
-                if (_gcSeen && il2 > _gcIl2) gc += " gc=il2cpp+" + (il2 - _gcIl2);
-                if (_gcSeen && mono > _gcMono) gc += (gc.Length == 0 ? " gc=" : ",") + "mono+" + (mono - _gcMono);
-                Event(what + " " + ms.ToString("F1") + "ms" + gc);
+                int il2 = Il2GcCount();
+                if (il2 > _gcIl2Frame) gc += " gc=il2cpp+" + (il2 - _gcIl2Frame);
             }
-            _gcIl2 = il2;
-            _gcMono = mono;
-            _gcSeen = true;
+            if (_gcMonoFrame >= 0)
+            {
+                int mono = System.GC.CollectionCount(0);
+                if (mono > _gcMonoFrame) gc += (gc.Length == 0 ? " gc=" : ",") + "mono+" + (mono - _gcMonoFrame);
+            }
+            Event(what + " " + ms.ToString("F1") + "ms" + gc);
         }
 
         private static void Event(string msg)

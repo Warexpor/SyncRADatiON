@@ -44,31 +44,20 @@ namespace SyncRADation.Networking
 
         public void SendDropItem(DropItemSpawnMessage msg) => DroppedItemHandlers.SendDropItem(msg);
 
-        public void SendItemPickedUp(ItemPickedUpMessage msg) => DroppedItemHandlers.SendItemPickedUp(msg);
-
         public ushort AllocateItemIndex() => DroppedItemHandlers.AllocateItemIndex();
 
         public bool DropOverflow(Items.itemlist item, int count) => DroppedItemHandlers.DropOverflow(item, count);
-
-        public void DumpDroppedItems() => DroppedItemHandlers.DumpDroppedItems();
-
-        public bool TryDropCurrentItem() => DroppedItemHandlers.TryDropCurrentItem();
 
         public bool TryDropItem(AnItem anItem) => DroppedItemHandlers.TryDropItem(anItem);
 
         public bool TryClaimDropped(int itemKey, int claimerId, out string reason, bool skipLocalGrant = false) =>
             DroppedItemHandlers.TryClaimDropped(itemKey, claimerId, out reason, skipLocalGrant);
 
-        public bool HasBagRoom(Items.itemlist itemEnum) => DroppedItemHandlers.HasBagRoom(itemEnum);
-
         public void SendWorldPickupState(IList<WorldPickupEntry> entries, bool fullRefresh) =>
             WorldPickupHandlers.SendWorldPickupState(entries, fullRefresh);
 
         public void SendWorldPickupClaim(ulong worldId, Items.itemlist item = Items.itemlist.None, int count = 1) =>
             WorldPickupHandlers.SendWorldPickupClaim(worldId, item, count);
-
-        public void SendWorldPickupGrant(int targetPlayerId, ulong worldId, Items.itemlist item, int count) =>
-            WorldPickupHandlers.SendWorldPickupGrant(targetPlayerId, worldId, item, count);
 
         public void SendFriendlyFire(int targetPlayerId, float damage, UnityEngine.Vector3 hitPos) =>
             CombatHandlers.SendFriendlyFire(targetPlayerId, damage, hitPos);

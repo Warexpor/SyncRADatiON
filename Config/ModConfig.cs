@@ -9,10 +9,9 @@ namespace SyncRADation.Config
         public static MelonPreferences_Entry<string> ConnectAddress;
         public static MelonPreferences_Entry<int> ConnectPort;
         public static MelonPreferences_Entry<bool> FriendlyFire;
-        /// <summary>Host diffs puzzles/locks/elevators/radio/storage/event zones.</summary>
+        /// <summary>Host diffs puzzles/locks/elevators/radio/storage/event zones. Local pref: read PuzzlesEnabled instead.</summary>
         public static MelonPreferences_Entry<bool> SyncPuzzles;
-        /// <summary>Legacy name kept for old prefs files; mirrors SyncPuzzles when binding.</summary>
-        public static MelonPreferences_Entry<bool> ExperimentalPuzzles;
+        /// <summary>Local pref: read WorldPickupsEnabled instead.</summary>
         public static MelonPreferences_Entry<bool> SyncWorldPickups;
         public static MelonPreferences_Entry<bool> SyncPlayerVitals;
         public static MelonPreferences_Entry<bool> VerboseLogging;
@@ -34,9 +33,7 @@ namespace SyncRADation.Config
             ConnectPort = Category.CreateEntry("ConnectPort", PluginInfo.DefaultPort, "Default UDP port");
             FriendlyFire = Category.CreateEntry("FriendlyFire", false, "Allow players to damage each other");
             SyncPuzzles = Category.CreateEntry("SyncPuzzles", true,
-                "Sync puzzles, locks, elevators, radio, storage, interactions, alert (host-authoritative)");
-            ExperimentalPuzzles = Category.CreateEntry("ExperimentalPuzzles", true,
-                "Deprecated alias — use SyncPuzzles (kept for old configs)");
+                "Sync puzzles, locks, elevators, radio, storage, interactions, alert (host-authoritative). Clients use the host's value.");
             SyncWorldPickups = Category.CreateEntry("SyncWorldPickups", true,
                 "Sync world ItemPickups (keys, modules, docs, ground ammo)");
             SyncPlayerVitals = Category.CreateEntry("SyncPlayerVitals", true,
@@ -53,10 +50,6 @@ namespace SyncRADation.Config
                 MaxPlayers.Value = System.Math.Max(MinMaxPlayers, System.Math.Min(HardMaxPlayers, MaxPlayers.Value));
             DownedRespawnDelay = Category.CreateEntry("DownedRespawnDelay", 20f,
                 "Seconds a downed player (host or client) waits before respawning next to the nearest living teammate. The party wipes (host reloads its last save) only when everyone is down.");
-
-            if (!SyncPuzzles.Value && ExperimentalPuzzles.Value)
-                SyncPuzzles.Value = true;
-            ExperimentalPuzzles.Value = SyncPuzzles.Value;
         }
 
         public static float DownedRespawnSeconds
@@ -68,7 +61,58 @@ namespace SyncRADation.Config
             }
         }
 
-        public static bool PuzzlesEnabled => SyncPuzzles?.Value == true;
+        // ---- Effective sync toggles. The host is authoritative: it sends its prefs in every PlayerRoster, and a connected
+        // client uses those for the session (two installs with different toggles would otherwise desync silently).
+        // Host, solo and offline use the local prefs. Read these, not the MelonPreferences entries.
+
+        public const byte FlagPuzzles = 1;
+        public const byte FlagWorldPickups = 2;
+        public const byte FlagPlayerVitals = 4;
+        public const byte FlagFriendlyFire = 8;
+
+        // Session state (cleared by SessionReset "HostSyncFlags" on start / stop).
+        private static bool _hasHostFlags;
+        private static byte _hostFlags;
+
+        /// <summary>This install's toggles as roster flags (what a host sends).</summary>
+        public static byte LocalSyncFlags =>
+            (byte)((SyncPuzzles?.Value == true ? FlagPuzzles : 0)
+                | (SyncWorldPickups?.Value == true ? FlagWorldPickups : 0)
+                | (SyncPlayerVitals?.Value == true ? FlagPlayerVitals : 0)
+                | (FriendlyFire?.Value == true ? FlagFriendlyFire : 0));
+
+        /// <summary>Client: the host's toggles arrived (PlayerRoster). Logged when they differ from the local prefs.</summary>
+        public static void ApplyHostSyncFlags(byte flags)
+        {
+            bool changed = !_hasHostFlags || _hostFlags != flags;
+            _hasHostFlags = true;
+            _hostFlags = flags;
+            if (changed && flags != LocalSyncFlags)
+                ModRuntime.Log?.Msg("[Config] using the host's sync toggles: " + Describe(flags) + " (local prefs: " + Describe(LocalSyncFlags) + ")");
+        }
+
+        public static void ClearHostSyncFlags()
+        {
+            _hasHostFlags = false;
+            _hostFlags = 0;
+        }
+
+        static bool Effective(byte flag, MelonPreferences_Entry<bool> local) =>
+            _hasHostFlags ? (_hostFlags & flag) != 0 : local?.Value == true;
+
+        public static bool PuzzlesEnabled => Effective(FlagPuzzles, SyncPuzzles);
+        public static bool WorldPickupsEnabled => Effective(FlagWorldPickups, SyncWorldPickups);
+        public static bool PlayerVitalsEnabled => Effective(FlagPlayerVitals, SyncPlayerVitals);
+        public static bool FriendlyFireEnabled => Effective(FlagFriendlyFire, FriendlyFire);
+
+        public static string Describe(byte flags) =>
+            "FF=" + ((flags & FlagFriendlyFire) != 0 ? "ON" : "OFF")
+            + " puzzles=" + ((flags & FlagPuzzles) != 0 ? "ON" : "OFF")
+            + " pickups=" + ((flags & FlagWorldPickups) != 0 ? "ON" : "OFF")
+            + " vitals=" + ((flags & FlagPlayerVitals) != 0 ? "ON" : "OFF");
+
+        /// <summary>The toggles in effect right now (host's while connected as a client).</summary>
+        public static byte EffectiveSyncFlags => _hasHostFlags ? _hostFlags : LocalSyncFlags;
 
         /// <summary>Clamped MaxPlayers (2..8); DefaultMaxPlayers before Bind().</summary>
         public static int MaxPlayersClamped

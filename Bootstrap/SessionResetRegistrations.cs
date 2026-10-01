@@ -68,6 +68,7 @@ namespace SyncRADation
             SessionReset.RegisterConnection("PickupSync", () => Net()?.PickupSync.Reset());
             SessionReset.RegisterConnection("StorySync", () => Net()?.StorySync.Reset()); // also _authorDepth / _suppressForward / _flags
             SessionReset.RegisterConnection("StorageSync", () => Net()?.StorageSync.Reset());
+            SessionReset.RegisterConnection("HostSyncFlags", Config.ModConfig.ClearHostSyncFlags); // host's toggles (PlayerRoster)
         }
 
         private static LanNetworkManager Net()

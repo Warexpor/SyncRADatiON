@@ -58,6 +58,7 @@ namespace SyncRADation.Networking
         private string _stopReason = "";
         private const float ConnectTimeoutSeconds = 12f;
         private const float HandshakeTimeoutSeconds = 10f;
+        private const float VitalInterval = 0.2f;
 
         public NetworkRole Role => _role;
         public bool IsConnected => _handshakeComplete && (_role == NetworkRole.Host || _peers.Count > 0);
@@ -67,7 +68,6 @@ namespace SyncRADation.Networking
         public string StatusText { get; private set; } = "Offline";
         public bool SceneMismatch => _sceneMismatch;
         public string HostSceneName => _hostSceneName;
-        public string LocalSceneName => _localSceneName;
         public PlayerProxyManager ProxyManager => _proxyManager;
         public EnemySyncService EnemySync => _enemySync;
         public PuzzleSyncService PuzzleSync => _puzzleSync;
@@ -133,22 +133,12 @@ namespace SyncRADation.Networking
 
         internal bool HasPeer(int playerId) => _readyPeers.Contains(playerId) && _peers.ContainsKey(playerId);
 
-        internal bool IsPeerReady(int playerId) => _readyPeers.Contains(playerId);
-
         /// <summary>Session ids (host + clients), ascending. For UI.</summary>
         public List<int> GetSessionPlayerIdsSorted()
         {
             var ids = new List<int>(_sessionPlayerIds);
             ids.Sort();
             return ids;
-        }
-
-        public string GetPeerSceneName(int playerId)
-        {
-            if (playerId == _localPlayerId) return _localSceneName;
-            if (playerId == 0 && _role == NetworkRole.Client) return _hostSceneName;
-            string s;
-            return _peerScenes.TryGetValue(playerId, out s) ? s : "";
         }
 
         /// <summary>Round-trip ms to a remote peer (0 when unknown).</summary>
@@ -172,6 +162,12 @@ namespace SyncRADation.Networking
         internal bool HandshakeComplete => _handshakeComplete;
 
         internal bool HasTransport => _net != null;
+
+        /// <summary>
+        /// True inside a join/resync dump scope (BeginUnicast): every Broadcast* goes to one peer only. A full-send path
+        /// that records "already sent" state must not record it here, or the other clients never get those changes.
+        /// </summary>
+        public bool UnicastActive => _unicastPlayerId >= 0;
 
         /// <summary>Join/resync dump scope. Returns previous unicast id for restore in finally.</summary>
         internal int BeginUnicast(int targetPlayerId)
@@ -209,7 +205,7 @@ namespace SyncRADation.Networking
 
         internal void SetStatusText(string text) => StatusText = text ?? "";
 
-        internal void NoteAvatarStateReceived() => _lastStateTime = Time.time;
+        internal void NoteAvatarStateReceived() => _lastStateTime = Time.unscaledTime;
 
         /// <summary>Two channels (events 0 / continuous state 1). AutoRecycle: handlers only read inside the callback.</summary>
         private NetManager NewNetManager()
@@ -232,8 +228,8 @@ namespace SyncRADation.Networking
 
         public void StartHost(int port)
         {
+            // StopNetwork already ran every SessionReset clear (a second RunAll here was pure duplicate work).
             StopNetwork();
-            SessionReset.RunAll(SessionReset.ReasonStart);
             if (port < 1 || port > 65535)
             {
                 StatusText = "Invalid port " + port;
@@ -273,8 +269,7 @@ namespace SyncRADation.Networking
 
         public void ConnectToHost(string address, int port)
         {
-            StopNetwork();
-            SessionReset.RunAll(SessionReset.ReasonStart);
+            StopNetwork(); // runs every SessionReset clear
             address = (address ?? "").Trim();
             if (address.Length == 0 || port < 1 || port > 65535)
             {
@@ -333,33 +328,15 @@ namespace SyncRADation.Networking
             _peerConnectedAt.Clear();
             _loggedGateDrops.Clear();
             _localPlayer = null;
+            // Kept explicit: no SessionReset entry covers these (proxies + per-instance handler state). Proxies stay first,
+            // before any domain reset, as before.
             _proxyManager.DestroyAll();
-            DoorSyncService.Reset();
-            _puzzleSync.Reset();
-            _pickupSync.Reset();
-            _storySync.Reset();
-            _storageSync.Reset();
-            PartyKeyRing.Reset();
-            FmodEmitterSync.Reset();
-            NetGate.Reset();
-            SourceAnimReader.Reset();
-            HitchTrace.Reset();
-            PlaytestLog.Reset();
-            NetworkDamageSystem.Reset();
-            DroppedItemManager.ClearAll();
-            AvatarHandlers.ResetSendState();
-            DroppedItemHandlers.Reset();
-            SessionHandlers.Reset();
-            SceneHandlers.Reset();
-            // Sticky beyond drop-claims + dump queue: client puppets/boss AI, EventZone
-            // once-fired, cutscene skip/start sets, airlock unlocks + personal scene,
-            // SceneFollow inflight coalesce, Dialoguer flavor gate.
-            try { _enemySync.Reset(); } catch (Exception e) { Guard.Swallow(e); }
-            try { _bossSync.Reset(); } catch (Exception e) { Guard.Swallow(e); }
-            try { Patches.EventZonePatch.OnSceneChanged(); } catch (Exception e) { Guard.Swallow(e); }
-            try { SceneFollowService.Reset(); } catch (Exception e) { Guard.Swallow(e); }
-            try { Patches.DialoguerGate.ClearFlavor(); } catch (Exception e) { Guard.Swallow(e); }
-            // Every registered static session value (Sync/SessionReset): the explicit resets above stay (idempotent).
+            try { AvatarHandlers.ResetSendState(); } catch (Exception e) { Guard.Swallow(e); }
+            try { DroppedItemHandlers.Reset(); } catch (Exception e) { Guard.Swallow(e); }
+            try { SessionHandlers.Reset(); } catch (Exception e) { Guard.Swallow(e); }
+            // Everything else (doors, puzzles, pickups, story, storage, key ring, FMOD, NetGate, traces, damage, floor
+            // drops, scene diff, enemies, bosses, EventZone, SceneFollow, Dialoguer) is a registered SessionReset clear
+            // (Bootstrap/SessionResetRegistrations.cs), each isolated so one throwing never skips the rest.
             SessionReset.RunAll(SessionReset.ReasonStop);
             _handshakeComplete = false;
             _vitalTimer = 0f;
@@ -482,13 +459,14 @@ namespace SyncRADation.Networking
             try { _storageSync.TickHost(this); } catch (Exception ex) { TickFailed("storage", ex); }
             HitchTrace.End("domainTicks", tTicks);
 
-            // Vitals ~5 Hz for remote damage/death presentation
-            if (ModConfig.SyncPlayerVitals?.Value == true)
+            // Vitals ~5 Hz for remote damage/death presentation (host's toggle while connected as a client)
+            if (ModConfig.PlayerVitalsEnabled)
             {
                 _vitalTimer += Mathf.Min(Time.unscaledDeltaTime, 0.1f);
-                if (_vitalTimer >= 0.2f)
+                if (_vitalTimer >= VitalInterval)
                 {
-                    _vitalTimer = 0f;
+                    // Carry the remainder (clamped) so the cadence matches the interval instead of drifting low.
+                    _vitalTimer = Mathf.Min(_vitalTimer - VitalInterval, VitalInterval);
                     long tVital = HitchTrace.Begin();
                     try { AvatarHandlers.SendLocalVital(); } catch (Exception ex) { TickFailed("vital", ex); }
                     HitchTrace.End("sendVital", tVital);
@@ -498,7 +476,9 @@ namespace SyncRADation.Networking
             _sendTimer += Mathf.Min(Time.unscaledDeltaTime, 0.1f);
             if (_sendTimer < PluginInfo.SendInterval)
                 return;
-            _sendTimer = 0f;
+            // Keep the remainder: resetting to 0 dropped the overshoot every send, so pose ran below the configured
+            // rate (e.g. ~24-27 Hz at 60 fps for a 30 Hz interval). Clamped so a long frame cannot queue a burst.
+            _sendTimer = Mathf.Min(_sendTimer - PluginInfo.SendInterval, PluginInfo.SendInterval);
 
             if (_localPlayer == null && PlayerState.player != null)
             {
@@ -520,9 +500,7 @@ namespace SyncRADation.Networking
             }
             catch (Exception ex) { TickFailed("avatar", ex); }
             HitchTrace.End("sendAvatar", tAvatar);
-
-            // Host also needs to relay states it received from clients — but that's handled
-            // in OnReceive: the host stores the state and re-sends to all other peers
+            // Client states are relayed by the host on receipt (AvatarNetHandlers.HandlePlayerState / HandleBonePose).
         }
 
         /// <summary>Throttled per-domain failure log: first occurrence in full, then every 300th.</summary>
@@ -715,12 +693,6 @@ namespace SyncRADation.Networking
             return _remoteIdsCache;
         }
 
-        public NetPeer GetPeer(int playerId)
-        {
-            _peers.TryGetValue(playerId, out var peer);
-            return peer;
-        }
-
         // --- Network events ---
 
         void INetEventListener.OnPeerConnected(NetPeer peer)
@@ -901,7 +873,7 @@ namespace SyncRADation.Networking
                 }
                 _peerConnectedAt.Remove(senderId);
                 RebuildHostSession();
-                _lastStateTime = Time.time;
+                _lastStateTime = Time.unscaledTime;
                 StatusText = "Hosting (" + (GetPlayerCount() - 1) + "/" + (PluginInfo.MaxPlayers - 1) + " clients)";
                 ModRuntime.Log?.Msg("[Network] Handshake OK, player " + senderId + " ready (" + GetPlayerCount() + " players)");
                 WorldRegistry.RebuildIfStale();
@@ -940,7 +912,7 @@ namespace SyncRADation.Networking
             _connectedPeersDirty = true;
             _handshakeComplete = true;
             _connectStartedAt = 0f;
-            _lastStateTime = Time.time;
+            _lastStateTime = Time.unscaledTime;
             StatusText = "Connected to host";
             ModRuntime.Log?.Msg("[Network] Handshake OK, local playerId=" + _localPlayerId);
             WorldRegistry.RebuildIfStale();
@@ -986,7 +958,8 @@ namespace SyncRADation.Networking
             int i = 0;
             foreach (int id in _sessionPlayerIds)
                 ids[i++] = id;
-            var msg = new PlayerRosterMessage { PlayerIds = ids };
+            // The host's sync toggles ride every roster: clients use them for the session (ModConfig.*Enabled).
+            var msg = new PlayerRosterMessage { PlayerIds = ids, HostFlags = ModConfig.LocalSyncFlags };
             var writer = new NetDataWriter();
             writer.Put((byte)NetMessageType.PlayerRoster);
             msg.Serialize(writer);
@@ -1000,6 +973,7 @@ namespace SyncRADation.Networking
         private void HandlePlayerRoster(PlayerRosterMessage msg)
         {
             if (_role == NetworkRole.Host) return;
+            ModConfig.ApplyHostSyncFlags(msg.HostFlags);
             _sessionPlayerIds.Clear();
             if (msg.PlayerIds != null)
             {

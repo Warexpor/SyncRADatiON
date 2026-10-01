@@ -116,10 +116,14 @@ namespace SyncRADation.Networking
         HostWipeReload = 2,
     }
 
-    /// <summary>Host → all: full session id list (includes 0). Leave is an omission; clients prune proxies.</summary>
+    /// <summary>
+    /// Host → all: full session id list (includes 0). Leave is an omission; clients prune proxies.
+    /// HostFlags: the host's sync toggles (ModConfig.Flag*); clients use them instead of their own prefs while connected.
+    /// </summary>
     public struct PlayerRosterMessage
     {
         public int[] PlayerIds;
+        public byte HostFlags;
 
         public void Serialize(NetDataWriter w)
         {
@@ -128,6 +132,7 @@ namespace SyncRADation.Networking
             w.Put((byte)n);
             for (int i = 0; i < n; i++)
                 w.Put(PlayerIds[i]);
+            w.Put(HostFlags);
         }
 
         public static PlayerRosterMessage Deserialize(NetDataReader r)
@@ -138,7 +143,7 @@ namespace SyncRADation.Networking
             var ids = n > 0 ? new int[n] : Array.Empty<int>();
             for (int i = 0; i < n; i++)
                 ids[i] = r.GetInt();
-            return new PlayerRosterMessage { PlayerIds = ids };
+            return new PlayerRosterMessage { PlayerIds = ids, HostFlags = r.GetByte() };
         }
     }
 

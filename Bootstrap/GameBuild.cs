@@ -24,8 +24,6 @@ namespace SyncRADation
         /// <summary>Label without the hash (what goes on the wire for display).</summary>
         public static string Version { get; private set; } = "unknown";
 
-        public static bool Known => Hash != 0;
-
         public static void Compute()
         {
             try

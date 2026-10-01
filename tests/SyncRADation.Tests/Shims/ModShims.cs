@@ -24,8 +24,6 @@ namespace SyncRADation
         public static int InternalFailures => 0;
         public static void Swallow(string tag, Exception e) { Swallowed++; }
         public static void Swallow(Exception e, [CallerMemberName] string member = "", [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) { Swallowed++; }
-        public static void Try(string tag, Action a) { try { a(); } catch (Exception e) { Swallow(tag, e); } }
-        public static T Try<T>(string tag, Func<T> f, T fallback) { try { return f(); } catch (Exception e) { Swallow(tag, e); return fallback; } }
     }
 }
 

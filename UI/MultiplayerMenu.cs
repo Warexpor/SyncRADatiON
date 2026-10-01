@@ -90,7 +90,7 @@ namespace SyncRADation.UI
                 {
                     int pid = roster[i];
                     string tag = pid == net.LocalPlayerId ? " (you)" : (pid == 0 ? " (host)" : "");
-                    string scene = net.GetPeerSceneName(pid);
+                    string scene = net.SceneOf(pid);
                     string ping = pid != net.LocalPlayerId && net.Role == NetworkRole.Host
                         ? "  " + net.GetPeerPing(pid) + "ms" : "";
                     GUI.Label(CR(20, y, 320, 20), "#" + pid + tag
@@ -110,9 +110,8 @@ namespace SyncRADation.UI
                 y += RowHeight;
             }
 
-            GUI.Label(CR(10, y, 340, 20), "FF=" + (ModConfig.FriendlyFire?.Value == true ? "ON" : "OFF")
-                + " puzzles=" + (ModConfig.PuzzlesEnabled ? "ON" : "OFF")
-                + " pickups=" + (ModConfig.SyncWorldPickups?.Value == true ? "ON" : "OFF"));
+            GUI.Label(CR(10, y, 340, 20), ModConfig.Describe(ModConfig.EffectiveSyncFlags)
+                + (net.Role == NetworkRole.Client ? " (host)" : ""));
             y += 25f;
 
             if (net.Role != NetworkRole.Offline && GUI.Button(CR(10, y, 150, 28), "Resync world"))

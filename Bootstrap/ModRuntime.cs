@@ -129,10 +129,6 @@ namespace SyncRADation
         {
             if (_running) return;
             _running = true;
-
-            var root = new GameObject("SyncRADation_Runtime");
-            Object.DontDestroyOnLoad(root);
-
             Network = new LanNetworkManager();
         }
 
@@ -173,11 +169,11 @@ namespace SyncRADation
             HitchTrace.End("guard", tp);
             tp = HitchTrace.Begin();
 
-            // Friendly fire only (opt-in). Enemy hits go through Harmony → EnemyController.TakeDamage
-            // (see Patches/EnemyTakeDamagePatches) — not DIY raycasts.
-            if (net != null && net.IsConnected && ModConfig.FriendlyFire?.Value == true)
+            // Friendly fire only (opt-in, host's toggle while connected). Enemy hits go through Harmony →
+            // EnemyController.TakeDamage (Domains/Enemies/Patches/EnemyTakeDamagePatches) — not DIY raycasts.
+            if (net != null && net.IsConnected && ModConfig.FriendlyFireEnabled)
             {
-                _ffCooldown -= Mathf.Min(Time.deltaTime, 0.1f);
+                _ffCooldown -= Mathf.Min(Time.unscaledDeltaTime, 0.1f);
                 bool curShooting = Input.GetButton("Fire1") || Input.GetMouseButton(0);
                 if (curShooting && !_lastLocalShooting && _ffCooldown <= 0f)
                 {
@@ -219,10 +215,6 @@ namespace SyncRADation
             try { NetworkDamageSystem.TickRespawn(); }
             catch (System.Exception ex) { Guard.Swallow("ModRuntime.TickRespawn", ex); }
             HitchTrace.End("tickRespawn", tp);
-            tp = HitchTrace.Begin();
-            try { Cheats.EntitySpawner.Tick(); }
-            catch (System.Exception ex) { Guard.Swallow("ModRuntime.EntitySpawnerTick", ex); }
-            HitchTrace.End("entitySpawner", tp);
 
             if (net != null && net.IsConnected)
                 HitchTrace.Frame();
@@ -266,8 +258,22 @@ namespace SyncRADation
                 try { PatchAudit.RunLate(); }
                 catch (System.Exception e) { Guard.Swallow("ModRuntime.PatchAuditLate", e); }
             }
-            WorldRegistry.Rebuild();
-            Cheats.EntitySpawner.HarvestLoaded();
+            // One scene scan, then every scripted object's WorldId is pinned before gameplay can Destroy a sibling (a later
+            // sibling's index-based id would shift on this peer only). Runs solo too: hosting later in this scene must
+            // still agree with a peer that loads it fresh. Invalidate first: a same-name reload has all-new instances.
+            try
+            {
+                WorldLookup.Invalidate();
+                WorldId.BeginScene(scene ?? "");
+                WorldScan.BuildAndWarm();
+            }
+            catch (System.Exception e) { Guard.Swallow("ModRuntime.WorldIdWarm", e); }
+            // Reuses that scan and the pinned ids (no second scene walk); read-only, so solo stays vanilla.
+            WorldRegistry.Rebuild(rescan: false);
+            // F11 template harvest (two Resources.FindObjectsOfTypeAll + template clones) only for a live session or an
+            // open F11 window. FinishSpawn / AdoptNativeSpawn harvest on demand, so a session started later still works.
+            if ((Network != null && Network.IsConnected) || Cheats.EntitySpawner.ShowMenu)
+                Cheats.EntitySpawner.HarvestLoaded();
             // Before Network.OnSceneChanged: a wipe reload that has arrived resets the host's world state first, so the
             // full snapshot Network.OnSceneChanged sends is the post-wipe one (clients reset locally on the Wipe message).
             try { HostReload.OnSceneArrived(scene); }

@@ -219,6 +219,8 @@ namespace SyncRADation.Networking
 
             ModRuntime.Log?.Msg("[Network] Sending full world snapshot"
                 + (targetPlayerId >= 0 ? " to player " + targetPlayerId : " to all peers"));
+            if (targetPlayerId >= 0 && HasOtherReadyPeer(targetPlayerId))
+                FlushPendingDiffs();
             int prevUnicast = _net.BeginUnicast(targetPlayerId);
             try
             {
@@ -249,6 +251,29 @@ namespace SyncRADation.Networking
             {
                 _net.EndUnicast(prevUnicast);
             }
+        }
+
+        /// <summary>
+        /// Before a unicast dump (3+ players): the dump's full sends record "already sent" state, so a change still
+        /// waiting for its next broadcast diff would reach only the joiner. Send those diffs to everyone first.
+        /// Story (dirty keys) and the storage box (signature) flush here; doors / puzzles / world pickups have no
+        /// on-demand diff, so their full-send paths skip the sent-record while LanNetworkManager.UnicastActive.
+        /// </summary>
+        bool HasOtherReadyPeer(int targetPlayerId)
+        {
+            foreach (int pid in _net.GetRemotePlayerIds())
+            {
+                if (pid != targetPlayerId && _net.HasPeer(pid)) return true;
+            }
+            return false;
+        }
+
+        void FlushPendingDiffs()
+        {
+            try { _net.StorySync.Send(_net, false); }
+            catch (System.Exception ex) { Guard.Swallow("Session.FlushStory", ex); }
+            try { _net.StorageSync.SendNow(_net); }
+            catch (System.Exception ex) { Guard.Swallow("Session.FlushStorage", ex); }
         }
 
         /// <summary>Client: unscaled time of the last snapshot request (-999 = none). Lets the WorldId divergence path skip a redundant one.</summary>

@@ -26,6 +26,9 @@ namespace UnityEngine
 
     public class GameObject
     {
+        private static int _nextInstanceId = 1000;
+        private readonly int _instanceId = System.Threading.Interlocked.Increment(ref _nextInstanceId);
+
         public Transform transform { get; }
         public SceneManagement.Scene scene { get; set; }
 
@@ -34,16 +37,21 @@ namespace UnityEngine
             transform = new Transform(this, name, parent, rootSiblingIndex);
             scene = new SceneManagement.Scene { name = sceneName };
         }
+
+        public int GetInstanceID() => _instanceId;
     }
 
     public class Transform
     {
+        private static long _nextPointer = 0x10000;
         private readonly List<Transform> _children = new List<Transform>();
         private readonly int _rootIndex;
 
         public string name { get; set; }
         public Transform parent { get; }
         public GameObject gameObject { get; }
+        /// <summary>Stand-in for Unhollower's Il2CppObjectBase.Pointer (unique per live object).</summary>
+        public IntPtr Pointer { get; } = new IntPtr(System.Threading.Interlocked.Add(ref _nextPointer, 16));
 
         internal Transform(GameObject go, string name, Transform parent, int? rootSiblingIndex)
         {
@@ -55,6 +63,9 @@ namespace UnityEngine
         }
 
         public int GetSiblingIndex() => parent == null ? _rootIndex : parent._children.IndexOf(this);
+
+        /// <summary>Test hook: what Object.Destroy does to the hierarchy (later siblings shift down one index).</summary>
+        public void DestroyForTest() => parent?._children.Remove(this);
     }
 }
 

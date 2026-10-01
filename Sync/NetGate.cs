@@ -12,9 +12,20 @@ namespace SyncRADation.Sync
 
         public static void BeginApply() => _applying++;
 
+        // Warn-once flag (per process): an unbalanced EndApply is a code bug, one line is enough to find it.
+        private static bool _underflowLogged;
+
         public static void EndApply()
         {
-            if (_applying > 0) _applying--;
+            if (_applying > 0)
+            {
+                _applying--;
+                return;
+            }
+            if (_underflowLogged) return;
+            _underflowLogged = true;
+            PlaytestLog.Warn("Net", "NetGate.EndApply without a matching BeginApply (unbalanced apply scope, or a reset ran inside one): "
+                + System.Environment.StackTrace);
         }
 
         public static void Reset()

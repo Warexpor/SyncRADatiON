@@ -104,12 +104,21 @@ namespace SyncRADation.Networking
         }
 
         /// <summary>
-        /// Session boundary (StopNetwork): the party-wipe bookkeeping is over, but a reload already under way is the
-        /// host's own game load and must still complete (the watchdog in Tick clears a stuck one).
+        /// Session boundary (start / stop): forget every pending-reload fact. A load already issued still completes
+        /// natively (SaveManager.loading is left as set, so its Load runs); what goes is the party bookkeeping around it:
+        /// the pending gate (held dumps of a new session), the watchdog re-issue / abort, the Retry bag restore.
         /// </summary>
         public static void Reset()
         {
+            _pending = false;
             _wipeReload = false;
+            _setLoading = false;
+            _retried = false;
+            _retryBag = null;
+            _mode = Mode.None;
+            _targetScene = "";
+            _startedAt = 0f;
+            _issuedAt = 0f;
         }
 
         // ------------------------------------------------------------------ host: start the reload
