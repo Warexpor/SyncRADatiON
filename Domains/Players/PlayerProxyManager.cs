@@ -167,6 +167,8 @@ namespace SyncRADation.Players
         private void ApplyPosition(int playerId, Vector3 position, Vector3 velocity, Quaternion facingWorld)
         {
             if (!_interp.TryGetValue(playerId, out var ist)) return;
+            if (velocity.sqrMagnitude > PluginInfo.MaxProxySpeed * PluginInfo.MaxProxySpeed)
+                velocity = Vector3.zero;
 
             bool teleport = !ist.isFirst && ist.Snaps.Count > 0
                 && Vector3.Distance(ist.Snaps[ist.Snaps.Count - 1].Pos, position) > TeleportDistance;

@@ -20,6 +20,8 @@ namespace SyncRADation
         public const float SendInterval = 1f / 30f;
         /// <summary>~2.5 packets behind at the real ~25 Hz send cadence (SnapClock-smoothed stamps). Shared by root pose and bone sampling.</summary>
         public const float PoseInterpDelay = 0.1f;
+        /// <summary>Planar units/s above which a pose delta is a teleport (room door), not movement: velocity is dropped.</summary>
+        public const float MaxProxySpeed = 80f;
         public const float EntitySendInterval = 1f / 15f;
         public const string ConnectionKey = "SyncRADation";
     }
