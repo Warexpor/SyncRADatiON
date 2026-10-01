@@ -176,53 +176,18 @@ namespace SyncRADation.Networking
             _net.EnemySync.ApplyActionOnHost(unchecked((ulong)msg.EnemyWorldId), msg.Action, senderId);
         }
 
-        const float MaxRelayedDamage = 100f;
-
-        void RelayFriendlyDamage(EnemyDamageMessage msg)
-        {
-            int target = msg.TargetPlayerId;
-            if (target == msg.AttackerPlayerId || !_net.HasPeer(target)) return;
-            if (PartyVitals.IsDown(target)) return;
-            float dmg = msg.Damage;
-            if (float.IsNaN(dmg) || dmg <= 0f) return;
-            if (dmg > MaxRelayedDamage) dmg = MaxRelayedDamage;
-            var relay = new EnemyDamageMessage
-            {
-                AttackerPlayerId = msg.AttackerPlayerId,
-                TargetPlayerId = target,
-                EnemyWorldId = 0,
-                Damage = dmg,
-                IsStagger = msg.IsStagger
-            };
-            var writer = new NetDataWriter();
-            writer.Put((byte)NetMessageType.EnemyDamage);
-            relay.Serialize(writer);
-            if (_net.TryGetPeer(target, out var peer) && peer.ConnectionState == ConnectionState.Connected)
-            {
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
-                PlaytestLog.Verbose("Damage", "FF relay p" + msg.AttackerPlayerId + " -> p" + target + " dmg=" + dmg.ToString("F0"));
-            }
-        }
-
         internal void HandleEnemyDamage(EnemyDamageMessage msg)
         {
             ulong enemyId = unchecked((ulong)msg.EnemyWorldId);
 
             // Host receives only client-originated EnemyDamage (AttackerPlayerId stamped from the peer map by dispatch).
-            // A client may hit enemies (TargetPlayerId < 0); damaging a player is the FriendlyFire path, off by default.
+            // A client may hit enemies (TargetPlayerId < 0). No client sends EnemyDamage at a player: player->player
+            // damage is the FriendlyFire message (opt-in, clamped in CombatNetHandlers). Refuse any such packet.
             // Enemy->player damage the host itself authors is sent host->client and handled on the client below.
-            if (_net.Role == NetworkRole.Host && msg.TargetPlayerId >= 0 && ModConfig.FriendlyFire?.Value != true)
+            if (_net.Role == NetworkRole.Host && msg.TargetPlayerId >= 0)
             {
                 PlaytestLog.Warn("Damage", "rejected client damage to player " + msg.TargetPlayerId
-                    + " from " + msg.AttackerPlayerId + " (FriendlyFire off)");
-                return;
-            }
-
-            // Client -> client friendly fire rides the host: re-author it to the target peer (the attacker id
-            // was stamped from the peer map, damage is clamped, downed / departed / self targets are refused).
-            if (_net.Role == NetworkRole.Host && msg.TargetPlayerId >= 0 && msg.TargetPlayerId != _net.LocalPlayerId)
-            {
-                RelayFriendlyDamage(msg);
+                    + " from " + msg.AttackerPlayerId);
                 return;
             }
 
@@ -230,7 +195,7 @@ namespace SyncRADation.Networking
             {
                 PlaytestLog.Verbose("Enemy", "dmg=" + msg.Damage.ToString("F0")
                     + " from " + enemyId.ToString("X16"));
-                NetworkDamageSystem.ApplyDamage(msg.Damage, Vector3.zero, Vector3.zero);
+                NetworkDamageSystem.ApplyDamage(msg.Damage);
             }
             else if (msg.AttackerPlayerId >= 0 && msg.TargetPlayerId < 0 && _net.Role == NetworkRole.Host
                 && msg.NativeTakeDamage)

@@ -58,5 +58,42 @@ namespace SyncRADation.Tests
             Assert.InRange(199 * 0.04f - s, -0.01f, 0.01f);
             Assert.InRange(c.Interval, 0.038f, 0.042f);
         }
+
+        /// <summary>
+        /// Sender at a fixed cadence (plus small network jitter); the receiver handles packets once per frame, so at
+        /// a frame rate below the send rate several packets arrive with the same timestamp. The learned interval
+        /// must stay the send cadence and the stream must not keep resyncing.
+        /// </summary>
+        [Theory]
+        [InlineData(30f, 15f)]
+        [InlineData(30f, 20f)]
+        [InlineData(30f, 60f)]
+        [InlineData(25f, 15f)]
+        [InlineData(25f, 20f)]
+        [InlineData(25f, 60f)]
+        public void Slow_receiver_learns_the_send_cadence(float sendHz, float receiverFps)
+        {
+            float send = 1f / sendHz;
+            float frame = 1f / receiverFps;
+            var c = new SnapClock(1f / 30f);
+            var rng = new System.Random(1234);
+            const float warmup = 2f;
+            int resyncsAtWarmup = -1;
+            float worst = 0f;
+            for (int i = 0; i < (int)(12f * sendHz); i++)
+            {
+                float sentAt = i * send;
+                float lands = sentAt + 0.004f + (float)rng.NextDouble() * 0.006f;
+                float arrival = (float)System.Math.Ceiling(lands / frame) * frame; // handled on the next receiver frame
+                float stamp = c.Stamp(arrival);
+                if (sentAt < warmup) continue;
+                if (resyncsAtWarmup < 0) resyncsAtWarmup = c.Resyncs;
+                float err = System.Math.Abs(arrival - stamp);
+                if (err > worst) worst = err;
+            }
+            Assert.InRange(c.Interval, send * 0.92f, send * 1.08f);
+            Assert.Equal(resyncsAtWarmup, c.Resyncs);
+            Assert.True(worst < SnapClock.ResyncWindow, "stamp drifted " + worst + " s from arrival");
+        }
     }
 }

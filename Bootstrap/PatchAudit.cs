@@ -24,8 +24,6 @@ namespace SyncRADation
         private static readonly ReflectedMember[] Reflected =
         {
             new ReflectedMember(typeof(EventSlidingDoor), "cycle", MemberKind.Method, "DoorNative"),
-            new ReflectedMember(typeof(ThirdPersonCharacter), "m_ForwardAmount", MemberKind.FieldOrProperty, "AvatarNetHandlers"),
-            new ReflectedMember(typeof(ThirdPersonCharacter), "m_TurnAmount", MemberKind.FieldOrProperty, "AvatarNetHandlers"),
             new ReflectedMember(typeof(StorageBox), "open", MemberKind.FieldOrProperty, "StorageLidSyncService"),
             new ReflectedMember(typeof(UseItemMultiInteraction), "ready", MemberKind.Method, "InteractionSyncService"),
         };

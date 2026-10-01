@@ -47,8 +47,7 @@ namespace SyncRADation
             if (_patchAuditMissing.Count < 8) _patchAuditMissing.Add(item);
         }
 
-        private static bool _lastLocalShooting;
-        private static float _ffCooldown;
+        private static int _ffShotSerial;
         private static bool _lateAuditDone;
 
         public static void Start(MelonLogger.Instance log, HarmonyLib.Harmony harmony)
@@ -171,43 +170,37 @@ namespace SyncRADation
 
             // Friendly fire only (opt-in, host's toggle while connected). Enemy hits go through Harmony →
             // EnemyController.TakeDamage (Domains/Enemies/Patches/EnemyTakeDamagePatches) — not DIY raycasts.
-            if (net != null && net.IsConnected && ModConfig.FriendlyFireEnabled)
+            // One ray per live round: the equipped magAmmo-drop edge SourceAnimReader also sends as AnimTriggers.Fire
+            // (a trigger press while not aiming, empty, reloading or in a menu fires nothing). Chest height: up is -Z.
+            int shotSerial = SourceAnimReader.ShotSerial;
+            if (net != null && net.IsConnected && ModConfig.FriendlyFireEnabled && shotSerial != _ffShotSerial)
             {
-                _ffCooldown -= Mathf.Min(Time.unscaledDeltaTime, 0.1f);
-                bool curShooting = Input.GetButton("Fire1") || Input.GetMouseButton(0);
-                if (curShooting && !_lastLocalShooting && _ffCooldown <= 0f)
+                GameObject pl = PlayerState.player;
+                if (pl != null)
                 {
-                    GameObject pl = PlayerState.player;
-                    if (pl != null)
+                    Vector3 origin = pl.transform.position + new Vector3(0f, 0f, -0.8f);
+                    Vector3 dir = SourceAnimReader.ReadFacingWorldRotation(pl) * Vector3.forward;
+                    if (dir.sqrMagnitude < 0.0001f)
+                        dir = Vector3.forward;
+                    else
+                        dir.Normalize();
+                    int wallMask = GetWallMask();
+                    if (pm != null && pm.ProxyLayer >= 0)
+                        wallMask |= (1 << pm.ProxyLayer);
+                    RaycastHit hit;
+                    if (Physics.Raycast(origin, dir, out hit, 50f, wallMask))
                     {
-                        Vector3 origin = pl.transform.position + Vector3.up * 0.8f;
-                        Vector3 dir = SourceAnimReader.ReadFacingWorldRotation(pl) * Vector3.forward;
-                        if (dir.sqrMagnitude < 0.0001f)
-                            dir = Vector3.forward;
-                        else
-                            dir.Normalize();
-                        int wallMask = GetWallMask();
-                        if (pm != null && pm.ProxyLayer >= 0)
-                            wallMask |= (1 << pm.ProxyLayer);
-                        RaycastHit hit;
-                        if (Physics.Raycast(origin, dir, out hit, 50f, wallMask))
+                        int hitPid = pm != null ? pm.GetPlayerIdByCollider(hit.collider) : -1;
+                        if (hitPid >= 0)
                         {
-                            int hitPid = pm != null ? pm.GetPlayerIdByCollider(hit.collider) : -1;
-                            if (hitPid >= 0)
-                            {
-                                float dmg = RemoteWeaponSync.GetDamage(WeaponUtils.EquippedWeaponType());
-                                net.SendFriendlyFire(hitPid, dmg, hit.point);
-                                _ffCooldown = 0.2f;
-                            }
+                            // Clamped / NaN-checked again in SendFriendlyFire and on the receiving side.
+                            float dmg = RemoteWeaponSync.GetDamage(WeaponUtils.EquippedWeaponType());
+                            net.SendFriendlyFire(hitPid, dmg, hit.point);
                         }
                     }
                 }
-                _lastLocalShooting = curShooting;
             }
-            else
-            {
-                _lastLocalShooting = Input.GetButton("Fire1") || Input.GetMouseButton(0);
-            }
+            _ffShotSerial = shotSerial;
 
             HitchTrace.End("friendlyFire", tp);
             tp = HitchTrace.Begin();
@@ -250,8 +243,7 @@ namespace SyncRADation
             try { scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name; } catch (System.Exception e) { Guard.Swallow(e); }
             PlaytestLog.Reset();
             PlaytestLog.Event("Scene", "loaded '" + scene + "'");
-            _lastLocalShooting = false;
-            _ffCooldown = 0f;
+            _ffShotSerial = SourceAnimReader.ShotSerial;
             if (!_lateAuditDone)
             {
                 _lateAuditDone = true;

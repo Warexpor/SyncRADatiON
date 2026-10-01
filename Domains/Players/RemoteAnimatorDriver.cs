@@ -1,4 +1,4 @@
-// SyncRADation � drives proxy Animator params (9 floats, 22 bools, 16 triggers), facing pivot, bone lerp
+// SyncRADation � drives the proxy Animator params that exist in ElsterNewController, bone + hips timeline
 using SyncRADation.Networking;
 using SyncRADation.Sync;
 using UnityEngine;
@@ -18,27 +18,40 @@ namespace SyncRADation.Players
         private float _smoothedTurn;
         private float _targetAimingTime;
         private float _smoothedAimingTime;
-        private float _currentFacing;
-        private float _targetFacing;
         private float _stamina;
-        private float _blend;
-        private float _ikWalk;
-        private float _inputX;
-        private float _inputY;
         private float _hurtTime;
-    private AnimBools _animBools;
-    private bool _climbing;
-    private AnimTriggers _pendingTriggers;
-    private Networking.WeaponType _weapon;
-    private byte _facing;
-    private bool _snappedToFirst;
-    private BoneSyncManager _boneSync;
-    private float[] _boneAssemble;
-    private int _boneAssembleGot;
+        private AnimBools _animBools;
+        private AnimBools _prevBools;
+        private bool _hasPrevBools;
+        private bool _edgeTaser;
+        private bool _edgeReloadChamber;
+        private AnimTriggers _pendingTriggers;
+        private Networking.WeaponType _weapon;
+        private byte _facing;
+        private bool _snappedToFirst;
+
+        // Last values written to the Animator: bools / weapon flags are only re-sent when they change.
+        private bool _paramsApplied;
+        private bool _appliedAiming, _appliedDead, _appliedInventory, _appliedInjured;
+        private bool _weaponApplied;
+        private Networking.WeaponType _appliedWeapon;
+        private bool _flipApplied;
+        private bool _appliedFlip;
+
+        // Hurt / Pickup are Bool params in ElsterNewController: native ElsterHurtAnimation.hurt sets Hurt true and
+        // clears it 0.2 s later (Ghidra ElsterHurtAnimation.<Callback>d__17). The one-shot mirrors that pulse.
+        private const float BoolPulse = 0.2f;
+        private float _hurtOffAt = -1f;
+        private float _pickupOffAt = -1f;
+
+        private BoneSyncManager _boneSync;
+        private float[] _boneAssemble;
+        private int _boneAssembleGot;
+        private int _boneMismatchLogged = -1;
         private struct BoneSnap
         {
             public float Time;
-            public float[] Eulers;
+            public Quaternion[] Rots;
             public bool HasHips;
             public Vector3 Hips;
         }
@@ -65,14 +78,11 @@ namespace SyncRADation.Players
         }
 
         private const float SmoothRate = 12f;
-        private const float FacingSmoothRate = 16f;
 
         public RemoteAnimatorDriver(GameObject target)
         {
             _rootTransform = target.transform;
         }
-
-        public Transform RootTransform => _rootTransform;
 
         public void Initialize(GameObject target)
         {
@@ -80,6 +90,11 @@ namespace SyncRADation.Players
             _animators = target.GetComponentsInChildren<Animator>(true);
             _spriteRenderers = target.GetComponentsInChildren<SpriteRenderer>(true);
             _facingPivot = FindFacingPivot(_rootTransform);
+            // Facing lives on the proxy root (PlayerProxyManager: yaw of the sender's facing-pivot world rotation).
+            // The pivot clone keeps whatever local yaw the local Elster's pivot had at clone time: zero it once, or
+            // the model is turned twice.
+            if (_facingPivot != null)
+                _facingPivot.localRotation = Quaternion.identity;
             _smoothedForward = 0f;
             _boneSync = new BoneSyncManager();
             // Use facing pivot (same hierarchy as source) for consistent bone indices
@@ -100,6 +115,7 @@ namespace SyncRADation.Players
             PlaytestLog.Event("DRV", "init animators=" + (_animators != null ? _animators.Length.ToString() : "null")
                 + " sprites=" + (_spriteRenderers != null ? _spriteRenderers.Length.ToString() : "null")
                 + " facingPivot=" + (_facingPivot != null ? _facingPivot.name : "NULL")
+                + " bones=" + _boneSync.BoneCount
                 + " hips=" + (_proxyHips != null ? _proxyHips.name : "NULL"));
         }
 
@@ -109,59 +125,46 @@ namespace SyncRADation.Players
             _targetTurn = state.Turn;
             _targetAimingTime = state.AimingTime;
             _stamina = state.Stamina;
-            _blend = state.Blend;
-            _ikWalk = state.IKwalk;
-            _inputX = state.InputX;
-            _inputY = state.InputY;
             _hurtTime = state.HurtTime;
             _animBools = state.AnimBools;
-            _climbing = state.Climbing;
+            if (_hasPrevBools)
+            {
+                // Trigger params the sender samples as bools: replay the rising edge as the trigger.
+                if (!_prevBools.HasFlag(AnimBools.Taser) && _animBools.HasFlag(AnimBools.Taser)) _edgeTaser = true;
+                if (!_prevBools.HasFlag(AnimBools.ReloadChamber) && _animBools.HasFlag(AnimBools.ReloadChamber)) _edgeReloadChamber = true;
+            }
+            _prevBools = _animBools;
+            _hasPrevBools = true;
             _pendingTriggers |= state.AnimTriggers;
             _weapon = state.Weapon;
             _facing = state.Facing;
-            _targetFacing = state.RotY;
             _latestHasHips = state.HasHips;
             _latestHips = new Vector3(state.HipsX, state.HipsY, state.HipsZ);
             // Timestamped bone snapshot; sampled on the same delay as root pose.
             if (state.BoneRotations != null && state.BoneRotations.Length > 0)
-            {
-                if (_boneSync != null && _boneSync.BoneCount > 0 && _boneSync.BoneCount != state.BoneRotations.Length / 3)
-                {
-                    PlaytestLog.Warn("DRV", "bone count mismatch proxy=" + _boneSync.BoneCount
-                        + " source=" + (state.BoneRotations.Length / 3));
-                }
                 CommitBoneSnapshot(state.BoneRotations);
-            }
 
             if (!_snappedToFirst)
             {
                 _smoothedForward = state.Forward;
                 _smoothedTurn = state.Turn;
                 _smoothedAimingTime = state.AimingTime;
-                _currentFacing = state.RotY;
                 _snappedToFirst = true;
 
-                foreach (var sr in _spriteRenderers)
-                {
-                    if (sr != null)
-                        sr.flipX = ShouldFlipX(state.Facing);
-                }
-
+                Tick();
                 foreach (var anim in _animators)
                 {
                     if (anim == null) continue;
-                    ApplyAnimParams(anim, state.Forward, state.Turn, state.AimingTime, state.Stamina, state.Blend, state.IKwalk, state.InputX, state.InputY, state.HurtTime, state.AnimBools, state.Climbing);
-                    ApplyWeaponParams(anim);
-                    ApplyPendingTriggers(anim);
-                    // Snap bones directly on first state (no interpolation yet)
-                    if (_boneSync != null && state.BoneRotations != null)
-                        _boneSync.ApplyRotationsSnap(state.BoneRotations);
-                    anim.Update(0f);
+                    try { anim.Update(0f); } catch (System.Exception e) { Guard.Swallow(e); }
                 }
-                if (_latestHasHips && _proxyHips != null)
-                    _proxyHips.localPosition = _latestHips;
-
-                ApplyFacing();
+                // Snap the first pose directly (no interpolation yet), after the Animator wrote its own.
+                int n = _boneSnaps.Count;
+                if (n > 0 && _boneSync != null)
+                {
+                    _boneSync.ApplyRotations(_boneSnaps[n - 1].Rots);
+                    if (_boneSnaps[n - 1].HasHips && _proxyHips != null)
+                        _proxyHips.localPosition = _boneSnaps[n - 1].Hips;
+                }
             }
         }
 
@@ -175,6 +178,32 @@ namespace SyncRADation.Players
         public void DropPending(AnimTriggers mask)
         {
             _pendingTriggers &= ~mask;
+        }
+
+        /// <summary>
+        /// PlayerVital: Dead param, the Die trigger when this death was not already played by a one-shot, and the
+        /// revive reset (Die trigger + Hurt bool cleared). The pose bits take over again on the next Tick.
+        /// </summary>
+        public void ApplyVital(bool dead, bool playDie, bool revived)
+        {
+            if (_animators == null) return;
+            foreach (var anim in _animators)
+            {
+                if (anim == null) continue;
+                try
+                {
+                    anim.SetBool(P.Dead, dead);
+                    if (playDie) anim.SetTrigger(P.Die);
+                    if (revived)
+                    {
+                        anim.ResetTrigger(P.Die);
+                        anim.SetBool(P.Hurt, false);
+                    }
+                }
+                catch (System.Exception e) { Guard.Swallow(e); }
+            }
+            if (revived) _hurtOffAt = -1f;
+            _paramsApplied = false;
         }
 
         public void ApplyBoneChunk(ushort totalBones, ushort startBone, float[] eulers)
@@ -200,29 +229,43 @@ namespace SyncRADation.Players
 
         private void CommitBoneSnapshot(float[] data)
         {
-            if (data == null || data.Length < 3) return;
-            // Ring of pooled buffers: the oldest snapshot's array is recycled instead of a new float[]
-            // every pose (30 Hz x every remote player).
-            float[] copy;
+            if (data == null || data.Length < 3 || _boneSync == null) return;
+            int bones = _boneSync.BoneCount;
+            if (bones == 0) return;
+            // Bone identity is the tree-walk index: a different count means the two hierarchies differ, and applying
+            // by index would twist the wrong bones. Drop the snapshot (the proxy keeps its own Animator pose).
+            if (data.Length / 3 != bones)
+            {
+                if (_boneMismatchLogged != data.Length / 3)
+                {
+                    _boneMismatchLogged = data.Length / 3;
+                    PlaytestLog.Warn("DRV", "bone count mismatch proxy=" + bones + " source=" + (data.Length / 3)
+                        + " - bone snapshots ignored");
+                }
+                return;
+            }
+            // Ring of pooled buffers: the oldest snapshot's array is recycled instead of a new one every pose
+            // (30 Hz x every remote player). Converted to rotations once here, not per rendered frame.
+            Quaternion[] rots;
             if (_boneSnaps.Count >= BoneSnapCap)
             {
-                copy = _boneSnaps[0].Eulers;
+                rots = _boneSnaps[0].Rots;
                 _boneSnaps.RemoveAt(0);
-                if (copy == null || copy.Length != data.Length)
-                    copy = new float[data.Length];
+                if (rots == null || rots.Length != bones)
+                    rots = new Quaternion[bones];
             }
             else
-                copy = new float[data.Length];
-            System.Array.Copy(data, copy, data.Length);
+                rots = new Quaternion[bones];
+            BoneSyncManager.EulersToRotations(data, rots);
             _boneSnaps.Add(new BoneSnap
             {
                 Time = _boneClock.Stamp(Time.unscaledTime),
-                Eulers = copy,
+                Rots = rots,
                 HasHips = _latestHasHips,
                 Hips = _latestHips
             });
-            if (!_snappedToFirst && _boneSync != null)
-                _boneSync.ApplyRotationsSnap(copy);
+            if (!_snappedToFirst)
+                _boneSync.ApplyRotations(rots);
         }
 
         private void SampleBones(float renderTime)
@@ -233,13 +276,13 @@ namespace SyncRADation.Players
             var oldest = _boneSnaps[0];
             if (n == 1 || renderTime <= oldest.Time)
             {
-                _boneSync.ApplyRotationsSnap(oldest.Eulers);
+                _boneSync.ApplyRotations(oldest.Rots);
                 if (oldest.HasHips) ApplyHips(oldest.Hips);
                 return;
             }
             if (renderTime >= newest.Time)
             {
-                _boneSync.ApplyRotationsSnap(newest.Eulers);
+                _boneSync.ApplyRotations(newest.Rots);
                 if (newest.HasHips) ApplyHips(newest.Hips);
                 return;
             }
@@ -252,7 +295,7 @@ namespace SyncRADation.Players
             var b = _boneSnaps[hi];
             float span = b.Time - a.Time;
             float t = span > 0.0001f ? Mathf.Clamp01((renderTime - a.Time) / span) : 1f;
-            _boneSync.ApplyRotationsInterpolated(a.Eulers, b.Eulers, t);
+            _boneSync.ApplyRotationsInterpolated(a.Rots, b.Rots, t);
             if (a.HasHips && b.HasHips) ApplyHips(Vector3.Lerp(a.Hips, b.Hips, t));
             else if (b.HasHips) ApplyHips(b.Hips);
         }
@@ -322,117 +365,99 @@ namespace SyncRADation.Players
             _smoothedForward = Mathf.Lerp(_smoothedForward, _targetForward, dt * SmoothRate);
             _smoothedTurn = Mathf.Lerp(_smoothedTurn, _targetTurn, dt * SmoothRate);
             _smoothedAimingTime = Mathf.Lerp(_smoothedAimingTime, _targetAimingTime, dt * SmoothRate);
-            _currentFacing = Mathf.LerpAngle(_currentFacing, _targetFacing, dt * FacingSmoothRate);
-            if (Mathf.Abs(Mathf.DeltaAngle(_currentFacing, _targetFacing)) < 0.5f)
-                _currentFacing = _targetFacing;
         }
 
         public void Tick()
         {
-            float forwardAmount = _smoothedForward;
-
-            foreach (var sr in _spriteRenderers)
+            bool flip = ShouldFlipX(_facing);
+            if (!_flipApplied || flip != _appliedFlip)
             {
-                if (sr != null)
-                    sr.flipX = ShouldFlipX(_facing);
+                foreach (var sr in _spriteRenderers)
+                {
+                    if (sr != null)
+                        sr.flipX = flip;
+                }
+                _appliedFlip = flip;
+                _flipApplied = true;
             }
 
+            float now = Time.unscaledTime;
+            bool hurtOff = _hurtOffAt >= 0f && now >= _hurtOffAt;
+            bool pickupOff = _pickupOffAt >= 0f && now >= _pickupOffAt;
+            if (hurtOff) _hurtOffAt = -1f;
+            if (pickupOff) _pickupOffAt = -1f;
+
+            bool weaponChanged = !_weaponApplied || _weapon != _appliedWeapon;
             foreach (var anim in _animators)
             {
                 if (anim == null) continue;
-                ApplyAnimParams(anim, forwardAmount, _smoothedTurn, _smoothedAimingTime, _stamina, _blend, _ikWalk, _inputX, _inputY, _hurtTime, _animBools, _climbing);
-                ApplyWeaponParams(anim);
-                ApplyPendingTriggers(anim);
+                ApplyAnimParams(anim);
+                if (weaponChanged) ApplyWeaponParams(anim);
+                if (hurtOff) anim.SetBool(P.Hurt, false);
+                if (pickupOff) anim.SetBool(P.Pickup, false);
+                ApplyPendingTriggers(anim, now);
             }
+            _paramsApplied = true;
+            _weaponApplied = true;
+            _appliedWeapon = _weapon;
 
             _pendingTriggers = 0;
+            _edgeTaser = false;
+            _edgeReloadChamber = false;
         }
 
         // Animator.StringToHash once: string-keyed SetBool/SetFloat hashes the name on every call.
+        // Only parameters that exist in ElsterNewController (AssetRipper AnimatorController/ElsterNewController.controller).
         private static class P
         {
+            // Float
             public static readonly int Forward = Animator.StringToHash("Forward");
             public static readonly int Turn = Animator.StringToHash("Turn");
             public static readonly int AimingTime = Animator.StringToHash("AimingTime");
             public static readonly int Stamina = Animator.StringToHash("Stamina");
-            public static readonly int Blend = Animator.StringToHash("Blend");
-            public static readonly int IKwalk = Animator.StringToHash("IKwalk");
-            public static readonly int X = Animator.StringToHash("X");
-            public static readonly int Y = Animator.StringToHash("Y");
             public static readonly int HurtTime = Animator.StringToHash("HurtTime");
-
+            // Bool
             public static readonly int Aiming = Animator.StringToHash("Aiming");
-            public static readonly int Shooting = Animator.StringToHash("Shooting");
-            public static readonly int Running = Animator.StringToHash("Running");
-            public static readonly int Grounded = Animator.StringToHash("Grounded");
-            public static readonly int Crouch = Animator.StringToHash("Crouch");
-            public static readonly int Blocked = Animator.StringToHash("Blocked");
             public static readonly int Dead = Animator.StringToHash("Dead");
             public static readonly int Inventory = Animator.StringToHash("Inventory");
-            public static readonly int Attack = Animator.StringToHash("Attack");
             public static readonly int Injured = Animator.StringToHash("Injured");
-            public static readonly int Stomp = Animator.StringToHash("Stomp");
-            public static readonly int Push = Animator.StringToHash("Push");
-            public static readonly int Melee = Animator.StringToHash("Melee");
-            public static readonly int Snap = Animator.StringToHash("Snap");
-            public static readonly int Reload = Animator.StringToHash("Reload");
-            public static readonly int Swap = Animator.StringToHash("Swap");
-            public static readonly int Burst = Animator.StringToHash("Burst");
-            public static readonly int Taser = Animator.StringToHash("Taser");
-            public static readonly int Random = Animator.StringToHash("Random");
-            public static readonly int Hugged = Animator.StringToHash("Hugged");
-            public static readonly int ReloadRounds = Animator.StringToHash("ReloadRounds");
-            public static readonly int ReloadChamber = Animator.StringToHash("ReloadChamber");
-            public static readonly int Climbing = Animator.StringToHash("Climbing");
-            public static readonly int Crawl = Animator.StringToHash("Crawl");
-
             public static readonly int Hurt = Animator.StringToHash("Hurt");
-            public static readonly int Die = Animator.StringToHash("Die");
-            public static readonly int Fire = Animator.StringToHash("Fire");
             public static readonly int Pickup = Animator.StringToHash("Pickup");
-            public static readonly int Radio = Animator.StringToHash("Radio");
+            // Trigger
+            public static readonly int Die = Animator.StringToHash("Die");
+            public static readonly int Attack = Animator.StringToHash("Attack");
+            public static readonly int Push = Animator.StringToHash("Push");
+            public static readonly int Reload = Animator.StringToHash("Reload");
+            public static readonly int ReloadChamber = Animator.StringToHash("ReloadChamber");
+            public static readonly int Stomp = Animator.StringToHash("Stomp");
+            public static readonly int Swap = Animator.StringToHash("Swap");
             public static readonly int Drop = Animator.StringToHash("Drop");
-            public static readonly int Sleep = Animator.StringToHash("Sleep");
-            public static readonly int Injector = Animator.StringToHash("Injector");
-            public static readonly int InjectorCancel = Animator.StringToHash("InjectorCancel");
+            public static readonly int Taser = Animator.StringToHash("Tools/Taser");
+            public static readonly int Injector = Animator.StringToHash("Tools/Injector");
+            public static readonly int InjectorCancel = Animator.StringToHash("Tools/InjectorCancel");
         }
 
-        private static void ApplyAnimParams(Animator anim, float forward, float turn, float aimingTime, float stamina, float blend, float ikWalk, float inputX, float inputY, float hurtTime, AnimBools bools, bool climbing)
+        private void ApplyAnimParams(Animator anim)
         {
-            anim.SetFloat(P.Forward, forward);
-            anim.SetFloat(P.Turn, turn);
-            anim.SetFloat(P.AimingTime, aimingTime);
-            anim.SetFloat(P.Stamina, stamina);
-            anim.SetFloat(P.Blend, blend);
-            anim.SetFloat(P.IKwalk, ikWalk);
-            anim.SetFloat(P.X, inputX);
-            anim.SetFloat(P.Y, inputY);
-            anim.SetFloat(P.HurtTime, hurtTime);
+            anim.SetFloat(P.Forward, _smoothedForward);
+            anim.SetFloat(P.Turn, _smoothedTurn);
+            anim.SetFloat(P.AimingTime, _smoothedAimingTime);
+            anim.SetFloat(P.Stamina, _stamina);
+            anim.SetFloat(P.HurtTime, _hurtTime);
 
-            anim.SetBool(P.Aiming, bools.HasFlag(AnimBools.Aiming));
-            anim.SetBool(P.Shooting, bools.HasFlag(AnimBools.Shooting));
-            anim.SetBool(P.Running, bools.HasFlag(AnimBools.Running));
-            anim.SetBool(P.Grounded, bools.HasFlag(AnimBools.Grounded));
-            anim.SetBool(P.Crouch, bools.HasFlag(AnimBools.Crouch) || climbing);
-            anim.SetBool(P.Blocked, bools.HasFlag(AnimBools.Blocked));
-            anim.SetBool(P.Dead, bools.HasFlag(AnimBools.Dead));
-            anim.SetBool(P.Inventory, bools.HasFlag(AnimBools.Inventory));
-            anim.SetBool(P.Attack, bools.HasFlag(AnimBools.Attack));
-            anim.SetBool(P.Injured, bools.HasFlag(AnimBools.Injured));
-            anim.SetBool(P.Stomp, bools.HasFlag(AnimBools.Stomp));
-            anim.SetBool(P.Push, bools.HasFlag(AnimBools.Push));
-            anim.SetBool(P.Melee, bools.HasFlag(AnimBools.Melee));
-            anim.SetBool(P.Snap, bools.HasFlag(AnimBools.Snap));
-            anim.SetBool(P.Reload, bools.HasFlag(AnimBools.Reload));
-            anim.SetBool(P.Swap, bools.HasFlag(AnimBools.Swap));
-            anim.SetBool(P.Burst, bools.HasFlag(AnimBools.Burst));
-            anim.SetBool(P.Taser, bools.HasFlag(AnimBools.Taser));
-            anim.SetBool(P.Random, bools.HasFlag(AnimBools.Random));
-            anim.SetBool(P.Hugged, bools.HasFlag(AnimBools.Hugged));
-            anim.SetBool(P.ReloadRounds, bools.HasFlag(AnimBools.ReloadRounds));
-            anim.SetBool(P.ReloadChamber, bools.HasFlag(AnimBools.ReloadChamber));
-            anim.SetBool(P.Climbing, climbing);
-            anim.SetBool(P.Crawl, climbing);
+            var bools = _animBools;
+            bool aiming = bools.HasFlag(AnimBools.Aiming);
+            bool dead = bools.HasFlag(AnimBools.Dead);
+            bool inventory = bools.HasFlag(AnimBools.Inventory);
+            bool injured = bools.HasFlag(AnimBools.Injured);
+            if (!_paramsApplied || aiming != _appliedAiming) anim.SetBool(P.Aiming, aiming);
+            if (!_paramsApplied || dead != _appliedDead) anim.SetBool(P.Dead, dead);
+            if (!_paramsApplied || inventory != _appliedInventory) anim.SetBool(P.Inventory, inventory);
+            if (!_paramsApplied || injured != _appliedInjured) anim.SetBool(P.Injured, injured);
+            _appliedAiming = aiming;
+            _appliedDead = dead;
+            _appliedInventory = inventory;
+            _appliedInjured = injured;
         }
 
         private void ApplyWeaponParams(Animator anim)
@@ -443,84 +468,69 @@ namespace SyncRADation.Players
                 anim.SetBool(ids[i], ids[i] == active);
         }
 
-        private void ApplyPendingTriggers(Animator anim)
+        private void ApplyPendingTriggers(Animator anim, float now)
         {
+            if (_edgeTaser) anim.SetTrigger(P.Taser);
+            if (_edgeReloadChamber) anim.SetTrigger(P.ReloadChamber);
             var t = _pendingTriggers;
             if (t == 0) return;
-            if (t.HasFlag(AnimTriggers.Hurt)) anim.SetTrigger(P.Hurt);
+            if (t.HasFlag(AnimTriggers.Hurt))
+            {
+                anim.SetBool(P.Hurt, true);
+                _hurtOffAt = now + BoolPulse;
+            }
+            if (t.HasFlag(AnimTriggers.Pickup))
+            {
+                anim.SetBool(P.Pickup, true);
+                _pickupOffAt = now + BoolPulse;
+            }
             if (t.HasFlag(AnimTriggers.Die)) anim.SetTrigger(P.Die);
-            if (t.HasFlag(AnimTriggers.Fire)) anim.SetTrigger(P.Fire);
-            if (t.HasFlag(AnimTriggers.Pickup)) anim.SetTrigger(P.Pickup);
-            if (t.HasFlag(AnimTriggers.Radio)) anim.SetTrigger(P.Radio);
             if (t.HasFlag(AnimTriggers.Drop)) anim.SetTrigger(P.Drop);
-            if (t.HasFlag(AnimTriggers.Sleep)) anim.SetTrigger(P.Sleep);
             if (t.HasFlag(AnimTriggers.Injector)) anim.SetTrigger(P.Injector);
             if (t.HasFlag(AnimTriggers.InjectorCancel)) anim.SetTrigger(P.InjectorCancel);
             if (t.HasFlag(AnimTriggers.ReloadTrigger)) anim.SetTrigger(P.Reload);
             if (t.HasFlag(AnimTriggers.AttackTrigger)) anim.SetTrigger(P.Attack);
             if (t.HasFlag(AnimTriggers.SwapTrigger)) anim.SetTrigger(P.Swap);
-            if (t.HasFlag(AnimTriggers.BurstTrigger)) anim.SetTrigger(P.Burst);
             if (t.HasFlag(AnimTriggers.StompTrigger)) anim.SetTrigger(P.Stomp);
             if (t.HasFlag(AnimTriggers.PushTrigger)) anim.SetTrigger(P.Push);
-            if (t.HasFlag(AnimTriggers.SnapTrigger)) anim.SetTrigger(P.Snap);
-        }
-
-        private void ApplyFacing()
-        {
-            if (_facingPivot == null)
-                return;
-            _facingPivot.localEulerAngles = new Vector3(0f, _currentFacing, 0f);
         }
 
         private float _lastLog;
         public void LateTick()
         {
-            ApplyFacing();
-            foreach (var anim in _animators)
-            {
-                if (anim == null) continue;
-                ApplyWeaponParams(anim);
-            }
-
             // Apply bone rotations � interpolate between snapshots
             if (_boneSync != null && _boneSnaps.Count > 0)
                 SampleBones(Time.unscaledTime - PluginInfo.PoseInterpDelay);
 
-            if (SyncRADation.ModRuntime.VerboseLogging && Time.time - _lastLog > 30f)
+            if (SyncRADation.ModRuntime.VerboseLogging && Time.unscaledTime - _lastLog > 30f)
             {
                 try
                 {
                     var sb = new System.Text.StringBuilder("root=");
                     sb.Append(_rootTransform.eulerAngles.ToString("F1"));
-                    sb.Append(" pivot=");
-                    sb.Append(_facingPivot != null ? _facingPivot.localEulerAngles.ToString("F1") : "NULL");
-                    sb.Append(" curFacing="); sb.Append(_currentFacing.ToString("F1"));
-                    sb.Append(" target="); sb.Append(_targetFacing.ToString("F1"));
                     sb.Append(" bones="); sb.Append(_boneSync != null ? _boneSync.BoneCount.ToString() : "0");
                     for (int i = 0; i < _animators.Length; i++)
                     {
                         var a = _animators[i];
                         if (a == null) continue;
                         sb.Append(" [a"); sb.Append(i);
-                        sb.Append("] fwd="); sb.Append(a.GetFloat("Forward").ToString("F2"));
-                        sb.Append(" turn="); sb.Append(a.GetFloat("Turn").ToString("F2"));
-                        sb.Append(" aimT="); sb.Append(a.GetFloat("AimingTime").ToString("F2"));
-                        sb.Append(" aim="); sb.Append(a.GetBool("Aiming") ? "1" : "0");
-                        sb.Append(" shoot="); sb.Append(a.GetBool("Shooting") ? "1" : "0");
-                        sb.Append(" run="); sb.Append(a.GetBool("Running") ? "1" : "0");
-                        sb.Append(" inv="); sb.Append(a.GetBool("Inventory") ? "1" : "0");
+                        sb.Append("] fwd="); sb.Append(a.GetFloat(P.Forward).ToString("F2"));
+                        sb.Append(" turn="); sb.Append(a.GetFloat(P.Turn).ToString("F2"));
+                        sb.Append(" aimT="); sb.Append(a.GetFloat(P.AimingTime).ToString("F2"));
+                        sb.Append(" aim="); sb.Append(a.GetBool(P.Aiming) ? "1" : "0");
+                        sb.Append(" inv="); sb.Append(a.GetBool(P.Inventory) ? "1" : "0");
                         var wpnNames = WeaponUtils.AnimatorBoolNames;
+                        var wpnIds = WeaponUtils.AnimatorBoolHashes;
                         for (int wi = 0; wi < wpnNames.Length; wi++)
                         {
-                            string w = wpnNames[wi];
-                            sb.Append(" ").Append(w).Append("=");
-                            try { sb.Append(a.GetBool(w) ? "1" : "0"); }
+                            sb.Append(" ").Append(wpnNames[wi]).Append("=");
+                            try { sb.Append(a.GetBool(wpnIds[wi]) ? "1" : "0"); }
                             catch { sb.Append("E"); }
                         }
                         try
                         {
                             var si = a.GetCurrentAnimatorStateInfo(0);
-                            sb.Append(" s0=").Append(si.shortNameHash);
+                            sb.Append(" s0=").Append(StateName(si.shortNameHash));
                             sb.Append(" t0=").Append(si.normalizedTime.ToString("F2"));
                         }
                         catch (System.Exception e) { Guard.Swallow(e); }
@@ -535,7 +545,7 @@ namespace SyncRADation.Players
                     PlaytestLog.Verbose("DRV", sb.ToString());
                 }
                 catch (System.Exception e) { Guard.Swallow(e); }
-                _lastLog = Time.time;
+                _lastLog = Time.unscaledTime;
             }
         }
 

@@ -200,6 +200,8 @@ namespace SyncRADation.Networking
         internal void SetHostSceneName(string scene) => _hostSceneName = scene ?? "";
 
         internal void SetLocalSceneName(string scene) => _localSceneName = scene ?? "";
+        /// <summary>This peer's scene as last announced (per-sender proxy scene check).</summary>
+        public string LocalSceneName => _localSceneName;
 
         internal void SetSceneMismatch(bool mismatch) => _sceneMismatch = mismatch;
 

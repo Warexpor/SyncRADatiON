@@ -120,9 +120,11 @@ namespace SyncRADation.Players
             Die();
         }
 
-        public static void ApplyDamage(float damage, Vector3 hitPoint, Vector3 hitDir)
+        /// <summary>Remote-authored damage (host enemy hit, friendly fire) through native HurtElster.</summary>
+        public static void ApplyDamage(float damage)
         {
             if (_isDead) return;
+            if (float.IsNaN(damage) || damage <= 0f) return;
             try
             {
                 if (PlayerState.hp <= 0 || PlayerState.charState == PlayerState.charStates.dead)
@@ -130,34 +132,9 @@ namespace SyncRADation.Players
             }
             catch (System.Exception ex) { LogOnce("damage pre", ex); }
 
-            try
-            {
-                PlayerState.HurtElster((int)damage, new Vector2(hitDir.x, hitDir.z));
-            }
-            catch (System.Exception hurtEx)
-            {
-                LogOnce("HurtElster", hurtEx);
-                try
-                {
-                    var hurtSound = PlayerState.player?.GetComponent<ElsterHurtSound>();
-                    if (hurtSound != null && !string.IsNullOrEmpty(hurtSound.HurtSound))
-                        RuntimeManager.PlayOneShot(hurtSound.HurtSound, hitPoint);
-                }
-                catch (System.Exception ex) { LogOnce("hurt sound", ex); }
-
-                try { PlayerState.hp = Mathf.Max(0, PlayerState.hp - (int)damage); } catch (System.Exception ex) { LogOnce("hp set", ex); }
-                try { PlayerState.charState = PlayerState.charStates.grabbed; } catch (System.Exception ex) { LogOnce("charState set", ex); }
-                try
-                {
-                    var anim = PlayerState.player?.GetComponentInChildren<Animator>(true);
-                    if (anim != null)
-                    {
-                        anim.SetFloat("HurtTime", 1f);
-                        anim.SetBool("Injured", true);
-                    }
-                }
-                catch (System.Exception ex) { LogOnce("hurt anim", ex); }
-            }
+            // No hit direction on the wire: zero, as the callers always passed.
+            try { PlayerState.HurtElster((int)damage, Vector2.zero); }
+            catch (System.Exception hurtEx) { LogOnce("HurtElster", hurtEx); }
 
             int hp = 0;
             try { hp = PlayerState.hp; } catch (System.Exception ex) { LogOnce("hp read", ex); }
