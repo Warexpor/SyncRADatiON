@@ -40,5 +40,7 @@
     <Compile Include="../../Sync/DumpFlush.cs" Link="Game/Sync/DumpFlush.cs" />
     <Compile Include="../../Domains/Players/SnapClock.cs" Link="Game/Domains/Players/SnapClock.cs" />
     <Compile Include="../../Domains/Puzzles/PuzzleMerge.cs" Link="Game/Domains/Puzzles/PuzzleMerge.cs" />
+    <Compile Include="../../Domains/Story/CutsceneStamps.cs" Link="Game/Domains/Story/CutsceneStamps.cs" />
+    <Compile Include="../../Domains/Story/StorySlotPlan.cs" Link="Game/Domains/Story/StorySlotPlan.cs" />
   </ItemGroup>
 </Project>

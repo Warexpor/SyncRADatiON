@@ -17,11 +17,7 @@ namespace SyncRADation
             _done = true;
 
             // Story: dirty-key StoryCommit diff.
-            DumpFlush.Register("Story", () =>
-            {
-                var net = LanNetworkManager.Instance;
-                net?.StorySync.Send(net, false);
-            });
+            DumpFlush.Register("Story", () => LanNetworkManager.Instance?.StorySync.FlushDiffNow());
             // Doors: pending open/lock diffs.
             DumpFlush.Register("Doors", DoorSyncService.FlushDiffNow);
             // Shared storage box: blob when its signature changed.
