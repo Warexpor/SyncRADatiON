@@ -87,6 +87,10 @@ namespace SyncRADation.Networking
                 QueueRequest(sceneName, busy);
                 return true;
             }
+            // A peer's request drags the host out of whatever it was doing: same sticky-state teardown as a follower's
+            // Apply (open inventory / menu / dialogue / cutscene state would survive the load).
+            try { DroppedItemManager.RestorePlayForLoad(); }
+            catch (System.Exception ex) { PlaytestLog.Warn("Scene", "RestorePlayForLoad: " + ex.Message); }
             try
             {
                 AsyncLoader.LoadLevel(sceneName);
@@ -278,90 +282,11 @@ namespace SyncRADation.Networking
             catch { return false; }
         }
 
+        // Every load path (AsyncLoader, SceneHelper, LoadLevelZone, LoadLevelInteraction, PenroseAirlock,
+        // AirlockDoorLoadZone) can only reach a scene in build settings, so that is the whole check.
         private static bool IsKnownScene(string sceneName)
         {
-            if (IsTransient(sceneName)) return false;
-            try
-            {
-                if (string.Equals(AsyncLoader.targetLevelString, sceneName, System.StringComparison.Ordinal))
-                    return true;
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            try
-            {
-                if (string.Equals(NameForBuildIndex(AsyncLoader.targetLevel), sceneName, System.StringComparison.Ordinal))
-                    return true;
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            try
-            {
-                var zones = WorldLookup.All<LoadLevelZone>();
-                if (zones != null)
-                {
-                    for (int i = 0; i < zones.Length; i++)
-                    {
-                        if (zones[i] != null && string.Equals(zones[i].SceneName, sceneName, System.StringComparison.Ordinal))
-                            return true;
-                    }
-                }
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            try
-            {
-                var loads = WorldLookup.All<LoadLevelInteraction>();
-                if (loads != null)
-                {
-                    for (int i = 0; i < loads.Length; i++)
-                    {
-                        if (loads[i] != null && string.Equals(loads[i].targetLevel, sceneName, System.StringComparison.Ordinal))
-                            return true;
-                    }
-                }
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            try
-            {
-                var helpers = WorldLookup.All<SceneHelper>();
-                if (helpers != null)
-                {
-                    for (int i = 0; i < helpers.Length; i++)
-                    {
-                        if (helpers[i] == null) continue;
-                        if (string.Equals(helpers[i].targetScene, sceneName, System.StringComparison.Ordinal))
-                            return true;
-                    }
-                }
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            try
-            {
-                var air = WorldLookup.All<PenroseAirlock>();
-                if (air != null)
-                {
-                    for (int i = 0; i < air.Length; i++)
-                    {
-                        if (air[i] == null) continue;
-                        if (string.Equals(NameForBuildIndex(air[i].targetLevel), sceneName, System.StringComparison.Ordinal))
-                            return true;
-                    }
-                }
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            try
-            {
-                var doors = WorldLookup.All<AirlockDoorLoadZone>();
-                if (doors != null)
-                {
-                    for (int i = 0; i < doors.Length; i++)
-                    {
-                        if (doors[i] == null) continue;
-                        if (string.Equals(NameForBuildIndex(doors[i].targetLevel), sceneName, System.StringComparison.Ordinal))
-                            return true;
-                    }
-                }
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            return InBuildSettings(sceneName);
+            return !IsTransient(sceneName) && InBuildSettings(sceneName);
         }
 
         static bool InBuildSettings(string sceneName)

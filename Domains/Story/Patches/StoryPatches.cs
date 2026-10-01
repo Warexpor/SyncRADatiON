@@ -544,6 +544,16 @@ namespace SyncRADation.Patches
         public static void PostUnbox(AnItem item) => FlushHostBoxBlob();
     }
 
+    // Every Dialoguer dialogue is local to the peer that opened it: shipped content only starts flavor ids (all 1282
+    // serialized Dialogue._dialogue are 0 / 20 / 22, InteractiveLockSingle forces 20, ItemPickup uses 6 / 17 / 25 / 26),
+    // so there is no host-authored dialogue to mirror. Continue / End always run natively on the pressing peer: a
+    // forwarded hold-cancel used to close every peer's line / yes-no prompt. What is left is the local key-ring name
+    // binding: Dialoguer global strings s0 / s3 hold the item name a use / inspect line shows, and story dumps overwrite
+    // them with the host's last use.
+    // Detours reaching this gate (RVA folding, script.json): Dialoguer.StartDialogue(int, cb) = 0x426320 =
+    // DialoguerDialogueManager.startDialogueWithCallback (every native Dialogue.StartDialogue / ItemPickup line), and
+    // Dialoguer.ContinueDialogue(int) = 0x425C60 = DialoguerDialogueManager.continueDialogue (every native continue).
+    // Both prefixes always return true, so a nested start / continue through the shared function is harmless.
     static class DialoguerGate
     {
         static bool _flavorActive;
@@ -553,198 +563,37 @@ namespace SyncRADation.Patches
         {
             _flavorActive = false;
             _flavorId = 0;
-            // The dialogue (and its end callback) is over or replaced. NOT _pendingCb: a client request for the next
-            // start can be in flight while an unrelated End finalizer runs this.
-            _activeCb = false;
         }
 
-        /// <summary>SessionReset (session scope): flavor + every held callback + the re-entrancy / local-end counters.</summary>
-        internal static void ResetSession()
+        /// <summary>SessionReset (session scope): the local line bookkeeping.</summary>
+        internal static void ResetSession() => ClearFlavor();
+
+        public static void Start(int dialogueId)
         {
-            ClearFlavor();
-            _pendingCb = null;
-            _pendingCbId = 0;
-            _depth = 0;
-            _localEnd = 0;
-        }
-
-        /// <summary>Scene change: a held callback targets an object (Dialogue component) of the unloaded scene.</summary>
-        internal static void OnSceneChanged()
-        {
-            _pendingCb = null;
-            _pendingCbId = 0;
-            _activeCb = false;
-        }
-
-        // --- Re-entrancy (finding 1) ---------------------------------------------------------------------
-        // Dialoguer.StartDialogue(int) and (DialoguerDialogues) share RVA 0x42AF20, and the callback overloads share
-        // 0x426320 (script.json): two detours on one native function would run both prefixes per call, the second
-        // HostDialogueStart(id) returning false inside its dedupe window and skipping the native body on the host.
-        // Only the int overloads are patched now (the enum overloads are the same machine code, so the one detour
-        // covers them) and this depth guard makes any nested start of the same id a pass-through regardless.
-        static int _depth;
-        static int _depthId;
-        static float _depthAt;
-
-        // Dialogue callbacks (StartDialogue(int, DialoguerCallback)) of a client-initiated start: the client only
-        // *requests* the start, so the callback is kept and handed to the replayed start from the host.
-        static DialoguerCallback _pendingCb;
-        static int _pendingCbId;
-        static float _pendingCbAt;
-
-        public static DialoguerCallback TakeCallback(int dialogueId)
-        {
-            var cb = _pendingCb;
-            bool ok = cb != null && _pendingCbId == dialogueId && Time.unscaledTime - _pendingCbAt < 15f;
-            _pendingCb = null;
-            _pendingCbId = 0;
-            // A destroyed target would throw inside native code when the end callback runs.
-            return ok && CallbackTargetAlive(cb) ? cb : null;
-        }
-
-        static bool CallbackTargetAlive(DialoguerCallback cb)
-        {
-            try
-            {
-                var target = cb.m_target;
-                if (target == null) return true; // static callback
-                var uo = target.TryCast<UnityEngine.Object>();
-                if ((object)uo == null) return true; // plain managed target, nothing Unity-destroyable
-                return uo != null; // overloaded != : false once the native object is destroyed
-            }
-            catch (Exception e) { Guard.Swallow(e); return false; }
-        }
-
-        // The callback of a client-initiated start is running on this peer: its Continue / End apply runs it under
-        // apply, so the apply gets an author scope (its SProgress writes are the dialogue's consequences, and the host
-        // started the dialogue without the callback).
-        static bool _activeCb;
-        public static bool HoldsCallback => _activeCb;
-        public static void NoteActiveCallback(int dialogueId) => _activeCb = true;
-
-        static int _localEnd;
-        /// <summary>Scope: this peer alone leaves the dialogue (damage cancel); never forwarded to the host / party.</summary>
-        public static void BeginLocalEnd() => _localEnd++;
-        public static void EndLocalEnd() { if (_localEnd > 0) _localEnd--; }
-
-        public static bool Start(int dialogueId, DialoguerCallback callback, out bool entered)
-        {
-            entered = false;
-            if (_depth > 0 && _depthId == dialogueId && Time.unscaledTime - _depthAt < 2f)
-                return true;
-            // One line per start that reaches the gate: confirms in-game that the DialoguerDialogues overloads (same
-            // native function as the int ones, only the int ones are patched) go through this detour as well.
-            if (NetGate.Live && !NetGate.IsApplying)
-                PlaytestLog.Event("Story", "StartDialogue gate id=" + dialogueId
-                    + (callback != null ? " cb" : "") + " role=" + (NetGate.Host ? "host" : "client"));
-            bool run = StartCore(dialogueId, callback);
-            if (run)
-            {
-                _depth++;
-                _depthId = dialogueId;
-                _depthAt = Time.unscaledTime;
-                entered = true;
-            }
-            return run;
-        }
-
-        public static void Exit(bool entered)
-        {
-            if (entered && _depth > 0) _depth--;
-        }
-
-        static bool StartCore(int dialogueId, DialoguerCallback callback)
-        {
+            if (!NetGate.Live) return;
             if (NetGate.IsApplying)
             {
-                // A story Start applied from the host / a relay replaces whatever local flavor line was up
-                // (flavor never goes through ApplyPresentation). Left set, every later Continue on this peer
-                // took the flavor branch and never reached the host.
+                // A line the mod opens itself (WorldPickup "gone" message) binds its own name first: leave it alone.
                 ClearFlavor();
-                return true;
+                return;
             }
-            // Offline is vanilla. A host with nobody connected still does the replay bookkeeping (a later joiner replays
-            // the dialogue) but never swallows a start and sends nothing (BroadcastPresentation only notes it).
-            if (!NetGate.Live) return true;
-            if (LocalInspect.DialoguerFlavor(dialogueId) || LocalInspect.InspectScreen())
-            {
-                _flavorId = dialogueId;
-                if (dialogueId == (int)DialoguerDialogues.useItemDialogue)
-                    BindUseItemName();
-                else
-                    PartyKeyRing.RestoreUiNames();
-                _flavorActive = true;
-                return true;
-            }
-            _flavorActive = false;
-            if (NetGate.Host)
-            {
-                var story = LanNetworkManager.Instance.StorySync;
-                // Duplicate Start of the same dialogue (a client request landed just before) is swallowed.
-                if (!story.HostDialogueStart(dialogueId) && NetGate.Party)
-                    return false;
-                story.BroadcastPresentation(StoryCmd.DialoguerStartId, 0, dialogueId, story.DialogueTag());
-                return true;
-            }
-            if (!NetGate.Party) return true;
-            PlaytestLog.Event("Story", "request Dialoguer " + dialogueId);
-            if (callback != null)
-            {
-                _pendingCb = callback;
-                _pendingCbId = dialogueId;
-                _pendingCbAt = Time.unscaledTime;
-            }
-            LanNetworkManager.Instance.SendInteractionRequest(0, InteractionKind.DialogueStart, dialogueId);
-            return false;
+            _flavorId = dialogueId;
+            _flavorActive = true;
+            BindNames();
         }
 
-        public static bool Continue(int choice)
+        public static void Continue()
         {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
-            if (_flavorActive || LocalInspect.InspectScreen())
-            {
-                if (_flavorId == (int)DialoguerDialogues.useItemDialogue)
-                    BindUseItemName();
-                else
-                    PartyKeyRing.RestoreUiNames();
-                return true;
-            }
-            var story = LanNetworkManager.Instance.StorySync;
-            if (NetGate.Host)
-            {
-                // Host press: always valid, advances the step so in-flight client Continues for the old step drop.
-                story.HostDialogueAdvance(-1, 0, false);
-                story.BroadcastPresentation(StoryCmd.DialogueContinue, 0, choice, story.DialogueTag());
-                return true;
-            }
-            if (!NetGate.Party) return true;
-            // Carry the step this peer is on: with N players any of them may press, the host applies the first
-            // request for a step and drops the rest as stale.
-            LanNetworkManager.Instance.SendInteractionRequest(0, InteractionKind.DialogueContinue, choice,
-                0, 0f, 0f, 0f, story.DialogueTag());
-            return false;
+            if (NetGate.IsApplying || !NetGate.Live) return;
+            if (_flavorActive || LocalInspect.InspectScreen()) BindNames();
         }
 
-        public static bool End()
+        static void BindNames()
         {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
-            if (_localEnd > 0) return true; // damage cancel: only this peer leaves the dialogue
-            if (_flavorActive || LocalInspect.InspectScreen())
-            {
-                _flavorActive = false;
-                return true;
-            }
-            var story = LanNetworkManager.Instance.StorySync;
-            if (NetGate.Host)
-            {
-                story.HostDialogueAdvance(-1, 0, true);
-                story.BroadcastPresentation(StoryCmd.DialogueEnd, 0, 0, story.DialogueTag());
-                return true;
-            }
-            if (!NetGate.Party) return true;
-            LanNetworkManager.Instance.SendInteractionRequest(0, InteractionKind.DialogueEnd,
-                0, 0, 0f, 0f, 0f, story.DialogueTag());
-            return false;
+            if (_flavorId == (int)DialoguerDialogues.useItemDialogue)
+                BindUseItemName();
+            else
+                PartyKeyRing.RestoreUiNames();
         }
 
         static void BindUseItemName()
@@ -778,101 +627,36 @@ namespace SyncRADation.Patches
     public static class DialoguerStartIntPatch
     {
         [HarmonyPrefix]
-        public static bool Prefix(int dialogueId, out bool __state) => DialoguerGate.Start(dialogueId, null, out __state);
-
-        // Flavor sticky set in Start — clear if native throws after Prefix returned true.
-        [HarmonyFinalizer]
-        public static void Finalizer(Exception __exception, bool __state)
-        {
-            DialoguerGate.Exit(__state);
-            if (__exception != null) DialoguerGate.ClearFlavor();
-        }
+        public static void Prefix(int dialogueId) => DialoguerGate.Start(dialogueId);
     }
 
     [HarmonyPatch(typeof(Dialoguer), nameof(Dialoguer.StartDialogue), new[] { typeof(int), typeof(DialoguerCallback) })]
     public static class DialoguerStartIntCbPatch
     {
         [HarmonyPrefix]
-        public static bool Prefix(int dialogueId, DialoguerCallback callback, out bool __state) =>
-            DialoguerGate.Start(dialogueId, callback, out __state);
-
-        [HarmonyFinalizer]
-        public static void Finalizer(Exception __exception, bool __state)
-        {
-            DialoguerGate.Exit(__state);
-            if (__exception != null) DialoguerGate.ClearFlavor();
-        }
+        public static void Prefix(int dialogueId) => DialoguerGate.Start(dialogueId);
     }
 
-    // Dialogue.CallDialogue (unique RVA 0x423F30) calls DialoguerDialogueManager.startDialogue directly, so neither
-    // Dialoguer.StartDialogue detour sees it (a scene UnityEvent / EventScreen can call it). Same start gate: a client
-    // asks the host (native body skipped, no half-set dialogue state), the host dedupes + broadcasts; flavor / EventScreen
-    // lines stay local through the gate's own checks.
+    // Dialogue.CallDialogue (unique RVA 0x423F30, EventScreen lines) calls DialoguerDialogueManager.startDialogue
+    // directly, so neither Dialoguer.StartDialogue detour sees it.
     [HarmonyPatch(typeof(Dialogue), nameof(Dialogue.CallDialogue))]
     public static class DialogueCallDialoguePatch
     {
         [HarmonyPrefix]
-        public static bool Prefix(Dialogue __instance, out bool __state)
+        public static void Prefix(Dialogue __instance)
         {
-            __state = false;
-            if (__instance == null) return true;
+            if (__instance == null) return;
             int id;
             try { id = (int)__instance._dialogue; }
-            catch (Exception e) { Guard.Swallow(e); return true; }
-            return DialoguerGate.Start(id, null, out __state);
+            catch (Exception e) { Guard.Swallow(e); return; }
+            DialoguerGate.Start(id);
         }
-
-        [HarmonyFinalizer]
-        public static void Finalizer(Exception __exception, bool __state)
-        {
-            DialoguerGate.Exit(__state);
-            if (__exception != null) DialoguerGate.ClearFlavor();
-        }
-    }
-
-    // BlackSleekGuiSubs listens to the LOCAL player's damage and ends the dialogue through Dialoguer.EndDialogue,
-    // which the End gate would forward (DialogueEnd ends it for everyone). Damage only takes this peer out.
-    [HarmonyPatch(typeof(BlackSleekGuiSubs), "CancelDialogueOnDamageReceived")]
-    public static class CancelDialogueOnDamagePatch
-    {
-        [HarmonyPrefix] public static void Prefix() => DialoguerGate.BeginLocalEnd();
-        [HarmonyFinalizer] public static void Finalizer() => DialoguerGate.EndLocalEnd();
     }
 
     [HarmonyPatch(typeof(Dialoguer), nameof(Dialoguer.ContinueDialogue), new[] { typeof(int) })]
     public static class DialoguerContinueIntPatch
     {
         [HarmonyPrefix]
-        public static bool Prefix(int choice) => DialoguerGate.Continue(choice);
-
-        [HarmonyFinalizer]
-        public static void Finalizer(Exception __exception)
-        {
-            if (__exception != null) DialoguerGate.ClearFlavor();
-        }
-    }
-
-    [HarmonyPatch(typeof(Dialoguer), nameof(Dialoguer.ContinueDialogue), new System.Type[0])]
-    public static class DialoguerContinuePatch
-    {
-        [HarmonyPrefix]
-        public static bool Prefix() => DialoguerGate.Continue(0);
-
-        [HarmonyFinalizer]
-        public static void Finalizer(Exception __exception)
-        {
-            if (__exception != null) DialoguerGate.ClearFlavor();
-        }
-    }
-
-    [HarmonyPatch(typeof(Dialoguer), nameof(Dialoguer.EndDialogue))]
-    public static class DialoguerEndPatch
-    {
-        [HarmonyPrefix]
-        public static bool Prefix() => DialoguerGate.End();
-
-        // NetGate.IsApplying End path skips DialoguerGate.End clear — Finalizer always clears sticky.
-        [HarmonyFinalizer]
-        public static void Finalizer() => DialoguerGate.ClearFlavor();
+        public static void Prefix() => DialoguerGate.Continue();
     }
 }

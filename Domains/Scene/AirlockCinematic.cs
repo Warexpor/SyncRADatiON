@@ -12,7 +12,6 @@ namespace SyncRADation.Patches
         static readonly System.Collections.Generic.HashSet<ulong> _remoteUnlock
             = new System.Collections.Generic.HashSet<ulong>();
 
-        static string _personalScene;
         static bool _localCinematic;
         static float _cinematicAt;
 
@@ -20,15 +19,8 @@ namespace SyncRADation.Patches
         {
             _localUnlock.Clear();
             _remoteUnlock.Clear();
-            _personalScene = null;
             _localCinematic = false;
             _cinematicAt = 0f;
-        }
-
-        public static void NotePersonalLoad(string scene)
-        {
-            if (!string.IsNullOrEmpty(scene))
-                _personalScene = scene;
         }
 
         public static void NoteLocalUnlock(UseItemInteraction u)
@@ -164,19 +156,30 @@ namespace SyncRADation.Patches
             return (aWreck && bHole) || (aHole && bWreck);
         }
 
+        /// <summary>
+        /// Client on one side of the wreck / hole split while the host is on the other: the host has none of this
+        /// scene's cutscenes / EventZones / MultiConditions (its request apply finds nothing, and presentations are
+        /// dropped while the scenes differ), so they run natively here, like solo. Flags they write still forward.
+        /// </summary>
+        public static bool ClientSplitFromHost()
+        {
+            if (!NetGate.Client) return false;
+            var net = LanNetworkManager.Instance;
+            if (net == null) return false;
+            string local = "";
+            try { local = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name ?? ""; }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            return IsWreckHoleSplit(local, net.HostSceneName);
+        }
+
         public static bool ShouldIgnoreHostFollow(string hostScene)
         {
             if (string.IsNullOrEmpty(hostScene)) return false;
             string local = "";
             try { local = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name ?? ""; }
             catch (System.Exception e) { Guard.Swallow(e); }
-            // Host left Penrose — follow (LOV etc.). Stale _personalScene=PEN_Hole used to
-            // trap the client in the hole after LOV_Reeducation loaded (pause-only freeze).
-            if (!IsWreckOrHole(hostScene))
-            {
-                _personalScene = null;
-                return false;
-            }
+            // Host left Penrose — follow (LOV etc.).
+            if (!IsWreckOrHole(hostScene)) return false;
             // Wreck↔hole is per-Elster. Requiring local PEN_Titles meant the observer
             // still on the wreck got SceneFollow when the host skipped the airlock.
             if (IsWreckHoleSplit(local, hostScene))

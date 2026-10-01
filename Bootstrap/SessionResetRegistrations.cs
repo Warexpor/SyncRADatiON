@@ -30,7 +30,7 @@ namespace SyncRADation
             SessionReset.Register("BagTrace", BagTrace.Reset);
             SessionReset.Register("MoveTrace", MoveTrace.Reset);
             SessionReset.Register("Airlock", AirlockCinematic.Reset);
-            SessionReset.Register("DialoguerFlavor", DialoguerGate.ResetSession);   // flavor + held dialogue callbacks + _depth/_localEnd
+            SessionReset.Register("DialoguerFlavor", DialoguerGate.ResetSession);   // local line id / flavor flag (key-ring name binding)
             SessionReset.Register("EventZone", EventZonePatch.OnSceneChanged);          // fired sets, keypad/use-item dedupe
             SessionReset.Register("DropClaims", ItemPickupPatches.ResetDropClaims);
             SessionReset.Register("ClientDamage", ClientDamageService.OnSceneChanged);
