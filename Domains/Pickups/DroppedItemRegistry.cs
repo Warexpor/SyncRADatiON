@@ -390,6 +390,7 @@ namespace SyncRADation.ItemSystem
         public static void TickDeferred()
         {
             try { SyncRADation.Patches.ItemPickupPatches.TickPendingDrop(); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { DroppedItemSpawner.TickRest(); } catch (System.Exception e) { Guard.Swallow(e); }
             if (_deferKey < 0) return;
             bool wait = InspectLocked();
             if (wait && Time.unscaledTime - _deferAt < 2.5f) return;

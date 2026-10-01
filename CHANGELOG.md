@@ -1,3 +1,19 @@
+## 0.5.63 — 2026-10-01
+
+Protocol **v17** (player velocity field changed meaning). Fixes from the first human dual-box session.
+
+### Fixed
+- **Remote player stutter and "hops"** — SIGNALIS walks the XY plane and Z is height (up = -Z), but the pose wire sent velocity X/Z and dropped Y. North-south movement was Hermite-interpolated with zero velocity (a speed pulse every packet), and height was extrapolated with a real velocity during send gaps (the host's model hopping on the client after an inventory/drop pause). `PlayerState` now carries planar `VelX/VelY`; interpolation is planar Hermite + linear height, extrapolation never moves height.
+- **Pose timing jitter** — snapshots were stamped with raw arrival time, so 16 ms frame-boundary jitter on the ~25 Hz stream became speed changes, and the 45 ms render delay (about one packet) fell into extrapolation whenever a packet came late. New `Domains/Players/SnapClock.cs` stamps root and bone snapshots on a learned interval pulled gently toward arrival (resyncs on gaps > 150 ms); `PoseInterpDelay` 45 → 100 ms (~2.5 packets).
+- **Dropped item counts doubled on pickup** — drops cloned a native pickup with `firstObserved = false`, so native `pickUp` re-rolled the count through `DynamicDifficulty.calculateCount` (a 1-round drop became 2 for a low-ammo taker, here the host). Drops now set `firstObserved = true`, and the take path uses the registry's dropped count rather than the prop's.
+- **Dropped items floating** — floor placement copied the z of the nearest native pickup (usually on a table or shelf) and `RestOnFloor` lifted the model along +Y (north) instead of height. Drops now keep the dropper's feet z and seat the visible mesh's lowest point (`bounds.max.z`) on it, with a second pass one frame later. The never-registered `DroppedItemAnchor` component (`[Guard] FinishInteractable … TypeInitializationException`) is gone.
+- **Dialogue UI blips relayed as world sounds** — `event:/UI/` emitters (dialogue `Voice` / `VoiceEnd`) stay local like music and ambience beds.
+
+### Added
+- **`FreeCursor`** pref (default off): never confine the mouse to the window (dual-box under Proton/Wayland).
+
+Protocol **17**. Product **0.5.63** (not 1.0).
+
 ## 0.5.62 — 2026-10-01
 
 Protocol **v16** (no wire change). First in-level dual-instance run (host + client in `DET_Detention`, driven by the new `--sync-scene`) found a real WorldId bug and a scan cost; both fixed and re-verified in the same run setup. **Gameplay is still untested by a human.**

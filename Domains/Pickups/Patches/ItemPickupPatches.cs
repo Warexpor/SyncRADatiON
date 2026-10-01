@@ -112,11 +112,15 @@ namespace SyncRADation.Patches
                 _pendingDropCount = p.count > 0 ? p.count : 1;
             }
             catch (System.Exception e) { Guard.Swallow(e); }
-            if (_pendingDropItem == Items.itemlist.None && _pendingDropKey >= 0)
+            // The registry holds the count that was dropped; the prop's count can be rewritten natively.
+            if (_pendingDropKey >= 0)
             {
-                int c;
-                ItemSystem.DroppedItemManager.TryGet(_pendingDropKey, out _pendingDropItem, out c);
-                if (c > 0) _pendingDropCount = c;
+                Items.itemlist regItem; int c;
+                if (ItemSystem.DroppedItemManager.TryGet(_pendingDropKey, out regItem, out c))
+                {
+                    if (_pendingDropItem == Items.itemlist.None) _pendingDropItem = regItem;
+                    if (c > 0) _pendingDropCount = c;
+                }
             }
             _countBeforeDrop = ItemSystem.DroppedItemManager.CountInBag(_pendingDropItem);
         }

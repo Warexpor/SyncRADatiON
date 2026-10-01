@@ -563,6 +563,8 @@ namespace SyncRADation.Networking
             if (path.StartsWith("event:/Music/")) return true;
             if (path.StartsWith("event:/Cutscenes/")) return true;
             if (path.StartsWith("event:/Ambience/")) return true;
+            // UI emitters (dialogue text blips, menus) belong to whoever has the UI open.
+            if (path.StartsWith("event:/UI/")) return true;
             return false;
         }
 

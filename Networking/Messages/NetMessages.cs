@@ -360,7 +360,7 @@ namespace SyncRADation.Networking
         public float RotY;   // facing-pivot world quat.w (was fAngle)
         public float RootY;  // quat.y
         public float VelX;
-        public float VelZ;
+        public float VelY;   // planar north-south (SIGNALIS walks XY; Z is height)
         public float Forward;
         public float Turn;
         public float AimingTime;
@@ -412,7 +412,7 @@ namespace SyncRADation.Networking
             w.Put(RotY);
             w.Put(RootY);
             w.Put(VelX);
-            w.Put(VelZ);
+            w.Put(VelY);
             w.Put(Forward);
             w.Put(Turn);
             w.Put(AimingTime);
@@ -451,7 +451,7 @@ namespace SyncRADation.Networking
                 RotY = r.GetFloat(),
                 RootY = r.GetFloat(),
                 VelX = r.GetFloat(),
-                VelZ = r.GetFloat(),
+                VelY = r.GetFloat(),
                 Forward = r.GetFloat(),
                 Turn = r.GetFloat(),
                 AimingTime = r.GetFloat(),

@@ -12,8 +12,9 @@ namespace SyncRADation.Players
         private readonly Dictionary<int, GameObject> _proxyObjects = new Dictionary<int, GameObject>();
         private readonly Dictionary<Collider, int> _proxyColliders = new Dictionary<Collider, int>();
 
-        // Snapshot interpolation: render ~1 packet behind so 30 Hz pose is
-        // sampled between snaps (Hermite + Slerp), not exponential-lerped at the live packet.
+        // Snapshot interpolation: render PoseInterpDelay behind (~2.5 packets at the real ~25 Hz) so the
+        // pose is sampled between snaps (Hermite + Slerp), not exponential-lerped at the live packet.
+        // SIGNALIS walks the XY plane; Z is height (up = -Z). Vel is planar (x, y, 0).
         private struct PoseSnap
         {
             public float Time;
@@ -24,6 +25,7 @@ namespace SyncRADation.Players
         private class InterpState
         {
             public readonly List<PoseSnap> Snaps = new List<PoseSnap>(8);
+            public readonly SnapClock Clock = new SnapClock(PluginInfo.SendInterval);
             public bool isFirst;
         }
         private readonly Dictionary<int, InterpState> _interp = new Dictionary<int, InterpState>();
@@ -156,7 +158,7 @@ namespace SyncRADation.Players
             {
                 proxy.ApplyState(state);
                 var targetPos = new Vector3(state.PosX, state.PosY, state.PosZ);
-                ApplyPosition(playerId, targetPos, new Vector3(state.VelX, 0f, state.VelZ), state.GetFacingWorld());
+                ApplyPosition(playerId, targetPos, new Vector3(state.VelX, state.VelY, 0f), state.GetFacingWorld());
                 HitchTrace.Recv(playerId);
             }
         }
@@ -176,9 +178,10 @@ namespace SyncRADation.Players
                     go.transform.rotation = YawOnPlane(facingWorld, go.transform.up);
                 }
                 ist.Snaps.Clear();
+                ist.Clock.Reset();
                 ist.Snaps.Add(new PoseSnap
                 {
-                    Time = Time.time,
+                    Time = ist.Clock.Stamp(Time.time),
                     Pos = position,
                     Vel = velocity,
                     Facing = facingWorld
@@ -189,7 +192,7 @@ namespace SyncRADation.Players
 
             ist.Snaps.Add(new PoseSnap
             {
-                Time = Time.time,
+                Time = ist.Clock.Stamp(Time.time),
                 Pos = position,
                 Vel = velocity,
                 Facing = facingWorld
@@ -241,9 +244,10 @@ namespace SyncRADation.Players
 
             if (renderTime >= newest.Time)
             {
+                // Planar only: never extrapolate height (a stale vertical guess reads as a hop).
                 float extra = Mathf.Min(renderTime - newest.Time, ExtrapolateMax);
                 pos = newest.Pos + newest.Vel * extra;
-                pos.y = newest.Pos.y;
+                pos.z = newest.Pos.z;
                 facing = newest.Facing;
                 HitchTrace.Interp("extrap");
                 return;
@@ -259,7 +263,7 @@ namespace SyncRADation.Players
             float span = b.Time - a.Time;
             float t = span > 0.0001f ? Mathf.Clamp01((renderTime - a.Time) / span) : 1f;
             pos = span > 0.0001f ? Hermite(a.Pos, a.Vel, b.Pos, b.Vel, span, t) : a.Pos;
-            pos.y = Mathf.Lerp(a.Pos.y, b.Pos.y, t);
+            pos.z = Mathf.Lerp(a.Pos.z, b.Pos.z, t);
             facing = Quaternion.Slerp(a.Facing, b.Facing, t);
             HitchTrace.Interp("lerp");
         }

@@ -169,6 +169,9 @@ namespace SyncRADation.ItemSystem
             try { p.triggered = false; } catch (System.Exception e) { Guard.Swallow(e); }
             try { p.slave = false; } catch (System.Exception e) { Guard.Swallow(e); }
             try { p.count = DroppedItemRegistry.SanitizeStack(count, PartyKeyRing.IsKeyOrObject(item)); } catch (System.Exception e) { Guard.Swallow(e); }
+            // Native pickUp re-rolls count through DynamicDifficulty.calculateCount on the first look
+            // (firstObserved false): a dropped 1-round stack became 2 for a low-ammo taker.
+            try { p.firstObserved = true; } catch (System.Exception e) { Guard.Swallow(e); }
             try { p.focusCamera = true; } catch (System.Exception e) { Guard.Swallow(e); }
             try { p.pauseGame = true; } catch (System.Exception e) { Guard.Swallow(e); }
             try { p.showItemView = true; } catch (System.Exception e) { Guard.Swallow(e); }
@@ -245,12 +248,7 @@ namespace SyncRADation.ItemSystem
             if (layer < 0) layer = 19;
             SetLayer(go, layer);
             EnsureOutlines(go);
-            try
-            {
-                if (go.GetComponent<DroppedItemAnchor>() == null)
-                    go.AddComponent<DroppedItemAnchor>();
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
+            _restNextFrame.Add(go);
         }
 
         static void EnsureOutlines(GameObject go)
@@ -345,31 +343,70 @@ namespace SyncRADation.ItemSystem
                 vis.transform.localScale *= target / m;
         }
 
+        /// <summary>
+        /// SIGNALIS walks the XY plane and "up" is -Z (Elster's model up maps to -Z; feet sit at the floor z).
+        /// The drop root is placed at the dropper's feet, so the visual's lowest point (bounds.max.z) must
+        /// meet the root z: a template cloned from a table/shelf pickup otherwise keeps its raised model.
+        /// </summary>
         public static void RestOnFloor(GameObject go)
         {
             if (go == null) return;
             try { if (!go.activeInHierarchy) return; } catch { return; }
-            Renderer r = null;
-            try { r = go.GetComponentInChildren<Renderer>(); } catch { return; }
-            if (r == null) return;
+            Transform vis = null;
             try
             {
-                var s = r.bounds.size;
-                if (Mathf.Max(s.x, Mathf.Max(s.y, s.z)) > 3f) return;
-            }
-            catch { return; }
-            float dy = go.transform.position.y - r.bounds.min.y;
-            if (dy <= 0.04f) return;
-            if (dy > 0.7f) dy = 0.7f;
-            Transform vis = go.transform.Find("Model3D");
-            if (vis == null) vis = FindModel(go.transform);
-            Vector3 lift = new Vector3(0f, dy, 0f);
-            try
-            {
-                if (vis != null) vis.position += lift;
-                else go.transform.position += lift;
+                vis = go.transform.Find("Model3D");
+                if (vis == null || !vis.gameObject.activeSelf) vis = FindModel(go.transform);
             }
             catch (System.Exception e) { Guard.Swallow(e); }
+            Bounds b;
+            if (!VisibleBounds(vis != null ? vis.gameObject : go, out b)) return;
+            if (Mathf.Max(b.size.x, Mathf.Max(b.size.y, b.size.z)) > 4f) return;
+            float dz = go.transform.position.z - b.max.z;
+            if (Mathf.Abs(dz) <= 0.01f) return;
+            dz = Mathf.Clamp(dz, -2.5f, 2.5f);
+            try
+            {
+                if (vis != null) vis.position += new Vector3(0f, 0f, dz);
+                else go.transform.position += new Vector3(0f, 0f, dz);
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+        }
+
+        static bool VisibleBounds(GameObject root, out Bounds b)
+        {
+            b = default(Bounds);
+            if (root == null) return false;
+            Renderer[] rs;
+            try { rs = root.GetComponentsInChildren<Renderer>(false); } catch { return false; }
+            if (rs == null) return false;
+            bool any = false;
+            for (int i = 0; i < rs.Length; i++)
+            {
+                var r = rs[i];
+                if (r == null) continue;
+                try
+                {
+                    if (!r.enabled) continue;
+                    if (!any) { b = r.bounds; any = true; }
+                    else b.Encapsulate(r.bounds);
+                }
+                catch (System.Exception e) { Guard.Swallow(e); }
+            }
+            return any;
+        }
+
+        static readonly List<GameObject> _restNextFrame = new List<GameObject>(4);
+
+        /// <summary>Second floor pass one frame after spawn (skinned / late-bound renderer bounds).</summary>
+        public static void TickRest()
+        {
+            if (_restNextFrame.Count == 0) return;
+            for (int i = 0; i < _restNextFrame.Count; i++)
+            {
+                try { RestOnFloor(_restNextFrame[i]); } catch (System.Exception e) { Guard.Swallow(e); }
+            }
+            _restNextFrame.Clear();
         }
 
         static void RebuildCollider(GameObject go)
@@ -466,45 +503,6 @@ namespace SyncRADation.ItemSystem
             return bestT;
         }
 
-        static Vector3 SnapToFloor(Vector3 pos)
-        {
-            ItemPickup near = NearestNativePickup(pos, 4f);
-            if (near != null && near.transform != null)
-            {
-                pos.y = near.transform.position.y;
-                pos.z = near.transform.position.z;
-                return pos;
-            }
-
-            ItemPickup any = NearestNativePickup(pos, 80f);
-            if (any != null && any.transform != null)
-                pos.z = any.transform.position.z;
-            else
-                pos.z = 0f;
-            return pos;
-        }
-
-        static ItemPickup NearestNativePickup(Vector3 pos, float maxDist)
-        {
-            var all = ScenePickups();
-            if (all == null || all.Length == 0) return null;
-            ItemPickup best = null;
-            float bestD = maxDist;
-            for (int i = 0; i < all.Length; i++)
-            {
-                var p = all[i];
-                if (p == null || DroppedItemRegistry.IsDropped(p) || p.transform == null) continue;
-                try { if (p.triggered) continue; } catch (System.Exception e) { Guard.Swallow(e); }
-                float d = Vector3.Distance(p.transform.position, pos);
-                if (d < bestD)
-                {
-                    bestD = d;
-                    best = p;
-                }
-            }
-            return best;
-        }
-
         static Sprite SpriteOf(AnItem catalog)
         {
             if (catalog == null) return null;
@@ -547,7 +545,7 @@ namespace SyncRADation.ItemSystem
         static void PlaceInWorld(GameObject go, Vector3 pos)
         {
             if (go == null) return;
-            pos = SnapToFloor(pos);
+            // pos is the dropper's feet (floor z). Native pickups sit on tables/shelves, so their z is not the floor.
             try { go.transform.SetParent(null, true); } catch (System.Exception e) { Guard.Swallow(e); }
             try { go.transform.rotation = Quaternion.identity; } catch (System.Exception e) { Guard.Swallow(e); }
             Transform room = RoomAt(pos);

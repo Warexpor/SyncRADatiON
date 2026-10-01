@@ -41,6 +41,7 @@ namespace SyncRADation.Players
             public float[] Eulers;
         }
         private readonly System.Collections.Generic.List<BoneSnap> _boneSnaps = new System.Collections.Generic.List<BoneSnap>(8);
+        private readonly SnapClock _boneClock = new SnapClock(PluginInfo.SendInterval);
         private const int BoneSnapCap = 8;
 
         public Vector3 AimDirection
@@ -188,7 +189,7 @@ namespace SyncRADation.Players
             else
                 copy = new float[data.Length];
             System.Array.Copy(data, copy, data.Length);
-            _boneSnaps.Add(new BoneSnap { Time = Time.time, Eulers = copy });
+            _boneSnaps.Add(new BoneSnap { Time = _boneClock.Stamp(Time.time), Eulers = copy });
             if (!_snappedToFirst && _boneSync != null)
                 _boneSync.ApplyRotationsSnap(copy);
         }

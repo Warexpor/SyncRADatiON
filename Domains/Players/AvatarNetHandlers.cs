@@ -138,7 +138,7 @@ namespace SyncRADation.Networking
                 RootX = euler.x,
                 RootZ = euler.z,
                 VelX = vel.x,
-                VelZ = vel.z,
+                VelY = vel.y,
                 Forward = forwardAmount,
                 Turn = turnAmount,
                 AimingTime = aimingTime,

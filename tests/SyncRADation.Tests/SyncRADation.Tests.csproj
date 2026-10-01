@@ -37,5 +37,6 @@
     <Compile Include="../../Sync/WorldChecksum.cs" Link="Game/Sync/WorldChecksum.cs" />
     <Compile Include="../../Bootstrap/PluginInfo.cs" Link="Game/Bootstrap/PluginInfo.cs" />
     <Compile Include="../../Sync/SessionReset.cs" Link="Game/Sync/SessionReset.cs" />
+    <Compile Include="../../Domains/Players/SnapClock.cs" Link="Game/Domains/Players/SnapClock.cs" />
   </ItemGroup>
 </Project>
