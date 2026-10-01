@@ -127,8 +127,58 @@ namespace SyncRADation.Sync
                 if (tpc != null) s += " tpc=" + tpc.enabled;
                 return s;
             });
+            Try(sb, "walls", Walls);
             Try(sb, "near", () => Near(player));
             return sb.ToString();
+        }
+
+        // Native ThirdPersonCharacter.CollisionDetection (Ghidra ThirdPersonCharacter.c): Physics.Raycast along
+        // transform.forward from points up the body (and sideOffset left/right), length Distance, mask WallMask,
+        // default trigger query (so triggers count). Any hit zeroes m_ForwardAmount: turning still works, walking
+        // does not. Same casts here, naming what they hit.
+        static string Walls()
+        {
+            var pcs = PlayerState.pcs;
+            var tpc = pcs != null ? pcs.character : null;
+            if (tpc == null) return "no tpc";
+            var t = tpc.transform;
+            Vector3 fwd = t.forward.normalized;
+            float dist = tpc.Distance * (Mathf.Abs(fwd.y) * 0.2f + 0.8f);
+            int mask = tpc.WallMask.value;
+            var seen = new System.Collections.Generic.HashSet<string>();
+            var sb = new System.Text.StringBuilder();
+            sb.Append("dist=").Append(dist.ToString("F2")).Append(" side=").Append(tpc.sideOffset.ToString("F2"))
+              .Append(" fwdAmt=").Append(tpc.m_ForwardAmount.ToString("F2")).Append(" hits:");
+            int n = 0;
+            float[] heights = { 0.1f, 0.4f, 0.8f, 1.2f, 1.6f };
+            float[] sides = { 0f, -1f, 1f };
+            for (int h = 0; h < heights.Length; h++)
+            {
+                for (int s = 0; s < sides.Length; s++)
+                {
+                    Vector3 o = t.position + t.up * heights[h] + t.right * (tpc.sideOffset * sides[s]);
+                    RaycastHit hit;
+                    if (!Physics.Raycast(o, fwd, out hit, dist, mask)) continue;
+                    var c = hit.collider;
+                    if (c == null) continue;
+                    var go = c.gameObject;
+                    string key = go.name + go.GetInstanceID();
+                    if (!seen.Add(key)) continue;
+                    sb.Append(' ').Append(Path(go.transform)).Append('[').Append(LayerMask.LayerToName(go.layer))
+                      .Append(c.isTrigger ? ",trigger" : "").Append(",d=").Append(hit.distance.ToString("F2")).Append(']');
+                    if (++n >= 6) return sb.ToString();
+                }
+            }
+            if (n == 0) sb.Append(" none");
+            return sb.ToString();
+        }
+
+        static string Path(Transform t)
+        {
+            string s = t.name;
+            var p = t.parent;
+            for (int i = 0; i < 3 && p != null; i++, p = p.parent) s = p.name + "/" + s;
+            return s;
         }
 
         static string Near(GameObject player)
