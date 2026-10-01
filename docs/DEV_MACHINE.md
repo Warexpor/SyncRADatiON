@@ -45,7 +45,7 @@ Read with `grep -a` (non-UTF8 bytes). Connected lines are prefixed `H ` (host) /
 | `frame dt=Nms` | Unscaled frame dt ≥ 50ms |
 | `send gap=Nms` | Host send cadence gap ≥ 80ms |
 | `recv pN gap=Nms` | Pose recv gap ≥ 80ms |
-| `puzzle` / `enemy` / `boss` / `pickup N.Nms` | That TickHost ≥ 8ms |
+| `puzzle` / `enemy` / `boss` / `pickup N.Nms` | That TickHost ≥ 8ms. A trailing `gc=il2cpp+N` / `mono+N` means a garbage collection landed in that tick (the pause is the GC, not the tick's own work) |
 | `weaponClone N.Nms` | Remote weapon clone ≥ 8ms |
 | `5s sendHz=… cost=TAG Nms` | 5s anomaly summary (max gaps/dt + worst Cost tag) |
 | `phase=NAME Nms` | A mod update phase or a patched Update/LateUpdate/FixedUpdate (`Sync/HarmonyPhaseTiming`) took > 50 ms |

@@ -28,6 +28,9 @@ namespace SyncRADation.Sync
         private static float _maxCostMs;
         private static string _maxCostWhat = "";
         private static bool _hadAnomaly;
+        private static int _gcIl2;
+        private static int _gcMono;
+        private static bool _gcSeen;
 
         // Phase cost (spike-only): "[Hitch] phase=<name> Nms" when one top-level per-frame phase of the mod takes >= PhaseWarnMs.
         private const float PhaseWarnMs = 50f;
@@ -228,8 +231,20 @@ namespace SyncRADation.Sync
                 _maxCostMs = ms;
                 _maxCostWhat = what;
             }
+            // GC counts since the previous Cost call (same or previous frame): a spike with gc=il2cpp+N / mono+N is a
+            // collection that landed in this tick, not the tick's own work.
+            int il2 = -1, mono = System.GC.CollectionCount(0);
+            try { il2 = Il2CppSystem.GC.CollectionCount(0); } catch { }
             if (ms >= CostWarnMs)
-                Event(what + " " + ms.ToString("F1") + "ms");
+            {
+                string gc = "";
+                if (_gcSeen && il2 > _gcIl2) gc += " gc=il2cpp+" + (il2 - _gcIl2);
+                if (_gcSeen && mono > _gcMono) gc += (gc.Length == 0 ? " gc=" : ",") + "mono+" + (mono - _gcMono);
+                Event(what + " " + ms.ToString("F1") + "ms" + gc);
+            }
+            _gcIl2 = il2;
+            _gcMono = mono;
+            _gcSeen = true;
         }
 
         private static void Event(string msg)
