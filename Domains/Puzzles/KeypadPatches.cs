@@ -1,8 +1,8 @@
 // Live keypads (KeypadLive): each local press is emitted at the end of the frame it happened in, with the code
 // as native Update left it. Native Update polls Keys[i].triggered and does everything inline: pushButton(key)
 // first, then the digit / clear / verify (Ghidra Keypad3D.c, ROT_Keypad.c), so pushButton names the key and the
-// Update postfix sees the result. openDoor / CheckSolution have no native caller (Update inlines them), which is
-// why the 0.5.64 Harmony patches on them never fired.
+// Update postfix sees the result. openDoor / CheckSolution have no native caller (Update inlines them), so they
+// are not patch points.
 using System.Collections.Generic;
 using HarmonyLib;
 using SyncRADation.Networking;
@@ -13,7 +13,7 @@ namespace SyncRADation.Patches
 {
     static class KeypadPress
     {
-        // Instance id → key pressed this frame (local cache key only, never sent).
+        // Instance id → key pressed this frame (local per-frame state, never sent).
         static readonly Dictionary<int, int> _pending = new Dictionary<int, int>();
 
         public static bool Any => _pending.Count > 0;
@@ -22,16 +22,13 @@ namespace SyncRADation.Patches
 
         public static void Note(Component pad, Interaction[] keys, Transform key)
         {
-            if (pad == null || key == null || NetGate.IsApplying || !NetGate.Party) return;
-            int idx = -1;
-            try
+            if (pad == null || key == null || keys == null || NetGate.IsApplying || !NetGate.Party) return;
+            for (int i = 0; i < keys.Length; i++)
             {
-                if (keys != null)
-                    for (int i = 0; i < keys.Length; i++)
-                        if (keys[i] != null && keys[i].transform == key) { idx = i; break; }
+                if (keys[i] == null || keys[i].transform != key) continue;
+                _pending[pad.GetInstanceID()] = i;
+                return;
             }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            if (idx >= 0) _pending[pad.GetInstanceID()] = idx;
         }
 
         public static void NoteOp(Component pad, int op)
@@ -55,8 +52,7 @@ namespace SyncRADation.Patches
             ulong id = WorldId.FromGameObject(pad.gameObject);
             if (id == 0) return;
             KeypadLive.NotePress(id, key, wrong);
-            if (solved) EnvEmit.Progressed(type, pad);
-            else EnvEmit.Read(type, pad);
+            EnvEmit.Edge(type, pad, solved);
         }
     }
 
@@ -66,8 +62,7 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(Keypad3D __instance, Transform __0)
         {
-            try { KeypadPress.Note(__instance, __instance != null ? __instance.Keys : null, __0); }
-            catch (System.Exception e) { Guard.Swallow(e); }
+            if (__instance != null) KeypadPress.Note(__instance, __instance.Keys, __0);
         }
     }
 
@@ -77,15 +72,10 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(Keypad3D __instance)
         {
-            if (!KeypadPress.Any) return;
             int key;
-            if (!KeypadPress.Take(__instance, out key)) return;
-            try
-            {
-                bool solved = __instance.solved;
-                KeypadPress.Emit(PuzzleType.Keypad3D, __instance, key, solved, key == 11 && !solved);
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
+            if (!KeypadPress.Any || !KeypadPress.Take(__instance, out key)) return;
+            bool solved = __instance.solved;
+            KeypadPress.Emit(PuzzleType.Keypad3D, __instance, key, solved, key == 11 && !solved);
         }
     }
 
@@ -95,13 +85,8 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(Keypad3D __instance)
         {
-            if (__instance == null) return;
-            try
-            {
-                if (__instance.solved) return;
-                KeypadLive.RestoreCode(__instance, () => __instance.code, v => __instance.code = v);
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
+            if (__instance == null || __instance.solved) return;
+            KeypadLive.RestoreCode(__instance, () => __instance.code, v => __instance.code = v);
         }
     }
 
@@ -111,8 +96,7 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(ROT_Keypad __instance, Transform __0)
         {
-            try { KeypadPress.Note(__instance, __instance != null ? __instance.Keys : null, __0); }
-            catch (System.Exception e) { Guard.Swallow(e); }
+            if (__instance != null) KeypadPress.Note(__instance, __instance.Keys, __0);
         }
     }
 
@@ -122,15 +106,10 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(ROT_Keypad __instance)
         {
-            if (!KeypadPress.Any) return;
             int key;
-            if (!KeypadPress.Take(__instance, out key)) return;
-            try
-            {
-                bool solved = __instance.solved;
-                KeypadPress.Emit(PuzzleType.ROT_Keypad, __instance, key, solved, key == 11 && !solved);
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
+            if (!KeypadPress.Any || !KeypadPress.Take(__instance, out key)) return;
+            bool solved = __instance.solved;
+            KeypadPress.Emit(PuzzleType.ROT_Keypad, __instance, key, solved, key == 11 && !solved);
         }
     }
 
@@ -140,10 +119,7 @@ namespace SyncRADation.Patches
     {
         [HarmonyPostfix]
         public static void Postfix(PEN_Codepad __instance, int __0, bool __1)
-        {
-            try { KeypadPress.NoteOp(__instance, KeypadLive.CodepadOp(__0, __1)); }
-            catch (System.Exception e) { Guard.Swallow(e); }
-        }
+            => KeypadPress.NoteOp(__instance, KeypadLive.CodepadOp(__0, __1));
     }
 
     [HarmonyPatch(typeof(PEN_Codepad), "Update")]
@@ -152,11 +128,9 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(PEN_Codepad __instance)
         {
-            if (!KeypadPress.Any) return;
             int op;
-            if (!KeypadPress.Take(__instance, out op)) return;
-            try { KeypadPress.Emit(PuzzleType.PEN_Codepad, __instance, op, __instance.solved, false); }
-            catch (System.Exception e) { Guard.Swallow(e); }
+            if (!KeypadPress.Any || !KeypadPress.Take(__instance, out op)) return;
+            KeypadPress.Emit(PuzzleType.PEN_Codepad, __instance, op, __instance.solved, false);
         }
     }
 
@@ -166,13 +140,8 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(PEN_Codepad __instance)
         {
-            if (__instance == null) return;
-            try
-            {
-                if (__instance.solved) return;
+            if (__instance != null && !__instance.solved)
                 KeypadLive.RestoreWheels(__instance);
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 }

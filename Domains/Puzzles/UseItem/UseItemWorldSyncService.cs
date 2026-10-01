@@ -1,36 +1,21 @@
 using SyncRADation.Patches;
 using SyncRADation.Sync;
 using UnityEngine;
+using static SyncRADation.Networking.PuzzleDomainUtil;
 
 namespace SyncRADation.Networking
 {
-    /// <summary>
-    /// UseItemInteraction / UseItemMulti read/apply + SnapUseItemWorld / PerPlayerUse.
-    /// </summary>
+    /// <summary>UseItemInteraction / UseItemMulti read/apply + SnapUseItemWorld / PerPlayerUse.</summary>
     public sealed class UseItemWorldSyncService
     {
-        public static bool TryRead(PuzzleType type, Component c, long wid, out PuzzleStateEntry entry)
-        {
-            entry = default;
-            switch (type)
-            {
-                case PuzzleType.UseItemInteraction:
-                {
-                    var x = (UseItemInteraction)c;
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.unlocked, false, false, 0, 0, 0, 0, 0);
-                    return true;
-                }
-                case PuzzleType.UseItemMulti:
-                {
-                    entry = PuzzleDomainUtil.Mk(type, wid, UseItemMultiInteraction.blocked, false, false, 0, 0, 0, 0, 0);
-                    return true;
-                }
-                default:
-                    return false;
-            }
-        }
+        internal static PuzzleStateEntry ReadUseItem(UseItemInteraction x, long wid)
+            => Mk(PuzzleType.UseItemInteraction, wid, x.unlocked, false, false, 0, 0, 0, 0, 0);
 
-        public static void ApplyUseItem(UseItemInteraction x, PuzzleStateEntry e)
+        /// <summary>UseItemMultiInteraction.blocked is static (read through the first instance).</summary>
+        internal static PuzzleStateEntry ReadMulti(UseItemMultiInteraction x, long wid)
+            => Mk(PuzzleType.UseItemMulti, wid, UseItemMultiInteraction.blocked, false, false, 0, 0, 0, 0, 0);
+
+        internal static void ApplyUseItem(UseItemInteraction x, PuzzleStateEntry e)
         {
             if (x == null) return;
             if (e.Bool0)
@@ -39,187 +24,90 @@ namespace SyncRADation.Networking
                 x.unlocked = false;
         }
 
-        public static void ApplyMulti(PuzzleStateEntry e)
+        internal static void ApplyMulti(UseItemMultiInteraction x, PuzzleStateEntry e)
         {
             UseItemMultiInteraction.blocked = e.Bool0;
         }
 
+        /// <summary>The airlock key card (PEN_Titles) is used by each player for themselves.</summary>
         internal static bool PerPlayerUse(UseItemInteraction x)
         {
             if (x == null) return false;
-            try
-            {
-                if (LocalInspect.AirlockCinematic(x.gameObject)) return true;
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            try { return AirlockCinematic.IsPenTitlesCard(x); } catch { return false; }
+            return LocalInspect.AirlockCinematic(x.gameObject) || AirlockCinematic.IsPenTitlesCard(x);
         }
 
-        public static void SnapUseItemWorld(UseItemInteraction x)
+        /// <summary>
+        /// The interaction snaps on every apply (dump included) so joiners cannot re-use a party-wide UseItem. A
+        /// party-wide use latches unlocked (an unlatched flag would be polled back to the host as a relock) and its
+        /// durable consequence (door unlock, follow-up interaction: flag / enable state, flavor seals filtered) runs on
+        /// every apply. A per-player use only touches the world on a live apply.
+        /// </summary>
+        internal static void SnapUseItemWorld(UseItemInteraction x)
         {
             if (x == null) return;
-            // Rising-edge before latch: Disk InsertDisk* / Tarot PlaceCard* bind
-            // onSuccessful; Apply used to set unlocked + doors only → peers softlock.
-            bool wasUnlocked = false;
-            try { wasUnlocked = x.unlocked; } catch (System.Exception e) { Guard.Swallow(e); }
+            bool wasUnlocked = x.unlocked;
             bool localUse = PerPlayerUse(x);
-            // Inter snap always (FullRefresh + cinematic): keep party-wide UseItems
-            // inert so joiners cannot re-use mid-refresh. A per-player use does not latch
-            // unlocked on a dump. A party-wide one latches the flag (an unlatched flag would
-            // be polled back to the host as a relock) but runs onSuccessful only on a live
-            // apply (ReplayWorld): a join dump or held re-snap never replays it.
-            try
+            if (x.inter != null)
             {
-                if (x.inter != null)
-                {
-                    if (localUse)
-                    {
-                        x.inter.triggered = false;
-                        x.inter.enabled = true;
-                    }
-                    else
-                    {
-                        x.inter.triggered = true;
-                        x.inter.enabled = false;
-                    }
-                }
+                x.inter.triggered = !localUse;
+                x.inter.enabled = localUse;
             }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            // Durable consequence (door unlock / follow-up interaction) runs on every apply, including the
-            // join dump: gating it on MutateWorld left late joiners with the flag set and the door locked.
-            // All of it is flag/enable state (flavor seals are filtered inside the helpers), no cutscene.
-            // Per-player uses (airlock card) keep the old rule: only a live apply touches the world.
             if (localUse && !PuzzleSyncService.MutateWorld)
             {
-                try { AirlockCinematic.NoteRemoteUnlock(x); } catch (System.Exception e) { Guard.Swallow(e); }
-                try
-                {
-                    string n = "?";
-                    try { if (x.gameObject != null) n = x.gameObject.name; } catch (System.Exception e) { Guard.Swallow(e); }
-                    PlaytestLog.Verbose("Puzzle", "snap UseItem inter only (no unlock latch) " + n);
-                }
-                catch (System.Exception e) { Guard.Swallow(e); }
+                PlaytestLog.Verbose("Puzzle", "snap UseItem inter only (no unlock latch) " + x.gameObject.name);
                 return;
             }
-            // MutateWorld: latch unlocked (or NoteRemoteUnlock for PerPlayerUse) then
-            // doors + rising-edge Invoke below.
             if (!localUse)
+                x.unlocked = true;
+            if (x.slaveInteraction != null)
             {
-                try { x.unlocked = true; } catch (System.Exception e) { Guard.Swallow(e); }
+                x.slaveInteraction.enabled = true;
+                x.slaveInteraction.triggered = false;
             }
-            else
-            {
-                try { AirlockCinematic.NoteRemoteUnlock(x); } catch (System.Exception e) { Guard.Swallow(e); }
-            }
-            // Mid-unload: flags snapped above; skip door unlock on a torn-down GO.
-            try
-            {
-                if (x.gameObject == null) return;
-            }
-            catch { return; }
-            try
-            {
-                if (x.slaveInteraction != null)
-                {
-                    x.slaveInteraction.enabled = true;
-                    x.slaveInteraction.triggered = false;
-                }
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            try
-            {
-                var lockComp = x.GetComponent<InteractiveLock>();
-                if (lockComp != null && lockComp.key != null) lockComp.locked = false;
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            try
-            {
-                if (x.gameObject == null) return;
-            }
-            catch { return; }
+            var lockComp = x.GetComponent<InteractiveLock>();
+            if (lockComp != null && lockComp.key != null) lockComp.locked = false;
             PuzzleDoorFlagsSyncService.TryUnlockDoors(x.gameObject);
             UnlockMatchingKeyLocks(x);
-            // Host-auth Apply path (InteractionSync Snap + PuzzleState Apply / remount).
-            // Gate false→true so host-local Dialoguer (already Invoked) and re-Emit
-            // already-unlocked snaps do not double-fire non-idempotent cinematics.
-            // PerPlayerUse (airlock / PEN_Titles) stays local — no party onSuccessful.
-            // Live only (ReplayWorld): the consequences (disk / tarot card) ride their own puzzle entries in a dump.
+            // onSuccessful (scene data: InsertDisk*, PlaceCard*, UnlockKey, TurnValve, PowerUp, END_Graves.Unlock,
+            // painting Dissolve, SetActive …) runs once on the false → true edge of a live party-wide use, for every
+            // peer whatever room it is in: several targets are world state with no puzzle entry of their own. Not
+            // PuzzleEdge.Solved: this snap is also the host's InteractionSync relay of a client use, which is live but
+            // not inside a PuzzleState apply (LiveEdge false), so the gate is ReplayWorld. A dump / held re-snap never
+            // replays it (the puzzle consequences ride their own entries).
             if (!wasUnlocked && !localUse && PuzzleSyncService.ReplayWorld)
-            {
-                NetGate.BeginApply();
-                try
-                {
-                    if (x.onSuccessful != null)
-                        x.onSuccessful.Invoke();
-                }
-                catch (System.Exception e) { Guard.Swallow(e); }
-                finally { NetGate.EndApply(); }
-            }
+                Native("useitem-success", () => PuzzleEdge.Invoke(x.onSuccessful));
         }
 
         static bool SameKey(AnItem a, AnItem b)
-        {
-            if (a == null || b == null) return false;
-            try { if (a == b) return true; } catch (System.Exception e) { Guard.Swallow(e); }
-            try { return a._item == b._item; } catch { return false; }
-        }
+            => a != null && b != null && (a == b || a._item == b._item);
 
+        /// <summary>Locks in the same room keyed to this item open with it.</summary>
         static void UnlockMatchingKeyLocks(UseItemInteraction x)
         {
-            AnItem key = null;
-            try { key = x.key; } catch (System.Exception e) { Guard.Swallow(e); }
+            AnItem key = x.key;
             if (key == null) return;
-            GameObject root = x.gameObject;
-            try
+            var room = FindInParents<Room>(x.gameObject);
+            GameObject root = room != null ? room.gameObject : x.gameObject;
+            var singles = root.GetComponentsInChildren<InteractiveLockSingle>(true);
+            if (singles != null)
             {
-                var room = PuzzleDomainUtil.FindInParents<Room>(x.gameObject);
-                if (room != null) root = room.gameObject;
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            try
-            {
-                var singles = root.GetComponentsInChildren<InteractiveLockSingle>(true);
-                if (singles != null)
+                for (int i = 0; i < singles.Length; i++)
                 {
-                    for (int i = 0; i < singles.Length; i++)
-                    {
-                        var s = singles[i];
-                        if (s == null || !SameKey(s.key, key)) continue;
-                        try
-                        {
-                            if (s.door != null && DoorNative.IsFlavorSeal(s.door.gameObject))
-                                continue;
-                        }
-                        catch (System.Exception e) { Guard.Swallow(e); }
-                        try
-                        {
-                            if (s.door != null) s.door.locked = false;
-                        }
-                        catch (System.Exception e) { Guard.Swallow(e); }
-                        DoorNative.ApplyLockPlate(s, false);
-                    }
+                    var s = singles[i];
+                    if (s == null || !SameKey(s.key, key)) continue;
+                    if (s.door != null && DoorNative.IsFlavorSeal(s.door.gameObject)) continue;
+                    if (s.door != null) s.door.locked = false;
+                    DoorNative.ApplyLockPlate(s, false);
                 }
             }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            try
+            var locks = root.GetComponentsInChildren<InteractiveLock>(true);
+            if (locks == null) return;
+            for (int i = 0; i < locks.Length; i++)
             {
-                var locks = root.GetComponentsInChildren<InteractiveLock>(true);
-                if (locks != null)
-                {
-                    for (int i = 0; i < locks.Length; i++)
-                    {
-                        var l = locks[i];
-                        if (l == null) continue;
-                        try
-                        {
-                            if (l.key == null || DoorNative.IsFlavorSeal(l.gameObject)) continue;
-                            if (SameKey(l.key, key)) l.locked = false;
-                        }
-                        catch (System.Exception e) { Guard.Swallow(e); }
-                    }
-                }
+                var l = locks[i];
+                if (l == null || l.key == null || DoorNative.IsFlavorSeal(l.gameObject)) continue;
+                if (SameKey(l.key, key)) l.locked = false;
             }
-            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 }

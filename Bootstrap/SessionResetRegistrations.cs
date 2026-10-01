@@ -50,7 +50,7 @@ namespace SyncRADation
             SessionReset.Register("EnemyScene", Scene, () => Net()?.EnemySync.OnSceneChanged());   // EnemySyncService room / wake caches
             SessionReset.Register("EnemyAdopted", Scene | Connection, EnemySpawnerPatches.ClearAdopted);
             SessionReset.Register("ClientDamage", Scene | Session, ClientDamageService.OnSceneChanged);
-            SessionReset.Register("PuzzleScene", Scene, () => Net()?.PuzzleSync.RefreshScene());  // also clears EnvEmit once-set, BiodomeLockPatch
+            SessionReset.Register("PuzzleScene", Scene, () => Net()?.PuzzleSync.RefreshScene());  // also clears EnvEmit once-set, BiodomeLockPatch, LibraryPcUpdatePatch
             SessionReset.Register("BossScene", Scene, () => Net()?.BossSync.OnSceneChanged());
             SessionReset.Register("BossAuth", Scene | Session, KolibriAdlerAuthPatches.Clear);     // held Kolibri/Adler snapshots
             SessionReset.Register("PickupScene", Scene, () => Net()?.PickupSync.RefreshScene());

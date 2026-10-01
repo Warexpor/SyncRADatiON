@@ -1,59 +1,43 @@
 // Pure merge rules for concurrent puzzle edits (no Unity objects, no service state): linked into the test project.
+// Which rule a type uses is its PuzzleTypeSpec.Merge (PuzzleSpecs.cs); these functions only take the kind.
 using System.Collections.Generic;
 using UnityEngine;
 
 namespace SyncRADation.Networking
 {
+    /// <summary>How the host combines a client edit with its current state of the same key.</summary>
+    internal enum MergeKind : byte
+    {
+        /// <summary>The newest entry replaces the old one whole (stale regresses are dropped).</summary>
+        None,
+        /// <summary>Each field is a cell: only the fields the client changed (PuzzleStateEntry.Mask) are overlaid.</summary>
+        Fields,
+        /// <summary>Fields, except any Int change replaces all four ints (a typed code is never interleaved).</summary>
+        AtomicInts,
+        /// <summary>Fields, plus Int0 bit i is its own cell (pattern lights, key-grid nodes).</summary>
+        BitCells,
+        /// <summary>Fields, plus one byte per tarot slot (Int0 slots 0..3, Int1 slots 4..5); the switch float is not an edit.</summary>
+        Tarot,
+        /// <summary>Fields, plus each 16-bit half of every Int is its own cell (mural moons).</summary>
+        HalfInts,
+        /// <summary>Fields, plus each 3-bit rod position in Int0 is its own cell (reactor rods).</summary>
+        Rods,
+        /// <summary>Only ever grows: the host ORs Int0 / Bool0 with its current state (checklist items).</summary>
+        Grow,
+    }
+
     internal static class PuzzleMerge
     {
-        // Types where the host merges only the cells a client actually changed (see PuzzleStateEntry.Mask).
-        internal static bool IsMergeType(PuzzleType t)
-        {
-            switch (t)
-            {
-                case PuzzleType.DialLock:
-                case PuzzleType.MED_Incinerator:
-                case PuzzleType.RES_Shrine:
-                case PuzzleType.PEN_Reaktor:
-                case PuzzleType.ROT_Mural:
-                case PuzzleType.ROT_RadioAlignment:
-                case PuzzleType.DET_RadioCodeLock:
-                // Live shared puzzles: two players in the same screen see each other's input as it happens.
-                case PuzzleType.PatternLock:
-                case PuzzleType.MED_KeyGrid:
-                case PuzzleType.ROT_Tarot:
-                case PuzzleType.EvidenceLockerPuzzle:
-                case PuzzleType.Keypad3D:
-                case PuzzleType.ROT_Keypad:
-                case PuzzleType.PEN_Codepad:
-                    return true;
-                default:
-                    return false;
-            }
-        }
+        /// <summary>A live shared screen: edits merge per cell and the host relays the merge to everyone.</summary>
+        internal static bool IsCellMerge(MergeKind k) => k != MergeKind.None && k != MergeKind.Grow;
 
-        // One bit of Int0 per cell (pattern lights, key-grid nodes): mask bit 9+i = cell i changed.
+        // Mask bits 0..8 = Bool0..2, Int0..3, Float0..1; the kind-specific cell bits start at 9 (cells) or 16 (halves, rods).
         internal const int BitCells = 23;
-        internal static bool IsBitCellType(PuzzleType t) => t == PuzzleType.PatternLock || t == PuzzleType.MED_KeyGrid;
-
-        // Tarot: one byte per card slot (Int0 slots 0..3, Int1 slots 4..5): mask bit 9+slot = slot changed.
         internal const int TarotSlots = 6;
-
-        // Input that only makes sense whole (a typed code, the evidence locker's coupled lights + last press):
-        // any Int change replaces all four, so two concurrent entries never interleave into a code nobody typed.
-        internal static bool IsAtomicIntsType(PuzzleType t)
-            => t == PuzzleType.EvidenceLockerPuzzle || t == PuzzleType.Keypad3D
-            || t == PuzzleType.ROT_Keypad || t == PuzzleType.PEN_Codepad;
-
-        // Mural packs two 16-bit moons per Int: merge at half granularity.
-        internal static bool IsHalfMergeType(PuzzleType t) => t == PuzzleType.ROT_Mural;
-
-        // Reaktor packs four 3-bit rod positions in Int0: mask bits 16..19 = rod r changed. The selection
-        // cursor (PEN_Reaktor.current) is per player and not on the wire (Int1 stays 0).
         internal const int ReaktorRodBits = 4;
-        internal static bool IsRodMergeType(PuzzleType t) => t == PuzzleType.PEN_Reaktor;
+        const int IntsMask = 8 | 16 | 32 | 64;
 
-        internal static int DiffMask(PuzzleStateEntry a, PuzzleStateEntry b)
+        internal static int DiffMask(PuzzleStateEntry a, PuzzleStateEntry b, MergeKind kind)
         {
             int m = 0;
             if (a.Bool0 != b.Bool0) m |= 1;
@@ -65,35 +49,39 @@ namespace SyncRADation.Networking
             if (a.Int3 != b.Int3) m |= 64;
             if (!Mathf.Approximately(a.Float0, b.Float0)) m |= 128;
             if (!Mathf.Approximately(a.Float1, b.Float1)) m |= 256;
-            if (IsRodMergeType(b.Type))
+            switch (kind)
             {
-                int x = a.Int0 ^ b.Int0;
-                for (int r = 0; r < ReaktorRodBits; r++)
-                    if (((x >> (r * 3)) & 7) != 0) m |= 1 << (16 + r);
-            }
-            if (IsHalfMergeType(b.Type))
-            {
-                for (int k = 0; k < 4; k++)
+                case MergeKind.Rods:
                 {
-                    int x = GetInt(a, k) ^ GetInt(b, k);
-                    if ((x & 0xFFFF) != 0) m |= 1 << (16 + 2 * k);
-                    if ((x & unchecked((int)0xFFFF0000)) != 0) m |= 1 << (17 + 2 * k);
+                    int x = a.Int0 ^ b.Int0;
+                    for (int r = 0; r < ReaktorRodBits; r++)
+                        if (((x >> (r * 3)) & 7) != 0) m |= 1 << (16 + r);
+                    break;
                 }
+                case MergeKind.HalfInts:
+                    for (int k = 0; k < 4; k++)
+                    {
+                        int x = GetInt(a, k) ^ GetInt(b, k);
+                        if ((x & 0xFFFF) != 0) m |= 1 << (16 + 2 * k);
+                        if ((x & unchecked((int)0xFFFF0000)) != 0) m |= 1 << (17 + 2 * k);
+                    }
+                    break;
+                case MergeKind.BitCells:
+                {
+                    int x = a.Int0 ^ b.Int0;
+                    for (int i = 0; i < BitCells; i++)
+                        if (((x >> i) & 1) != 0) m |= 1 << (9 + i);
+                    break;
+                }
+                case MergeKind.Tarot:
+                    for (int s = 0; s < TarotSlots; s++)
+                        if (TarotSlot(a, s) != TarotSlot(b, s)) m |= 1 << (9 + s);
+                    m &= ~128; // FlipSwitchPos is the switch animation native Update drives from darkmode
+                    break;
+                case MergeKind.AtomicInts:
+                    if ((m & IntsMask) != 0) m |= IntsMask;
+                    break;
             }
-            if (IsBitCellType(b.Type))
-            {
-                int x = a.Int0 ^ b.Int0;
-                for (int i = 0; i < BitCells; i++)
-                    if (((x >> i) & 1) != 0) m |= 1 << (9 + i);
-            }
-            if (b.Type == PuzzleType.ROT_Tarot)
-            {
-                for (int s = 0; s < TarotSlots; s++)
-                    if (TarotSlot(a, s) != TarotSlot(b, s)) m |= 1 << (9 + s);
-                m &= ~128; // FlipSwitchPos is the switch animation native Update drives from darkmode
-            }
-            if (IsAtomicIntsType(b.Type) && (m & (8 | 16 | 32 | 64)) != 0)
-                m |= 8 | 16 | 32 | 64;
             return m;
         }
 
@@ -129,21 +117,17 @@ namespace SyncRADation.Networking
         }
 
         /// <summary>Overlay only the cells named by inc.Mask onto the host's current state.</summary>
-        internal static PuzzleStateEntry MergeEdit(PuzzleStateEntry cur, PuzzleStateEntry inc)
+        internal static PuzzleStateEntry MergeEdit(PuzzleStateEntry cur, PuzzleStateEntry inc, MergeKind kind)
         {
             int m = inc.Mask;
             var r = cur;
             if ((m & 1) != 0) r.Bool0 = inc.Bool0;
             if ((m & 2) != 0) r.Bool1 = inc.Bool1;
             if ((m & 4) != 0) r.Bool2 = inc.Bool2;
-            bool half = IsHalfMergeType(inc.Type);
-            bool rods = IsRodMergeType(inc.Type);
-            bool cells = IsBitCellType(inc.Type);
-            bool tarot = inc.Type == PuzzleType.ROT_Tarot;
             for (int k = 0; k < 4; k++)
             {
                 if ((m & (8 << k)) == 0) continue;
-                if (cells && k == 0)
+                if (kind == MergeKind.BitCells && k == 0)
                 {
                     int cv = cur.Int0;
                     for (int i = 0; i < BitCells; i++)
@@ -154,14 +138,14 @@ namespace SyncRADation.Networking
                     r.Int0 = cv;
                     continue;
                 }
-                if (tarot && k <= 1)
+                if (kind == MergeKind.Tarot && k <= 1)
                 {
                     int s0 = k == 0 ? 0 : 4, s1 = k == 0 ? 4 : TarotSlots;
                     for (int s = s0; s < s1; s++)
                         if ((m & (1 << (9 + s))) != 0) SetTarotSlot(ref r, s, TarotSlot(inc, s));
                     continue;
                 }
-                if (rods && k == 0)
+                if (kind == MergeKind.Rods && k == 0)
                 {
                     int rv = cur.Int0;
                     for (int rr = 0; rr < ReaktorRodBits; rr++)
@@ -173,7 +157,7 @@ namespace SyncRADation.Networking
                     r.Int0 = rv;
                     continue;
                 }
-                if (!half)
+                if (kind != MergeKind.HalfInts)
                 {
                     SetInt(ref r, k, GetInt(inc, k));
                     continue;
@@ -189,6 +173,17 @@ namespace SyncRADation.Networking
             r.Seq = inc.Seq;
             r.Mask = 0;
             return r;
+        }
+
+        /// <summary>MergeKind.Grow: two players ticking different items concurrently keep both. True when cur added something.</summary>
+        internal static bool Grow(ref PuzzleStateEntry inc, PuzzleStateEntry cur)
+        {
+            int orInt = inc.Int0 | cur.Int0;
+            bool orDone = inc.Bool0 || cur.Bool0;
+            bool grew = orInt != inc.Int0 || orDone != inc.Bool0;
+            inc.Int0 = orInt;
+            inc.Bool0 = orDone;
+            return grew;
         }
 
         internal static bool SameCells(PuzzleStateEntry a, PuzzleStateEntry b)

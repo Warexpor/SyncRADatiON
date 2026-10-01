@@ -22,6 +22,8 @@ namespace SyncRADation
             DumpFlush.Register("Doors", DoorSyncService.FlushDiffNow);
             // Shared storage box: blob when its signature changed.
             DumpFlush.Register("Storage", () => LanNetworkManager.Instance?.StorageSync.FlushDiffNow());
+            // Puzzles: read + send the pending diff now.
+            DumpFlush.Register("Puzzles", () => LanNetworkManager.Instance?.PuzzleSync.FlushDiffNow());
             // World pickups: pending claim/hide diffs.
             DumpFlush.Register("Pickups", () => LanNetworkManager.Instance?.PickupSync.FlushDiffNow());
         }

@@ -50,6 +50,6 @@ namespace SyncRADation.Patches
         // No host relay: TryTrigger is a counter (tried++ per call, OnTryDone on the call reaching tries), and its
         // callers are often replayed on peers already (EventZone onInRange, cutscene Proceed), so a live relay counted
         // those calls twice and fired OnTryDone early. The host's tried rides the PuzzleState poll instead, and
-        // StorySyncService.ApplyMultiConditionEvent fires OnTryDone when it crosses tries past the local count.
+        // StoryFlagPuzzleSyncService.ApplyMultiCondition fires OnTryDone when it crosses tries past the local count.
     }
 }

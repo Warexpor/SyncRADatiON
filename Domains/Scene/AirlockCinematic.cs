@@ -41,12 +41,6 @@ namespace SyncRADation.Patches
             if (id != 0) _localUnlock.Add(id);
         }
 
-        /// <summary>
-        /// A peer unlocked this keycard: that unlock is theirs, so it never makes this peer's PEN_Hole load personal.
-        /// Nothing is recorded (IsLocalUnlock only tracks this peer's own unlocks).
-        /// </summary>
-        public static void NoteRemoteUnlock(UseItemInteraction u) { }
-
         public static bool IsLocalUnlock(UseItemInteraction u)
         {
             ulong id = Id(u);

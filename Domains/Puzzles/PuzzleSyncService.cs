@@ -1,4 +1,5 @@
-// Host puzzle/interactive sync keyed by WorldId (never FindObjectsOfType index).
+// Host puzzle/interactive sync keyed by WorldId (never FindObjectsOfType index). Per-type knowledge (reader, applier,
+// scan, emit / durable / merge / progressed rules) lives in PuzzleSpecs; this file is the coordinator.
 using System;
 using System.Collections.Generic;
 using SyncRADation.Patches;
@@ -8,12 +9,8 @@ using static SyncRADation.Networking.PuzzleMerge;
 
 namespace SyncRADation.Networking
 {
-    public sealed partial class PuzzleSyncService : IPuzzleDomainHost
+    public sealed class PuzzleSyncService : IPuzzleDomainHost
     {
-        delegate bool PuzzleReader(PuzzleType type, Component c, long wid, out PuzzleStateEntry entry);
-        delegate void PuzzleApplier(PuzzleSyncService self, PuzzleStateEntry e, bool cinematic);
-        delegate void PuzzleScanner(PuzzleSyncService self);
-
         private float _sendTimer;
         private const float SendInterval = 0.5f;
         private float _lastFullSend = -999f;
@@ -31,7 +28,7 @@ namespace SyncRADation.Networking
         private readonly Dictionary<PuzzleType, Dictionary<ulong, Component>> _maps
             = new Dictionary<PuzzleType, Dictionary<ulong, Component>>();
 
-        // Allocation-free (type, WorldId) key. Replaces the per-entry string that Key() used to build.
+        // Allocation-free (type, WorldId) key.
         internal readonly struct PKey : IEquatable<PKey>
         {
             public readonly long Id;
@@ -67,8 +64,9 @@ namespace SyncRADation.Networking
         // Local emits that fired inside a unicast scope (would reach the joiner only): replayed on the next Tick.
         private readonly List<Action> _afterUnicast = new List<Action>(2);
 
-        // An apply that could not finish natively (tarot take/place threw): re-applied on the next tick while the
-        // entry is still the current state, a few times at most.
+        // An apply that threw or could not finish natively (tarot take/place): re-applied on the next tick while the
+        // entry is still the current state, a few times at most, so a half-applied puzzle is never left as is (the
+        // next poll would author that half state for everyone).
         const int MaxApplyRetries = 3;
         static readonly List<PuzzleStateEntry> _retry = new List<PuzzleStateEntry>(4);
         static readonly Dictionary<PKey, int> _retryCount = new Dictionary<PKey, int>();
@@ -118,8 +116,7 @@ namespace SyncRADation.Networking
         private readonly Dictionary<PKey, PendingLocal> _pending = new Dictionary<PKey, PendingLocal>();
         private readonly List<PendingFlush> _pendingFlush = new List<PendingFlush>(8);
         private readonly List<PuzzleStateEntry> _pendingOut = new List<PuzzleStateEntry>(8);
-        // Door-ish types that default to "unlocked": only hold them once a locked state has been observed,
-        // otherwise a script relock after a scene reload is undone by the durable memory / held re-snap.
+        // SpecFlags.LockTransition keys that have been seen locked (see HoldIfProgressed).
         private readonly HashSet<PKey> _sawLocked = new HashSet<PKey>();
         private readonly List<PuzzleStateEntry> _relayAll = new List<PuzzleStateEntry>(8);
         private readonly List<PuzzleStateEntry> _relayExcept = new List<PuzzleStateEntry>(8);
@@ -140,8 +137,9 @@ namespace SyncRADation.Networking
         /// <summary>True while applying a live (non-full-refresh, non-reapply) entry: the rising edge may run native consequences.</summary>
         internal static bool LiveEdge => _liveEdge;
 
+        // Warn-once sites: persistent for the process on purpose (one line per call site).
         private static readonly HashSet<string> _warnedSites = new HashSet<string>();
-        private static readonly HashSet<string> _worldAnimStarted = new HashSet<string>();
+        private static readonly HashSet<(byte, ulong)> _worldAnimStarted = new HashSet<(byte, ulong)>();
         // Join/resync dumps are a settled snapshot. Replaying native transitions
         // (EventZone.Invoke, openDoor, delayedOpen, slaveInteraction.enable)
         // wakes leftover inactive puzzles and unseals flavor doors the host never touched.
@@ -149,9 +147,9 @@ namespace SyncRADation.Networking
 
         internal static bool MutateWorld => _mutateWorld;
 
-        // True while ReapplyHeld re-snaps held entries (never a live event). MutateWorld stays true there on purpose
-        // (UseItem NoteRemoteUnlock / unlock latch, RevealPickups need it); the replay-prone consumers (FlipSwitch.Flip,
-        // pin / ring / reaktor visual refresh, UseItem onSuccessful) read ReplayWorld instead.
+        // True while ReapplyHeld / FlushRetries re-snap entries (never a live event). MutateWorld stays true there on
+        // purpose (UseItem unlock latch, RevealPickups need it); the replay-prone consumers (FlipSwitch.Flip, pin /
+        // ring / reaktor visual refresh, UseItem onSuccessful) read ReplayWorld instead.
         private static bool _reapplying;
         /// <summary>MutateWorld for a live apply, false during a join dump or a held re-snap.</summary>
         internal static bool ReplayWorld => _mutateWorld && !_reapplying;
@@ -159,33 +157,20 @@ namespace SyncRADation.Networking
         readonly CryoSyncService _cryo;
         readonly CodepadSyncService _codepad;
 
-        static readonly Dictionary<PuzzleType, PuzzleReader> Readers;
-        static readonly Dictionary<PuzzleType, PuzzleApplier> Appliers;
-        static readonly HashSet<PuzzleType> ClientEmitTypes;
-        static readonly HashSet<PuzzleType> ProgressedBool0;
-        static readonly PuzzleScanner[] Scanners;
-
-        static PuzzleSyncService()
-        {
-            Readers = BuildReaders();
-            Appliers = BuildAppliers();
-            ClientEmitTypes = BuildClientEmitTypes();
-            ProgressedBool0 = BuildProgressedBool0();
-            Scanners = BuildScanners();
-        }
-
         public PuzzleSyncService()
         {
             _cryo = new CryoSyncService(this);
             _codepad = new CodepadSyncService(this);
+            PuzzleSpecs.SelfCheck();
         }
 
         public void RefreshScene()
         {
             // No WorldLookup.Invalidate here: WorldRegistry.Rebuild (ModRuntime.OnSceneChanged) already invalidated
             // and rescanned for this load; dropping it again made every load scan the scene twice.
-            try { SyncRADation.Patches.EnvEmit.ClearOnce(); } catch (Exception e) { Guard.Swallow(e); }
-            try { SyncRADation.Patches.BiodomeLockPatch.Reset(); } catch (Exception e) { Guard.Swallow(e); }
+            EnvEmit.ClearOnce();
+            BiodomeLockPatch.Reset();
+            LibraryPcUpdatePatch.Reset();
             _scanned = false;
             _needFullSend = true;
             _unicastFull = false;
@@ -208,8 +193,7 @@ namespace SyncRADation.Networking
             _clientLive = false;
             _clientWaitSince = -1f;
             _dumpRetries = 0;
-            try { _sceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name ?? ""; }
-            catch (Exception ex) { _sceneName = ""; WarnOnce("scene-name", ex.Message); }
+            _sceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name ?? "";
             int restored = 0;
             foreach (var kvp in _memory)
             {
@@ -235,40 +219,31 @@ namespace SyncRADation.Networking
 
         static PKey Key(PuzzleStateEntry e) => new PKey((byte)e.Type, e.WorldId);
 
-        static bool IsDurableMemoryType(PuzzleType t)
+        static PuzzleTypeSpec Spec(PuzzleType t) => PuzzleSpecs.Of(t);
+
+        static bool IsCellMerge(PuzzleType t)
         {
-            switch (t)
-            {
-                case PuzzleType.InteractiveLock:
-                case PuzzleType.InteractiveLockSingle:
-                case PuzzleType.Keypad3D:
-                case PuzzleType.ROT_Keypad:
-                case PuzzleType.PEN_Codepad:
-                case PuzzleType.PatternLock:
-                case PuzzleType.DialLock:
-                case PuzzleType.NumberLockNew:
-                case PuzzleType.DoorLockPuzzle:
-                case PuzzleType.MultiLock:
-                case PuzzleType.DoorLockControl:
-                case PuzzleType.DoorwaySimple:
-                case PuzzleType.SwingDoor:
-                case PuzzleType.DoorLockEventInteraction:
-                case PuzzleType.BiodomeDoorLock:
-                case PuzzleType.DET_ServiceLock:
-                case PuzzleType.DET_ServiceLock_Key:
-                case PuzzleType.SafeDoorSmall:
-                case PuzzleType.MultiKeyLock:
-                case PuzzleType.UseItemInteraction:
-                case PuzzleType.DET_RadioCodeLock:
-                case PuzzleType.ROT_DiskManager:
-                case PuzzleType.MEM_ChecklistLogic:
-                    return true;
-                default:
-                    return false;
-            }
+            var s = Spec(t);
+            return s != null && s.CellMerge;
         }
 
-        // Merge rules (IsMergeType, DiffMask, MergeEdit, SameCells, own-echo check): PuzzleMerge.cs (unit-tested).
+        static MergeKind KindOf(PuzzleType t)
+        {
+            var s = Spec(t);
+            return s != null ? s.Merge : MergeKind.None;
+        }
+
+        private static bool IsProgressed(PuzzleStateEntry e)
+        {
+            var s = Spec(e.Type);
+            return s != null && s.Progressed(e);
+        }
+
+        static bool ClientMayEmit(PuzzleType type)
+        {
+            var s = Spec(type);
+            return s != null && s.ClientEmit;
+        }
 
         int CurSeq(PKey key)
         {
@@ -302,7 +277,7 @@ namespace SyncRADation.Networking
 
         void NoteOwnSent(PKey key, PuzzleStateEntry e)
         {
-            if (!IsMergeType(e.Type)) return;
+            if (!IsCellMerge(e.Type)) return;
             List<PuzzleMerge.OwnSent> l;
             if (!_ownSent.TryGetValue(key, out l)) { l = new List<PuzzleMerge.OwnSent>(PuzzleMerge.OwnSentKeep); _ownSent[key] = l; }
             PuzzleMerge.NoteOwnSent(l, e, Time.unscaledTime);
@@ -311,7 +286,7 @@ namespace SyncRADation.Networking
         /// <summary>Client: e equals a state this client sent recently but has since moved past.</summary>
         bool IsOwnStaleEcho(PuzzleStateEntry e)
         {
-            if (!IsMergeType(e.Type)) return false;
+            if (!IsCellMerge(e.Type)) return false;
             List<PuzzleMerge.OwnSent> l;
             if (!_ownSent.TryGetValue(Key(e), out l)) return false;
             if (!PuzzleMerge.IsStaleOwnEcho(l, e, Time.unscaledTime)) return false;
@@ -348,6 +323,8 @@ namespace SyncRADation.Networking
         {
             merged = false;
             PKey key = Key(e);
+            var kind = KindOf(e.Type);
+            bool cellMerge = PuzzleMerge.IsCellMerge(kind);
             PuzzleStateEntry cur;
             bool hasCur = _lastSent.TryGetValue(key, out cur);
             int curSeq = CurSeq(key);
@@ -356,7 +333,7 @@ namespace SyncRADation.Networking
             // A client that authored the current state carries an older base Seq by design (its own edits are
             // not echoed back to it), so only somebody else's newer state makes its regress stale.
             // A merge-type edit carries only the cells its author changed, so an older base cannot regress anything.
-            if (hasCur && e.Seq < curSeq && !senderIsAuthor && !IsMergeType(e.Type) && !IsProgressed(e) && IsProgressed(cur))
+            if (hasCur && e.Seq < curSeq && !senderIsAuthor && !cellMerge && !IsProgressed(e) && IsProgressed(cur))
             {
                 PlaytestLog.Event("Puzzle", "drop stale " + e.Type + " id=" + unchecked((ulong)e.WorldId).ToString("X16")
                     + " seq=" + e.Seq + "<" + curSeq + " from p" + sender);
@@ -365,16 +342,9 @@ namespace SyncRADation.Networking
                 e.Mask = 0;
                 return false;
             }
-            // Checklist only grows: two players ticking different items concurrently keep both.
-            if (hasCur && e.Type == PuzzleType.MEM_ChecklistLogic)
-            {
-                int orInt = e.Int0 | cur.Int0;
-                bool orDone = e.Bool0 || cur.Bool0;
-                merged = orInt != e.Int0 || orDone != e.Bool0;
-                e.Int0 = orInt;
-                e.Bool0 = orDone;
-            }
-            else if (hasCur && e.Mask != 0 && IsMergeType(e.Type))
+            if (hasCur && kind == MergeKind.Grow)
+                merged = PuzzleMerge.Grow(ref e, cur);
+            else if (hasCur && e.Mask != 0 && cellMerge)
             {
                 // _lastSent lags the live component by up to one poll: merge onto the live state so a cell the
                 // host changed in the meantime is not reverted.
@@ -387,7 +357,7 @@ namespace SyncRADation.Networking
                     if (live != null && IsActiveInScene(live) && TryRead(e.Type, unchecked((ulong)e.WorldId), live, out fresh))
                         baseEntry = fresh;
                 }
-                e = MergeEdit(baseEntry, e);
+                e = MergeEdit(baseEntry, e, kind);
                 merged = true;
             }
             e.Mask = 0;
@@ -450,7 +420,8 @@ namespace SyncRADation.Networking
             return m;
         }
 
-        private void RegisterAll<T>(PuzzleType type) where T : Component
+        /// <summary>PuzzleTypeSpec.Scan: register every T in the scene under its WorldId.</summary>
+        internal void RegisterAll<T>(PuzzleType type) where T : Component
         {
             var map = Map(type);
             T[] arr = WorldLookup.All<T>();
@@ -470,10 +441,9 @@ namespace SyncRADation.Networking
         {
             if (_scanned) return;
             _maps.Clear();
-
-            for (int i = 0; i < Scanners.Length; i++)
-                Scanners[i](this);
-
+            var specs = PuzzleSpecs.All;
+            for (int i = 0; i < specs.Length; i++)
+                specs[i].Scan?.Invoke(this);
             _scanned = true;
             int total = 0;
             foreach (var kvp in _maps) total += kvp.Value.Count;
@@ -504,11 +474,9 @@ namespace SyncRADation.Networking
                 var deferred = _afterUnicast.ToArray();
                 _afterUnicast.Clear();
                 for (int i = 0; i < deferred.Length; i++)
-                {
-                    try { deferred[i](); } catch (Exception e) { Guard.Swallow(e); }
-                }
+                    deferred[i]();
             }
-            SyncRADation.Patches.EnvEmit.TickSoon();
+            EnvEmit.TickSoon();
             LibraryRobotGlide.Tick();
 
             if (_pendingReapply)
@@ -536,58 +504,93 @@ namespace SyncRADation.Networking
             EnsureScanned();
             try
             {
-
-            // Clients only emit real local puzzle/lock changes. Buttons, event zones,
-            // combat flags and cutscenes are not world-authoring — echoing those
-            // runs native trigger()/EventScreen on the other Elster.
-            if (net.Role != NetworkRole.Host)
+                if (net.Role != NetworkRole.Host)
+                    TickClient(net);
+                else
+                    TickHost(net, fullNow);
+            }
+            finally
             {
-                if (!_clientLive)
+                HitchTrace.Cost("puzzle", (Time.realtimeSinceStartup - t0) * 1000f);
+            }
+        }
+
+        /// <summary>
+        /// Clients only emit real local puzzle/lock changes (SpecFlags.Emit). Buttons, event zones, combat flags and
+        /// cutscenes are not world-authoring: echoing those runs native trigger()/EventScreen on the other Elster.
+        /// </summary>
+        void TickClient(LanNetworkManager net)
+        {
+            if (!_clientLive)
+            {
+                // No seed: default-true IsProgressed rules (elevator, mural, reactor…) would overwrite the host.
+                // Wait for the host dump (ApplyPuzzleState primes + goes live). A dump that lands while this client is
+                // still loading is dropped by ApplyPuzzleState, so the wait only runs on a loaded scene; the post-load
+                // SnapshotRequest (OnSceneChanged) asks for a fresh dump and the gate arms on that one. Re-ask if it
+                // has not arrived.
+                if (SceneFollowService.LocalIsTransient())
                 {
-                    // No seed: default-true IsProgressed rules (elevator, mural, reactor…) would
-                    // overwrite the host. Wait for the host dump (ApplyPuzzleState primes + goes live).
-                    // A dump that lands while this client is still loading is dropped by ApplyPuzzleState, so the
-                    // wait only runs on a loaded scene; the post-load SnapshotRequest (OnSceneChanged) asks for
-                    // a fresh dump and the gate arms on that one. Re-ask if it has not arrived.
-                    if (SceneFollowService.LocalIsTransient())
-                    {
-                        _clientWaitSince = -1f;
-                        return;
-                    }
-                    if (_clientWaitSince < 0f) _clientWaitSince = Time.unscaledTime;
-                    ObserveUnseeded();
-                    float waited = Time.unscaledTime - _clientWaitSince;
-                    if (!_hostDumpApplied && waited < ClientDumpWait)
-                    {
-                        if (_dumpRetries < ClientDumpMaxRetries && waited >= ClientDumpRetryEvery * (_dumpRetries + 1)
-                            && !net.SceneMismatch && !AirlockCinematic.ShouldIgnoreHostFollow(net.HostSceneName))
-                        {
-                            _dumpRetries++;
-                            PlaytestLog.Event("Puzzle", "client dump retry " + _dumpRetries + " (waited " + waited.ToString("0.0") + "s)");
-                            net.RequestWorldSnapshot();
-                        }
-                        return;
-                    }
-                    PrimeClientBaseline("no host dump within " + ClientDumpWait.ToString("0") + "s");
+                    _clientWaitSince = -1f;
                     return;
                 }
-                _tickLocal.Clear();
-                ReadAll(_tickLocal, false, clientFilter: true, activeOnly: true, firstIsBaseline: true, dampEcho: true);
-                if (_tickLocal.Count > 0)
+                if (_clientWaitSince < 0f) _clientWaitSince = Time.unscaledTime;
+                ObserveUnseeded();
+                float waited = Time.unscaledTime - _clientWaitSince;
+                if (!_hostDumpApplied && waited < ClientDumpWait)
                 {
-                    StampOutgoing(_tickLocal, host: false, full: false);
-                    for (int i = 0; i < _tickLocal.Count; i++)
-                        HoldIfProgressed(_tickLocal[i]);
-                    if (ModRuntime.VerboseLogging)
-                        PlaytestLog.Verbose("Puzzle", "client diff " + _tickLocal.Count
-                            + " " + Describe(_tickLocal));
-                    net.SendPuzzleState(_tickLocal, false);
+                    if (_dumpRetries < ClientDumpMaxRetries && waited >= ClientDumpRetryEvery * (_dumpRetries + 1)
+                        && !net.SceneMismatch && !AirlockCinematic.ShouldIgnoreHostFollow(net.HostSceneName))
+                    {
+                        _dumpRetries++;
+                        PlaytestLog.Event("Puzzle", "client dump retry " + _dumpRetries + " (waited " + waited.ToString("0.0") + "s)");
+                        net.RequestWorldSnapshot();
+                    }
+                    return;
                 }
+                PrimeClientBaseline("no host dump within " + ClientDumpWait.ToString("0") + "s");
                 return;
             }
+            SendClientDiff(net);
+        }
 
+        void SendClientDiff(LanNetworkManager net)
+        {
+            _tickLocal.Clear();
+            ReadAll(_tickLocal, false, clientFilter: true, activeOnly: true, firstIsBaseline: true, dampEcho: true);
+            if (_tickLocal.Count == 0) return;
+            StampOutgoing(_tickLocal, host: false, full: false);
+            for (int i = 0; i < _tickLocal.Count; i++)
+                HoldIfProgressed(_tickLocal[i]);
+            if (ModRuntime.VerboseLogging)
+                PlaytestLog.Verbose("Puzzle", "client diff " + _tickLocal.Count + " " + Describe(_tickLocal));
+            net.SendPuzzleState(_tickLocal, false);
+        }
+
+        /// <summary>
+        /// Read + send the pending local diff now instead of on the next 0.5 s tick (a dump or scene change is about
+        /// to happen). Diff only: no full dump, no client seeding; nothing while unscanned or inside a unicast scope.
+        /// </summary>
+        public void FlushDiffNow()
+        {
+            var net = LanNetworkManager.Instance;
+            if (net == null || !net.IsConnected || !net.HasReadyPeers || net.UnicastActive) return;
+            if (!Config.ModConfig.PuzzlesEnabled || !_scanned) return;
+            float t0 = Time.realtimeSinceStartup;
+            try
+            {
+                if (net.Role == NetworkRole.Host) TickHost(net, false);
+                else if (_clientLive) SendClientDiff(net);
+                _sendTimer = 0f;
+            }
+            finally
+            {
+                HitchTrace.Cost("puzzle", (Time.realtimeSinceStartup - t0) * 1000f);
+            }
+        }
+
+        void TickHost(LanNetworkManager net, bool full)
+        {
             _tickEntries.Clear();
-            bool full = fullNow;
             ReadAll(_tickEntries, full, clientFilter: false, activeOnly: !full);
             // Only clear after an actual full dump. Clearing on a rate-limited diff tick
             // dropped join/resync full state when MinFullSendInterval still blocked.
@@ -598,11 +601,6 @@ namespace SyncRADation.Networking
                 HoldIfProgressed(_tickEntries[i]);
             if (_tickEntries.Count == 0) return;
             net.SendPuzzleState(_tickEntries, full);
-            }
-            finally
-            {
-                HitchTrace.Cost("puzzle", (Time.realtimeSinceStartup - t0) * 1000f);
-            }
         }
 
         /// <summary>
@@ -671,15 +669,13 @@ namespace SyncRADation.Networking
         {
             foreach (var typeMap in _maps)
             {
-                var type = typeMap.Key;
-                if (!ClientMayEmit(type)) continue;
-                if (type == PuzzleType.UseItemMulti || type == PuzzleType.MED_KeyGrid || type == PuzzleType.ArianePhotoCode)
-                    continue;
+                var spec = Spec(typeMap.Key);
+                if (spec == null || !spec.ClientEmit || spec.FirstInstanceOnly) continue;
                 foreach (var kvp in typeMap.Value)
                 {
                     if (kvp.Value == null || !IsActiveInScene(kvp.Value)) continue;
                     PuzzleStateEntry entry;
-                    if (TryRead(type, kvp.Key, kvp.Value, out entry)) RecordPending(entry, false, explicitEdit: false);
+                    if (TryRead(typeMap.Key, kvp.Key, kvp.Value, out entry)) RecordPending(entry, false, explicitEdit: false);
                 }
             }
         }
@@ -728,18 +724,20 @@ namespace SyncRADation.Networking
                 var f = _pendingFlush[i];
                 var e = f.Latest;
                 if (!IsProgressed(e)) continue;
-                int mask = DiffMask(f.First, e);
-                if (f.HaveHostBase) mask &= DiffMask(f.HostBase, e);
+                var kind = KindOf(e.Type);
+                bool cellMerge = PuzzleMerge.IsCellMerge(kind);
+                int mask = DiffMask(f.First, e, kind);
+                if (f.HaveHostBase) mask &= DiffMask(f.HostBase, e, kind);
                 if (mask == 0) continue;
                 if (!f.Explicit && (mask & ~FloatMask) == 0) continue;
-                if (f.HaveHostBase && IsProgressed(f.HostBase) && !IsMergeType(e.Type)) continue;
+                if (f.HaveHostBase && IsProgressed(f.HostBase) && !cellMerge) continue;
                 PKey key = Key(e);
                 e.Seq = CurSeq(key);
                 e.Mask = mask;
                 PuzzleStateEntry local = e;
                 if (f.HaveHostBase)
                 {
-                    if (IsMergeType(e.Type)) local = MergeEdit(f.HostBase, e);
+                    if (cellMerge) local = MergeEdit(f.HostBase, e, kind);
                     local.Seq = CurSeq(key);
                     bool prevMutate = _mutateWorld;
                     _mutateWorld = false;
@@ -767,45 +765,34 @@ namespace SyncRADation.Networking
         private void ReadAll(List<PuzzleStateEntry> entries, bool full, bool clientFilter, bool activeOnly,
             bool firstIsBaseline = false, bool dampEcho = false, bool record = true)
         {
-            bool emittedMultiBlocked = false;
             foreach (var typeMap in _maps)
             {
                 var type = typeMap.Key;
-                if (clientFilter && !ClientMayEmit(type)) continue;
+                var spec = Spec(type);
+                if (spec == null || (clientFilter && !spec.ClientEmit)) continue;
                 foreach (var kvp in typeMap.Value)
                 {
                     if (kvp.Value == null) continue;
                     if (activeOnly && !IsActiveInScene(kvp.Value)) continue;
-                    if (type == PuzzleType.UseItemMulti)
-                    {
-                        if (emittedMultiBlocked) continue;
-                        emittedMultiBlocked = true;
-                    }
-                    // Globals-only: instance WorldIds would double-emit with WorldId=0 below.
-                    if (type == PuzzleType.MED_KeyGrid || type == PuzzleType.ArianePhotoCode)
-                        continue;
                     PuzzleStateEntry entry;
-                    if (!TryRead(type, kvp.Key, kvp.Value, out entry)) continue;
-                    Collect(entries, entry, full, firstIsBaseline, dampEcho, record);
+                    if (TryRead(type, kvp.Key, kvp.Value, out entry))
+                        Collect(entries, entry, full, firstIsBaseline, dampEcho, record);
+                    if (spec.FirstInstanceOnly) break;
                 }
             }
 
-            // Globals (WorldId = 0). Alarm stays host-only (client poll would clobber).
-            // RadioManagerState: client may emit moduleInstalled=true (latch on apply).
-            // KeyGrid / ArianePhotoCode are client-emittable (static solved/code reverse arrow).
-            if (!clientFilter)
-                Collect(entries, EnemySyncService.ReadGlobalAlert(), full, firstIsBaseline, dampEcho, record);
-            if (!clientFilter || ClientMayEmit(PuzzleType.RadioManagerState))
+            // WorldId-0 globals (alarm, radio module, key grid, photo code).
+            var globals = PuzzleSpecs.Globals;
+            for (int i = 0; i < globals.Length; i++)
             {
-                var radio = RadioPuzzleSyncService.ReadManagerState();
-                // Client must not emit false — would race host latch before acquire.
-                if (!(clientFilter && (radio.Int0 & 1) == 0))
-                    Collect(entries, radio, full, firstIsBaseline, dampEcho, record);
+                var g = globals[i];
+                if (clientFilter && !g.ClientEmit) continue;
+                PuzzleStateEntry entry;
+                try { entry = g.ReadGlobal(); }
+                catch (Exception e) { Guard.Swallow(e); continue; }
+                if (clientFilter && g.ClientSendIf != null && !g.ClientSendIf(entry)) continue;
+                Collect(entries, entry, full, firstIsBaseline, dampEcho, record);
             }
-            if (!clientFilter || ClientMayEmit(PuzzleType.MED_KeyGrid))
-                Collect(entries, ResidencyPuzzleSyncService.ReadKeyGridGlobal(), full, firstIsBaseline, dampEcho, record);
-            if (!clientFilter || ClientMayEmit(PuzzleType.ArianePhotoCode))
-                Collect(entries, ResidencyPuzzleSyncService.ReadArianePhotoCodeGlobal(), full, firstIsBaseline, dampEcho, record);
         }
 
         void Collect(List<PuzzleStateEntry> entries, PuzzleStateEntry entry, bool full, bool firstIsBaseline,
@@ -862,6 +849,7 @@ namespace SyncRADation.Networking
             return false;
         }
 
+        /// <summary>Liveness probe: a component destroyed mid-scene throws on access instead of comparing null.</summary>
         private static bool IsActiveInScene(Component c)
         {
             try
@@ -875,22 +863,15 @@ namespace SyncRADation.Networking
             }
         }
 
+        /// <summary>The one try around a read: a read that throws yields no entry this tick (never a half-read one).</summary>
         private bool TryRead(PuzzleType type, ulong id, Component c, out PuzzleStateEntry entry)
         {
             entry = default;
-            long wid = unchecked((long)id);
-            try
-            {
-                PuzzleReader reader;
-                if (Readers.TryGetValue(type, out reader))
-                    return reader(type, c, wid, out entry);
-            }
-            catch (Exception e) { Guard.Swallow(e); }
-            return false;
+            var spec = Spec(type);
+            if (spec == null || spec.Read == null) return false;
+            try { return spec.Read(c, unchecked((long)id), out entry); }
+            catch (Exception e) { Guard.Swallow("Puzzle.read." + type, e); return false; }
         }
-
-        private static PuzzleStateEntry Mk(PuzzleType type, long worldId, bool b0, bool b1, bool b2, int i0, int i1, int i2, int i3, float f0)
-            => PuzzleDomainUtil.Mk(type, worldId, b0, b1, b2, i0, i1, i2, i3, f0);
 
         /// <summary>
         /// Change detect vs the last sent/applied state. A real change also fills entry.Mask (cells that differ
@@ -924,12 +905,9 @@ namespace SyncRADation.Networking
                     else if (entry.Bool1 != prev.Bool1 && entry.Bool0 == prev.Bool0 && entry.Bool2 == prev.Bool2)
                         return false;
                 }
-                if (prev.Bool0 == entry.Bool0 && prev.Bool1 == entry.Bool1 && prev.Bool2 == entry.Bool2
-                    && prev.Int0 == entry.Int0 && prev.Int1 == entry.Int1 && prev.Int2 == entry.Int2 && prev.Int3 == entry.Int3
-                    && Mathf.Approximately(prev.Float0, entry.Float0)
-                    && Mathf.Approximately(prev.Float1, entry.Float1))
+                if (SameCells(prev, entry))
                     return false;
-                entry.Mask = DiffMask(prev, entry);
+                entry.Mask = DiffMask(prev, entry, KindOf(entry.Type));
             }
             else if (firstIsBaseline)
             {
@@ -945,8 +923,6 @@ namespace SyncRADation.Networking
             _lastSent[key] = entry;
             _fromApply.Remove(key);
         }
-
-        private static bool ClientMayEmit(PuzzleType type) => ClientEmitTypes.Contains(type);
 
         private static string Describe(IList<PuzzleStateEntry> entries)
         {
@@ -975,145 +951,6 @@ namespace SyncRADation.Networking
                 _seq[key] = entry.Seq;
         }
 
-        private static bool IsProgressed(PuzzleStateEntry e)
-        {
-            if (e.Type == PuzzleType.EXC_Elevator)
-                return e.Bool0 || e.Bool1;
-            if (e.Type == PuzzleType.ArianePhotoCode)
-                return e.Int0 != 0 || e.Bool0;
-            if (e.Type == PuzzleType.AraNest)
-                return e.Bool0 || e.Bool2;
-            if (e.Type == PuzzleType.LAB_RifleQuest || e.Type == PuzzleType.LOV_Microfiche)
-                return e.Bool0 || e.Bool1 || e.Bool2;
-            // Door / lock flags: hold unlocked or open so remount re-snaps.
-            if (e.Type == PuzzleType.SwingDoor)
-                return e.Bool0 || !e.Bool1;
-            if (e.Type == PuzzleType.DoorwaySimple
-                || e.Type == PuzzleType.DoorLockControl
-                || e.Type == PuzzleType.InteractiveLock
-                || e.Type == PuzzleType.InteractiveLockSingle
-                || e.Type == PuzzleType.NumberLockNew
-                || e.Type == PuzzleType.DoorLockPuzzle)
-                return !e.Bool0;
-            if (e.Type == PuzzleType.FoldingShutterDoor)
-                return e.Float0 > 0.01f;
-            // Cabin floor/state must survive room remount.
-            if (e.Type == PuzzleType.CentralElevator)
-                return true;
-            // Dig S: hold gate-active Bool0 even when solved weight is 0 so remount
-            // / late-join re-snaps MultiInteraction.SetActive(true).
-            if (e.Type == PuzzleType.LAB_Waage)
-                return e.Bool0 || !Mathf.Approximately(e.Float0, 0f);
-            if (e.Type == PuzzleType.ROT_RadioAlignment)
-                return e.Bool0 || e.Int0 != 0 || e.Int1 != 0;
-            // LAB_Rings: hold partial finger pack (Int0) so remount / late-join
-            // re-snaps mid-puzzle place/take, not only final Bool0 solved.
-            if (e.Type == PuzzleType.LAB_Rings)
-                return e.Bool0 || e.Int0 != 0;
-            // DET_ServiceLock: hold partial pinning pack (Int0) so remount / late-join
-            // re-snaps mid-pin state, not only final Bool0 solved.
-            if (e.Type == PuzzleType.DET_ServiceLock)
-                return e.Bool0 || e.Int0 != 0;
-            // FloodControls: hold partial input pack (Int1) so remount / late-join
-            // re-snaps mid-switch input[], not only final Bool0 done.
-            if (e.Type == PuzzleType.FloodControls)
-                return e.Bool0 || e.Int1 != 0;
-            // MED_KeyGrid: hold partial connected pack (Int1 count marker) so remount /
-            // late-join re-snaps mid-node state, including all-zero Int0 packs.
-            if (e.Type == PuzzleType.MED_KeyGrid)
-                return e.Bool0 || e.Int1 != 0;
-            // MED_Incinerator: hold mid-dial A/B/C (initial 10/10/10) so remount /
-            // late-join re-snaps unsolved dial changes, not only final Bool0 solved.
-            if (e.Type == PuzzleType.MED_Incinerator)
-                return e.Bool0 || e.Int0 != 10 || e.Int1 != 10 || e.Int2 != 10;
-            // MultiLock: hold partial element-key pack (Int0 Fire/Earth/Water/Air/Gold[/Star])
-            // so remount / late-join re-snaps mid-key inserts, not only final Bool0 unlocked.
-            if (e.Type == PuzzleType.MultiLock)
-                return e.Bool0 || e.Int0 != 0;
-            // DialLock (ROT_DialLock): hold mid-dial A/B/C/D (initial 0/0/0/5) so
-            // remount / late-join re-snaps unsolved dial changes, not only final Bool0 solved.
-            if (e.Type == PuzzleType.DialLock)
-                return e.Bool0 || e.Int0 != 0 || e.Int1 != 0 || e.Int2 != 0 || e.Int3 != 5;
-            // MED_CardWriter: hold partial connected pack (Int3 count marker) + hasCard
-            // so remount / late-join re-snaps mid-trace / inserted card, including
-            // all-zero Int0 packs (Dig AB).
-            if (e.Type == PuzzleType.MED_CardWriter)
-                return e.Bool0 || e.Bool1 || e.Int3 != 0;
-            // EvidenceLocker: hold mid-button states pack (Int0/Int1) so remount /
-            // late-join re-snaps unsolved button presses, not only final Bool0 solved.
-            if (e.Type == PuzzleType.EvidenceLockerPuzzle)
-                return e.Bool0 || e.Int0 != 0 || e.Int1 != 0;
-            // RES_Power: hold mid-fuse states pack (Int0) so remount / late-join
-            // re-snaps unsolved fuse flips, not only final Bool0 solved.
-            if (e.Type == PuzzleType.RES_Power)
-                return e.Bool0 || e.Int0 != 0;
-            // MED_Pump: hold mid-water a/b/c (initial 12/0/0) so remount / late-join
-            // re-snaps unsolved transfers, not only final Bool0 solved.
-            if (e.Type == PuzzleType.MED_Pump)
-                return e.Bool0 || e.Int0 != 12 || e.Int1 != 0 || e.Int2 != 0;
-            // RES_Shrine: hold mid-dial big/mid/small (initial 0/0/0) so remount /
-            // late-join re-snaps unsolved plate turns, not only final Bool0 solved.
-            if (e.Type == PuzzleType.RES_Shrine)
-                return e.Bool0 || e.Int0 != 0 || e.Int1 != 0 || e.Int2 != 0;
-            // ROT_Mural: hold mid-moon Pos pack (Int0–Int3) + busy so remount /
-            // late-join re-snaps unsolved moon turns, not only final Bool0 finished.
-            // DesiredPos bits make Int≠0 from load — intentional so FullRefresh
-            // always carries the moon pack (Dig AF).
-            if (e.Type == PuzzleType.ROT_Mural)
-                return e.Bool0 || e.Bool1 || e.Int0 != 0 || e.Int1 != 0 || e.Int2 != 0 || e.Int3 != 0;
-            // PEN_Reaktor: hold mid-rod positions pack (Int0) + current (Int1) so
-            // remount / late-join re-snaps unsolved rod moves, not only final Bool0
-            // solved. Initial AssetStudio positions [0,4,3,1] → Int0=736≠0 from load
-            // — intentional FullRefresh carry (Dig AG).
-            if (e.Type == PuzzleType.PEN_Reaktor)
-                return e.Bool0 || e.Bool1 || e.Int0 != 0 || e.Int1 != 0;
-            // MultiKeyLock: hold partial keys[] pack (Int0) so remount / late-join
-            // re-snaps inserted keys, not only final Bool0 (every key true).
-            if (e.Type == PuzzleType.MultiKeyLock)
-                return e.Bool0 || e.Int0 != 0;
-            // RES_MusicBox: hold inserted cassette (Bool1) before the lid opens.
-            if (e.Type == PuzzleType.RES_MusicBox)
-                return e.Bool0 || e.Bool1;
-            // ROT_MeatBlocker: hold mid pickup count (Int0) before the seal drops.
-            if (e.Type == PuzzleType.ROT_MeatBlocker)
-                return e.Bool0 || e.Int0 != 0;
-            // DET_RadioCodeLock: hold host-generated frequency/code/hint (Int0–2)
-            // so remount does not Start() a second local code. 0/0/0 is pre-Start.
-            if (e.Type == PuzzleType.DET_RadioCodeLock)
-                return e.Bool0 || e.Int0 != 0 || e.Int1 != 0 || e.Int2 != 0;
-            // PatternLock: hold the button grid (Int3 = cell count, including all-off)
-            // so remount / the other peer keep mid-presses, not only Bool0 solved.
-            if (e.Type == PuzzleType.PatternLock)
-                return e.Bool0 || e.Int3 != 0;
-            // ROT_Tarot: hold the card pack (Int3 = slot count, empty coded 0xFF)
-            // plus darkmode. Int3 != 0 from the first successful read.
-            if (e.Type == PuzzleType.ROT_Tarot)
-                return e.Bool0 || e.Int3 != 0;
-            // RES_LibraryPC: hold mid-maze robotPos (Bool1 = pack valid from TryRead).
-            if (e.Type == PuzzleType.RES_LibraryPC)
-                return e.Bool0 || e.Bool1;
-            // MED_Adler_EVdoors: hold DoorL/DoorR local X (Float0/Float1) + open Bool0.
-            if (e.Type == PuzzleType.MED_Adler_EVdoors)
-                return e.Bool0
-                    || !Mathf.Approximately(e.Float0, 0f)
-                    || !Mathf.Approximately(e.Float1, 0f);
-            // BiodomeDoorLock: hold partial KeyLevel (Int0) before !hasLock.
-            if (e.Type == PuzzleType.BiodomeDoorLock)
-                return e.Bool0 || e.Int0 != 0;
-            // MultiConditionEvent: hold partial tried (Int0) before triedOnce.
-            if (e.Type == PuzzleType.MultiConditionEvent)
-                return e.Bool0 || e.Int0 != 0;
-            // MEM_ChecklistLogic: any item checked (Int0 bitmask) or complete.
-            if (e.Type == PuzzleType.MEM_ChecklistLogic)
-                return e.Int0 != 0 || e.Bool0;
-            // ROT_DiskManager: either disk inserted.
-            if (e.Type == PuzzleType.ROT_DiskManager)
-                return e.Bool0 || e.Bool1;
-            if (e.Type == PuzzleType.DET_WallCreature)
-                return e.Bool0 || WorldObjectPuzzleSyncService.WallDamaged(e.WorldId, e.Int0);
-            return ProgressedBool0.Contains(e.Type) && e.Bool0;
-        }
-
         public void ApplyPuzzleState(PuzzleStateMessage msg)
         {
             var net = LanNetworkManager.Instance;
@@ -1136,9 +973,8 @@ namespace SyncRADation.Networking
                 for (int i = 0; i < msg.Entries.Length; i++)
                 {
                     var e = msg.Entries[i];
-                    // Client Start() generates its own radio code. Applying that
-                    // unsolved payload would replace the host's frequency/code/hint.
-                    if (e.Type == PuzzleType.DET_RadioCodeLock && !e.Bool0)
+                    var spec = Spec(e.Type);
+                    if (spec != null && spec.HostAcceptIf != null && !spec.HostAcceptIf(e))
                         continue;
                     bool merged;
                     if (!ResolveClientEntry(ref e, msg.SenderPlayerId, canApply, out merged))
@@ -1207,6 +1043,7 @@ namespace SyncRADation.Networking
 
                 if (cinematic)
                 {
+                    // Door visuals are a separate pass: a failure there must not drop the relay below.
                     try { DoorNative.ReassertLockVisuals(); }
                     catch (Exception ex) { WarnOnce("reassert-locks", ex.Message); }
                 }
@@ -1236,17 +1073,16 @@ namespace SyncRADation.Networking
         /// <summary>Room entry / chunk remount: re-snap only what sits in that room (or in no room).</summary>
         public void QueueReapply(Room room)
         {
-            Transform t = null;
-            try { if (room != null) t = room.transform; } catch (Exception e) { Guard.Swallow(e); }
+            Transform t = room != null ? room.transform : null;
             if (t == null) { _pendingReapply = true; return; }
             if (!_reapplyRooms.Contains(t)) _reapplyRooms.Add(t);
         }
 
-        // Cryo/Codepad ask "held" to mean SOLVED (they disable the pad and kill its buttons). A PatternLock entry
-        // is held while unsolved too (mid-grid presses, Int3 = cell count), so for them only Bool0 counts:
-        // otherwise every button of a fresh lock was swallowed as "already solved" (PEN_Wreck cryo, 0.5.64).
         static bool HeldSolved(PuzzleStateEntry e)
-            => e.Type == PuzzleType.PatternLock ? e.Bool0 : IsProgressed(e);
+        {
+            var s = Spec(e.Type);
+            return s != null && s.HeldSolved(e);
+        }
 
         bool IPuzzleDomainHost.IsHeld(PuzzleType type, ulong worldId)
         {
@@ -1259,7 +1095,7 @@ namespace SyncRADation.Networking
         /// A solved entry of this type is held under a WorldId no local component has, and candidateId (an unsolved
         /// component of the same type) is one the host never sent: only then is candidateId the local copy of that
         /// entry (a WorldId mismatch). A pad the host knows by its own id is never snapped by someone else's entry,
-        /// and types never stand in for each other (an unmatched pattern lock used to solve every cryo pad).
+        /// and types never stand in for each other (an unmatched pattern lock would otherwise solve every cryo pad).
         /// </summary>
         bool IPuzzleDomainHost.HeldUnmatched(PuzzleType type, ulong candidateId)
         {
@@ -1319,16 +1155,13 @@ namespace SyncRADation.Networking
         {
             if (_held.Count == 0)
             {
-                try { DoorSyncService.ReapplyHeldDoors(); } catch (Exception ex) { WarnOnce("reapply-doors", ex.Message); }
+                ReapplyDoorsAndPickups(false);
                 return;
             }
             // Snapshot first: ApplyEntry → HoldIfProgressed writes _held while this runs.
             _reapplyScratch.Clear();
             foreach (var kvp in _held)
                 _reapplyScratch.Add(kvp.Value);
-            // MutateWorld stays true on purpose: UseItem (per-player airlock card latch) and RevealPickups need it.
-            // The replay-prone consumers (FlipSwitch.Flip, DET_ServiceLock pins, PEN_Reaktor positions, LAB_Rings
-            // fingers) read ReplayWorld, which is false here, so a reapply never re-runs a rising-edge consequence.
             bool prevMutate = _mutateWorld;
             bool prevReapplying = _reapplying;
             _mutateWorld = true;
@@ -1371,14 +1204,19 @@ namespace SyncRADation.Networking
             }
             else if (ModRuntime.VerboseLogging)
                 PlaytestLog.Verbose("Puzzle", "reapply held none (" + skipped + " unchanged)");
-            try { DoorNative.ReassertLockVisuals(); } catch (Exception ex) { WarnOnce("reapply-locks", ex.Message); }
-            try { DoorSyncService.ReapplyHeldDoors(); } catch (Exception ex) { WarnOnce("reapply-doors", ex.Message); }
-            try
+            ReapplyDoorsAndPickups(true);
+        }
+
+        /// <summary>The door / pickup passes after a re-snap: separate domains, each must run even if another throws.</summary>
+        static void ReapplyDoorsAndPickups(bool full)
+        {
+            if (full)
             {
-                var net = LanNetworkManager.Instance;
-                if (net != null)
-                    net.PickupSync.HideClaimed(null);
+                try { DoorNative.ReassertLockVisuals(); } catch (Exception ex) { WarnOnce("reapply-locks", ex.Message); }
             }
+            try { DoorSyncService.ReapplyHeldDoors(); } catch (Exception ex) { WarnOnce("reapply-doors", ex.Message); }
+            if (!full) return;
+            try { LanNetworkManager.Instance?.PickupSync.HideClaimed(null); }
             catch (Exception ex) { WarnOnce("reapply-pickups", ex.Message); }
         }
 
@@ -1388,17 +1226,19 @@ namespace SyncRADation.Networking
         /// </summary>
         private void HoldIfProgressed(PuzzleStateEntry e, bool authored = false)
         {
-            bool progressed = IsProgressed(e);
+            var spec = Spec(e.Type);
+            if (spec == null) return;
+            bool progressed = spec.Progressed(e);
             PKey pk = Key(e);
             bool found = _held.ContainsKey(pk);
-            bool durable = IsDurableMemoryType(e.Type) && e.WorldId != 0;
+            bool durable = spec.Durable && e.WorldId != 0;
             // Default-unlocked doors are "progressed" from load: only hold one after it was seen locked, so a script
             // that relocks it (boss arena) is not undone by a held re-snap / durable memory after a reload.
             // A host-authored entry (ApplyEntry: dump / live apply / held re-snap) is always held: a client or late
             // joiner never reads the locked state itself, so the unlocked entry would otherwise be re-snapped away
             // on a chunk remount. The rule only guards local reads.
             bool hold = progressed;
-            if (NeedsLockTransition(e.Type))
+            if (spec.LockTransition)
             {
                 if (!progressed) _sawLocked.Add(pk);
                 else if (!authored && !_sawLocked.Contains(pk) && !found && !_memory.ContainsKey(pk))
@@ -1418,24 +1258,19 @@ namespace SyncRADation.Networking
             }
         }
 
-        static bool NeedsLockTransition(PuzzleType t)
-            => t == PuzzleType.DoorwaySimple || t == PuzzleType.SwingDoor || t == PuzzleType.DoorLockControl;
-
         /// <summary>c sits in one of the remounted rooms, or in no room (not chunk-managed).</summary>
         static bool InReapplyScope(Component c, List<Transform> rooms)
         {
             if (rooms == null) return true;
-            Room own = null;
-            try { own = PuzzleDomainUtil.FindInParents<Room>(c.gameObject); } catch (Exception e) { Guard.Swallow(e); }
+            Room own = PuzzleDomainUtil.FindInParents<Room>(c.gameObject);
             if (own == null) return true;
-            Transform t = null;
-            try { t = own.transform; } catch (Exception e) { Guard.Swallow(e); return true; }
+            Transform t = own.transform;
             for (int i = 0; i < rooms.Count; i++)
                 if (rooms[i] == t) return true;
             return false;
         }
 
-        /// <summary>An apply could not finish natively: re-apply it next tick (bounded, see FlushRetries).</summary>
+        /// <summary>An apply could not finish (threw / a native step failed): re-apply it next tick (bounded, see FlushRetries).</summary>
         internal static void RetryApply(PuzzleStateEntry e)
         {
             PKey k = Key(e);
@@ -1510,12 +1345,7 @@ namespace SyncRADation.Networking
             }
             PuzzleStateEntry entry;
             if (!TryRead(type, worldId, c, out entry)) return;
-            if (!ChangedOrFirst(ref entry, false)) return;
-            StampOutgoing(ref entry, net.Role == NetworkRole.Host, false);
-            HoldIfProgressed(entry);
-            PlaytestLog.Event("Puzzle", "emit " + type + " id=" + worldId.ToString("X16"));
-            _emitScratch[0] = entry;
-            net.SendPuzzleState(_emitScratch, false);
+            SendEmit(net, entry, "emit ");
         }
 
         /// <summary>Emit a pre-built entry (Adler EV projected end pose, etc.).</summary>
@@ -1530,13 +1360,7 @@ namespace SyncRADation.Networking
                 if (Unseeded(net, entry.Type)) RecordPending(entry);
                 return;
             }
-            if (!ChangedOrFirst(ref entry, false)) return;
-            StampOutgoing(ref entry, net.Role == NetworkRole.Host, false);
-            HoldIfProgressed(entry);
-            PlaytestLog.Event("Puzzle", "emit entry " + entry.Type
-                + " id=" + unchecked((ulong)entry.WorldId).ToString("X16"));
-            _emitScratch[0] = entry;
-            net.SendPuzzleState(_emitScratch, false);
+            SendEmit(net, entry, "emit entry ");
         }
 
         /// <summary>
@@ -1566,16 +1390,21 @@ namespace SyncRADation.Networking
             if (c != null && TryRead(type, worldId, c, out entry))
                 entry.Bool0 = true;
             else
-                entry = Mk(type, unchecked((long)worldId), true, false, false, 0, 0, 0, 0, 0f);
+                entry = PuzzleDomainUtil.Mk(type, unchecked((long)worldId), true, false, false, 0, 0, 0, 0, 0f);
             if (gated)
             {
                 RecordPending(entry, solvedEdge: true);
                 return;
             }
+            SendEmit(net, entry, "emit progressed ");
+        }
+
+        void SendEmit(LanNetworkManager net, PuzzleStateEntry entry, string what)
+        {
             if (!ChangedOrFirst(ref entry, false)) return;
             StampOutgoing(ref entry, net.Role == NetworkRole.Host, false);
             HoldIfProgressed(entry);
-            PlaytestLog.Event("Puzzle", "emit progressed " + type + " id=" + worldId.ToString("X16"));
+            PlaytestLog.Event("Puzzle", what + entry.Type + " id=" + unchecked((ulong)entry.WorldId).ToString("X16"));
             _emitScratch[0] = entry;
             net.SendPuzzleState(_emitScratch, false);
         }
@@ -1600,45 +1429,28 @@ namespace SyncRADation.Networking
             return c as T;
         }
 
+        /// <summary>The one try around an apply: a throw marks the entry for a bounded re-apply (RetryApply).</summary>
         private void ApplyEntry(PuzzleStateEntry e, bool cinematic)
         {
             HoldIfProgressed(e, authored: true);
             NoteApplied(e, keepPending: !cinematic);
+            var spec = Spec(e.Type);
+            if (spec == null || spec.Apply == null) return;
+            // WorldId-keyed snaps: skip when the component is gone. Globals (WorldId 0 / static flags) apply without
+            // a map hit.
+            Component c = Get<Component>(e.Type, e.WorldId);
+            if (e.WorldId != 0 && !spec.GlobalApply && c == null) return;
             bool prevLive = _liveEdge;
             _liveEdge = cinematic;
-            try
-            {
-                PuzzleApplier apply;
-                if (!Appliers.TryGetValue(e.Type, out apply)) return;
-                // WorldId-keyed snaps: skip Apply* when the component is gone (avoids NRE).
-                // Globals (WorldId 0 / static solved flags) apply without a map hit.
-                if (e.WorldId != 0 && !IsGlobalApply(e.Type)
-                    && Get<Component>(e.Type, e.WorldId) == null)
-                    return;
-                apply(this, e, cinematic);
-            }
+            try { spec.Apply(c, e); }
             catch (Exception ex)
             {
                 PlaytestLog.Warn("Puzzle", "apply " + e.Type + ": " + ex.Message);
+                RetryApply(e);
             }
             finally
             {
                 _liveEdge = prevLive;
-            }
-        }
-
-        static bool IsGlobalApply(PuzzleType type)
-        {
-            switch (type)
-            {
-                case PuzzleType.GlobalAlertStatus:
-                case PuzzleType.RadioManagerState:
-                case PuzzleType.MED_KeyGrid:
-                case PuzzleType.ArianePhotoCode:
-                case PuzzleType.UseItemMulti:
-                    return true;
-                default:
-                    return false;
             }
         }
 
@@ -1648,47 +1460,34 @@ namespace SyncRADation.Networking
         internal static void DisableInteractions(Component root)
         {
             if (root == null) return;
-            try
-            {
-                var all = root.GetComponentsInChildren<Interaction>(true);
-                if (all == null) return;
-                for (int i = 0; i < all.Length; i++)
-                    DisableOne(all[i]);
-            }
-            catch (Exception e) { Guard.Swallow(e); }
+            var all = root.GetComponentsInChildren<Interaction>(true);
+            if (all == null) return;
+            for (int i = 0; i < all.Length; i++)
+                DisableOne(all[i]);
         }
 
         internal static void DisableOne(Interaction it)
         {
-            if (it == null) return;
-            try
-            {
-                if (it.GetComponent<ItemPickup>() != null) return;
-            }
-            catch (Exception e) { Guard.Swallow(e); }
-            try { it.triggered = true; } catch (Exception e) { Guard.Swallow(e); }
-            try { it.enabled = false; } catch (Exception e) { Guard.Swallow(e); }
+            if (it == null || it.GetComponent<ItemPickup>() != null) return;
+            it.triggered = true;
+            it.enabled = false;
         }
 
-        static string AnimKey(PuzzleType type, ulong id) => ((byte)type) + "_" + id.ToString("X");
-
         internal static bool AnimStarted(PuzzleType type, ulong id)
-            => id != 0 && _worldAnimStarted.Contains(AnimKey(type, id));
+            => id != 0 && _worldAnimStarted.Contains(((byte)type, id));
 
         internal static void NoteAnimStarted(PuzzleType type, ulong id)
         {
-            if (id != 0) _worldAnimStarted.Add(AnimKey(type, id));
+            if (id != 0) _worldAnimStarted.Add(((byte)type, id));
         }
 
+        /// <summary>First live start of a native world animation (drain, valve, hatch) for this object this scene.</summary>
         internal static bool TryStartWorldAnim(PuzzleType type, GameObject go)
         {
-            if (go == null) return false;
-            bool active = false;
-            try { active = go.activeInHierarchy; } catch { active = true; }
-            if (!active) return false;
+            if (go == null || !go.activeInHierarchy) return false;
             ulong id = WorldId.FromGameObject(go);
             if (id == 0) return true;
-            return _worldAnimStarted.Add(AnimKey(type, id));
+            return _worldAnimStarted.Add(((byte)type, id));
         }
 
         internal static void RevealPickups(GameObject root)
