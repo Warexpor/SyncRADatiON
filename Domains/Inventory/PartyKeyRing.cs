@@ -406,17 +406,6 @@ namespace SyncRADation.Networking
 
         public static bool InLocalBag(AnItem item) => FindInBag(item) != null;
 
-        public static bool InLocalBag(Items.itemlist item)
-        {
-            if (item == Items.itemlist.None) return false;
-            try
-            {
-                var cat = InventoryManager.getItem(item);
-                return cat != null && InLocalBag(cat);
-            }
-            catch { return false; }
-        }
-
         /// <summary>
         /// Native UseItem / Interactor.InteractItem compare AnItem by reference.
         /// Scene <c>key</c> is the catalog SO; a dropped grant may be a different

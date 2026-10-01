@@ -40,10 +40,10 @@ namespace SyncRADation.ItemSystem
             LogSpawn(go, item, pos);
 
             Vector3 stored = pos;
-            try { if (go != null) stored = go.transform.position; } catch (System.Exception e) { Guard.Swallow(e); }
             string scene = "";
             try
             {
+                if (go != null) stored = go.transform.position;
                 scene = SceneManager.GetActiveScene().name ?? "";
                 if (SceneFollowService.IsTransient(scene)) scene = "";
             }
@@ -68,29 +68,16 @@ namespace SyncRADation.ItemSystem
                 ModRuntime.Log?.Warning("[Drop] spawn failed " + item);
                 return;
             }
-            int rends = 0;
             try
             {
+                int rends = 0;
                 var rs = go.GetComponentsInChildren<Renderer>(true);
                 if (rs != null)
-                {
                     for (int i = 0; i < rs.Length; i++)
-                    {
-                        try { if (rs[i] != null && rs[i].enabled) rends++; } catch (System.Exception e) { Guard.Swallow(e); }
-                    }
-                }
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            string parent = "null";
-            try { if (go.transform.parent != null) parent = go.transform.parent.name; } catch (System.Exception e) { Guard.Swallow(e); }
-            bool active = false;
-            try { active = go.activeInHierarchy; } catch (System.Exception e) { Guard.Swallow(e); }
-            bool trig = false;
-            float cx = 0f, cy = 0f;
-            int layer = -1;
-            try
-            {
-                layer = go.layer;
+                        if (rs[i] != null && rs[i].enabled) rends++;
+                var parent = go.transform.parent;
+                bool trig = false;
+                float cx = 0f, cy = 0f;
                 var col = go.GetComponent<BoxCollider2D>();
                 if (col != null)
                 {
@@ -99,18 +86,17 @@ namespace SyncRADation.ItemSystem
                     cx = Mathf.Max(col.size.x, b.x);
                     cy = Mathf.Max(col.size.y, b.y);
                 }
+                var at = go.transform.position;
+                ModRuntime.Log?.Msg("[Drop] spawn " + go.name + " " + item
+                    + " pos=" + at.x.ToString("F1") + "," + at.y.ToString("F1") + "," + at.z.ToString("F1")
+                    + " parent=" + (parent != null ? parent.name : "null")
+                    + " active=" + go.activeInHierarchy
+                    + " rends=" + rends
+                    + " layer=" + go.layer
+                    + " trigger=" + trig
+                    + " col=" + cx.ToString("F1") + "x" + cy.ToString("F1"));
             }
             catch (System.Exception e) { Guard.Swallow(e); }
-            ModRuntime.Log?.Msg("[Drop] spawn " + go.name + " " + item
-                + " pos=" + go.transform.position.x.ToString("F1") + ","
-                + go.transform.position.y.ToString("F1") + ","
-                + go.transform.position.z.ToString("F1")
-                + " parent=" + parent
-                + " active=" + active
-                + " rends=" + rends
-                + " layer=" + layer
-                + " trigger=" + trig
-                + " col=" + cx.ToString("F1") + "x" + cy.ToString("F1"));
         }
 
         static GameObject TryCloneNative(Items.itemlist item, int count, int netID, Vector3 pos)
@@ -270,12 +256,9 @@ namespace SyncRADation.ItemSystem
 
         static void ApplyCatalogMesh(GameObject go, Items.itemlist item)
         {
-            AnItem catalog = null;
-            try { catalog = InventoryManager.getItem(item); } catch (System.Exception e) { Guard.Swallow(e); }
-            if (catalog == null || go == null) return;
-
+            if (go == null) return;
             GameObject prefab = null;
-            try { prefab = catalog.Image3D; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { prefab = InventoryManager.getItem(item)?.Image3D; } catch (System.Exception e) { Guard.Swallow(e); }
             if (prefab == null) return;
 
             Transform slot = FindModel(go.transform);
