@@ -300,6 +300,90 @@ namespace SyncRADation.Patches
         }
     }
 
+    // Native OobChecker (Ghidra OobChecker.c): each frame one SphereCast from the player along +y / -y / +x / -x
+    // (round robin on `tick`, mask = walls). A miss counts as out of bounds; after 1 s the player is teleported to
+    // the room's gotoSpawn / camera centre and every door is reset. Alone, a door is only open while this player
+    // traverses it (gameState 5, not checked). In co-op a peer opens the door next to you: the cast leaves through
+    // the doorway into the next room's unloaded chunk, misses, and you are "rescued" to the middle of your room.
+    // A miss whose ray runs through an open (or still closing) door is a doorway, not out of bounds.
+    [HarmonyPatch(typeof(OobChecker), nameof(OobChecker.Check))]
+    public static class OobThroughOpenDoorPatch
+    {
+        const float PerpMax = 4f;
+        const float AheadMax = 80f;
+        static float _lastLog = -99f;
+
+        [HarmonyPostfix]
+        public static void Postfix(OobChecker __instance, ref bool __result)
+        {
+            if (__result || __instance == null || !NetGate.Party) return;
+            try
+            {
+                var t = __instance.trans;
+                if (t == null) return;
+                Vector2 p = t.position;
+                Vector2 dir;
+                switch (__instance.tick) // a miss leaves tick on the direction that missed
+                {
+                    case 0: dir = Vector2.up; break;
+                    case 1: dir = Vector2.down; break;
+                    case 2: dir = Vector2.right; break;
+                    default: dir = Vector2.left; break;
+                }
+                string door = DoorOnRay(p, dir);
+                if (door == null) return;
+                __result = true;
+                float now = Time.unscaledTime;
+                if (now - _lastLog > 5f)
+                {
+                    _lastLog = now;
+                    PlaytestLog.Event("Door", "oob rescue held: cast " + dir + " leaves through open door " + door);
+                }
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+        }
+
+        static string DoorOnRay(Vector2 p, Vector2 dir)
+        {
+            foreach (var kvp in WorldRegistry.AllDoubleDoors())
+            {
+                var d = kvp.Value;
+                if (d == null || !d.isActiveAndEnabled || !DoubleOpenish(d)) continue;
+                if (OnRay(p, dir, d.transform.position)) return d.gameObject.name;
+            }
+            foreach (var kvp in WorldRegistry.AllSlidingDoors())
+            {
+                var s = kvp.Value;
+                if (s == null || !s.isActiveAndEnabled || !(s.opened || s.moving)) continue;
+                if (OnRay(p, dir, s.transform.position)) return s.gameObject.name;
+            }
+            return null;
+        }
+
+        // Open, or closing: closeDoors lerps the leaves' local x (NS) / z back to 0 (Ghidra Doorway_Double.c).
+        static bool DoubleOpenish(Doorway_Double d)
+        {
+            if (d.open) return true;
+            return LeafOpen(d.Left, d.NS) || LeafOpen(d.Right, d.NS);
+        }
+
+        static bool LeafOpen(Transform leaf, bool ns)
+        {
+            if (leaf == null) return false;
+            var lp = leaf.localPosition;
+            return Mathf.Abs(ns ? lp.x : lp.z) > 0.05f;
+        }
+
+        static bool OnRay(Vector2 p, Vector2 dir, Vector3 doorPos)
+        {
+            Vector2 d = (Vector2)doorPos - p;
+            float ahead = Vector2.Dot(d, dir);
+            if (ahead < -1f || ahead > AheadMax) return false;
+            float perp = Mathf.Abs(d.x * dir.y - d.y * dir.x);
+            return perp <= PerpMax;
+        }
+    }
+
     [HarmonyPatch(typeof(Room), nameof(Room.EnterRoom))]
     public static class RoomEnterPuzzlePatch
     {
