@@ -1113,6 +1113,10 @@ namespace SyncRADation.Networking
                 {
                     Items.itemlist noted = Items.itemlist.None;
                     _claimedItemOf.TryGetValue(id, out noted);
+                    // Only undo a hide this peer did. The join dump lists every unclaimed prop as
+                    // Triggered=false, and force-activating them revealed props the level keeps off
+                    // (PEN_Cryo.contentLateActivated: the cryo key card, live before the pod opened).
+                    bool wasHidden = _claimed.Contains(id) || _deferredHide.Contains(id);
                     _claimed.Remove(id);
                     _claimerOf.Remove(id);
                     _claimedItemOf.Remove(id);
@@ -1128,9 +1132,11 @@ namespace SyncRADation.Networking
                         if (!still)
                             _claimedItems.Remove((ushort)noted);
                     }
-                    if (p != null)
+                    if (p != null && wasHidden)
+                    {
                         RestorePickup(p);
-                    PlaytestLog.Verbose("Pickup", "unhide id=" + id.ToString("X16"));
+                        PlaytestLog.Verbose("Pickup", "unhide id=" + id.ToString("X16"));
+                    }
                     continue;
                 }
 

@@ -144,6 +144,7 @@ namespace SyncRADation
             long tp = HitchTrace.Begin();
             try { SyncRADation.UI.FreeCursor.Tick(); } catch (System.Exception e) { Guard.Swallow(e); }
             try { EventCamTrace.Tick(); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { BagTrace.Tick(); } catch (System.Exception e) { Guard.Swallow(e); }
             try { DroppedItemManager.TickDeferred(); } catch (System.Exception e) { Guard.Swallow(e); }
             HitchTrace.End("dropTick", tp);
             tp = HitchTrace.Begin();

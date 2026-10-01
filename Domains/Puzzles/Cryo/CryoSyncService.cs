@@ -291,6 +291,22 @@ namespace SyncRADation.Networking
         public static void DisableCryoAccess(PEN_Cryo x)
         {
             if (x == null) return;
+            // Native PEN_Cryo.Open hides the "open" prompt by disabling the interaction's BoxCollider (Ghidra
+            // PEN_Cryo.c Open); the Interactor finds prompts by collider, so a disabled Interaction alone kept
+            // offering "open" to the peer who did not open it.
+            try
+            {
+                var it = x.interaction;
+                if (it != null)
+                {
+                    // The MethodInfo is GetComponent<BoxCollider2D>; disable a 3D box too in case of folding.
+                    var box2 = it.GetComponent<BoxCollider2D>();
+                    if (box2 != null) box2.enabled = false;
+                    var box = it.GetComponent<BoxCollider>();
+                    if (box != null) box.enabled = false;
+                }
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var lockGo = PuzzleDomainUtil.FindInParents<CryoDoorLock>(x.gameObject);
