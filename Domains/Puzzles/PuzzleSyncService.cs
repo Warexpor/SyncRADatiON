@@ -898,6 +898,21 @@ namespace SyncRADation.Networking
             PuzzleStateEntry prev;
             if (_lastSent.TryGetValue(key, out prev))
             {
+                // Client: a lock's traverse plate (Bool1 = AutoTraverseDoor blocker / DoorLockControl) is set by
+                // native code from where THIS player stands, so it never converges with the host's and the lock
+                // ping-ponged every tick (Cryogenics doors). The client authors only locked/unlocked; the plate
+                // stays whatever the host last sent.
+                // Host: a plate-only flip is the same per-player native state, so it is not broadcast either (the
+                // client would otherwise be forced into the host's blocker); it still rides any lock change and
+                // the full dump.
+                if (entry.Type == PuzzleType.InteractiveLockSingle)
+                {
+                    var role = LanNetworkManager.Instance;
+                    if (firstIsBaseline || (role != null && role.Role == NetworkRole.Client))
+                        entry.Bool1 = prev.Bool1;
+                    else if (entry.Bool1 != prev.Bool1 && entry.Bool0 == prev.Bool0 && entry.Bool2 == prev.Bool2)
+                        return false;
+                }
                 if (prev.Bool0 == entry.Bool0 && prev.Bool1 == entry.Bool1 && prev.Bool2 == entry.Bool2
                     && prev.Int0 == entry.Int0 && prev.Int1 == entry.Int1 && prev.Int2 == entry.Int2 && prev.Int3 == entry.Int3
                     && Mathf.Approximately(prev.Float0, entry.Float0)
