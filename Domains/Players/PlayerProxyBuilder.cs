@@ -88,7 +88,7 @@ namespace SyncRADation.Players
                 proxyAnim.avatar = sourceAnim.avatar;
                 proxyAnim.applyRootMotion = false;
                 proxyAnim.cullingMode = AnimatorCullingMode.AlwaysAnimate;
-                proxyAnim.updateMode = AnimatorUpdateMode.Normal;
+                proxyAnim.updateMode = AnimatorUpdateMode.UnscaledTime; // remote player is not paused by our inventory
                 proxyAnim.speed = 1f;
                 proxyAnim.enabled = true;
                 try { proxyAnim.Rebind(); proxyAnim.Update(0f); } catch (System.Exception e) { Guard.Swallow(e); }
@@ -254,7 +254,7 @@ namespace SyncRADation.Players
                 {
                     anim.applyRootMotion = false;
                     anim.cullingMode = AnimatorCullingMode.AlwaysAnimate;
-                    anim.updateMode = AnimatorUpdateMode.Normal;
+                    anim.updateMode = AnimatorUpdateMode.UnscaledTime;
                     anim.speed = 1f;
                     anim.enabled = true;
                 }

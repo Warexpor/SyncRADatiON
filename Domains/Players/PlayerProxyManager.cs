@@ -181,7 +181,7 @@ namespace SyncRADation.Players
                 ist.Clock.Reset();
                 ist.Snaps.Add(new PoseSnap
                 {
-                    Time = ist.Clock.Stamp(Time.time),
+                    Time = ist.Clock.Stamp(Time.unscaledTime),
                     Pos = position,
                     Vel = velocity,
                     Facing = facingWorld
@@ -192,7 +192,7 @@ namespace SyncRADation.Players
 
             ist.Snaps.Add(new PoseSnap
             {
-                Time = ist.Clock.Stamp(Time.time),
+                Time = ist.Clock.Stamp(Time.unscaledTime),
                 Pos = position,
                 Vel = velocity,
                 Facing = facingWorld
@@ -203,7 +203,8 @@ namespace SyncRADation.Players
 
         public void LateUpdate()
         {
-            float renderTime = Time.time - PluginInfo.PoseInterpDelay;
+            // Real time: a local pause (inventory / menu sets timeScale 0) must not freeze or back up the remote timeline.
+            float renderTime = Time.unscaledTime - PluginInfo.PoseInterpDelay;
             _staleScratch.Clear();
 
             foreach (var kvp in _proxyObjects)

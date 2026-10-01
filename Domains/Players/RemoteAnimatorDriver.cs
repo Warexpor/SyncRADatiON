@@ -189,7 +189,7 @@ namespace SyncRADation.Players
             else
                 copy = new float[data.Length];
             System.Array.Copy(data, copy, data.Length);
-            _boneSnaps.Add(new BoneSnap { Time = _boneClock.Stamp(Time.time), Eulers = copy });
+            _boneSnaps.Add(new BoneSnap { Time = _boneClock.Stamp(Time.unscaledTime), Eulers = copy });
             if (!_snappedToFirst && _boneSync != null)
                 _boneSync.ApplyRotationsSnap(copy);
         }
@@ -224,7 +224,7 @@ namespace SyncRADation.Players
 
         public void PreTick()
         {
-            float dt = Mathf.Min(Time.deltaTime, 0.1f);
+            float dt = Mathf.Min(Time.unscaledDeltaTime, 0.1f);
             _smoothedForward = Mathf.Lerp(_smoothedForward, _targetForward, dt * SmoothRate);
             _smoothedTurn = Mathf.Lerp(_smoothedTurn, _targetTurn, dt * SmoothRate);
             _smoothedAimingTime = Mathf.Lerp(_smoothedAimingTime, _targetAimingTime, dt * SmoothRate);
@@ -390,7 +390,7 @@ namespace SyncRADation.Players
 
             // Apply bone rotations � interpolate between snapshots
             if (_boneSync != null && _boneSnaps.Count > 0)
-                SampleBones(Time.time - PluginInfo.PoseInterpDelay);
+                SampleBones(Time.unscaledTime - PluginInfo.PoseInterpDelay);
 
             if (SyncRADation.ModRuntime.VerboseLogging && Time.time - _lastLog > 30f)
             {
