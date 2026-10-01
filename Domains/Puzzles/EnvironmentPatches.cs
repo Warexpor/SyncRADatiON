@@ -46,8 +46,33 @@ namespace SyncRADation.Patches
                 _once.Add(key);
             }
 
+            // Deferred emits: native input that changes state inside a coroutine (after its first yield).
+            struct SoonItem { public float At; public Component C; public System.Action<Component> Fn; }
+            static readonly System.Collections.Generic.List<SoonItem> _soon = new System.Collections.Generic.List<SoonItem>();
+
+            public static void Soon(float delay, Component c, System.Action<Component> fn)
+            {
+                if (c == null || fn == null || _soon.Count > 64) return;
+                _soon.Add(new SoonItem { At = Time.unscaledTime + delay, C = c, Fn = fn });
+            }
+
+            public static void TickSoon()
+            {
+                if (_soon.Count == 0) return;
+                float now = Time.unscaledTime;
+                for (int i = 0; i < _soon.Count; i++)
+                {
+                    var s = _soon[i];
+                    if (s.At > now) continue;
+                    _soon.RemoveAt(i--);
+                    if (s.C == null) continue;
+                    try { s.Fn(s.C); } catch (System.Exception e) { Guard.Swallow(e); }
+                }
+            }
+
             public static void ClearOnce()
             {
+                _soon.Clear();
                 _once.Clear();
                 _ids.Clear();
                 _idGeneration = SyncRADation.Sync.WorldRegistry.Generation;
@@ -585,7 +610,21 @@ namespace SyncRADation.Patches
     public static class EvidenceLockerLogicPatch
     {
         [HarmonyPostfix]
-        public static void Postfix(EvidenceLockerLogicPuzzle __instance) => EnvEmit.EvidenceLocker(__instance);
+        public static void Postfix(EvidenceLockerLogicPuzzle __instance, int __0)
+        {
+            if (__instance == null || NetGate.IsApplying) return;
+            // The pressed button rides with the lights so a peer replays the key push + click (KeypadLive op).
+            try
+            {
+                if (NetGate.Party)
+                {
+                    ulong id = WorldId.FromGameObject(__instance.gameObject);
+                    if (id != 0) KeypadLive.NotePress(id, __0, false);
+                }
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            EnvEmit.EvidenceLocker(__instance);
+        }
     }
 
     // RES_Shrine: emit mid-dial big/mid/small on TurnLeft/TurnRight (Int0–Int2),
@@ -655,6 +694,29 @@ namespace SyncRADation.Patches
             if (__instance == null || NetGate.IsApplying) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
+            bool solved = false;
+            try { solved = __instance.solved; } catch (System.Exception e) { Guard.Swallow(e); }
+            if (solved) EnvEmit.Progressed(PuzzleType.RES_LibraryPC, __instance);
+            else EnvEmit.Read(PuzzleType.RES_LibraryPC, __instance);
+        }
+    }
+
+    // The Move* coroutine slides robotPos cell by cell; emit where it stopped (moving true → false) so a peer's
+    // glide (LibraryRobotGlide) ends on the right cell instead of the last 0.5 s poll sample.
+    [HarmonyPatch(typeof(RES_LibraryPC), "Update")]
+    public static class LibraryPcUpdatePatch
+    {
+        static readonly System.Collections.Generic.HashSet<int> _wasMoving = new System.Collections.Generic.HashSet<int>();
+
+        [HarmonyPostfix]
+        public static void Postfix(RES_LibraryPC __instance)
+        {
+            if (__instance == null) return;
+            bool moving;
+            try { moving = __instance.moving; } catch { return; }
+            int iid = __instance.GetInstanceID();
+            if (moving) { _wasMoving.Add(iid); return; }
+            if (!_wasMoving.Remove(iid) || NetGate.IsApplying) return;
             bool solved = false;
             try { solved = __instance.solved; } catch (System.Exception e) { Guard.Swallow(e); }
             if (solved) EnvEmit.Progressed(PuzzleType.RES_LibraryPC, __instance);
@@ -823,14 +885,18 @@ namespace SyncRADation.Patches
         public static void Postfix(LAB_PatternLock __instance)
         {
             if (__instance == null || NetGate.IsApplying) return;
-            try
-            {
-                if (__instance.solved)
-                    EnvEmit.Progressed(PuzzleType.PatternLock, __instance);
-                else
-                    EnvEmit.Read(PuzzleType.PatternLock, __instance);
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
+            // toggleButton only starts delayed(): the light flips 0.1 s later and checkSolution runs then (Ghidra
+            // LAB_PatternLock.c). Emit right after each step so a peer sees the press live, not on the next poll.
+            EnvEmit.Soon(0.12f, __instance, Emit);
+            EnvEmit.Soon(0.25f, __instance, Emit);
+        }
+
+        static void Emit(Component c)
+        {
+            var x = c as LAB_PatternLock;
+            if (x == null) return;
+            if (x.solved) EnvEmit.Progressed(PuzzleType.PatternLock, x);
+            else EnvEmit.Read(PuzzleType.PatternLock, x);
         }
     }
 

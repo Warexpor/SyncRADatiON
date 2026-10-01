@@ -180,6 +180,7 @@ namespace SyncRADation.Networking
             _maps.Clear();
             _seq.Clear();
             _lastAuthor.Clear();
+            _ownSent.Clear();
             _pending.Clear();
             _hostDumpApplied = false;
             _clientLive = false;
@@ -252,11 +253,32 @@ namespace SyncRADation.Networking
                 case PuzzleType.ROT_Mural:
                 case PuzzleType.ROT_RadioAlignment:
                 case PuzzleType.DET_RadioCodeLock:
+                // Live shared puzzles: two players in the same screen see each other's input as it happens.
+                case PuzzleType.PatternLock:
+                case PuzzleType.MED_KeyGrid:
+                case PuzzleType.ROT_Tarot:
+                case PuzzleType.EvidenceLockerPuzzle:
+                case PuzzleType.Keypad3D:
+                case PuzzleType.ROT_Keypad:
+                case PuzzleType.PEN_Codepad:
                     return true;
                 default:
                     return false;
             }
         }
+
+        // One bit of Int0 per cell (pattern lights, key-grid nodes): mask bit 9+i = cell i changed.
+        const int BitCells = 23;
+        static bool IsBitCellType(PuzzleType t) => t == PuzzleType.PatternLock || t == PuzzleType.MED_KeyGrid;
+
+        // Tarot: one byte per card slot (Int0 slots 0..3, Int1 slots 4..5): mask bit 9+slot = slot changed.
+        const int TarotSlots = 6;
+
+        // Input that only makes sense whole (a typed code, the evidence locker's coupled lights + last press):
+        // any Int change replaces all four, so two concurrent entries never interleave into a code nobody typed.
+        static bool IsAtomicIntsType(PuzzleType t)
+            => t == PuzzleType.EvidenceLockerPuzzle || t == PuzzleType.Keypad3D
+            || t == PuzzleType.ROT_Keypad || t == PuzzleType.PEN_Codepad;
 
         // Mural packs two 16-bit moons per Int: merge at half granularity.
         static bool IsHalfMergeType(PuzzleType t) => t == PuzzleType.ROT_Mural;
@@ -293,7 +315,30 @@ namespace SyncRADation.Networking
                     if ((x & unchecked((int)0xFFFF0000)) != 0) m |= 1 << (17 + 2 * k);
                 }
             }
+            if (IsBitCellType(b.Type))
+            {
+                int x = a.Int0 ^ b.Int0;
+                for (int i = 0; i < BitCells; i++)
+                    if (((x >> i) & 1) != 0) m |= 1 << (9 + i);
+            }
+            if (b.Type == PuzzleType.ROT_Tarot)
+            {
+                for (int s = 0; s < TarotSlots; s++)
+                    if (TarotSlot(a, s) != TarotSlot(b, s)) m |= 1 << (9 + s);
+                m &= ~128; // FlipSwitchPos is the switch animation native Update drives from darkmode
+            }
+            if (IsAtomicIntsType(b.Type) && (m & (8 | 16 | 32 | 64)) != 0)
+                m |= 8 | 16 | 32 | 64;
             return m;
+        }
+
+        static int TarotSlot(PuzzleStateEntry e, int s)
+            => s < 4 ? (e.Int0 >> (8 * s)) & 0xFF : (e.Int1 >> (8 * (s - 4))) & 0xFF;
+
+        static void SetTarotSlot(ref PuzzleStateEntry e, int s, int v)
+        {
+            if (s < 4) e.Int0 = (e.Int0 & ~(0xFF << (8 * s))) | ((v & 0xFF) << (8 * s));
+            else e.Int1 = (e.Int1 & ~(0xFF << (8 * (s - 4)))) | ((v & 0xFF) << (8 * (s - 4)));
         }
 
         static int GetInt(PuzzleStateEntry e, int k)
@@ -328,9 +373,29 @@ namespace SyncRADation.Networking
             if ((m & 4) != 0) r.Bool2 = inc.Bool2;
             bool half = IsHalfMergeType(inc.Type);
             bool rods = IsRodMergeType(inc.Type);
+            bool cells = IsBitCellType(inc.Type);
+            bool tarot = inc.Type == PuzzleType.ROT_Tarot;
             for (int k = 0; k < 4; k++)
             {
                 if ((m & (8 << k)) == 0) continue;
+                if (cells && k == 0)
+                {
+                    int cv = cur.Int0;
+                    for (int i = 0; i < BitCells; i++)
+                    {
+                        if ((m & (1 << (9 + i))) == 0) continue;
+                        cv = (cv & ~(1 << i)) | (inc.Int0 & (1 << i));
+                    }
+                    r.Int0 = cv;
+                    continue;
+                }
+                if (tarot && k <= 1)
+                {
+                    int s0 = k == 0 ? 0 : 4, s1 = k == 0 ? 4 : TarotSlots;
+                    for (int s = s0; s < s1; s++)
+                        if ((m & (1 << (9 + s))) != 0) SetTarotSlot(ref r, s, TarotSlot(inc, s));
+                    continue;
+                }
                 if (rods && k == 0)
                 {
                     int rv = cur.Int0;
@@ -374,6 +439,7 @@ namespace SyncRADation.Networking
             if (!host)
             {
                 e.Seq = CurSeq(key);
+                NoteOwnSent(key, e);
                 return;
             }
             int s = CurSeq(key);
@@ -385,6 +451,43 @@ namespace SyncRADation.Networking
             _seq[key] = s;
             e.Seq = s;
             e.Mask = 0;
+        }
+
+        // Client: the last few states this client sent per merge-type key. The host relays a merged edit to
+        // everyone, the author included, so fast input (keypad digits, pattern presses) gets its own older states
+        // echoed back after newer local presses.
+        const int OwnSentKeep = 6;
+        const float OwnEchoWindow = 2f;
+        struct OwnSent { public PuzzleStateEntry E; public float At; }
+        private readonly Dictionary<PKey, List<OwnSent>> _ownSent = new Dictionary<PKey, List<OwnSent>>();
+
+        void NoteOwnSent(PKey key, PuzzleStateEntry e)
+        {
+            if (!IsMergeType(e.Type)) return;
+            List<OwnSent> l;
+            if (!_ownSent.TryGetValue(key, out l)) { l = new List<OwnSent>(OwnSentKeep); _ownSent[key] = l; }
+            if (l.Count >= OwnSentKeep) l.RemoveAt(0);
+            l.Add(new OwnSent { E = e, At = Time.unscaledTime });
+        }
+
+        /// <summary>Client: e equals a state this client sent recently but has since moved past.</summary>
+        bool IsOwnStaleEcho(PuzzleStateEntry e)
+        {
+            if (!IsMergeType(e.Type)) return false;
+            List<OwnSent> l;
+            if (!_ownSent.TryGetValue(Key(e), out l) || l.Count < 2) return false;
+            float now = Time.unscaledTime;
+            if (now - l[l.Count - 1].At > OwnEchoWindow) return false;
+            if (SameCells(l[l.Count - 1].E, e)) return false; // the newest: applying it is a no-op anyway
+            for (int i = l.Count - 2; i >= 0; i--)
+            {
+                if (now - l[i].At > OwnEchoWindow) break;
+                if (!SameCells(l[i].E, e)) continue;
+                int s;
+                if (!_seq.TryGetValue(Key(e), out s) || e.Seq > s) _seq[Key(e)] = e.Seq;
+                return true;
+            }
+            return false;
         }
 
         void StampOutgoing(List<PuzzleStateEntry> list, bool host, bool full)
@@ -422,7 +525,8 @@ namespace SyncRADation.Networking
             bool senderIsAuthor = _lastAuthor.TryGetValue(key, out author) && author == sender;
             // A client that authored the current state carries an older base Seq by design (its own edits are
             // not echoed back to it), so only somebody else's newer state makes its regress stale.
-            if (hasCur && e.Seq < curSeq && !senderIsAuthor && !IsProgressed(e) && IsProgressed(cur))
+            // A merge-type edit carries only the cells its author changed, so an older base cannot regress anything.
+            if (hasCur && e.Seq < curSeq && !senderIsAuthor && !IsMergeType(e.Type) && !IsProgressed(e) && IsProgressed(cur))
             {
                 PlaytestLog.Event("Puzzle", "drop stale " + e.Type + " id=" + unchecked((ulong)e.WorldId).ToString("X16")
                     + " seq=" + e.Seq + "<" + curSeq + " from p" + sender);
@@ -544,6 +648,9 @@ namespace SyncRADation.Networking
             if (net == null || !net.IsConnected) return;
             if (!Config.ModConfig.PuzzlesEnabled) return;
             if (!net.HasReadyPeers) return; // zero-peer host: nothing to sync, no read/diff work
+
+            SyncRADation.Patches.EnvEmit.TickSoon();
+            LibraryRobotGlide.Tick();
 
             if (_pendingReapply)
             {
@@ -1172,13 +1279,21 @@ namespace SyncRADation.Networking
                 ApplyingPeerPacket = isHost;
                 int prevSender = NetGate.ApplySender;
                 if (isHost && msg.SenderPlayerId >= 1) NetGate.ApplySender = msg.SenderPlayerId;
+                bool prevLive = PuzzleFx.LiveApply;
+                PuzzleFx.LiveApply = cinematic;
                 try
                 {
                     for (int i = 0; i < _applyScratch.Count; i++)
+                    {
+                        // A stale echo of this client's own earlier edit (the host relays merges to everyone):
+                        // applying it would flick the puzzle back one press until the newer echo lands.
+                        if (!isHost && IsOwnStaleEcho(_applyScratch[i])) continue;
                         ApplyEntry(_applyScratch[i], cinematic);
+                    }
                 }
                 finally
                 {
+                    PuzzleFx.LiveApply = prevLive;
                     NetGate.ApplySender = prevSender;
                     ApplyingPeerPacket = false;
                     _mutateWorld = prevMutate;

@@ -2,13 +2,13 @@
 
 LAN/VPN co-op for **SIGNALIS**, for **2 to 8 players** (default 4). One player hosts and owns the world and story. Everyone else plays as a real Elster and their actions go through the host.
 
-**Status: 0.5.64, protocol 17, pre-release.** This build is in the playtest phase. Nothing in it is proven in a real multi-player session yet, so expect bugs. Back up your saves before you try it.
+**Status: 0.5.65, protocol 17, pre-release.** This build is in the playtest phase. Nothing in it is proven in a real multi-player session yet, so expect bugs. Back up your saves before you try it.
 
 ## Requirements
 
 - SIGNALIS (Steam, Windows build; Linux via Proton works, see below).
 - **MelonLoader 0.5.7, exactly.** Newer or older versions do not work. The mod is built against the Unhollower assembly layout that 0.5.7 generates, and later MelonLoader versions changed it.
-- **Every player runs the exact same mod build.** The connection handshake rejects any version or protocol mismatch, even a patch-level one (for example 0.5.63 vs 0.5.64).
+- **Every player runs the exact same mod build.** The connection handshake rejects any version or protocol mismatch, even a patch-level one (for example 0.5.64 vs 0.5.65).
 - A network path between players: same LAN, or a VPN (see Hosting and joining).
 
 ## Install
@@ -62,6 +62,7 @@ To pick up something another player dropped, walk up to it and use the normal TA
 - Story progress, dialogue, cutscenes, endings.
 - Chapter loads (everyone follows the host).
 - Doors, locks and puzzles. A door or lock solved by one player is open for everyone, including people who join later.
+- Puzzle screens are live: if two players look at the same keypad, pattern lock, dial or board, each sees the other's presses as they happen (one shared code on keypads). Anyone standing near the panel hears the button presses from where the panel is.
 - Elevators, radio, pumps and pipes, storage boxes (box contents are shared).
 - Items lying in the world. Each one exists once: whoever picks it up gets it. Unique keys and key objects go onto a **party key ring**, so one key opens the door for the whole party.
 - Sounds from world objects.
@@ -84,7 +85,7 @@ A solo game (no session running) behaves like vanilla SIGNALIS.
 
 ## Known limitations
 
-- Pre-release: the whole 0.5.57 to 0.5.64 feature set (death/revive, party save, 3+ players, boss and enemy client hits, puzzle merging) is compile- and unit-tested; host+client join into a real chapter is smoke-tested, gameplay is not.
+- Pre-release: the whole 0.5.57 to 0.5.65 feature set (death/revive, party save, 3+ players, boss and enemy client hits, puzzle merging) is compile- and unit-tested; host+client join into a real chapter is smoke-tested, gameplay is not.
 - A client's "quit to menu" is blocked silently.
 - If a client joins while loading, it may wait up to 6 seconds for the host's state and then start from local defaults. Use **Resync world**.
 - A Falke spear held only by a client may not count as held for the Falke fight.

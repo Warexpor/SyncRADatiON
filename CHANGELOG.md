@@ -1,3 +1,26 @@
+## 0.5.65 — 2026-10-01
+
+Protocol **v17** (no wire layout change; puzzle entry fields gain meaning, and the version check keeps 0.5.64 out). Live shared puzzle screens.
+
+### Added
+- **Live shared puzzles** — two players zoomed into the same puzzle see each other's input as it happens, with the native animation and sound:
+  - **Keypads** (`Keypad3D` safes / radio code lock, `ROT_Keypad`, `PEN_Codepad` six-wheel codepad, `Domains/Puzzles/Locks/KeypadLive.cs`): one shared typed code (Keypad3D/ROT: up to 24 digits in Int0..Int2; codepad: six wheels in Int0) plus the last press (key, per-keypad seq, wrong-code flag in Int3). A press is emitted the frame it happens (`pushButton` / `UpdateDigitDiplay` postfix names it, the `Update` postfix sends the result) and replays on every peer through the native coroutine: button push + click, wheel flip, red blink + Denied / fail on a wrong code, green + chime on the right one. A chunk remount no longer wipes the shared code (native `OnEnable` reset is restored).
+  - **Pattern lock**: lights already synced; a peer's press now clicks (`clickSFX`) and is sent right after the light flips (0.12 s / 0.25 s after `toggleButton`, `EnvEmit.Soon`) instead of on the next 0.5 s poll.
+  - **Tarot**: a peer's card placed / taken runs native `PlaceCard` / `TakeCard` (card on the pivot, slot prompt, card sound); the flip switch eases and clicks from `darkmode` natively.
+  - **Evidence locker**: the pressed button rides with the lights (Int2), so the key push + click replay.
+  - **Fuse board** flip / wrong-voltage reset sound, **mural** dial click, **pump** button + water sound, **card writer** cursor (Int2) + key sound, **elemental plate lock** (LAB) insert sound.
+- **3D press sounds for everyone near** (`Domains/Puzzles/PuzzleFx.cs`): a peer's press plays native 2D for a player zoomed into that same screen, and for anyone else in the panel's room 3D at the room-side panel (`EventScreenInteraction`) with the door falloff; silent in other rooms. Replayed presses are never relayed again (one-shot and emitter host relays skip them).
+- **Merged concurrent input** — pattern lock and key grid merge per light/node, tarot per slot, keypads and the evidence locker whole (no interleaved codes). A merge-type edit is never dropped as stale, the host relays every merge to everyone, and a client skips stale echoes of its own presses (`IsOwnStaleEcho`), so both screens end on the same state.
+
+### Fixed
+- **Incinerator peer solve failed** — the apply wrote A/B/C only: the knobs never turned and `StartShutdown` integrated the default 1/1/1 curve, so the peer got the error buzz and the hatch never opened. The curve (`Yspeed/Yacc1/Yacc2 = n/10`) and knob rotations are set like native `plusX/minusX`, and the shutdown runs once.
+- **Tarot slot prompt inverted on peers** — the apply turned the empty-slot placer on for a full slot and never showed the placed card; it now uses native `PlaceCard` / `TakeCard`.
+- **Elemental card locks never redrew on peers** — `MED/LAB_MultiLock` have no `Update`; cards, slot icons and red/green lights are painted like native `OnEnable` (the native insert coroutine runs as a cutscene and cannot be replayed on a player outside the screen).
+- **Pump pressure light stayed red on peers after the solve** — painted from the solved flag.
+- **Library robot jumped between poll samples** — a peer's move glides at the native `movementSpeed` (`LibraryRobotGlide`) and the final cell is sent when the robot stops.
+- **Keypad lockout synced** — the native 0.3 s button-push `blocked` flag was copied to the other player and could leave their keypad deaf; it stays local.
+- **Dead keypad paths** — `Keypad3D.openDoor` / `ROT_Keypad.verify` / `PEN_Codepad.CheckSolution` patches never fired (native `Update` inlines them) and the host `KeypadSubmit` handler built an `openDoor` iterator that never ran; removed (the `KeypadSubmit` kind is retired, solves sync as live puzzle state).
+
 ## 0.5.64 — 2026-10-01
 
 Protocol **v17** (no wire change). Fixes from the second human dual-box session (Penrose wreck).

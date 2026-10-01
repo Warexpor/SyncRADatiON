@@ -43,6 +43,10 @@ namespace SyncRADation
             SessionReset.Register("PickupTakeScope", ItemPickupTakeScope.ResetSession);
             SessionReset.Register("NoPause", NoPausePatch.ResetSession);
             SessionReset.Register("MenuHit", MenuHit.Reset);
+            SessionReset.Register("PuzzleFx", PuzzleFx.Reset);                         // live-apply flag, screen cache
+            SessionReset.Register("KeypadLive", KeypadLive.Reset);                     // shared codes + last press
+            SessionReset.Register("KeypadPress", KeypadPress.Clear);
+            SessionReset.Register("LibraryGlide", LibraryRobotGlide.Reset);
             SessionReset.Register("KeyRingName", ItemLocalizedNamePatch.ResetSession);  // PartyKeyRingPatches _resolving (x2)
             SessionReset.Register("KeyRingGetName", InventoryGetNamePatch.ResetSession);
 

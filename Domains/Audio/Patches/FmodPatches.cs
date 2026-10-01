@@ -50,7 +50,8 @@ namespace SyncRADation.Patches
         {
             if (FmodEmitterSync.ShouldBlockDoorOneShot(path))
                 return false;
-            return true;
+            // A peer's puzzle press replayed here: 3D at the panel unless this player is looking at it.
+            return PuzzleFx.RemoteOneShot(path);
         }
 
         [HarmonyPostfix]
@@ -69,7 +70,7 @@ namespace SyncRADation.Patches
             string path = FmodEmitterSync.PathFromGuid(guid);
             if (FmodEmitterSync.ShouldBlockDoorOneShot(path))
                 return false;
-            return true;
+            return PuzzleFx.RemoteOneShot(path);
         }
 
         [HarmonyPostfix]

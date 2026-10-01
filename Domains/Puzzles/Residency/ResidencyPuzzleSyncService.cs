@@ -177,10 +177,18 @@ namespace SyncRADation.Networking
         public static void ApplyLibraryPc(RES_LibraryPC x, PuzzleStateEntry e)
         {
             if (x == null) return;
-            // Mid robotPos always (live + FullRefresh). Bool1 = pack valid.
+            // Mid robotPos always (live + FullRefresh). Bool1 = pack valid. A peer's live move glides at the
+            // native movementSpeed (native Move* coroutines set gameState 4/7, so they cannot be replayed on a
+            // player outside the screen); native Update draws RobotX/RobotY from robotPos every frame.
             if (e.Bool1)
             {
-                try { x.robotPos = new Vector2(e.Float0, e.Float1); } catch (System.Exception ex) { Guard.Swallow(ex); }
+                var to = new Vector2(e.Float0, e.Float1);
+                if (PuzzleFx.LiveApply && !e.Bool0) LibraryRobotGlide.To(x, to);
+                else
+                {
+                    LibraryRobotGlide.Stop(x);
+                    try { x.robotPos = to; } catch (System.Exception ex) { Guard.Swallow(ex); }
+                }
             }
             if (!e.Bool0) return;
             bool was = false;

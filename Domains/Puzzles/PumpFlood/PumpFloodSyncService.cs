@@ -78,7 +78,28 @@ namespace SyncRADation.Networking
             // skip remount StartCutscene). Keep SnapMedPump drain.
             bool was = false;
             try { was = x.solved; } catch (System.Exception ex) { Guard.Swallow(ex); }
-            try { x.a = e.Int0; x.b = e.Int1; x.c = e.Int2; } catch (System.Exception ex) { Guard.Swallow(ex); }
+            bool moved = false;
+            try
+            {
+                moved = x.a != e.Int0 || x.b != e.Int1 || x.c != e.Int2;
+                x.a = e.Int0; x.b = e.Int1; x.c = e.Int2;
+            }
+            catch (System.Exception ex) { Guard.Swallow(ex); }
+            // Native Update eases the water bars to a/b/c; the pressure sprite/light colour is only set by
+            // checkSolved (Ghidra MED_Pump.c), so paint it here: blue once solved, red otherwise.
+            try
+            {
+                bool blue = e.Bool0;
+                if (x.PressureSprite != null) x.PressureSprite.color = blue ? x.Blue : x.Red;
+                if (x.PressureLight != null) x.PressureLight.color = blue ? x.Blue : x.Red;
+            }
+            catch (System.Exception ex) { Guard.Swallow(ex); }
+            // A peer's transfer: the button click + water rush the native AB/BC/... play.
+            if (moved && PuzzleFx.LiveApply && !was)
+            {
+                try { PuzzleFx.Press(x, x.buttonSFX); PuzzleFx.Press(x, x.waterSFX); }
+                catch (System.Exception ex) { Guard.Swallow(ex); }
+            }
             if (!e.Bool0) return;
             SnapMedPump(x, cinematic);
             // Shared edge rule (PuzzleEdge): live rising edge = onSolved (dimPOI + StartCutscene + RecordSplit);

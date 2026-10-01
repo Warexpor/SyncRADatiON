@@ -4,7 +4,7 @@ namespace SyncRADation
     public static class PluginInfo
     {
         public const string Name = "SyncRADation";
-        public const string Version = "0.5.64";
+        public const string Version = "0.5.65";
         public const string Author = "Warexpor";
         public const string Description = "LAN multiplayer mod for SIGNALIS — host-authoritative world/story, native client UX";
         /// <summary>Protocol v17: v16 + PlayerState velocity is planar (VelX, VelY): SIGNALIS walks XY, Z is height (was VelX/VelZ).

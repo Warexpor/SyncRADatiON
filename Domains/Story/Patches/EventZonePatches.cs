@@ -16,7 +16,7 @@ namespace SyncRADation.Patches
         {
             _fired.Clear();
             _lastRequest.Clear();
-            ClientKeypad.OnSceneChanged();
+            KeypadPress.Clear();
             UseItemInteractionPatch.OnSceneChanged();
             InteractionSyncService.OnSceneChanged();
             AirlockCinematic.Reset();

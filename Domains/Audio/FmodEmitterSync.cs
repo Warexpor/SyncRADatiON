@@ -257,6 +257,7 @@ namespace SyncRADation.Networking
         public static void EmitterChanged(StudioEventEmitter emitter, bool play)
         {
             if (emitter == null) return;
+            if (PuzzleFx.Active) return; // a peer's puzzle press replayed here: every peer replays it itself
             if (NetGate.Host) { if (NetGate.Party) HostEmit(emitter, play); }
             else if (NetGate.Client && !NetGate.IsApplying) ClientEmit(emitter, play);
         }
@@ -548,6 +549,8 @@ namespace SyncRADation.Networking
         {
             if (!NetGate.Host) return;
             if (string.IsNullOrEmpty(path)) return;
+            // A peer's puzzle press replayed here: every peer replays it from the puzzle state itself.
+            if (PuzzleFx.Active) return;
             if (IsLocalOneShot(path)) return;
             if (IsDoorSfxPath(path)) return;
             // Host's own nearby sounds stay local; a host-applied client action is relayed even next to the host.
@@ -650,6 +653,8 @@ namespace SyncRADation.Networking
                     if (p.GetComponent<EventOnlyRoom>() != null) return true;
                     if (p.GetComponent<EventScreen>() != null) return true;
                     if (p.GetComponent<EventScreen3DCam>() != null) return true;
+                    // Tarot klick: native Update plays it on every peer from the synced darkmode edge.
+                    if (p.GetComponent<ROT_Tarot>() != null) return true;
                 }
                 catch (System.Exception e) { Guard.Swallow(e); }
                 p = p.parent;

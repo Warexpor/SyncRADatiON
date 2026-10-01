@@ -23,10 +23,17 @@ namespace SyncRADation.Networking
                     // 17 MED_KeyNodeConnection nodes (not KeyGrid's 17 GridSprites — same
                     // SO type; pack ≤32). maxSteps/remainingSteps initial 8.
                     var x = (MED_CardWriter)c;
-                    int bits = 0, count = 0, steps = 0;
+                    int bits = 0, count = 0, steps = 0, cursor = 0;
                     try { PackCardWriterNodes(x, out bits, out count); } catch (System.Exception e) { Guard.Swallow(e); }
                     try { steps = x.remainingSteps; } catch (System.Exception e) { Guard.Swallow(e); }
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.solved, x.hasCard, false, bits, steps, 0, count, 0);
+                    // Int2 = cursor node (x -2..1, y -1..1, +8 each) so a watching peer sees where it is drawn.
+                    try
+                    {
+                        var n = x.node;
+                        cursor = ((Mathf.RoundToInt(n.x) + 8) & 0xFF) | (((Mathf.RoundToInt(n.y) + 8) & 0xFF) << 8) | (1 << 16);
+                    }
+                    catch (System.Exception e) { Guard.Swallow(e); }
+                    entry = PuzzleDomainUtil.Mk(type, wid, x.solved, x.hasCard, false, bits, steps, cursor, count, 0);
                     return true;
                 }
                 case PuzzleType.RES_Shutters:
@@ -88,7 +95,9 @@ namespace SyncRADation.Networking
                     var x = (EvidenceLockerLogicPuzzle)c;
                     int lo, hi;
                     PackBoolBits64(x.states, out lo, out hi);
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.solved, false, false, lo, hi, 0, 0, 0);
+                    // Int2 = last pressed button (KeypadLive op): its key push + click replay on peers.
+                    entry = PuzzleDomainUtil.Mk(type, wid, x.solved, false, false, lo, hi,
+                        KeypadLive.PackOp(unchecked((ulong)wid)), 0, 0);
                     return true;
                 }
                 case PuzzleType.MED_VentPuzzle:
@@ -164,9 +173,20 @@ namespace SyncRADation.Networking
             // Both-path like PEN_Reaktor Dig Q: idempotent SetActive/setPower/
             // dimPOI / SetSpeed final-pose.
             bool was = x.solved;
+            int before = PackBoolBits(x.states);
             x.solved = e.Bool0;
             x.powered = e.Bool1;
             UnpackBoolBits(x.states, e.Int0);
+            // Native Update redraws the volt readouts from states every frame. A peer's fuse flip clicks here
+            // (Flip plays flipFuseSFX); all fuses dropping at once is TryMasterFlip's wrong-voltage reset.
+            if (PuzzleFx.LiveApply && before != e.Int0 && !e.Bool0)
+            {
+                string sfx = null;
+                bool reset = e.Int0 == 0 && (before & (before - 1)) != 0; // two or more fuses down at once
+                try { sfx = reset ? x.failFuseSFX : x.flipFuseSFX; }
+                catch (System.Exception ex) { Guard.Swallow(ex); }
+                PuzzleFx.Press(x, sfx);
+            }
             if (!e.Bool0) return;
             if (!was)
             {
@@ -213,6 +233,21 @@ namespace SyncRADation.Networking
             if (x == null) return;
             x.solved = e.Bool0;
             UnpackBoolBits64(x.states, e.Int0, e.Int1);
+            int button;
+            if (KeypadLive.TakeOp(unchecked((ulong)e.WorldId), e.Int2, out button) && PuzzleFx.LiveApply)
+            {
+                // Native Update: logic(button) then pushButton(key) (key dip + AudioSource click). The lights come
+                // from states below; the push animation only shows in the zoom view, the click everywhere near.
+                try
+                {
+                    var buttons = x.buttons;
+                    if (PuzzleFx.Viewing(x) && buttons != null && button < buttons.Length && buttons[button] != null)
+                        PuzzleFx.Run(x, x.pushButton(buttons[button].transform));
+                    else
+                        PuzzleFx.Clip(x, x.pressSound);
+                }
+                catch (System.Exception ex) { Guard.Swallow(ex); }
+            }
             // Dig AD: snap lights to unpacked states so remount / late-join mid-hold
             // shows button lights without waiting for native Update (!solved path).
             // Native Update follows states→lights when !solved; remote Apply skips Update.
@@ -306,8 +341,9 @@ namespace SyncRADation.Networking
         public static void ApplyTarot(ROT_Tarot x, PuzzleStateEntry e)
         {
             if (x == null) return;
+            // FlipSwitchPos is not written: native Update eases the switch toward ±45 from darkmode and plays
+            // the klick emitter on the darkmode edge, so the flip animates and clicks here too.
             x.darkmode = e.Bool0;
-            x.FlipSwitchPos = e.Float0;
             if (e.Int3 <= 0) return;
             ApplyTarotCards(x, e.Int0, e.Int1, e.Int3);
         }
@@ -347,10 +383,14 @@ namespace SyncRADation.Networking
             if (x == null || n <= 0) return;
             if (n > 6) n = 6;
             Il2CppReferenceArray<AnItem> cards = null;
-            Il2CppReferenceArray<GameObject> placers = null;
             try { cards = x.cards; } catch (System.Exception e) { Guard.Swallow(e); }
-            try { placers = x.Placers; } catch (System.Exception e) { Guard.Swallow(e); }
-            for (int i = 0; i < n; i++)
+            if (cards == null) return;
+            // Native TakeCard / PlaceCard (Ghidra ROT_Tarot.c) are the whole slot presentation: the card pickup
+            // shown on the slot's pivot (or hidden), the empty-slot placer off (or on), cards[] and the card
+            // sound. The 0.5.64 field write had the placer inverted (prompt on a full slot) and never showed the
+            // card. A peer's live move plays its sound here; a dump / remount snaps silently.
+            bool live = PuzzleFx.LiveApply;
+            for (int i = 0; i < n && i < cards.Length; i++)
             {
                 int code = i < 4 ? (lo >> (i * 8)) & 0xFF : (hi >> ((i - 4) * 8)) & 0xFF;
                 AnItem item = null;
@@ -358,21 +398,26 @@ namespace SyncRADation.Networking
                 {
                     try { item = InventoryManager.getItem((Items.itemlist)code); } catch (System.Exception e) { Guard.Swallow(e); }
                 }
+                AnItem cur = null;
+                try { cur = cards[i]; } catch (System.Exception e) { Guard.Swallow(e); }
+                if (SameItem(cur, item)) continue;
+                PuzzleFx.Begin(x, silent: !live);
                 try
                 {
-                    if (cards != null && i < cards.Length)
-                        cards[i] = item;
+                    if (cur != null) x.TakeCard(cur);
+                    if (item != null) x.PlaceCard(i, item);
                 }
                 catch (System.Exception e) { Guard.Swallow(e); }
-                try
-                {
-                    if (placers != null && i < placers.Length && placers[i] != null)
-                        placers[i].SetActive(item != null);
-                }
-                catch (System.Exception e) { Guard.Swallow(e); }
+                finally { PuzzleFx.End(); }
             }
             // Moon readout follows cards[]. Load/place path; no inventory remove.
             try { x.SetMoons(); } catch (System.Exception e) { Guard.Swallow(e); }
+        }
+
+        static bool SameItem(AnItem a, AnItem b)
+        {
+            if (a == null || b == null) return a == null && b == null;
+            try { return a._item == b._item; } catch { return false; }
         }
 
         public static void ApplyCardWriter(MED_CardWriter x, PuzzleStateEntry e)
@@ -383,6 +428,28 @@ namespace SyncRADation.Networking
             // Snap card pose without UI/cinematic until solved (existing SnapCardWriter).
             if (e.Int3 > 0)
             {
+                bool moved = false;
+                if ((e.Int2 & (1 << 16)) != 0)
+                {
+                    // Native Update moves node and sets nodeIcon.localPosition = node * 3.2 (Ghidra MED_CardWriter.c).
+                    try
+                    {
+                        var n = new Vector2(((e.Int2 & 0xFF) - 8), (((e.Int2 >> 8) & 0xFF) - 8));
+                        if (x.node != n)
+                        {
+                            moved = true;
+                            x.node = n;
+                            x.nodeIconPos = n * 3.2f;
+                            if (x.nodeIcon != null) x.nodeIcon.localPosition = new Vector3(n.x * 3.2f, n.y * 3.2f, 0f);
+                        }
+                    }
+                    catch (System.Exception ex) { Guard.Swallow(ex); }
+                }
+                int stepsBefore = e.Int1;
+                try { stepsBefore = x.remainingSteps; } catch (System.Exception ex) { Guard.Swallow(ex); }
+                // Each cursor move / burn plays keySFX natively; the peer's play here.
+                if (PuzzleFx.LiveApply && (moved || stepsBefore != e.Int1))
+                    PuzzleFx.Press(x, x.keySFX);
                 ApplyCardWriterNodes(x, e.Int0, e.Int3);
                 try { x.remainingSteps = e.Int1; } catch (System.Exception ex) { Guard.Swallow(ex); }
                 try
@@ -882,9 +949,19 @@ namespace SyncRADation.Networking
             // Instead snap Blocker Entry SetActive(false) + useRing so the door
             // blocker clears without replaying the mural cutscene (Dig AJ).
             bool was = x.finished;
+            int m0 = 0, m1 = 0, m2 = 0, m3 = 0;
+            try { PackMuralMoons(x.moons, out m0, out m1, out m2, out m3); } catch (System.Exception ex) { Guard.Swallow(ex); }
+            bool turned = m0 != e.Int0 || m1 != e.Int1 || m2 != e.Int2 || m3 != e.Int3;
             x.finished = e.Bool0; x.busy = e.Bool1;
             try { x.MoonTurnSpeed = e.Float0; } catch (System.Exception ex) { Guard.Swallow(ex); }
             try { UnpackMuralMoons(x.moons, e.Int0, e.Int1, e.Int2, e.Int3); } catch (System.Exception ex) { Guard.Swallow(ex); }
+            // Native Update eases each moon to its new state; Next/Last's dial click plays here for a peer's turn.
+            if (turned && PuzzleFx.LiveApply && !was)
+            {
+                string click = null;
+                try { click = x.dialClickSFX; } catch (System.Exception ex) { Guard.Swallow(ex); }
+                PuzzleFx.Press(x, click);
+            }
             if (!e.Bool0) return;
             // Shared edge rule (PuzzleEdge): live rising edge = onSolved (cutscene) + native useRing; join dump /
             // held re-snap = Blocker Entry off + ring objects only. ReapplyHeld used to count as live, and
@@ -1050,9 +1127,34 @@ namespace SyncRADation.Networking
         public static void ApplyIncinerator(MED_Incinerator x, PuzzleStateEntry e)
         {
             if (x == null) return;
-            x.solved = e.Bool0; x.A = e.Int0; x.B = e.Int1; x.C = e.Int2;
-            if (!e.Bool0) return;
-            try { x.StartShutdown(); } catch (System.Exception ex) { Guard.Swallow(ex); }
+            bool turned = x.A != e.Int0 || x.B != e.Int1 || x.C != e.Int2;
+            x.A = e.Int0; x.B = e.Int1; x.C = e.Int2;
+            // Native plusX/minusX (Ghidra MED_Incinerator.c) also set the curve (Yspeed = A/10, Yacc1 = B/10,
+            // Yacc2 = C/10) and turn the knob (Euler(0, (n-10)*-9, 0)); nothing redraws them from A/B/C. The
+            // 0.5.64 apply wrote A/B/C only, so the knobs never moved and the shutdown below integrated the
+            // default 1/1/1 curve: the peer got the error buzz and the hatch never opened.
+            try
+            {
+                x.Yspeed = x.A / 10f;
+                x.Yacc1 = x.B / 10f;
+                x.Yacc2 = x.C / 10f;
+                if (x.Abutton != null) x.Abutton.localRotation = Quaternion.Euler(0f, (x.A - 10) * -9f, 0f);
+                if (x.Bbutton != null) x.Bbutton.localRotation = Quaternion.Euler(0f, (x.B - 10) * -9f, 0f);
+                if (x.Cbutton != null) x.Cbutton.localRotation = Quaternion.Euler(0f, (x.C - 10) * -9f, 0f);
+            }
+            catch (System.Exception ex) { Guard.Swallow(ex); }
+            if (turned && PuzzleFx.LiveApply && !e.Bool0)
+                PuzzleFx.Press(x, x.TurnDialSFX);
+            bool was = x.solved;
+            if (!e.Bool0) { x.solved = false; return; }
+            // Shutdown is the native lever pull: lever + emitter animation, curve check, hatch. Only once.
+            if (!was)
+            {
+                PuzzleFx.Begin(x, silent: !PuzzleFx.LiveApply);
+                try { x.StartShutdown(); } catch (System.Exception ex) { Guard.Swallow(ex); }
+                finally { PuzzleFx.End(); }
+            }
+            x.solved = true;
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
         }
 

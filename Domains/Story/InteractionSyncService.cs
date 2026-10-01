@@ -59,7 +59,8 @@ namespace SyncRADation.Networking
                         else if (!string.IsNullOrEmpty(multiReason)) reason = multiReason;
                         break;
                     case InteractionKind.KeypadSubmit:
-                        ok = ApplyKeypad(id);
+                        // Retired (0.5.65): no build sends it; keypads sync as live puzzle state (KeypadLive).
+                        ok = true;
                         break;
                     case InteractionKind.DialogueStart:
                         if (LocalInspect.DialoguerFlavor(msg.Int0))
@@ -502,75 +503,6 @@ namespace SyncRADation.Networking
             }
             catch (System.Exception e) { Guard.Swallow(e); }
             return consumes;
-        }
-
-        // Mirror LockSyncService.ApplyKeypad3D / ApplyRotKeypad: host KeypadSubmit
-        // used to set solved/opening only, then poll-Emit to peers. Peers ran
-        // openDoor + TryUnlockDoors; host never self-Applied → ConnectedDoors /
-        // door mesh stayed sealed on host. Invoke consequences here (BeginApply
-        // so Harmony Prefix/NoteSolved do not re-submit). Emit after for late join.
-        private static bool ApplyKeypad(ulong id)
-        {
-            var k = Find<Keypad3D>(id);
-            if (k != null)
-            {
-                bool was = k.solved;
-                k.solved = true;
-                k.opening = true;
-                if (!was)
-                {
-                    NetGate.BeginApply();
-                    try { k.openDoor(); }
-                    catch (System.Exception e) { Guard.Swallow(e); }
-                    finally { NetGate.EndApply(); }
-                }
-                PuzzleSyncService.TryUnlockDoors(k.gameObject);
-                try
-                {
-                    var net = LanNetworkManager.Instance;
-                    if (net != null)
-                        net.PuzzleSync.Emit(PuzzleType.Keypad3D, id, k);
-                }
-                catch (System.Exception e) { Guard.Swallow(e); }
-                return true;
-            }
-            var r = Find<ROT_Keypad>(id);
-            if (r != null)
-            {
-                bool was = r.solved;
-                r.solved = true;
-                r.opening = true;
-                // Peel: onSuccess → ConnectedDoors.Unlock + exitEvent + SetActive
-                // + dimPOI. TryUnlockDoors covers CD parent walk; Invoke covers
-                // the rest of the UnityEvent gate list (only when newly solved).
-                if (!was)
-                {
-                    NetGate.BeginApply();
-                    try
-                    {
-                        if (r.onSuccess != null)
-                            r.onSuccess.Invoke();
-                    }
-                    catch (System.Exception e) { Guard.Swallow(e); }
-                    finally { NetGate.EndApply(); }
-                }
-                PuzzleSyncService.TryUnlockDoors(r.gameObject);
-                try
-                {
-                    var net = LanNetworkManager.Instance;
-                    if (net != null)
-                        net.PuzzleSync.Emit(PuzzleType.ROT_Keypad, id, r);
-                }
-                catch (System.Exception e) { Guard.Swallow(e); }
-                return true;
-            }
-            var p = Find<PEN_Codepad>(id);
-            if (p != null)
-            {
-                PuzzleSyncService.ApplyCodepadConsequences(p);
-                return true;
-            }
-            return false;
         }
 
         private static bool ApplyCutscene(ulong id, LanNetworkManager net)

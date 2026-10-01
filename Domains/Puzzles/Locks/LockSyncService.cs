@@ -35,16 +35,22 @@ namespace SyncRADation.Networking
                     entry = PuzzleDomainUtil.Mk(type, wid, locked, plate, false, 0, 0, 0, 0, 0);
                     return true;
                 }
+                // Bool2 (native blocked, the 0.3 s button-push lockout) is per player: syncing it could leave the
+                // other player's keypad deaf. Ints: the shared code + last press (KeypadLive).
                 case PuzzleType.Keypad3D:
                 {
                     var x = (Keypad3D)c;
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.solved || x.opening, x.opening, x.blocked, 0, 0, 0, 0, 0);
+                    int i0, i1, i2, i3;
+                    KeypadLive.PackCode(unchecked((ulong)wid), x.code, out i0, out i1, out i2, out i3);
+                    entry = PuzzleDomainUtil.Mk(type, wid, x.solved || x.opening, x.opening, false, i0, i1, i2, i3, 0);
                     return true;
                 }
                 case PuzzleType.ROT_Keypad:
                 {
                     var x = (ROT_Keypad)c;
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.solved || x.opening, x.opening, x.blocked, 0, 0, 0, 0, 0);
+                    int i0, i1, i2, i3;
+                    KeypadLive.PackCode(unchecked((ulong)wid), x.code, out i0, out i1, out i2, out i3);
+                    entry = PuzzleDomainUtil.Mk(type, wid, x.solved || x.opening, x.opening, false, i0, i1, i2, i3, 0);
                     return true;
                 }
                 case PuzzleType.DialLock:
@@ -163,7 +169,8 @@ namespace SyncRADation.Networking
         {
             if (x == null) return;
             bool wasOpening = x.opening;
-            x.solved = e.Bool0; x.opening = e.Bool1; x.blocked = e.Bool2;
+            if (!x.solved || e.Bool0) KeypadLive.ApplyKeypad3D(x, e);
+            x.solved = e.Bool0; x.opening = e.Bool1;
             if (!e.Bool0) return;
             // Decompile Keypad3D: the wheel turn sets opening and <openDoor> lerps Door to Euler(0,-100,0)
             // (and locks the local player's input). openDoor() returns an IEnumerator, so the bare call
@@ -184,7 +191,8 @@ namespace SyncRADation.Networking
         {
             if (x == null) return;
             bool was = x.solved;
-            x.solved = e.Bool0; x.opening = e.Bool1; x.blocked = e.Bool2;
+            if (!x.solved || e.Bool0) KeypadLive.ApplyRotKeypad(x, e);
+            x.solved = e.Bool0; x.opening = e.Bool1;
             if (!e.Bool0) return;
             // Mirror Keypad3D openDoor rising-edge + host ApplyKeypad: onSuccess peels
             // to ConnectedDoors.Unlock on Door Connection (35) under DoorConnections
@@ -297,6 +305,7 @@ namespace SyncRADation.Networking
                 try { was = med.unlocked; } catch (System.Exception ex) { Guard.Swallow(ex); }
                 med.unlocked = e.Bool0;
                 UnpackMedBits(med, e.Int0);
+                PaintMed(med);
                 if (!e.Bool0) return;
                 // Shared edge rule (PuzzleEdge): live rising edge = onUnlocked + onUnlockedLate; join dump and
                 // held re-snap (ReapplyHeld used to count as live) = onLoadUnlocked only, once.
@@ -316,7 +325,17 @@ namespace SyncRADation.Networking
                 bool was = false;
                 try { was = lab.unlocked; } catch (System.Exception ex) { Guard.Swallow(ex); }
                 lab.unlocked = e.Bool0;
+                int before = PackLabBits(lab);
                 UnpackLabBits(lab, e.Int0);
+                PaintLab(lab);
+                // Native LAB insertKey plays insertPlate for the plate going in (MED's card sound is a scene
+                // emitter on the item interaction, relayed by the emitter sync).
+                if (PuzzleFx.LiveApply && (e.Int0 & ~before) != 0)
+                {
+                    string plate = null;
+                    try { plate = lab.insertPlate; } catch (System.Exception ex) { Guard.Swallow(ex); }
+                    PuzzleFx.Press(lab, plate);
+                }
                 if (!e.Bool0) return;
                 // Shared edge rule (PuzzleEdge): live rising edge = onUnlocked + onUnlockedLate; join dump and
                 // held re-snap (ReapplyHeld used to count as live) = onLoadUnlocked only, once.
@@ -329,6 +348,70 @@ namespace SyncRADation.Networking
                     });
                 PuzzleSyncService.TryUnlockDoors(lab.gameObject);
             }
+        }
+
+        // Neither class has an Update: the cards, slot icons and lights are painted only by OnEnable (once, from the
+        // save) and the insertKey coroutine, which MED runs as a cutscene (gameState 4 → 7) and so cannot be
+        // replayed on a player who is not in the screen. Same paint as native OnEnable (Ghidra MED_MultiLock.c /
+        // LAB_MultiLock.c): card shown + slid in (x 0), _s on, _i off, lights green when set; else red, _i on.
+        static void PaintMed(MED_MultiLock x)
+        {
+            if (x == null) return;
+            try
+            {
+                PaintMedOne(x, x.Fire, x.FireCard, x.FireCard_s, x.FireCard_i, x.FireLight, x.FireLight_s, x.FireLight_L);
+                PaintMedOne(x, x.Earth, x.EarthCard, x.EarthCard_s, x.EarthCard_i, x.EarthLight, x.EarthLight_s, x.EarthLight_L);
+                PaintMedOne(x, x.Water, x.WaterCard, x.WaterCard_s, x.WaterCard_i, x.WaterLight, x.WaterLight_s, x.WaterLight_L);
+                PaintMedOne(x, x.Air, x.AirCard, x.AirCard_s, x.AirCard_i, x.AirLight, x.AirLight_s, x.AirLight_L);
+                PaintMedOne(x, x.Gold, x.GoldCard, x.GoldCard_s, x.GoldCard_i, x.GoldLight, x.GoldLight_s, x.GoldLight_L);
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+        }
+
+        static void PaintMedOne(MED_MultiLock x, bool on, Transform card, GameObject s, GameObject i,
+            SpriteRenderer light, SpriteRenderer lightS, Light lightL)
+        {
+            try
+            {
+                if (card != null)
+                {
+                    card.gameObject.SetActive(on);
+                    if (on) { var p = card.localPosition; p.x = 0f; card.localPosition = p; }
+                }
+                if (s != null) s.SetActive(on);
+                if (i != null) i.SetActive(!on);
+                Color col = on ? x.green : x.red;
+                if (light != null) light.color = col;
+                if (lightS != null) lightS.color = col;
+                if (lightL != null) lightL.color = col;
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+        }
+
+        static void PaintLab(LAB_MultiLock x)
+        {
+            if (x == null) return;
+            try
+            {
+                PaintLabOne(x.Fire, x.FireCard, x.FireCard_s, x.FireCard_i);
+                PaintLabOne(x.Earth, x.EarthCard, x.EarthCard_s, x.EarthCard_i);
+                PaintLabOne(x.Water, x.WaterCard, x.WaterCard_s, x.WaterCard_i);
+                PaintLabOne(x.Air, x.AirCard, x.AirCard_s, x.AirCard_i);
+                PaintLabOne(x.Gold, x.GoldCard, x.GoldCard_s, x.GoldCard_i);
+                PaintLabOne(x.Star, x.StarCard, x.StarCard_s, x.StarCard_i);
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+        }
+
+        static void PaintLabOne(bool on, GameObject card, GameObject s, GameObject i)
+        {
+            try
+            {
+                if (card != null) card.SetActive(on);
+                if (s != null) s.SetActive(on);
+                if (i != null) i.SetActive(!on);
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         // Decompile MED/LAB_MultiLock: Fire=1 Earth=2 Water=4 Air=8 Gold=16 Star=32 (LAB).

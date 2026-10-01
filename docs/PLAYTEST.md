@@ -1,6 +1,6 @@
 # SyncRADation playtest / soak checklist
 
-Target build: **0.5.64, protocol 17**. The 0.5.57–0.5.64 work is compile- and unit-tested, and an unattended host+client join into `DET_Detention` / `MED_Medical` is smoke-tested (handshake, dump, matching WorldId checksum); nothing past that has been played, so this list is the gate. Run it on **two instances** first (host + client), then repeat the marked items with **three** (host + two clients, `MaxPlayers` >= 3).
+Target build: **0.5.65, protocol 17**. The 0.5.57–0.5.65 work is compile- and unit-tested, and an unattended host+client join into `DET_Detention` / `MED_Medical` is smoke-tested (handshake, dump, matching WorldId checksum); nothing past that has been played, so this list is the gate. Run it on **two instances** first (host + client), then repeat the marked items with **three** (host + two clients, `MaxPlayers` >= 3).
 
 Conventions:
 
@@ -10,7 +10,7 @@ Conventions:
 - Same DLL on every peer. Keep `VerboseLogging=false` unless a failure needs detail.
 - A failure counts even if the game keeps running: grep `[Guard]` and `[Harmony]` at the end of each section and note anything new.
 
-Session info to record: date, build (0.5.64), players, chapter, result notes.
+Session info to record: date, build (0.5.65), players, chapter, result notes.
 
 ## 0. Preflight
 

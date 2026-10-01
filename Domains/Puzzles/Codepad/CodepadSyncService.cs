@@ -130,7 +130,9 @@ namespace SyncRADation.Networking
                 case PuzzleType.PEN_Codepad:
                 {
                     var x = (PEN_Codepad)c;
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.solved, false, false, 0, 0, 0, 0, 0);
+                    int i3;
+                    int wheels = KeypadLive.PackWheels(x, unchecked((ulong)wid), out i3);
+                    entry = PuzzleDomainUtil.Mk(type, wid, x.solved, false, false, wheels, 0, 0, i3, 0);
                     return true;
                 }
                 case PuzzleType.PatternLock:
@@ -157,6 +159,7 @@ namespace SyncRADation.Networking
                 return;
             }
             if (x.solved && !e.Bool0) return;
+            KeypadLive.ApplyCodepad(x, e);
             x.solved = e.Bool0 || x.solved;
             if (e.Bool0)
                 ApplyCodepadConsequences(x, cinematic);
@@ -178,11 +181,16 @@ namespace SyncRADation.Networking
             bool was = false;
             try { was = x.solved; } catch (System.Exception ex) { Guard.Swallow(ex); }
             x.solved = e.Bool0;
-            if (!e.Bool0)
+            // Lights first, solved or not: the solving press is the last light. A peer's press clicks here like the
+            // native delayed() press (zoomed in: the same 2D click; nearby: 3D at the panel).
+            int changed = ApplyPatternButtons(x, e);
+            if (changed > 0 && PuzzleFx.LiveApply)
             {
-                ApplyPatternButtons(x, e);
-                return;
+                string click = null;
+                try { click = x.clickSFX; } catch (System.Exception ex) { Guard.Swallow(ex); }
+                PuzzleFx.Press(x, click);
             }
+            if (!e.Bool0) return;
             // Shared edge rule (PuzzleEdge): the latch above used to make every later apply (join dump,
             // held re-snap) look "already solved" and skip the consequence. Live rising edge = native
             // onSolved; everything else = the idempotent durable form (pad off, _event off, _door on).
@@ -236,15 +244,16 @@ namespace SyncRADation.Networking
         /// so materials match. Only cells that differ are written. No-op when Int3
         /// is 0 (older payload / unreadable array).
         /// </summary>
-        static void ApplyPatternButtons(LAB_PatternLock x, PuzzleStateEntry e)
+        static int ApplyPatternButtons(LAB_PatternLock x, PuzzleStateEntry e)
         {
-            if (x == null || e.Int3 <= 0) return;
+            if (x == null || e.Int3 <= 0) return 0;
             // Int2 low = dim0 (setButtonState column), high = dim1 (row).
             int cols = e.Int2 & 0xFF;
             int rows = (e.Int2 >> 8) & 0xFF;
-            if (rows <= 0 || cols <= 0 || rows > 8 || cols > 8) return;
+            if (rows <= 0 || cols <= 0 || rows > 8 || cols > 8) return 0;
             int n = rows * cols;
             if (n > 64) n = 64;
+            int changed = 0;
             for (int i = 0; i < n; i++)
             {
                 int row = i / cols;
@@ -255,8 +264,9 @@ namespace SyncRADation.Networking
                 bool cur = false;
                 try { cur = ReadPatternCell(x, col, row); } catch (System.Exception ex) { Guard.Swallow(ex); }
                 if (cur == on) continue;
-                try { x.setButtonState(col, row, on); } catch (System.Exception ex) { Guard.Swallow(ex); }
+                try { x.setButtonState(col, row, on); changed++; } catch (System.Exception ex) { Guard.Swallow(ex); }
             }
+            return changed;
         }
 
         static void PackPatternStates(LAB_PatternLock x, out int bits0, out int bits1, out int dims, out int count)
