@@ -16,10 +16,9 @@ namespace SyncRADation.Players
         private readonly RemoteWeaponSync _weapon;
         private readonly ProxyRig _rig;
         private WeaponType _lastWeapon;
-        private byte _lastModelState = 255;
-        private bool _lastWearHat;
+        private int _lastOutfit = -1;
         private bool _aiming;
-        private AnimTriggers _pendingFx;
+        private AvatarCue _pendingFx;
 
         public bool LastDead { get; private set; }
         /// <summary>Unscaled time of the last PlayerState applied (stale-proxy cleanup).</summary>
@@ -62,25 +61,26 @@ namespace SyncRADation.Players
 
             Motion.OnState(new Vector3(state.PosX, state.PosY, state.PosZ), new Vector3(state.VelX, state.VelY, 0f),
                 state.GetFacingWorld());
-            Pose.OnState(state.BoneRotations, state.HasHips, new Vector3(state.HipsX, state.HipsY, state.HipsZ));
-            _aiming = state.AnimBools.HasFlag(AnimBools.Aiming) || state.AimingTime > 0.5f;
-            _audio.Tick(state, state.AnimBools, AnimTriggers.None);
+            Pose.OnState(state.BoneRotations, (state.Flags & PoseFlags.HasHips) != 0,
+                new Vector3(state.HipsX, state.HipsY, state.HipsZ));
+            _aiming = (state.Flags & PoseFlags.Aiming) != 0;
+            _audio.Tick(state);
 
-            if (state.ModelState != _lastModelState || state.WearHat != _lastWearHat)
+            int outfit = state.ModelState | ((state.Flags & PoseFlags.WearHat) != 0 ? 0x100 : 0);
+            if (outfit != _lastOutfit)
             {
-                ApplyOutfit(state.ModelState, state.WearHat);
-                _lastModelState = state.ModelState;
-                _lastWearHat = state.WearHat;
+                ApplyOutfit(state.ModelState, (outfit & 0x100) != 0);
+                _lastOutfit = outfit;
             }
         }
 
-        /// <summary>Reliable one-shot cues (AvatarOneShot): sounds now, weapon FX on the next LateTick.</summary>
-        public void ApplyOneShot(AnimTriggers triggers)
+        /// <summary>Reliable edge cues (AvatarOneShot): sounds now, weapon FX on the next LateTick.</summary>
+        public void ApplyOneShot(AvatarCue cues)
         {
-            if (LastDead) triggers &= ~AnimTriggers.Hurt; // already down: no hurt cue
-            if (triggers == AnimTriggers.None) return;
-            _pendingFx |= triggers;
-            _audio.OnTriggers(_lastWeapon, triggers);
+            if (LastDead) cues &= ~AvatarCue.Hurt; // already down: no hurt cue
+            if (cues == AvatarCue.None) return;
+            _pendingFx |= cues;
+            _audio.OnCues(_lastWeapon, cues);
         }
 
         /// <summary>Every frame at the delayed render time: root, body pose, then weapon FX at the posed hand.</summary>
@@ -90,7 +90,7 @@ namespace SyncRADation.Players
             Pose.LateTick(renderTime);
             _audio.LateTick();
             _weapon.Tick(_aiming, _pendingFx, GameObject.transform.position, Pose.AimDirection);
-            _pendingFx = AnimTriggers.None;
+            _pendingFx = AvatarCue.None;
         }
 
         /// <summary>

@@ -20,16 +20,13 @@ namespace SyncRADation.Networking
         private bool _loggedVitalFail;
         private Vector3 _lastSentPosition;
         private float _lastSentTime;
+        // Edge cues read with the last built pose; SendPlayerState sends them reliably ahead of it.
+        private AvatarCue _pendingCues;
 
         // Per-send reuse: LiteNetLib copies the payload inside Send, so one writer serves every packet of a frame.
         private readonly NetDataWriter _poseWriter = new NetDataWriter();
+        private readonly NetDataWriter _eventWriter = new NetDataWriter();
         private readonly NetDataWriter _relayWriter = new NetDataWriter();
-
-        // Local player components, looked up once per player object (not on every 30 Hz send).
-        private GameObject _compFor;
-        private AlternatePlayerController _apc;
-        private PlayerController8 _pc8;
-        private CharacterModelType _cmt;
 
         internal AvatarNetHandlers(LanNetworkManager net)
         {
@@ -40,21 +37,17 @@ namespace SyncRADation.Networking
         {
             _lastSentPosition = Vector3.zero;
             _lastSentTime = 0f;
-            _compFor = null;
-            _apc = null;
-            _pc8 = null;
-            _cmt = null;
+            _pendingCues = AvatarCue.None;
         }
 
         internal void SendLocalVital()
         {
-            int hp = 100, maxHp = 100;
+            int hp = 100;
             byte gameState = 0, charState = 0;
             bool dead = false;
             try
             {
                 hp = PlayerState.hp;
-                maxHp = 100;
                 gameState = (byte)PlayerState.gameState;
                 charState = (byte)PlayerState.charState;
                 dead = PlayerState.charState == PlayerState.charStates.dead || hp <= 0;
@@ -75,59 +68,28 @@ namespace SyncRADation.Networking
             {
                 SenderPlayerId = _net.LocalPlayerId,
                 Hp = hp,
-                MaxHp = maxHp,
+                MaxHp = 100,
                 GameState = gameState,
                 CharState = charState,
                 Dead = dead
             };
-            var writer = new NetDataWriter();
-            writer.Put((byte)NetMessageType.PlayerVital);
-            msg.Serialize(writer);
-            _net.BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
-        }
-
-        private void CacheComponents(GameObject player)
-        {
-            if (_compFor == player && _compFor != null) return;
-            _compFor = player;
-            _apc = null;
-            _pc8 = null;
-            _cmt = null;
-            try { _apc = player.GetComponent<AlternatePlayerController>(); } catch (System.Exception e) { Guard.Swallow(e); }
-            try { _pc8 = player.GetComponent<PlayerController8>(); } catch (System.Exception e) { Guard.Swallow(e); }
-            try { _cmt = player.GetComponentInChildren<CharacterModelType>(true); } catch (System.Exception e) { Guard.Swallow(e); }
+            _eventWriter.Reset();
+            _eventWriter.Put((byte)NetMessageType.PlayerVital);
+            msg.Serialize(_eventWriter);
+            _net.BroadcastRaw(_eventWriter, DeliveryMethod.ReliableOrdered);
         }
 
         internal PlayerStateMessage BuildPlayerStateMessage(GameObject player)
         {
             var pos = player.transform.position;
-            float dt = PluginInfo.SendInterval;
-            if (_lastSentTime > 0f)
-                dt = Mathf.Max(0.016f, Time.unscaledTime - _lastSentTime);
-            _lastSentTime = Time.unscaledTime;
+            float now = Time.unscaledTime;
+            float dt = _lastSentTime > 0f ? Mathf.Max(0.016f, now - _lastSentTime) : PluginInfo.SendInterval;
+            _lastSentTime = now;
             Vector3 vel = (pos - _lastSentPosition) / dt;
             // A room-to-room door moves Elster hundreds of units in one frame: that "velocity" made the
             // receiver's Hermite fling the proxy ~100 units back and forth after every door.
             if (vel.sqrMagnitude > PluginInfo.MaxProxySpeed * PluginInfo.MaxProxySpeed) vel = Vector3.zero;
             _lastSentPosition = pos;
-
-            CacheComponents(player);
-            byte facing = 0;
-            try
-            {
-                if (_apc != null) facing = (byte)_apc.facing;
-                else if (_pc8 != null) facing = (byte)_pc8.facing;
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-
-            byte modelState = 0;
-            bool wearHat = false;
-            try
-            {
-                if (_cmt != null) modelState = (byte)_cmt.modelState;
-                wearHat = CharacterModelType.wearHat;
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
 
             var msg = new PlayerStateMessage
             {
@@ -136,37 +98,23 @@ namespace SyncRADation.Networking
                 PosY = pos.y,
                 PosZ = pos.z,
                 VelX = vel.x,
-                VelY = vel.y,
-                AimingTime = -1f,
-                CharState = (byte)PlayerState.charState,
-                Facing = facing,
-                AnimBools = 0,
-                ModelState = modelState,
-                WearHat = wearHat
+                VelY = vel.y
             };
-            // RotY / RootX / RootY / RootZ carry the facing-pivot world quaternion (w / x / y / z).
-            msg.SetFacingWorld(SourceAnimReader.ReadFacingWorldRotation(player));
-
-            SourceAnimReader.ReadFromPlayer(player, ref msg);
-
-            if (PlayerState.aiming) msg.AnimBools |= AnimBools.Aiming;
-            if (PlayerState.charState == PlayerState.charStates.run) msg.AnimBools |= AnimBools.Running;
-
+            _pendingCues |= SourceAnimReader.Read(player, ref msg);
             return msg;
         }
 
         /// <summary>
-        /// One-shot triggers (Fire/Hurt/Die/Reload...) are edge events. The sequenced 30 Hz pose drops
-        /// packets by design, so they ride a small reliable message instead and are stripped from the pose.
+        /// Edge cues (shot / reload / hurt): the sequenced 30 Hz pose drops packets by design, so they ride a small
+        /// reliable message instead.
         /// </summary>
-        internal void SendOneShot(AnimTriggers triggers)
+        private void SendOneShot(AvatarCue cues)
         {
-            if (triggers == AnimTriggers.None) return;
-            var msg = new AvatarOneShotMessage { SenderPlayerId = _net.LocalPlayerId, Triggers = triggers };
-            var writer = new NetDataWriter();
-            writer.Put((byte)NetMessageType.AvatarOneShot);
-            msg.Serialize(writer);
-            _net.BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
+            var msg = new AvatarOneShotMessage { SenderPlayerId = _net.LocalPlayerId, Cues = cues };
+            _eventWriter.Reset();
+            _eventWriter.Put((byte)NetMessageType.AvatarOneShot);
+            msg.Serialize(_eventWriter);
+            _net.BroadcastRaw(_eventWriter, DeliveryMethod.ReliableOrdered);
         }
 
         internal void HandleAvatarOneShot(AvatarOneShotMessage msg, int peerId)
@@ -186,20 +134,15 @@ namespace SyncRADation.Networking
             }
 
             if (SenderElsewhere(senderId)) return;
-            var proxy = _net.ProxyManager.GetProxy(senderId);
-            if (proxy != null)
-            {
-                try { proxy.ApplyOneShot(msg.Triggers); }
-                catch (System.Exception ex) { ModRuntime.Log?.Warning("[Proxy] one-shot: " + ex.Message); }
-            }
+            _net.ProxyManager.GetProxy(senderId)?.ApplyOneShot(msg.Cues);
         }
 
         internal void SendPlayerState(PlayerStateMessage msg)
         {
-            if (msg.AnimTriggers != AnimTriggers.None)
+            if (_pendingCues != AvatarCue.None)
             {
-                SendOneShot(msg.AnimTriggers);
-                msg.AnimTriggers = AnimTriggers.None;
+                SendOneShot(_pendingCues);
+                _pendingCues = AvatarCue.None;
             }
             // msg.BoneRotations is SourceAnimReader's reused buffer: everything below serializes it synchronously.
             int mtu = SequencedMtu();
@@ -224,31 +167,15 @@ namespace SyncRADation.Networking
         void SendBoneChunks(int senderId, float[] eulers, int mtu)
         {
             int totalBones = eulers.Length / 3;
-            if (totalBones <= 0) return;
-            int maxPayload = mtu - BonePoseHeaderBytes;
-            if (maxPayload < 6) return;
-            int maxBones = maxPayload / 6;
-            if (maxBones < 1) maxBones = 1;
-
-            ushort start = 0;
-            while (start < totalBones)
+            int maxBones = (mtu - BonePoseHeaderBytes) / 6;
+            if (maxBones < 1) return;
+            for (int start = 0; start < totalBones; start += maxBones)
             {
-                int count = totalBones - start;
-                if (count > maxBones) count = maxBones;
-                var chunk = new float[count * 3];
-                System.Array.Copy(eulers, start * 3, chunk, 0, chunk.Length);
-                var msg = new BonePoseMessage
-                {
-                    SenderPlayerId = senderId,
-                    TotalBones = (ushort)totalBones,
-                    StartBone = start,
-                    Eulers = chunk
-                };
+                int count = System.Math.Min(maxBones, totalBones - start);
                 _poseWriter.Reset();
                 _poseWriter.Put((byte)NetMessageType.BonePose);
-                msg.Serialize(_poseWriter);
+                BonePoseMessage.Write(_poseWriter, senderId, (ushort)totalBones, (ushort)start, eulers, start, count);
                 SendSequenced(_poseWriter, mtu);
-                start += (ushort)count;
             }
         }
 
@@ -338,21 +265,16 @@ namespace SyncRADation.Networking
             // Host always relays (even when no local proxy yet, any scene): party vitals are scene-independent.
             if (_net.Role == NetworkRole.Host)
             {
-                var w = new NetDataWriter();
-                w.Put((byte)NetMessageType.PlayerVital);
-                msg.Serialize(w);
-                _net.RelayRaw(w, DeliveryMethod.ReliableOrdered, senderId);
+                _relayWriter.Reset();
+                _relayWriter.Put((byte)NetMessageType.PlayerVital);
+                msg.Serialize(_relayWriter);
+                _net.RelayRaw(_relayWriter, DeliveryMethod.ReliableOrdered, senderId);
             }
 
             if (msg.SenderPlayerId != _net.LocalPlayerId)
             {
                 PartyVitals.NoteVital(msg.SenderPlayerId, msg.Dead);
-                var proxy = _net.ProxyManager.GetProxy(msg.SenderPlayerId);
-                if (proxy != null)
-                {
-                    try { proxy.SetVital(msg.Dead); }
-                    catch (System.Exception e) { Guard.Swallow(e); }
-                }
+                _net.ProxyManager.GetProxy(msg.SenderPlayerId)?.SetVital(msg.Dead);
             }
         }
 

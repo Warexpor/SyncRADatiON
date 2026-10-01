@@ -92,7 +92,7 @@ namespace SyncRADation.Players
         // Fallback muzzle: chest height above the proxy's feet (SIGNALIS walks the XY plane, up is -Z).
         private static readonly Vector3 MuzzleHeight = new Vector3(0f, 0f, -0.95f);
 
-        public void Tick(bool aiming, AnimTriggers triggers, Vector3 proxyPos, Vector3 aimDir)
+        public void Tick(bool aiming, AvatarCue cues, Vector3 proxyPos, Vector3 aimDir)
         {
             _facingDir = aimDir.sqrMagnitude > 0.0001f ? aimDir.normalized : Vector3.forward;
 
@@ -117,16 +117,15 @@ namespace SyncRADation.Players
             if (fx == null) return;
             fx.Tick(Time.unscaledDeltaTime);
 
-            // Only the ammo-spent Fire pulse. Held Fire1 used to retrigger FX every dropped packet.
-            if (triggers.HasFlag(AnimTriggers.Fire))
+            // Only the ammo-spent Fire cue: one live round, one muzzle flash and impact.
+            if ((cues & AvatarCue.Fire) != 0)
             {
                 fx.OnShot();
                 fx.DoImpactRaycast(_muzzlePos, _facingDir);
-                var cb = OnShotFired;
-                if (cb != null) cb(_currentWeapon);
+                OnShotFired?.Invoke(_currentWeapon);
             }
 
-            if (triggers.HasFlag(AnimTriggers.ReloadTrigger))
+            if ((cues & AvatarCue.Reload) != 0)
                 fx.OnReload();
 
             fx.UpdateLaser(aiming);

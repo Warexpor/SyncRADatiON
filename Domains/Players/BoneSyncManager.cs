@@ -8,7 +8,6 @@ namespace SyncRADation.Players
 {
     public sealed class BoneSyncManager
     {
-        private Transform _armatureRoot;
         private readonly List<Transform> _bones = new List<Transform>(96);
         private float[] _readBuf;
 
@@ -34,37 +33,32 @@ namespace SyncRADation.Players
             return null;
         }
 
+        /// <summary>Rebuilds the bone list under <paramref name="modelRoot"/>; null just clears it.</summary>
         public void FindArmature(Transform modelRoot)
         {
-            _armatureRoot = null;
             _bones.Clear();
             _readBuf = null;
-            SkinnedMeshRenderer[] smrs = modelRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true);
-            for (int i = 0; i < smrs.Length; i++)
+            if (modelRoot == null) return;
+            Transform armature = null;
+            var smrs = modelRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+            for (int i = 0; i < smrs.Length && armature == null; i++)
             {
                 if (smrs[i] == null || smrs[i].rootBone == null) continue;
                 if (InWeaponPropTree(smrs[i].transform, modelRoot)) continue;
                 Transform top = smrs[i].rootBone;
                 while (top.parent != null && top.parent.parent != null && top.parent.parent != modelRoot)
                     top = top.parent;
-                _armatureRoot = top;
-                break;
+                armature = top;
             }
-            if (_armatureRoot == null)
+            // No SMR with a rootBone: the armature is the bone-only child with a real subtree.
+            for (int i = 0; armature == null && i < modelRoot.childCount; i++)
             {
-                // No SMR with a rootBone: the armature is the bone-only child with a real subtree.
-                for (int i = 0; i < modelRoot.childCount; i++)
-                {
-                    var c = modelRoot.GetChild(i);
-                    if (c.GetComponent<SkinnedMeshRenderer>() == null && c.childCount > 3)
-                    {
-                        _armatureRoot = c;
-                        break;
-                    }
-                }
+                var c = modelRoot.GetChild(i);
+                if (c.GetComponent<SkinnedMeshRenderer>() == null && c.childCount > 3)
+                    armature = c;
             }
-            if (_armatureRoot != null)
-                CollectBonesSkipProps(_armatureRoot);
+            if (armature != null)
+                CollectBonesSkipProps(armature);
             else
                 PlaytestLog.Warn("DRV", "no armature under '" + modelRoot.name + "'");
         }

@@ -100,8 +100,8 @@ namespace SyncRADation.Tests
             foreach (Type t in new[] { typeof(NetMessageType), typeof(InteractionKind), typeof(StoryCmd), typeof(DeathKind), typeof(WeaponType),
                                        typeof(DoorType), typeof(PuzzleType), typeof(EnemyActionKind), typeof(BossHitKind), typeof(BossType), typeof(PartyLifeKind) })
                 Assert.Equal(typeof(byte), Enum.GetUnderlyingType(t));
-            Assert.Equal(typeof(uint), Enum.GetUnderlyingType(typeof(AnimBools)));
-            Assert.Equal(typeof(ushort), Enum.GetUnderlyingType(typeof(AnimTriggers)));
+            Assert.Equal(typeof(byte), Enum.GetUnderlyingType(typeof(PoseFlags)));
+            Assert.Equal(typeof(byte), Enum.GetUnderlyingType(typeof(AvatarCue)));
         }
 
         [Fact]

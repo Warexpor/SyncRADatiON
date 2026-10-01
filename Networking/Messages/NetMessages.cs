@@ -306,113 +306,100 @@ namespace SyncRADation.Networking
         CAR = 9,
     }
 
+    /// <summary>PlayerState state bits: exactly what the proxy's sounds, laser and outfit read.</summary>
     [System.Flags]
-    public enum AnimBools : uint
-    {
-        Aiming = 1 << 0,
-        Shooting = 1 << 1,
-        Running = 1 << 2,
-        Grounded = 1 << 3,
-        Crouch = 1 << 4,
-        Blocked = 1 << 5,
-        Dead = 1 << 6,
-        Inventory = 1 << 7,
-        Attack = 1 << 8,
-        Injured = 1 << 9,
-        Stomp = 1 << 10,
-        Push = 1 << 11,
-        Melee = 1 << 12,
-        Snap = 1 << 13,
-        Reload = 1 << 14,
-        Swap = 1 << 15,
-        Burst = 1 << 16,
-        Taser = 1 << 17,
-        Random = 1 << 18,
-        Hugged = 1 << 19,
-        ReloadRounds = 1 << 20,
-        ReloadChamber = 1 << 21,
-        EmptyClick = 1 << 22,
-    }
-
-    [System.Flags]
-    public enum AnimTriggers : ushort
+    public enum PoseFlags : byte
     {
         None = 0,
-        Hurt = 1 << 0,
-        Die = 1 << 1,
-        Fire = 1 << 2,
-        Pickup = 1 << 3,
-        Radio = 1 << 4,
-        Drop = 1 << 5,
-        Sleep = 1 << 6,
-        Injector = 1 << 7,
-        InjectorCancel = 1 << 8,
-        ReloadTrigger = 1 << 9,
-        AttackTrigger = 1 << 10,
-        SwapTrigger = 1 << 11,
-        BurstTrigger = 1 << 12,
-        StompTrigger = 1 << 13,
-        PushTrigger = 1 << 14,
-        SnapTrigger = 1 << 15,
+        /// <summary>Aiming (AimingTime past half, or PlayerState.aiming): laser on, draw cue on the rising edge.</summary>
+        Aiming = 1 << 0,
+        /// <summary>Run gait: footstep loudness and the FMOD run parameter.</summary>
+        Running = 1 << 1,
+        /// <summary>Trigger pressed on an empty magazine while able to fire: dry-fire click on the rising edge.</summary>
+        EmptyClick = 1 << 2,
+        /// <summary>A footstep landed since the previous pose (base-layer loop crossed its half or wrapped).</summary>
+        Step = 1 << 3,
+        /// <summary>Traversing (ladder) or crawling: ladder cue on the rising edge.</summary>
+        Climbing = 1 << 4,
+        /// <summary>CharacterModelType.wearHat.</summary>
+        WearHat = 1 << 5,
+        /// <summary>HipsX/Y/Z carry the sender's humanoid hips localPosition.</summary>
+        HasHips = 1 << 6,
     }
 
+    /// <summary>Edge events sent reliably (AvatarOneShot), never on the lossy sequenced pose.</summary>
+    [System.Flags]
+    public enum AvatarCue : byte
+    {
+        None = 0,
+        /// <summary>A live round left the equipped weapon (magAmmo dropped): shot sound, muzzle FX, impact.</summary>
+        Fire = 1 << 0,
+        /// <summary>Reload started (or the magazine refilled): reload sound and FX.</summary>
+        Reload = 1 << 1,
+        /// <summary>Hit taken (Hurt pulse) or became Injured: hurt sound.</summary>
+        Hurt = 1 << 2,
+    }
+
+    /// <summary>
+    /// Sequenced ~30 Hz avatar pose (protocol 18). Root motion + the sender's full bone rotations + humanoid hips
+    /// position: the proxy has no Animator, these fields are the whole visible body. 57 bytes before the bones
+    /// (type byte included), 6 per bone.
+    /// </summary>
     public struct PlayerStateMessage
     {
         public int SenderPlayerId;
         public float PosX;
         public float PosY;
         public float PosZ;
-        public float RotY;   // facing-pivot world quat.w (was fAngle)
-        public float RootY;  // quat.y
+        /// <summary>Planar velocity (SIGNALIS walks XY; Z is height and never extrapolated).</summary>
         public float VelX;
-        public float VelY;   // planar north-south (SIGNALIS walks XY; Z is height)
-        public float Forward;
-        public float Turn;
-        public float AimingTime;
-        public float Stamina;
-        public float Blend;
-        public float IKwalk;
-        public float InputX;
-        public float InputY;
-        public float HurtTime;
-        public byte CharState;
-        public byte Facing;
+        public float VelY;
+        /// <summary>Facing-pivot world rotation x/y/z; w is implied (canonical w >= 0, see SetFacingWorld).</summary>
+        public float FacingX;
+        public float FacingY;
+        public float FacingZ;
         public WeaponType Weapon;
-        public AnimBools AnimBools;
-        public AnimTriggers AnimTriggers;
-        public bool StepHappened;
-        public bool Climbing;
-        public byte ModelState;   // CharacterModelType.ElsterType
-        public bool WearHat;
-        public float RootX;  // quat.x
-        public float RootZ;  // quat.z
-        // Humanoid hips localPosition (v18). Bone sync is rotation-only, and the hips height otherwise comes from the
-        // proxy's own Animator, whose state/phase drifts from the sender's: the legs then miss the floor (lift-offs).
-        public bool HasHips;
+        public PoseFlags Flags;
+        /// <summary>CharacterModelType.ElsterType (outfit).</summary>
+        public byte ModelState;
+        /// <summary>|Animator Forward| quantized to 0..255 (footstep loudness).</summary>
+        public byte Forward;
+        /// <summary>Humanoid hips localPosition (valid with PoseFlags.HasHips): bone sync is rotation-only.</summary>
         public float HipsX;
         public float HipsY;
         public float HipsZ;
+        /// <summary>Local euler angles of every armature bone (BoneSyncManager order), 3 per bone.</summary>
         public float[] BoneRotations;
 
         public void SetFacingWorld(Quaternion q)
         {
             if (q.w < 0f)
                 q = new Quaternion(-q.x, -q.y, -q.z, -q.w);
-            RootX = q.x;
-            RootY = q.y;
-            RootZ = q.z;
-            RotY = q.w;
+            FacingX = q.x;
+            FacingY = q.y;
+            FacingZ = q.z;
         }
 
         public Quaternion GetFacingWorld()
         {
-            var q = new Quaternion(RootX, RootY, RootZ, RotY);
-            float mag = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
-            if (mag < 0.0001f)
+            float xyz = FacingX * FacingX + FacingY * FacingY + FacingZ * FacingZ;
+            if (float.IsNaN(xyz) || float.IsInfinity(xyz))
                 return Quaternion.identity;
-            mag = Mathf.Sqrt(mag);
-            return new Quaternion(q.x / mag, q.y / mag, q.z / mag, q.w / mag);
+            if (xyz > 1f)
+            {
+                float inv = 1f / Mathf.Sqrt(xyz);
+                return new Quaternion(FacingX * inv, FacingY * inv, FacingZ * inv, 0f);
+            }
+            return new Quaternion(FacingX, FacingY, FacingZ, Mathf.Sqrt(1f - xyz));
         }
+
+        public void SetForward(float animatorForward)
+        {
+            float f = animatorForward < 0f ? -animatorForward : animatorForward;
+            Forward = (byte)(Mathf.Clamp(f, 0f, 1f) * 255f + 0.5f);
+        }
+
+        public float ForwardAmount => Forward / 255f;
 
         public void Serialize(NetDataWriter w)
         {
@@ -420,31 +407,15 @@ namespace SyncRADation.Networking
             w.Put(PosX);
             w.Put(PosY);
             w.Put(PosZ);
-            w.Put(RotY);
-            w.Put(RootY);
             w.Put(VelX);
             w.Put(VelY);
-            w.Put(Forward);
-            w.Put(Turn);
-            w.Put(AimingTime);
-            w.Put(Stamina);
-            w.Put(Blend);
-            w.Put(IKwalk);
-            w.Put(InputX);
-            w.Put(InputY);
-            w.Put(HurtTime);
-            w.Put(CharState);
-            w.Put(Facing);
+            w.Put(FacingX);
+            w.Put(FacingY);
+            w.Put(FacingZ);
             w.Put((byte)Weapon);
-            w.Put((uint)AnimBools);
-            w.Put((ushort)AnimTriggers);
-            w.Put(StepHappened);
-            w.Put(Climbing);
+            w.Put((byte)Flags);
             w.Put(ModelState);
-            w.Put(WearHat);
-            w.Put(RootX);
-            w.Put(RootZ);
-            w.Put(HasHips);
+            w.Put(Forward);
             w.Put(HipsX);
             w.Put(HipsY);
             w.Put(HipsZ);
@@ -463,31 +434,15 @@ namespace SyncRADation.Networking
                 PosX = r.GetFloat(),
                 PosY = r.GetFloat(),
                 PosZ = r.GetFloat(),
-                RotY = r.GetFloat(),
-                RootY = r.GetFloat(),
                 VelX = r.GetFloat(),
                 VelY = r.GetFloat(),
-                Forward = r.GetFloat(),
-                Turn = r.GetFloat(),
-                AimingTime = r.GetFloat(),
-                Stamina = r.GetFloat(),
-                Blend = r.GetFloat(),
-                IKwalk = r.GetFloat(),
-                InputX = r.GetFloat(),
-                InputY = r.GetFloat(),
-                HurtTime = r.GetFloat(),
-                CharState = r.GetByte(),
-                Facing = r.GetByte(),
+                FacingX = r.GetFloat(),
+                FacingY = r.GetFloat(),
+                FacingZ = r.GetFloat(),
                 Weapon = (WeaponType)r.GetByte(),
-                AnimBools = (AnimBools)r.GetUInt(),
-                AnimTriggers = (AnimTriggers)r.GetUShort(),
-                StepHappened = r.GetBool(),
-                Climbing = r.GetBool(),
+                Flags = (PoseFlags)r.GetByte(),
                 ModelState = r.GetByte(),
-                WearHat = r.GetBool(),
-                RootX = r.GetFloat(),
-                RootZ = r.GetFloat(),
-                HasHips = r.GetBool(),
+                Forward = r.GetByte(),
                 HipsX = r.GetFloat(),
                 HipsY = r.GetFloat(),
                 HipsZ = r.GetFloat()
@@ -526,21 +481,28 @@ namespace SyncRADation.Networking
 
         public int Count => Eulers != null ? Eulers.Length / 3 : 0;
 
-        public void Serialize(NetDataWriter w)
+        public void Serialize(NetDataWriter w) => Write(w, SenderPlayerId, TotalBones, StartBone, Eulers, 0, Count);
+
+        /// <summary>
+        /// Writes bones [startBone, startBone + count) straight from the full euler buffer (offset in bones), so the
+        /// sender's chunking needs no per-chunk array.
+        /// </summary>
+        public static void Write(NetDataWriter w, int senderPlayerId, ushort totalBones, ushort startBone,
+            float[] eulers, int offsetBones, int count)
         {
-            w.Put(SenderPlayerId);
-            w.Put(TotalBones);
-            w.Put(StartBone);
+            w.Put(senderPlayerId);
+            w.Put(totalBones);
+            w.Put(startBone);
             // Reader accepts 1..MaxChunkBones; a longer chunk would leave count*3 ushorts unread and desync the stream.
-            int count = Count;
             if (count > MaxChunkBones)
             {
                 NetWire.WarnOnce("bonepose", "BonePose chunk of " + count + " bones clamped to " + MaxChunkBones);
                 count = MaxChunkBones;
             }
             w.Put((ushort)count);
+            int from = offsetBones * 3;
             for (int i = 0; i < count * 3; i++)
-                w.Put(PlayerStateMessage.EncodeAngle(Eulers[i]));
+                w.Put(PlayerStateMessage.EncodeAngle(eulers[from + i]));
         }
 
         public static BonePoseMessage Deserialize(NetDataReader r)
@@ -1273,23 +1235,23 @@ namespace SyncRADation.Networking
             };
     }
 
-    /// <summary>Reliable one-shot avatar triggers so Fire/Hurt/Die never ride the lossy sequenced pose.</summary>
+    /// <summary>Reliable avatar edge cues (shot / reload / hurt) so they never ride the lossy sequenced pose.</summary>
     public struct AvatarOneShotMessage
     {
         public int SenderPlayerId;
-        public AnimTriggers Triggers;
+        public AvatarCue Cues;
 
         public void Serialize(NetDataWriter w)
         {
             w.Put(SenderPlayerId);
-            w.Put((ushort)Triggers);
+            w.Put((byte)Cues);
         }
 
         public static AvatarOneShotMessage Deserialize(NetDataReader r) =>
             new AvatarOneShotMessage
             {
                 SenderPlayerId = r.GetInt(),
-                Triggers = (AnimTriggers)r.GetUShort()
+                Cues = (AvatarCue)r.GetByte()
             };
     }
 

@@ -182,26 +182,80 @@ namespace SyncRADation.Tests
         }
 
         [Fact]
-        public void PlayerState_facing_quaternion_round_trips_and_normalizes()
+        public void PlayerState_facing_quaternion_round_trips_with_implied_w()
         {
             var s = new PlayerStateMessage();
             s.SetFacingWorld(new UnityEngine.Quaternion(0f, 0.6f, 0f, -0.8f)); // w<0 is flipped to the canonical hemisphere
-            Assert.Equal(0.8f, s.RotY);
-            Assert.Equal(-0.6f, s.RootY);
-            UnityEngine.Quaternion q = s.GetFacingWorld();
-            Assert.Equal(1f, q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w, 4);
-            Assert.Equal(UnityEngine.Quaternion.identity.w, new PlayerStateMessage().GetFacingWorld().w);
+            Assert.Equal(-0.6f, s.FacingY);
+            var back = PlayerStateMessage.Deserialize(new NetDataReader(WireFuzz.Write(s).CopyData()));
+            UnityEngine.Quaternion q = back.GetFacingWorld();
+            Assert.Equal(0f, q.x, 6);
+            Assert.Equal(-0.6f, q.y, 6);
+            Assert.Equal(0f, q.z, 6);
+            Assert.Equal(0.8f, q.w, 5);
+            Assert.Equal(1f, q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w, 5);
         }
 
         [Fact]
-        public void Flag_enums_keep_their_full_bit_width_on_the_wire()
+        public void PlayerState_default_and_degenerate_facing_stay_unit_quaternions()
         {
-            var s = new PlayerStateMessage { AnimBools = (AnimBools)0xFFFFFFFFu, AnimTriggers = (AnimTriggers)0xFFFF };
+            var id = new PlayerStateMessage().GetFacingWorld();
+            Assert.Equal((0f, 0f, 0f, 1f), (id.x, id.y, id.z, id.w));
+            // |xyz| > 1 (corrupt packet): renormalized with w = 0, never NaN.
+            var big = new PlayerStateMessage { FacingX = 2f, FacingY = 0f, FacingZ = 0f }.GetFacingWorld();
+            Assert.Equal((1f, 0f), (big.x, big.w));
+            var nan = new PlayerStateMessage { FacingX = float.NaN }.GetFacingWorld();
+            Assert.Equal(1f, nan.w);
+            // A 180-degree yaw (w = 0) survives the implied-w encoding.
+            var s = new PlayerStateMessage();
+            s.SetFacingWorld(new UnityEngine.Quaternion(0f, 0f, 1f, 0f));
+            var half = s.GetFacingWorld();
+            Assert.Equal((0f, 1f), (half.w, half.z));
+        }
+
+        [Fact]
+        public void PlayerState_forward_quantizes_magnitude_to_a_byte()
+        {
+            var s = new PlayerStateMessage();
+            s.SetForward(0f);
+            Assert.Equal((byte)0, s.Forward);
+            s.SetForward(-1f);
+            Assert.Equal((byte)255, s.Forward);
+            s.SetForward(7f);
+            Assert.Equal((byte)255, s.Forward);
+            s.SetForward(0.5f);
+            Assert.InRange(s.ForwardAmount, 0.498f, 0.502f);
+        }
+
+        [Fact]
+        public void Pose_flags_and_cues_keep_their_full_bit_width_on_the_wire()
+        {
+            var s = new PlayerStateMessage { Flags = (PoseFlags)0xFF };
             var back = PlayerStateMessage.Deserialize(new NetDataReader(WireFuzz.Write(s).CopyData()));
-            Assert.Equal((uint)0xFFFFFFFFu, (uint)back.AnimBools);
-            Assert.Equal((ushort)0xFFFF, (ushort)back.AnimTriggers);
-            var o = AvatarOneShotMessage.Deserialize(new NetDataReader(WireFuzz.Write(new AvatarOneShotMessage { SenderPlayerId = 1, Triggers = AnimTriggers.SnapTrigger }).CopyData()));
-            Assert.Equal(AnimTriggers.SnapTrigger, o.Triggers);
+            Assert.Equal((byte)0xFF, (byte)back.Flags);
+            var o = AvatarOneShotMessage.Deserialize(new NetDataReader(WireFuzz.Write(new AvatarOneShotMessage { SenderPlayerId = 1, Cues = (AvatarCue)0xFF }).CopyData()));
+            Assert.Equal((byte)0xFF, (byte)o.Cues);
+        }
+
+        [Fact]
+        public void PlayerState_wire_size_is_57_bytes_plus_6_per_bone()
+        {
+            // Type byte + fixed fields + bone count, then 3 quantized angles per bone (see PlayerStateMessage docs).
+            Assert.Equal(57 - 1, WireFuzz.Write(new PlayerStateMessage()).Length);
+            Assert.Equal(57 - 1 + 83 * 6, WireFuzz.Write(new PlayerStateMessage { BoneRotations = new float[83 * 3] }).Length);
+        }
+
+        [Fact]
+        public void BonePose_slice_write_matches_a_copied_chunk()
+        {
+            var eulers = new float[10 * 3];
+            for (int i = 0; i < eulers.Length; i++) eulers[i] = i * 11.5f % 360f;
+            var chunk = new float[4 * 3];
+            System.Array.Copy(eulers, 3 * 3, chunk, 0, chunk.Length);
+            byte[] copied = WireFuzz.Write(new BonePoseMessage { SenderPlayerId = 2, TotalBones = 10, StartBone = 3, Eulers = chunk }).CopyData();
+            var w = new LiteNetLib.Utils.NetDataWriter();
+            BonePoseMessage.Write(w, 2, 10, 3, eulers, 3, 4);
+            Assert.Equal(copied, w.CopyData());
         }
 
         [Fact]

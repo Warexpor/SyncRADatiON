@@ -1,4 +1,4 @@
-// SyncRADation � positional FMOD audio on proxy via PlayOneShotAttached, combat SFX cache
+// Remote player sounds: positional FMOD one-shots on the proxy (steps, weapon, hurt, ladder) and the weapon SFX cache.
 using System;
 using System.Collections.Generic;
 using SyncRADation.Networking;
@@ -9,8 +9,8 @@ namespace SyncRADation.Players
 {
     public sealed class ProxyAudioSync
     {
-        private Transform _proxyTransform;
-        private GameObject _audioAnchor;
+        private readonly Transform _proxyTransform;
+        private readonly GameObject _audioAnchor;
         private bool _lastAiming;
         private bool _lastEmptyClick;
         private float _lastReloadTime;
@@ -64,57 +64,40 @@ namespace SyncRADation.Players
             ReadFMODPaths();
         }
 
+        private static GameObject LocalPlayer()
+        {
+            var p = LanNetworkManager.Instance?.GetLocalPlayer();
+            return p != null ? p : PlayerState.player;
+        }
+
+        /// <summary>The local Elster's own sound paths: the proxy plays what she would.</summary>
         private void ReadFMODPaths()
         {
-            GameObject player = null;
-            try { player = LanNetworkManager.Instance?.GetLocalPlayer(); } catch (Exception e) { Guard.Swallow(e); }
-            if (player == null) try { player = PlayerState.player; } catch (Exception e) { Guard.Swallow(e); }
-
+            GameObject player = LocalPlayer();
             if (player == null)
             {
                 PlaytestLog.Warn("Audio", "no local player for FMOD paths");
                 return;
             }
-
             try
             {
                 var efs = player.GetComponentInChildren<ElsterFootstepSFX>(true);
                 if (efs != null && efs.stepSource != null && efs.stepSource.clip != null)
                     _footstepClip = efs.stepSource.clip;
-            }
-            catch (Exception e) { Guard.Swallow(e); }
-
-            try
-            {
                 var hs = player.GetComponentInChildren<ElsterHurtSound>(true);
                 if (hs != null) _hurtPath = hs.HurtSound;
-            }
-            catch (Exception e) { Guard.Swallow(e); }
-
-            try
-            {
                 var pa = player.GetComponentInChildren<PlayerAttack>(true);
                 if (pa != null)
                 {
                     _drawSound = pa.drawSound;
                     _holsterSound = pa.holsterSound;
                 }
-            }
-            catch (Exception e) { Guard.Swallow(e); }
-
-            try
-            {
                 var sc = player.GetComponentInChildren<StepSoundClass>(true);
                 if (sc != null) _footstepPath = sc.audioStep;
-            }
-            catch (Exception e) { Guard.Swallow(e); }
-
-            try
-            {
                 var inv = player.GetComponentInChildren<InventoryBase>(true);
                 if (inv != null) _reloadFMODPath = inv.reloadSound;
             }
-            catch (Exception e) { Guard.Swallow(e); }
+            catch (Exception e) { Guard.Swallow("ProxyAudio.paths", e); }
 
             PlaytestLog.Event("Audio", "cached footstep=" + (_footstepPath ?? "null")
                 + " hurt=" + (_hurtPath ?? "null")
@@ -136,9 +119,7 @@ namespace SyncRADation.Players
         /// <summary>Distance from this proxy to the local Elster (MaxValue when there is none).</summary>
         private float DistToLocal()
         {
-            GameObject localPlayer = null;
-            try { localPlayer = LanNetworkManager.Instance?.GetLocalPlayer(); } catch (Exception e) { Guard.Swallow(e); }
-            if (localPlayer == null) try { localPlayer = PlayerState.player; } catch (Exception e) { Guard.Swallow(e); }
+            GameObject localPlayer = LocalPlayer();
             if (localPlayer == null) return float.MaxValue;
             return Vector3.Distance(_proxyTransform.position, localPlayer.transform.position);
         }
@@ -147,63 +128,45 @@ namespace SyncRADation.Players
         private const float NearRange = 40f;
         private const float FarRange = 75f;
 
-        /// <summary>Edge sounds of the reliable one-shot triggers (shot, reload, hurt).</summary>
-        public void OnTriggers(WeaponType weapon, AnimTriggers triggers)
+        /// <summary>Sounds of the reliable edge cues (shot, reload, hurt).</summary>
+        public void OnCues(WeaponType weapon, AvatarCue cues)
         {
-            if (_proxyTransform == null || triggers == AnimTriggers.None) return;
+            if (cues == AvatarCue.None) return;
             EnsurePaths();
-            PlayTriggerSounds(weapon, triggers, DistToLocal());
-        }
-
-        private void PlayTriggerSounds(WeaponType weapon, AnimTriggers triggers, float distToLocal)
-        {
-            if (triggers == AnimTriggers.None) return;
-            bool nearby = distToLocal < NearRange;
-            bool farRange = distToLocal < FarRange;
+            float dist = DistToLocal();
+            bool nearby = dist < NearRange;
+            bool farRange = dist < FarRange;
             float now = Time.unscaledTime;
 
-            // Live shot — Fire pulse only (Shooting-held used to bang on empty clicks)
-            if (farRange && triggers.HasFlag(AnimTriggers.Fire))
+            if (farRange && (cues & AvatarCue.Fire) != 0)
                 PlayShootSound(weapon);
 
-            // Reload — medium range
-            if (farRange && triggers.HasFlag(AnimTriggers.ReloadTrigger) && now - _lastReloadTime > ReloadCooldown)
+            if (farRange && (cues & AvatarCue.Reload) != 0 && now - _lastReloadTime > ReloadCooldown)
             {
                 PlayReloadSound(weapon);
                 _lastReloadTime = now;
             }
 
-            // Hurt — nearby
-            if (nearby && triggers.HasFlag(AnimTriggers.Hurt) && now - _lastHurtTime > HurtCooldown)
+            if (nearby && (cues & AvatarCue.Hurt) != 0 && now - _lastHurtTime > HurtCooldown)
             {
                 PlayFMODAttached(_hurtPath, 0.5f);
                 _lastHurtTime = now;
             }
         }
 
-        private int _tickCount;
-        /// <summary>Per received pose: edge / state sounds (empty click, draw, footsteps, swap, ladder start).</summary>
-        public void Tick(PlayerStateMessage state, AnimBools bools, AnimTriggers triggers)
+        /// <summary>Per received pose: state-edge sounds (empty click, draw, footsteps, swap, ladder start).</summary>
+        public void Tick(PlayerStateMessage state)
         {
-            if (_proxyTransform == null) return;
             EnsurePaths();
+            var flags = state.Flags;
+            bool aiming = (flags & PoseFlags.Aiming) != 0;
+            bool emptyClick = (flags & PoseFlags.EmptyClick) != 0;
+            bool climbing = (flags & PoseFlags.Climbing) != 0;
 
-            _tickCount++;
-            bool aiming = bools.HasFlag(AnimBools.Aiming) || state.AimingTime > 0.5f;
-            bool emptyClick = bools.HasFlag(AnimBools.EmptyClick);
-
-            // Distance check: only play proxy sounds if within hearing range of local player
             float distToLocal = DistToLocal();
-
-            // Log every ~500 ticks
-            if (_tickCount % 2000 == 0)
-                PlaytestLog.Verbose("Audio", "tick#" + _tickCount + " step=" + state.StepHappened
-                    + " dist=" + distToLocal.ToString("F1"));
-
             bool nearby = distToLocal < NearRange;
             bool farRange = distToLocal < FarRange;
 
-            PlayTriggerSounds(state.Weapon, triggers, distToLocal);
             if (nearby && emptyClick && !_lastEmptyClick)
                 PlayEmptySound(state.Weapon);
             if (nearby && aiming && !_lastAiming)
@@ -211,44 +174,37 @@ namespace SyncRADation.Players
             _lastEmptyClick = emptyClick;
             _lastAiming = aiming;
 
-            // Footsteps — StepHappened from the sender's loop; run vs walk is an FMOD param.
-            if (nearby && state.StepHappened)
+            // Footsteps: Step from the sender's locomotion loop; run vs walk is an FMOD param.
+            if (nearby && (flags & PoseFlags.Step) != 0)
             {
-                bool running = state.AnimBools.HasFlag(AnimBools.Running);
-                float vol = running ? 0.7f : 0.4f + Mathf.Abs(state.Forward) * 0.2f;
-                if (vol > 1f) vol = 1f;
+                bool running = (flags & PoseFlags.Running) != 0;
+                float vol = running ? 0.7f : 0.4f + state.ForwardAmount * 0.2f;
                 if (!string.IsNullOrEmpty(_footstepPath))
                     WorldSfx.PlayFootstep(_footstepPath, _audioAnchor.transform, running, vol);
                 else if (_footstepClip != null)
                     AudioSource.PlayClipAtPoint(_footstepClip, _proxyTransform.position, vol * (running ? 0.85f : 0.6f));
             }
 
-            // Weapon swap — medium range
-            if (farRange && state.Weapon != _lastWeapon)
+            // Weapon swap: holster / draw. The first pose only sets the baseline; a swap out of range is not replayed later.
+            if (state.Weapon != _lastWeapon)
             {
-                if (_hasReceivedFirst)
-                {
-                    if (state.Weapon == WeaponType.None)
-                        PlayFMODAttached(_holsterSound, 0.3f);
-                    else
-                        PlayFMODAttached(_drawSound, 0.3f);
-                }
+                if (_hasReceivedFirst && farRange)
+                    PlayFMODAttached(state.Weapon == WeaponType.None ? _holsterSound : _drawSound, 0.3f);
                 _lastWeapon = state.Weapon;
-                _hasReceivedFirst = true;
             }
+            _hasReceivedFirst = true;
 
-            // Ladder climb start — same 3D falloff pipeline as doors. The cue itself plays from LateTick.
-            if (state.Climbing && !_wasClimbing)
+            // Ladder climb start: same 3D falloff pipeline as doors. The cue itself plays from LateTick.
+            if (climbing && !_wasClimbing)
                 _climbTimer = LadderCueDelay;
-            else if (!state.Climbing)
+            else if (!climbing)
                 _climbTimer = 0f;
-            _wasClimbing = state.Climbing;
+            _wasClimbing = climbing;
         }
 
-        /// <summary>Every frame (RemotePlayerProxy.LateFxTick): delayed cues on real time, packets or not.</summary>
+        /// <summary>Every frame (RemotePlayerProxy.LateTick): delayed cues on real time, packets or not.</summary>
         public void LateTick()
         {
-            if (_proxyTransform == null) return;
             float dt = Mathf.Min(Time.unscaledDeltaTime, 0.1f);
             if (_climbTimer > 0f)
             {
@@ -375,32 +331,20 @@ namespace SyncRADation.Players
                 foreach (var w in weapons)
                 {
                     if (w == null || w.parentItem == null) continue;
-                    try
+                    WeaponType wt = WeaponUtils.ItemToWeaponType(w.parentItem._item);
+                    if (wt == WeaponType.None) continue;
+                    if (!string.IsNullOrEmpty(w.shotMod) && !_shootFMOD.ContainsKey(wt))
                     {
-                        WeaponType wt = WeaponUtils.ItemToWeaponType(w.parentItem._item);
-                        if (wt == WeaponType.None) continue;
-
-                        // Read FMOD event paths (string fields — no IL2CPP serialization bug)
-                        if (!string.IsNullOrEmpty(w.shotMod) && !_shootFMOD.ContainsKey(wt))
-                        {
-                            _shootFMOD[wt] = w.shotMod;
-                            shotCount++;
-                        }
-                        if (!string.IsNullOrEmpty(w.reloadMod) && !_reloadFMOD.ContainsKey(wt))
-                        {
-                            _reloadFMOD[wt] = w.reloadMod;
-                            reloadCount++;
-                        }
-
-                        if (!string.IsNullOrEmpty(w.emptyMod) && !_emptyFMOD.ContainsKey(wt))
-                            _emptyFMOD[wt] = w.emptyMod;
-
-                        PlaytestLog.Verbose("Audio", "weapon " + wt
-                            + " shot=" + (w.shotMod ?? "null")
-                            + " empty=" + (w.emptyMod ?? "null")
-                            + " reload=" + (w.reloadMod ?? "null"));
+                        _shootFMOD[wt] = w.shotMod;
+                        shotCount++;
                     }
-                    catch (Exception e) { Guard.Swallow(e); }
+                    if (!string.IsNullOrEmpty(w.reloadMod) && !_reloadFMOD.ContainsKey(wt))
+                    {
+                        _reloadFMOD[wt] = w.reloadMod;
+                        reloadCount++;
+                    }
+                    if (!string.IsNullOrEmpty(w.emptyMod) && !_emptyFMOD.ContainsKey(wt))
+                        _emptyFMOD[wt] = w.emptyMod;
                 }
 
                 PlaytestLog.Event("Audio", "weapon FMOD shot=" + shotCount + " reload=" + reloadCount);
