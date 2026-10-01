@@ -20,13 +20,14 @@ namespace SyncRADation.Networking
 {
     internal static class CutsceneSync
     {
+        // persistent: holder object only; its stamps are cleared on scene change / session reset by InteractionSyncService.OnSceneChanged
         static readonly CutsceneStamps _stamps = new CutsceneStamps();
 
         static float Now => Time.unscaledTime;
 
         static string Hex(ulong id) => id.ToString("X16");
 
-        /// <summary>Scene change / session reset: stamps are per-scene WorldIds.</summary>
+        /// <summary>Scene change / session reset (via InteractionSyncService.OnSceneChanged): stamps are per-scene WorldIds.</summary>
         public static void OnSceneChanged() => _stamps.Clear();
 
         /// <summary>This peer's coroutine for the cutscene is live (started here, not completed).</summary>

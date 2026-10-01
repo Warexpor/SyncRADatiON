@@ -45,8 +45,9 @@ namespace SyncRADation.Networking
         // callbacks could otherwise start a load of their own on the follower.
         static int _suppressLoads;
 
-        // Build-settings scene names by build index: fixed for the process (pure cache, never reset).
+        // persistent: build-settings scene names by build index, fixed for the process
         static string[] _buildNames;
+        // persistent: same names as a set
         static System.Collections.Generic.HashSet<string> _buildSet;
 
         public static void Reset()

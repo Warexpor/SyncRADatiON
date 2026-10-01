@@ -69,7 +69,7 @@ namespace SyncRADation.Patches
             }
             // Client write outside an apply scope. Book / EventScreen flags keep their immediate request;
             // everything else (Interaction.trigger UnityEvents, cutscene coroutines, NPC / pickup flags) is
-            // coalesced and forwarded so it is no longer silently dropped. Local write always happens.
+            // coalesced and forwarded, so the shared story gets it. The local write always happens.
             if (IsInspectOrigin())
             {
                 if (!StorySyncService.ForwardSuppressed && !StorySyncService.SameAsLocal(e))
@@ -94,12 +94,11 @@ namespace SyncRADation.Patches
 
         static bool IsInspectOrigin()
         {
-            try { if (PlayerState.eventScreen) return true; } catch (Exception e) { Guard.Swallow(e); }
             try
             {
+                if (PlayerState.eventScreen) return true;
                 var gs = PlayerState.gameState;
-                if (gs == PlayerState.gameStates.eventScreen || gs == PlayerState.gameStates.book)
-                    return true;
+                return gs == PlayerState.gameStates.eventScreen || gs == PlayerState.gameStates.book;
             }
             catch (Exception e) { Guard.Swallow(e); }
             return false;
@@ -136,14 +135,7 @@ namespace SyncRADation.Patches
         public static void Finalizer()
         {
             StorySyncService.EndSuppressForward();
-            try
-            {
-                var story = LanNetworkManager.Instance?.StorySync;
-                story?.ResetEndBase();
-                // The live slot was replaced wholesale (wipe reload / Continue): clients get a FULL, authoritative dump.
-                if (NetGate.Host) story?.RequestAuthoritativeFull();
-            }
-            catch (System.Exception ex) { StorySyncService.WarnOnce("Load ResetEndBase", ex); }
+            LanNetworkManager.Instance?.StorySync.OnSlotReplaced();
         }
     }
 
@@ -155,13 +147,7 @@ namespace SyncRADation.Patches
         public static void Finalizer()
         {
             StorySyncService.EndSuppressForward();
-            try
-            {
-                var story = LanNetworkManager.Instance?.StorySync;
-                story?.ResetEndBase();
-                if (NetGate.Host) story?.RequestAuthoritativeFull();
-            }
-            catch (System.Exception ex) { StorySyncService.WarnOnce("NewGame ResetEndBase", ex); }
+            LanNetworkManager.Instance?.StorySync.OnSlotReplaced();
         }
     }
 
@@ -170,8 +156,8 @@ namespace SyncRADation.Patches
     // pos / rot / queuedForRespawn / permadeath per enemy), RadioManager.OnDisable + SaveState (RadioFreq),
     // HelpInputPrompts.OnDisable + SaveState (prompt flag), InventoryBase.SaveState (selectedSlot),
     // MinimapPOIManager.Save / PersistentMinimapManager.Save (minimap discovery), SaveGameScreenshotMaker.save
-    // (screenshot path). A client scene change used to flood the host with these (client puppets' default
-    // permadeath=false could overwrite the host's dead state; radio freq became shared): never forward them.
+    // (screenshot path). Forwarded, a client scene change would flood the host with these (client puppets' default
+    // permadeath=false would overwrite the host's dead state; radio freq would become shared): never forward them.
     // Shared puzzle/door *SaveState/OnDisable writers (Keypad3D, ConnectedDoors, CryoDoorLock, ...) are deliberately
     // NOT here: those are world state the host dedupes (SameAsLocal) and commits.
     [HarmonyPatch(typeof(EnemyController), "Save")]
@@ -595,7 +581,7 @@ namespace SyncRADation.Patches
     // Every Dialoguer dialogue is local to the peer that opened it: shipped content only starts flavor ids (all 1282
     // serialized Dialogue._dialogue are 0 / 20 / 22, InteractiveLockSingle forces 20, ItemPickup uses 6 / 17 / 25 / 26),
     // so there is no host-authored dialogue to mirror. Continue / End always run natively on the pressing peer: a
-    // forwarded hold-cancel used to close every peer's line / yes-no prompt. What is left is the local key-ring name
+    // forwarded hold-cancel would close every peer's line / yes-no prompt. What is left is the local key-ring name
     // binding: Dialoguer global strings s0 / s3 hold the item name a use / inspect line shows, and story dumps overwrite
     // them with the host's last use.
     // Detours reaching this gate (RVA folding, script.json): Dialoguer.StartDialogue(int, cb) = 0x426320 =

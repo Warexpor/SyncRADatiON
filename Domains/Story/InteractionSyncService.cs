@@ -416,6 +416,9 @@ namespace SyncRADation.Networking
             return true;
         }
 
+        /// <summary>Scene change / session reset of the request dedupe (cutscene start / skip stamps are per-scene WorldIds).</summary>
+        public static void OnSceneChanged() => CutsceneSync.OnSceneChanged();
+
         private static T Find<T>(ulong worldId) where T : Component => FindAlive<T>(worldId, "Interact");
 
         /// <summary>WorldId lookup that also rejects a destroyed object (Unity's overloaded == null). Shared by the Story services.</summary>

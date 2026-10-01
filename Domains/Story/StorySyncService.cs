@@ -51,7 +51,7 @@ namespace SyncRADation.Networking
         private static int _authorDepth;
         private static int _suppressForward;
 
-        // Warn-once sites (per process): a recurring fault logs one line.
+        // persistent: warn-once set (a recurring fault logs one line per process)
         private static readonly HashSet<string> _warned = new HashSet<string>();
 
         /// <summary>True while a client-applied presentation runs UnityEvents whose SProgress writes must reach the host.</summary>

@@ -24,9 +24,6 @@ namespace SyncRADation.Networking
         /// <summary>True while a client replays the host's DetermineEnding (Finale.determineEnding, CalculatePlaystyle suppressed).</summary>
         public static bool InEndingApply => _endingApply;
 
-        /// <summary>Host: the ending was already started + broadcast this scene.</summary>
-        public bool EndingBroadcasted => _endingBroadcast;
-
         void ResetEnd()
         {
             _endBaseValid = false;
@@ -90,8 +87,15 @@ namespace SyncRADation.Networking
             return false;
         }
 
-        /// <summary>After SaveManager.Load/NewGame the statics were replaced wholesale: do not treat that as a delta.</summary>
-        public void ResetEndBase() => _endBaseValid = false;
+        /// <summary>
+        /// SaveManager.Load / NewGame replaced the live slot and the END statics wholesale (wipe reload / Continue): the
+        /// new statics are not a delta, and the host's next full dump is authoritative.
+        /// </summary>
+        public void OnSlotReplaced()
+        {
+            _endBaseValid = false;
+            if (NetGate.Host) RequestAuthoritativeFull();
+        }
 
         private void CaptureEndBase(int[] cur, float healed)
         {
