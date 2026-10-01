@@ -412,6 +412,8 @@ namespace SyncRADation.Patches
         // Instance ids of robots seen moving (local per-frame edge state, never sent).
         static readonly HashSet<int> _wasMoving = new HashSet<int>();
 
+        internal static void Reset() => _wasMoving.Clear();
+
         [HarmonyPostfix]
         public static void Postfix(RES_LibraryPC __instance)
         {

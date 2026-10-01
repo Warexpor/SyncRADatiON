@@ -170,6 +170,7 @@ namespace SyncRADation.Networking
             // and rescanned for this load; dropping it again made every load scan the scene twice.
             EnvEmit.ClearOnce();
             BiodomeLockPatch.Reset();
+            LibraryPcUpdatePatch.Reset();
             _scanned = false;
             _needFullSend = true;
             _unicastFull = false;
@@ -549,6 +550,11 @@ namespace SyncRADation.Networking
                 PrimeClientBaseline("no host dump within " + ClientDumpWait.ToString("0") + "s");
                 return;
             }
+            SendClientDiff(net);
+        }
+
+        void SendClientDiff(LanNetworkManager net)
+        {
             _tickLocal.Clear();
             ReadAll(_tickLocal, false, clientFilter: true, activeOnly: true, firstIsBaseline: true, dampEcho: true);
             if (_tickLocal.Count == 0) return;
@@ -558,6 +564,28 @@ namespace SyncRADation.Networking
             if (ModRuntime.VerboseLogging)
                 PlaytestLog.Verbose("Puzzle", "client diff " + _tickLocal.Count + " " + Describe(_tickLocal));
             net.SendPuzzleState(_tickLocal, false);
+        }
+
+        /// <summary>
+        /// Read + send the pending local diff now instead of on the next 0.5 s tick (a dump or scene change is about
+        /// to happen). Diff only: no full dump, no client seeding; nothing while unscanned or inside a unicast scope.
+        /// </summary>
+        public void FlushDiffNow()
+        {
+            var net = LanNetworkManager.Instance;
+            if (net == null || !net.IsConnected || !net.HasReadyPeers || net.UnicastActive) return;
+            if (!Config.ModConfig.PuzzlesEnabled || !_scanned) return;
+            float t0 = Time.realtimeSinceStartup;
+            try
+            {
+                if (net.Role == NetworkRole.Host) TickHost(net, false);
+                else if (_clientLive) SendClientDiff(net);
+                _sendTimer = 0f;
+            }
+            finally
+            {
+                HitchTrace.Cost("puzzle", (Time.realtimeSinceStartup - t0) * 1000f);
+            }
         }
 
         void TickHost(LanNetworkManager net, bool full)
@@ -1067,7 +1095,7 @@ namespace SyncRADation.Networking
         /// A solved entry of this type is held under a WorldId no local component has, and candidateId (an unsolved
         /// component of the same type) is one the host never sent: only then is candidateId the local copy of that
         /// entry (a WorldId mismatch). A pad the host knows by its own id is never snapped by someone else's entry,
-        /// and types never stand in for each other (an unmatched pattern lock used to solve every cryo pad).
+        /// and types never stand in for each other (an unmatched pattern lock would otherwise solve every cryo pad).
         /// </summary>
         bool IPuzzleDomainHost.HeldUnmatched(PuzzleType type, ulong candidateId)
         {
