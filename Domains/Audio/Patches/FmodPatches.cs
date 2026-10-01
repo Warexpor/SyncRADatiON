@@ -17,6 +17,11 @@ namespace SyncRADation.Patches
         {
             if (NetGate.IsApplying && FmodEmitterSync.IsDoorEmitter(__instance))
                 return false;
+            // A remote action applied here (puzzle onSolved, interaction) must not sound in another room: the
+            // cryo OverridePanel_Solved emitter sits on a far-off 3D event-screen stage and plays 2D, so the
+            // host heard the client's solve from across the ship. Postfix still relays it on the host.
+            if (NetGate.IsApplying && !FmodEmitterSync.AudibleHere(__instance != null ? __instance.gameObject : null))
+                return false;
             return true;
         }
 
@@ -82,6 +87,8 @@ namespace SyncRADation.Patches
         {
             if (FmodEmitterSync.ShouldBlockDoorOneShot(path))
                 return false;
+            if (NetGate.IsApplying && !FmodEmitterSync.AudibleHere(gameObject))
+                return false;
             return true;
         }
 
@@ -111,6 +118,8 @@ namespace SyncRADation.Patches
         {
             string path = FmodEmitterSync.PathFromGuid(guid);
             if (FmodEmitterSync.ShouldBlockDoorOneShot(path))
+                return false;
+            if (NetGate.IsApplying && !FmodEmitterSync.AudibleHere(gameObject))
                 return false;
             return true;
         }

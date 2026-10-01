@@ -32,17 +32,21 @@ namespace SyncRADation.Sync
             _now.Clear();
             var dict = InventoryManager.elsterItems;
             if (dict == null) return;
-            var en = dict.GetEnumerator();
+            // Walk the keys and ask the native getCount: the Il2Cpp KeyValuePair enumerator returns garbage
+            // values here ("None x2090114272").
+            var en = dict.Keys.GetEnumerator();
             while (en.MoveNext())
             {
-                var key = en.Current.key;
-                if (key == null || en.Current.value <= 0) continue;
+                var key = en.Current;
+                if (key == null) continue;
                 int id = (int)key._item;
+                if (id == (int)Items.itemlist.None) continue;
+                int n = InventoryManager.getCount(key);
+                if (n <= 0) continue;
                 int c;
                 _now.TryGetValue(id, out c);
-                _now[id] = c + en.Current.value;
+                _now[id] = c + n;
             }
-            en.Dispose();
 
             if (!_primed)
             {

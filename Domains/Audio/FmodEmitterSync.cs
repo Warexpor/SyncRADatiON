@@ -552,6 +552,31 @@ namespace SyncRADation.Networking
             HostOneShot(path, position);
         }
 
+        /// <summary>
+        /// Local playback gate for a sound a remote action triggers here: a source inside a Room plays only when
+        /// that Room is the local player's current room (event-screen stages sit far from their room and play
+        /// 2D, so distance alone lets them through); a source outside any Room falls back to the door distance.
+        /// </summary>
+        public static bool AudibleHere(GameObject go)
+        {
+            if (go == null) return true;
+            try
+            {
+                Room room = null;
+                Transform t = go.transform;
+                while (t != null && room == null)
+                {
+                    room = t.GetComponent<Room>();
+                    t = t.parent;
+                }
+                var here = PlayerState.currentRoom;
+                if (room != null && here != null) return room == here;
+                float vol;
+                return WorldSfx.TryVolume(go.transform.position, out vol);
+            }
+            catch (System.Exception e) { Guard.Swallow(e); return true; }
+        }
+
         public static bool ShouldBlockDoorOneShot(string path)
         {
             return NetGate.IsApplying && IsDoorSfxPath(path);
