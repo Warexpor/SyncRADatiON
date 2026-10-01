@@ -84,7 +84,7 @@ UI/ Config/ Cheats/
 
 Same PC. **Steam = host. Copy = client.** Both are Windows SIGNALIS under Proton. F3 is `127.0.0.1:7777`. `VerboseLogging` off unless hunting FMOD / proxy clone. `boot.config` `single-instance=0` on both. MelonLoader **0.5.7** on both (`version.dll` + `MelonLoader/`).
 
-Proton will ignore MelonLoader’s `version.dll` unless native wins over Wine’s builtin. Host Steam launch options: `WINEDLLOVERRIDES="version=n,b" %command% -screen-fullscreen 0 -screen-width 2560 -screen-height 720` (also prefix `DllOverrides`). `secondsignalis` uses the same. Hyprland floats **Steam host top-half** (`steam_app_1262350`) and **Proton client bottom-half** (`SIGNALIS.exe`) for dual-box playtest.
+Proton will ignore MelonLoader’s `version.dll` unless native wins over Wine’s builtin. Host Steam launch options: `WINEDLLOVERRIDES="version=n,b" %command% -screen-fullscreen 0 -screen-width 1280 -screen-height 720` (also prefix `DllOverrides`). `secondsignalis` uses the same. Hyprland floats both as centered 16:9 half-height windows (1280x720 physical): **Steam host top** (`steam_app_1262350`), **Proton client bottom** (`SIGNALIS.exe`); the host size also lives in its prefix registry (`Screenmanager Resolution Width/Height`) for dual-box playtest.
 
 | Role | Install | Launch | MelonLoader log |
 |------|---------|--------|-----------------|

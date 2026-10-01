@@ -27,7 +27,7 @@ export STEAM_COMPAT_DATA_PATH="$COMPAT_DATA"
 export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:-version=n,b}"
 
 # Keep dual-instance friendly; match Steam host Proton.
-# Half-height windowed so Hyprland can stack host (top) + client (bottom).
+# 16:9 half-height windowed (1280x720) so Hyprland can stack host (top) + client (bottom).
 cd "$GAME_DIR"
 exec "$PROTON_DIR/proton" run "$GAME_DIR/SIGNALIS.exe" \
-  -screen-fullscreen 0 -screen-width 2560 -screen-height 720 "$@"
+  -screen-fullscreen 0 -screen-width 1280 -screen-height 720 "$@"
