@@ -31,6 +31,7 @@ Protocol **v18** (`PlayerState` rebuilt for an Animator-less proxy, `PlayerRoste
   - **A solved cryo/pattern entry the client could not match snapped the next unrelated pad/lock in the scene to solved** and unlocked the cryo doors for the party.
   - **After re-entering a scene the client ignored the host's puzzle updates** (an old stored sequence number outranked the host's restarted one).
   - **Solving a puzzle started its cutscene for players in other rooms** (mural, pump, radio, incinerator, cable car): live consequences now run only in the solver's room (`PuzzleEdge.InRoom`).
+  - **PEN_Wreck cryo override pattern lock: a late joiner never got the solved panel state** (Cryo / Inter on, Pivot off) — the durable form now replays the SetActive part of `onSolved`; **ROT keypad and the MED / LAB elemental locks exited a player's screen when solved in another room**; the library PC success sound played on join dumps.
   - **Cable car rode the wrong way on the observer** and ping-ponged; **echo damping swallowed a real quick re-toggle**; **storage lid sync never worked** (it now poses the lid only, never opening the other player's box screen); **incinerator replayed its whole shutdown on late join**; **room entry reverted recent puzzle changes**; **EXC elevator late-join pose used the wrong axis**; several `Update` postfixes did full reads every frame.
 - **Story**
   - **One player skipping a dialogue line closed everyone's dialogue** — dialogues are now local (every shipped dialogue is flavor text).
@@ -52,6 +53,7 @@ Protocol **v18** (`PlayerState` rebuilt for an Animator-less proxy, `PlayerRoste
 - **Dead keypad paths** — `Keypad3D.openDoor` / `ROT_Keypad.verify` / `PEN_Codepad.CheckSolution` patches never fired (native `Update` inlines them) and the host `KeypadSubmit` handler built an `openDoor` iterator that never ran; removed (the `KeypadSubmit` kind is retired, solves sync as live puzzle state).
 
 ### Changed (structure)
+- **Puzzle spec table**: one `PuzzleTypeSpec` row per puzzle type (`Domains/Puzzles/PuzzleSpecs.cs`) replaces eight parallel tables and switches; every live consequence goes through the room-aware `PuzzleEdge`; a failed apply is retried; Puzzles shrank from 9.4k to 6.8k lines (try/catch sites 556 → 28).
 - **Proxy without an Animator**: every one of Elster's 238 clips only drives humanoid muscles / root / IK goals, so the synced 83 bone rotations + hips replace it fully. The parameter plumbing (~580 lines) is gone; `PlayerState` shrank from 605 to 555 bytes (`PoseFlags`, `AvatarCue`, implied-w facing).
 - **One reset system**: `SessionReset` with `Scene` / `Session` / `Connection` scopes replaces three overlapping mechanisms (registry + explicit stop list + ~10 `OnSceneChanged` chains). `StaticStateGuardTests` fails on any mutable static that is neither reset nor marked `// persistent: <reason>`.
 - **Dump completeness**: `DumpFlush` runs every domain's `FlushDiffNow` before a join / resync dump; full sends inside a unicast never record "already sent".

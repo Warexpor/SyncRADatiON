@@ -20,7 +20,9 @@ Authority: `docs/SYNC.md`; reverse-check rule: repo root `AGENTS.md`. Wire in `N
 | Residency / key grid / photo / safe / drawer (64–72) | `Puzzles/Residency/ResidencyPuzzleSyncService` | |
 | GunCase / AraNest / RifleQuest / Microfiche (73–76) | `Puzzles/ChapterExtras/ChapterExtraPuzzleSyncService` | Protocol 10 |
 | World-object puzzles (ROT_DiskManager, DET_WallCreature, MapReveal, MEM_ChecklistLogic; 78–81) | `Puzzles/ChapterExtras/WorldObjectPuzzleSyncService` | Protocol 13; `Seq`/`Mask` cell merge |
-| Solved-edge rule (live rising edge vs join dump / held re-snap) | `Puzzles/PuzzleEdge` | Live runs native onSolved; dump/held runs idempotent durable form |
+| Adding / changing a puzzle type (reader, applier, scan, emit/durable/merge/progressed rules) | `Puzzles/PuzzleSpecs.cs` (one `PuzzleTypeSpec` row per type) | `PuzzleSpecTests` fails if an enum value has no row; merge logic in `Puzzles/PuzzleMerge` |
+| Solved-edge rule (live rising edge vs join dump / held re-snap) | `Puzzles/PuzzleEdge` (`Solved`, `InRoom`, `ReplayDurable`) | Live onSolved only for a player in that room; everyone else gets the durable form |
+| MultiCondition / SaveRoom / CutsceneCompleted / Dialogue playedOnce state | `Puzzles/StoryFlags/StoryFlagPuzzleSyncService` | On the PuzzleState poll |
 | Storage **lid** open | `Puzzles/Storage/StorageLidSyncService` | Host poll + client emit |
 | Storage **box items** (put/take, blob) | `Inventory/StorageService` (host put/take, `StorageTxn`, acks) + `Inventory/StorageBoxSyncService` (blob) + `Inventory/Patches/StorageBoxPatches` | Shared box; bag/box walks in `Inventory/ItemBag` |
 | UseItem world unlock / airlock card | `Puzzles/UseItem/` + `Inventory/Patches/UseItem*` | Party ring + PerPlayerUse |
@@ -71,7 +73,7 @@ Authority: `docs/SYNC.md`; reverse-check rule: repo root `AGENTS.md`. Wire in `N
 
 **Dropped items:** Registry (lookup/lifecycle) + Spawner (clone/floor) + NetHandlers (drop/claim wire). Call them directly; `DroppedItemManager` only forwards for the few callers that still use it.
 
-**Puzzles:** `PuzzleSyncService` = coordinator (scan, tick, held, `_mutateWorld`, host relay). Domain SyncServices own family TryRead/Apply/snap. Call sites may still use `PuzzleSyncService.Snap*` forwards.
+**Puzzles:** `PuzzleSyncService` = coordinator (scan, tick, held, `_mutateWorld`, host relay), driven by the `PuzzleSpecs` table. Domain SyncServices own family TryRead/Apply/snap; patches emit through `EnvEmit.Edge`.
 
 ## Empty / incomplete (do not assume)
 
