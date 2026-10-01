@@ -30,6 +30,8 @@ Read with `grep -a` (non-UTF8 bytes). Connected lines are prefixed `H ` (host) /
 
 **Event cam** (`Sync/EventCamTrace.cs`): `[EventCam] click …` explains every click in a zoom-in puzzle (inputs, cursor, zoom, interaction under the cursor, `MOD-KILLED`).
 
+**Move** (`Sync/MoveTrace.cs`): `[Move] BLOCKED …` when the local player holds a direction for 1 s without moving: every native movement gate (gameState, charState, suspendInput, hurt/stun, animating/useAnim/grappled, cutscene/eventScreen flags, overrideInput, MoveOverrideActive, controller/rigidbody state, foto mode, tuner) plus the solid 3D colliders within 1.2 units; `[Move] free` when walking works again.
+
 **Bag** (`Sync/BagTrace.cs`): `[Bag] start/change` lines with the raw bag contents (not the ring masquerade).
 
 **VerboseLogging** (`[SyncRADation]` pref, default `false`, set on **both** installs and restart): only when hunting FMOD Play/Stop, proxy clone/FX (`[Proxy]`/`[DRV]`) or incremental puzzle apply diffs.

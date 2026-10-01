@@ -28,6 +28,7 @@ namespace SyncRADation
             SessionReset.Register("SourceAnim", SourceAnimReader.Reset);
             SessionReset.Register("FlickerTrace", FlickerTrace.Reset);
             SessionReset.Register("BagTrace", BagTrace.Reset);
+            SessionReset.Register("MoveTrace", MoveTrace.Reset);
             SessionReset.Register("Airlock", AirlockCinematic.Reset);
             SessionReset.Register("DialoguerFlavor", DialoguerGate.ResetSession);   // flavor + held dialogue callbacks + _depth/_localEnd
             SessionReset.Register("EventZone", EventZonePatch.OnSceneChanged);          // fired sets, keypad/use-item dedupe
