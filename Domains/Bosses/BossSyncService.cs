@@ -1,4 +1,5 @@
-// Host-authoritative boss sync via WorldId
+// Host-authoritative END (Falke) / LAB Chimera / MED Mynah boss snapshots by WorldId; clients halt their copies.
+// Kolibri / Adler ride PuzzleState (TryReadPuzzle / Apply* below) and are held by KolibriAdlerAuthPatches.
 using System;
 using System.Collections.Generic;
 using SyncRADation.Players;
@@ -15,33 +16,31 @@ namespace SyncRADation.Networking
 
         private const float SendInterval = 1f / 15f;
 
-        /// <summary>Join/resync dump: bypass send timer so mid-phase state is in the unicast snapshot.</summary>
+        /// <summary>Send on the next tick; inside a join dump, the tick sends the unicast snapshot right away.</summary>
         public void RequestFullSend() => _forceSend = true;
 
-        private readonly Dictionary<long, (MonoBehaviour comp, BossType type)> _hostToLocal
-            = new Dictionary<long, (MonoBehaviour comp, BossType type)>();
-
+        // Scene boss cache: the controllers, their WorldIds (parallel arrays, taken once from the WorldId cache) and
+        // the reverse map the snapshot apply resolves a wire id with.
+        private struct BossRef
+        {
+            public MonoBehaviour Comp;
+            public BossType Type;
+        }
         private END_Boss[] _endBosses = Array.Empty<END_Boss>();
         private LAB_ChimeraBoss[] _chimeras = Array.Empty<LAB_ChimeraBoss>();
         private MED_MynahBoss[] _mynahs = Array.Empty<MED_MynahBoss>();
-        // WorldIds per cached boss (parallel to the arrays above), taken once when the cache is built: the 15 Hz
-        // snapshot and every id lookup read these instead of re-hashing the hierarchy path.
         private ulong[] _endIds = Array.Empty<ulong>();
         private ulong[] _chimeraIds = Array.Empty<ulong>();
         private ulong[] _mynahIds = Array.Empty<ulong>();
+        private readonly Dictionary<long, BossRef> _byId = new Dictionary<long, BossRef>();
         private bool _bossCacheReady;
         private readonly List<BossSnapshotNet> _tickList = new List<BossSnapshotNet>(8);
         // Client: last host-confirmed Falke HP per WorldId. PlayerAttack mutates Hitbox.HP directly
         // (Ghidra PlayerAttack.c: Hitbox.HP -= dmg, no method to hook), so a drop below this value is
         // a local hit that must be forwarded to the host and rolled back.
         private readonly Dictionary<long, int> _lastHp = new Dictionary<long, int>();
-        private readonly HashSet<string> _warned = new HashSet<string>();
-
-        void WarnOnce(string key, Exception ex)
-        {
-            if (_warned.Add(key))
-                ModRuntime.Log?.Warning("[BossSync] " + key + ": " + ex.Message);
-        }
+        // Host: who got PickupSpears[idx] (first taker wins).
+        private readonly Dictionary<int, int> _spearTaker = new Dictionary<int, int>();
 
         void EnsureBossCache()
         {
@@ -49,76 +48,205 @@ namespace SyncRADation.Networking
             _endBosses = WorldLookup.All<END_Boss>() ?? Array.Empty<END_Boss>();
             _chimeras = WorldLookup.All<LAB_ChimeraBoss>() ?? Array.Empty<LAB_ChimeraBoss>();
             _mynahs = WorldLookup.All<MED_MynahBoss>() ?? Array.Empty<MED_MynahBoss>();
-            _endIds = IdsOf(_endBosses);
-            _chimeraIds = IdsOf(_chimeras);
-            _mynahIds = IdsOf(_mynahs);
+            _byId.Clear();
+            _endIds = Index(_endBosses, BossType.END_Boss);
+            _chimeraIds = Index(_chimeras, BossType.LAB_ChimeraBoss);
+            _mynahIds = Index(_mynahs, BossType.MED_MynahBoss);
             _bossCacheReady = true;
         }
 
-        static ulong[] IdsOf<T>(T[] bosses) where T : Component
+        ulong[] Index<T>(T[] bosses, BossType type) where T : MonoBehaviour
         {
             var ids = new ulong[bosses.Length];
             for (int i = 0; i < bosses.Length; i++)
             {
-                try { if ((Component)bosses[i] != null) ids[i] = Sync.WorldId.FromGameObject(bosses[i].gameObject); }
+                try
+                {
+                    MonoBehaviour b = bosses[i];
+                    if (b == null) continue;
+                    ulong id = WorldId.FromGameObject(b.gameObject);
+                    ids[i] = id;
+                    long key = unchecked((long)id);
+                    if (id != 0 && !_byId.ContainsKey(key)) _byId[key] = new BossRef { Comp = b, Type = type };
+                }
                 catch (Exception e) { Guard.Swallow(e); }
             }
             return ids;
         }
 
-        static ulong IdIn<T>(T[] bosses, ulong[] ids, T b) where T : Component
-        {
-            // Component-typed compare: a generic T == T is a managed reference compare, not Unity's.
-            Component want = b;
-            if (want == null) return 0;
-            for (int i = 0; i < bosses.Length && i < ids.Length; i++)
-                if ((Component)bosses[i] == want) return ids[i];
-            // Not in this scene's boss cache (should not happen for scene bosses): hash it once.
-            try { return Sync.WorldId.FromGameObject(want.gameObject); }
-            catch (Exception e) { Guard.Swallow(e); return 0; }
-        }
+        /// <summary>WorldId of a boss controller (the scene-load WorldId cache, no hierarchy walk).</summary>
+        public ulong BossId(MonoBehaviour b) => b == null ? 0UL : WorldId.FromGameObject(b.gameObject);
 
-        /// <summary>Cached WorldId of a Falke controller.</summary>
-        public ulong BossId(END_Boss b)
+        bool BossCacheEmpty() => _endBosses.Length == 0 && _chimeras.Length == 0 && _mynahs.Length == 0;
+
+        private MonoBehaviour FindLocalBoss(long wid, out BossType type)
         {
             EnsureBossCache();
-            return IdIn(_endBosses, _endIds, b);
-        }
-
-        /// <summary>Cached WorldId of a Chimera controller.</summary>
-        public ulong BossId(LAB_ChimeraBoss b)
-        {
-            EnsureBossCache();
-            return IdIn(_chimeras, _chimeraIds, b);
-        }
-
-        /// <summary>Client per-frame: forward local hits on puppeted bosses to the host.</summary>
-        private void TickClient(LanNetworkManager net)
-        {
-            if (!_clientDisabled || net.SceneMismatch || _hostToLocal.Count == 0) return;
-            foreach (var kvp in _hostToLocal)
+            BossRef r;
+            if (_byId.TryGetValue(wid, out r) && r.Comp != null)
             {
-                if (kvp.Value.type != BossType.END_Boss) continue;
-                ForwardLocalBossDamage(net, kvp.Key, kvp.Value.comp as END_Boss);
+                type = r.Type;
+                return r.Comp;
             }
+            // A cache taken during a transient / partial load sticks empty: refresh only then, so other-scene
+            // WorldId misses do not rescan.
+            if (BossCacheEmpty())
+            {
+                _bossCacheReady = false;
+                EnsureBossCache();
+                if (_clientDisabled)
+                    DisableLocalAI();
+                if (_byId.TryGetValue(wid, out r) && r.Comp != null)
+                {
+                    type = r.Type;
+                    return r.Comp;
+                }
+            }
+            type = BossType.END_Boss;
+            return null;
         }
 
-        private void ForwardLocalBossDamage(LanNetworkManager net, long wid, END_Boss b)
+        // ------------------------------------------------------------------ host tick
+
+        public void TickHost(LanNetworkManager net)
         {
-            if (b == null) return;
-            int last;
-            if (!_lastHp.TryGetValue(wid, out last)) return;
+            if (net.Role == NetworkRole.Client)
+            {
+                TickClient(net);
+                return;
+            }
+            if (net.Role != NetworkRole.Host) return;
+            if (!net.IsConnected) return;
+
+            // Join/resync dump (unicast to the joiner): one snapshot now; the broadcast clock and a pending forced
+            // send stay untouched so everybody else still gets theirs.
+            if (!net.UnicastActive)
+            {
+                _sendTimer += Mathf.Min(Time.unscaledDeltaTime, 0.1f);
+                if (_sendTimer < SendInterval && !_forceSend) return;
+                _sendTimer = 0f;
+                _forceSend = false;
+            }
+
+            float t0 = Time.realtimeSinceStartup;
             try
             {
-                var hb = b.hitbox;
-                if (hb == null) return;
-                int cur = hb.HP;
-                if (cur >= last) return;
-                hb.HP = last;
-                net.BossHandlers.SendBossHitToHost(wid, BossHitKind.Damage, last - cur);
+                EnsureBossCache();
+                _tickList.Clear();
+                BossSnapshotNet snap;
+                for (int i = 0; i < _endBosses.Length; i++)
+                {
+                    var b = _endBosses[i];
+                    if (b == null) continue;
+                    try { if (ReadEnd(b, (short)i, _endIds[i], out snap)) _tickList.Add(snap); }
+                    catch (Exception e) { Guard.Swallow("BossSync.SnapshotEND", e); }
+                }
+                for (int i = 0; i < _chimeras.Length; i++)
+                {
+                    var b = _chimeras[i];
+                    if (b == null) continue;
+                    try { if (ReadChimera(b, (short)i, _chimeraIds[i], out snap)) _tickList.Add(snap); }
+                    catch (Exception e) { Guard.Swallow("BossSync.SnapshotLAB", e); }
+                }
+                for (int i = 0; i < _mynahs.Length; i++)
+                {
+                    var b = _mynahs[i];
+                    if (b == null) continue;
+                    try { if (ReadMynah(b, (short)i, _mynahIds[i], out snap)) _tickList.Add(snap); }
+                    catch (Exception e) { Guard.Swallow("BossSync.SnapshotMED", e); }
+                }
+                if (_tickList.Count > 0)
+                    net.SendBossState(_tickList);
             }
-            catch (Exception ex) { WarnOnce("forward boss damage", ex); }
+            finally
+            {
+                HitchTrace.Cost("boss", (Time.realtimeSinceStartup - t0) * 1000f);
+            }
         }
+
+        static bool ReadEnd(END_Boss b, short index, ulong id, out BossSnapshotNet snap)
+        {
+            snap = default;
+            var t = b.transform;
+            if (t == null) return false;
+            int hp = b.hitbox != null ? b.hitbox.HP : 0;
+            int animHash = 0;
+            float animTime = 0f;
+            var anim = b.animator;
+            if (anim != null)
+            {
+                var si = anim.GetCurrentAnimatorStateInfo(0);
+                animHash = si.shortNameHash;
+                animTime = si.normalizedTime;
+            }
+            var pos = t.position;
+            var state = b.state;
+            snap = new BossSnapshotNet
+            {
+                Index = index,
+                BossType = (byte)BossType.END_Boss,
+                PosX = pos.x, PosY = pos.y, PosZ = pos.z,
+                RotY = t.eulerAngles.y,
+                WorldId = unchecked((long)id),
+                Alive = state != END_Boss.states.dead,
+                StateEnum = (byte)state,
+                Bool0 = b.started, Bool1 = b.survival, Bool2 = b.hit,
+                Bool3 = b.didWideAttack, Bool4 = b.deployed,
+                Int0 = b.stage, Int1 = b.ammo,
+                Float0 = b.cycle, Float1 = b.stagger, Float2 = b.timer,
+                AnimHash = animHash,
+                AnimTime = animTime,
+                Hp = hp,
+                Corrupt = b.corrupt
+            };
+            return true;
+        }
+
+        static bool ReadChimera(LAB_ChimeraBoss b, short index, ulong id, out BossSnapshotNet snap)
+        {
+            snap = default;
+            if (b.gameObject == null) return false;
+            var body = b.Chimera != null && b.Chimera.gameObject != null ? b.Chimera.transform : b.transform;
+            if (body == null) return false;
+            var pos = body.position;
+            snap = new BossSnapshotNet
+            {
+                Index = index,
+                BossType = (byte)BossType.LAB_ChimeraBoss,
+                PosX = pos.x, PosY = pos.y, PosZ = pos.z,
+                RotY = body.eulerAngles.y,
+                WorldId = unchecked((long)id),
+                Alive = b.inOperation && !b.done,
+                StateEnum = 0,
+                Bool0 = b.inOperation, Bool1 = b.done, Bool2 = b.isaUp,
+                Float0 = b.remainingBossTime
+            };
+            return true;
+        }
+
+        static bool ReadMynah(MED_MynahBoss b, short index, ulong id, out BossSnapshotNet snap)
+        {
+            snap = default;
+            if (b.gameObject == null) return false;
+            var body = b.Mynah != null && b.Mynah.gameObject != null ? b.Mynah.transform : b.transform;
+            if (body == null) return false;
+            var pos = body.position;
+            snap = new BossSnapshotNet
+            {
+                Index = index,
+                BossType = (byte)BossType.MED_MynahBoss,
+                PosX = pos.x, PosY = pos.y, PosZ = pos.z,
+                RotY = body.eulerAngles.y,
+                WorldId = unchecked((long)id),
+                Alive = b.inProgress,
+                StateEnum = 0,
+                Bool0 = b.inProgress, Bool1 = b.phaseTwo, Bool2 = b.phaseThree,
+                Float0 = b.schonfrist
+            };
+            return true;
+        }
+
+        // ------------------------------------------------------------------ host: client requests
 
         /// <summary>
         /// Host: a client's boss request. Damage lowers the real Hitbox.HP (END_Boss.Update reacts to the
@@ -127,8 +255,7 @@ namespace SyncRADation.Networking
         public void ApplyHitOnHost(BossHitMessage msg, int senderId)
         {
             BossType type;
-            var comp = FindLocalBossByWorldId(msg.WorldId, out type);
-            var b = comp as END_Boss;
+            var b = FindLocalBoss(msg.WorldId, out type) as END_Boss;
             if (b == null || b.gameObject == null)
             {
                 PlaytestLog.Event("Boss", "hit MISS " + msg.Kind + " wid=" + msg.WorldId.ToString("X16") + " from=" + senderId);
@@ -189,8 +316,6 @@ namespace SyncRADation.Networking
             }
         }
 
-        private readonly Dictionary<int, int> _spearTaker = new Dictionary<int, int>();
-
         /// <summary>Host: who got PickupSpears[idx] (first taker wins; later calls keep the first).</summary>
         public void NoteSpearTaker(int idx, int playerId)
         {
@@ -198,30 +323,57 @@ namespace SyncRADation.Networking
         }
 
         /// <summary>The stab consumed SpearItem on the host bag only: retire it from the ring and every peer's bag.</summary>
-        void RevokeSpear(END_Boss b)
+        static void RevokeSpear(END_Boss b)
         {
             try
             {
-                var item = b != null ? b.SpearItem : null;
+                var item = b.SpearItem;
                 if (item != null) PartyKeyRing.RevokeConsumed(item._item);
             }
-            catch (Exception ex) { WarnOnce("stab revoke", ex); }
+            catch (Exception ex) { Guard.Swallow("BossSync.StabRevoke", ex); }
         }
 
         /// <summary>Tell a peer that lost the spear race to drop the copy its local UnityEvent added.</summary>
-        void AckConsumeSpear(END_Boss b, long wid, int senderId)
+        static void AckConsumeSpear(END_Boss b, long wid, int senderId)
         {
             var net = LanNetworkManager.Instance;
             if (net == null || senderId == net.LocalPlayerId) return;
             try
             {
-                var item = b != null ? b.SpearItem : null;
+                var item = b.SpearItem;
                 if (item == null) return;
                 net.SendInteractionAck(senderId, wid, InteractionKind.UseItem, true,
                     "consume:" + (int)item._item + ":1");
                 PlaytestLog.Event("Boss", "spear race lost p" + senderId + " -> consume ack");
             }
-            catch (Exception ex) { WarnOnce("spear consume ack", ex); }
+            catch (Exception ex) { Guard.Swallow("BossSync.SpearAck", ex); }
+        }
+
+        // ------------------------------------------------------------------ client
+
+        /// <summary>Client per-frame: forward local hits on halted Falke copies to the host.</summary>
+        private void TickClient(LanNetworkManager net)
+        {
+            if (!_clientDisabled || net.SceneMismatch || _lastHp.Count == 0) return;
+            for (int i = 0; i < _endBosses.Length; i++)
+                ForwardLocalBossDamage(net, unchecked((long)_endIds[i]), _endBosses[i]);
+        }
+
+        private void ForwardLocalBossDamage(LanNetworkManager net, long wid, END_Boss b)
+        {
+            if (b == null) return;
+            int last;
+            if (!_lastHp.TryGetValue(wid, out last)) return;
+            try
+            {
+                var hb = b.hitbox;
+                if (hb == null) return;
+                int cur = hb.HP;
+                if (cur >= last) return;
+                hb.HP = last;
+                net.BossHandlers.SendBossHitToHost(wid, BossHitKind.Damage, last - cur);
+            }
+            catch (Exception ex) { Guard.Swallow("BossSync.ForwardDamage", ex); }
         }
 
         /// <summary>Client: host presentation event (Falke spear taken, Chimera rifle shot).</summary>
@@ -231,7 +383,7 @@ namespace SyncRADation.Networking
             if (net == null || net.Role == NetworkRole.Host || net.SceneMismatch) return;
             if (SceneFollowService.LocalIsTransient()) return;
             BossType type;
-            var comp = FindLocalBossByWorldId(msg.WorldId, out type);
+            var comp = FindLocalBoss(msg.WorldId, out type);
             if (comp == null) return;
             try
             {
@@ -254,140 +406,7 @@ namespace SyncRADation.Networking
                     }
                 }
             }
-            catch (Exception ex) { WarnOnce("client boss event " + msg.Kind, ex); }
-        }
-
-        public void TickHost(LanNetworkManager net)
-        {
-            if (net.Role == NetworkRole.Client)
-            {
-                TickClient(net);
-                return;
-            }
-            if (net.Role != NetworkRole.Host) return;
-            if (!net.IsConnected) return;
-
-            _sendTimer += Mathf.Min(Time.unscaledDeltaTime, 0.1f);
-            if (_sendTimer < SendInterval && !_forceSend) return;
-            _sendTimer = 0f;
-            _forceSend = false;
-
-            float t0 = Time.realtimeSinceStartup;
-            try
-            {
-            EnsureBossCache();
-            _tickList.Clear();
-            var list = _tickList;
-
-            var endBosses = _endBosses;
-            for (int i = 0; i < endBosses.Length; i++)
-            {
-                var b = endBosses[i];
-                if (b == null) continue;
-                Transform t;
-                try { t = b.transform; }
-                catch { continue; }
-                if (t == null) continue;
-                var anim = b.animator;
-                int hp = 0;
-                try { if (b.hitbox != null) hp = b.hitbox.HP; } catch (Exception e) { Guard.Swallow(e); }
-                int animHash = 0;
-                float animTime = 0f;
-                if (anim != null)
-                {
-                    try
-                    {
-                        var si = anim.GetCurrentAnimatorStateInfo(0);
-                        animHash = si.shortNameHash;
-                        animTime = si.normalizedTime;
-                    }
-                    catch (Exception e) { Guard.Swallow(e); }
-                }
-                list.Add(new BossSnapshotNet
-                {
-                    Index = (short)i,
-                    BossType = (byte)BossType.END_Boss,
-                    PosX = t.position.x, PosY = t.position.y, PosZ = t.position.z,
-                    RotY = t.eulerAngles.y,
-                    WorldId = unchecked((long)_endIds[i]),
-                    Alive = b.state != END_Boss.states.dead,
-                    StateEnum = (byte)b.state,
-                    Bool0 = b.started, Bool1 = b.survival, Bool2 = b.hit,
-                    Bool3 = b.didWideAttack, Bool4 = b.deployed,
-                    Int0 = b.stage, Int1 = b.ammo,
-                    Float0 = b.cycle, Float1 = b.stagger, Float2 = b.timer,
-                    AnimHash = animHash,
-                    AnimTime = animTime,
-                    Hp = hp,
-                    Corrupt = b.corrupt
-                });
-            }
-
-            var labs = _chimeras;
-            for (int i = 0; i < labs.Length; i++)
-            {
-                var b = labs[i];
-                if (b == null || b.gameObject == null) continue;
-                Transform targetT = null;
-                try
-                {
-                    if (b.Chimera != null && b.Chimera.gameObject != null)
-                        targetT = b.Chimera.transform;
-                    else
-                        targetT = b.transform;
-                }
-                catch { continue; }
-                if (targetT == null) continue;
-                list.Add(new BossSnapshotNet
-                {
-                    Index = (short)i,
-                    BossType = (byte)BossType.LAB_ChimeraBoss,
-                    PosX = targetT.position.x, PosY = targetT.position.y, PosZ = targetT.position.z,
-                    RotY = targetT.eulerAngles.y,
-                    WorldId = unchecked((long)_chimeraIds[i]),
-                    Alive = b.inOperation && !b.done,
-                    StateEnum = 0,
-                    Bool0 = b.inOperation, Bool1 = b.done, Bool2 = b.isaUp,
-                    Float0 = b.remainingBossTime
-                });
-            }
-
-            var medBosses = _mynahs;
-            for (int i = 0; i < medBosses.Length; i++)
-            {
-                var b = medBosses[i];
-                if (b == null || b.gameObject == null) continue;
-                Transform targetT = null;
-                try
-                {
-                    if (b.Mynah != null && b.Mynah.gameObject != null)
-                        targetT = b.Mynah.transform;
-                    else
-                        targetT = b.transform;
-                }
-                catch { continue; }
-                if (targetT == null) continue;
-                list.Add(new BossSnapshotNet
-                {
-                    Index = (short)i,
-                    BossType = (byte)BossType.MED_MynahBoss,
-                    PosX = targetT.position.x, PosY = targetT.position.y, PosZ = targetT.position.z,
-                    RotY = targetT.eulerAngles.y,
-                    WorldId = unchecked((long)_mynahIds[i]),
-                    Alive = b.inProgress,
-                    StateEnum = 0,
-                    Bool0 = b.inProgress, Bool1 = b.phaseTwo, Bool2 = b.phaseThree,
-                    Float0 = b.schonfrist
-                });
-            }
-
-            if (list.Count > 0)
-                net.SendBossState(list);
-            }
-            finally
-            {
-                HitchTrace.Cost("boss", (Time.realtimeSinceStartup - t0) * 1000f);
-            }
+            catch (Exception ex) { Guard.Swallow("BossSync.ClientEvent", ex); }
         }
 
         public void OnBossStateReceived(BossStateMessage msg)
@@ -395,8 +414,8 @@ namespace SyncRADation.Networking
             var net = LanNetworkManager.Instance;
             if (net != null && net.Role == NetworkRole.Host) return;
             if (msg.Bosses == null) return;
-            // Join dump / SceneFollow mid-load: applying now empties EnsureBossCache and
-            // sticks _clientDisabled — later scene bosses keep local AI + miss phase snaps.
+            // Join dump / SceneFollow mid-load: applying now would cache an empty boss set and stick
+            // _clientDisabled, so later scene bosses would keep local AI and miss phase snaps.
             if (SceneFollowService.LocalIsTransient()) return;
             if (net != null && net.SceneMismatch) return;
 
@@ -412,41 +431,24 @@ namespace SyncRADation.Networking
 
         private void ApplyBossState(BossSnapshotNet snap)
         {
-            long hostID = snap.WorldId;
-
-            MonoBehaviour comp;
+            long wid = snap.WorldId;
             BossType type;
-            if (_hostToLocal.TryGetValue(hostID, out var existing))
-            {
-                comp = existing.comp;
-                type = existing.type;
-                if (comp == null)
-                {
-                    _hostToLocal.Remove(hostID);
-                    comp = FindLocalBossByWorldId(snap.WorldId, out type);
-                    if (comp == null) return;
-                    _hostToLocal[hostID] = (comp, type);
-                }
-            }
-            else
-            {
-                comp = FindLocalBossByWorldId(snap.WorldId, out type);
-                if (comp == null) return;
-                _hostToLocal[hostID] = (comp, type);
-            }
-
+            var comp = FindLocalBoss(wid, out type);
+            if (comp == null || (byte)type != snap.BossType) return;
+            // Every snapshot carries the whole state (15 Hz): a failed apply is redone in full by the next one.
             try
             {
-                if (comp == null || comp.gameObject == null) return;
-                switch ((BossType)snap.BossType)
+                if (comp.gameObject == null) return;
+                switch (type)
                 {
                     case BossType.END_Boss:
                     {
+                        var b = (END_Boss)comp;
                         // A hit landed since the last snap would be overwritten below: forward it first.
                         var net = LanNetworkManager.Instance;
-                        if (net != null) ForwardLocalBossDamage(net, hostID, (END_Boss)comp);
-                        ApplyEND((END_Boss)comp, snap);
-                        _lastHp[hostID] = snap.Hp;
+                        if (net != null) ForwardLocalBossDamage(net, wid, b);
+                        ApplyEND(b, snap);
+                        _lastHp[wid] = snap.Hp;
                         break;
                     }
                     case BossType.LAB_ChimeraBoss:
@@ -457,58 +459,50 @@ namespace SyncRADation.Networking
                         break;
                 }
             }
-            catch (Exception e) { Guard.Swallow(e); }
+            catch (Exception e)
+            {
+                switch (type)
+                {
+                    case BossType.END_Boss: Guard.Swallow("BossSync.ApplyEND", e); break;
+                    case BossType.LAB_ChimeraBoss: Guard.Swallow("BossSync.ApplyLAB", e); break;
+                    default: Guard.Swallow("BossSync.ApplyMED", e); break;
+                }
+            }
         }
 
         private static void ApplyEND(END_Boss b, BossSnapshotNet snap)
         {
-            if (b == null || b.gameObject == null) return;
             var t = b.transform;
             if (t == null) return;
-            try
-            {
-                t.position = new Vector3(snap.PosX, snap.PosY, snap.PosZ);
-                var rot = t.eulerAngles;
-                rot.y = snap.RotY;
-                t.eulerAngles = rot;
-            }
-            catch { return; }
+            t.position = new Vector3(snap.PosX, snap.PosY, snap.PosZ);
+            var rot = t.eulerAngles;
+            rot.y = snap.RotY;
+            t.eulerAngles = rot;
 
-            try { b.state = (END_Boss.states)snap.StateEnum; } catch (Exception e) { Guard.Swallow(e); }
-            try { b.started = snap.Bool0; } catch (Exception e) { Guard.Swallow(e); }
-            try { b.survival = snap.Bool1; } catch (Exception e) { Guard.Swallow(e); }
-            try { b.hit = snap.Bool2; } catch (Exception e) { Guard.Swallow(e); }
-            try { b.didWideAttack = snap.Bool3; } catch (Exception e) { Guard.Swallow(e); }
-            try { b.deployed = snap.Bool4; } catch (Exception e) { Guard.Swallow(e); }
-            try { b.stage = snap.Int0; } catch (Exception e) { Guard.Swallow(e); }
-            try { b.ammo = snap.Int1; } catch (Exception e) { Guard.Swallow(e); }
-            try { b.cycle = snap.Float0; } catch (Exception e) { Guard.Swallow(e); }
-            try { b.stagger = snap.Float1; } catch (Exception e) { Guard.Swallow(e); }
-            try { b.timer = snap.Float2; } catch (Exception e) { Guard.Swallow(e); }
-            try { b.corrupt = snap.Corrupt; } catch (Exception e) { Guard.Swallow(e); }
-            try
-            {
-                if (b.hitbox != null)
-                    b.hitbox.HP = snap.Hp;
-            }
-            catch (Exception e) { Guard.Swallow(e); }
+            b.state = (END_Boss.states)snap.StateEnum;
+            b.started = snap.Bool0;
+            b.survival = snap.Bool1;
+            b.hit = snap.Bool2;
+            b.didWideAttack = snap.Bool3;
+            b.deployed = snap.Bool4;
+            b.ammo = snap.Int1;
+            b.cycle = snap.Float0;
+            b.stagger = snap.Float1;
+            b.timer = snap.Float2;
+            if (b.hitbox != null)
+                b.hitbox.HP = snap.Hp;
 
-            if (b.animator != null && snap.AnimHash != 0)
+            var anim = b.animator;
+            if (anim != null && snap.AnimHash != 0)
             {
-                try
-                {
-                    var si = b.animator.GetCurrentAnimatorStateInfo(0);
-                    if (si.shortNameHash != snap.AnimHash || Mathf.Abs(si.normalizedTime - snap.AnimTime) > 0.1f)
-                        b.animator.Play(snap.AnimHash, 0, snap.AnimTime);
-                }
-                catch (Exception e) { Guard.Swallow(e); }
+                var si = anim.GetCurrentAnimatorStateInfo(0);
+                if (si.shortNameHash != snap.AnimHash || Mathf.Abs(si.normalizedTime - snap.AnimTime) > 0.1f)
+                    anim.Play(snap.AnimHash, 0, snap.AnimTime);
             }
 
-            // Client AI is disabled — Start/Stabbed/Update no longer drive arena doors,
-            // invuln shields, or corrupt mesh. Mirror host presentation from the snap
-            // values (not re-read fields) so a failed stage/corrupt write or mid-apply
-            // corrupt toggle cannot leave arenas/shields/meshes on a stale combo.
-            // (GameAssembly END_Boss.Start + <Stabbed>d__129.MoveNext + Update).
+            // Client AI is halted, so Start / Stabbed / Update no longer drive arena doors, invuln shields or the
+            // corrupt mesh. Mirror them from the snap values (Ghidra END_Boss.c Start, <Stabbed>d__129.MoveNext,
+            // Update); stage / corrupt are written there too.
             SnapFalkePresentation(b, snap.Int0, snap.Corrupt);
             SnapStabPrompt(b);
         }
@@ -520,24 +514,13 @@ namespace SyncRADation.Networking
         /// </summary>
         private static void SnapStabPrompt(END_Boss b)
         {
-            try
-            {
-                var go = b.StabInteraction;
-                if (go == null) return;
-                bool want = false;
-                if (b.state == END_Boss.states.downed)
-                {
-                    // Native CheckDowned enables StabInteraction only when hasItem(SpearItem) (ring-aware);
-                    // `deployed` alone lets the boss go down but never shows the prompt.
-                    try { want = b.SpearItem != null && InventoryManager.hasItem(b.SpearItem); }
-                    catch (Exception ex) { Guard.Swallow(ex); want = false; }
-                }
-                if (go.activeSelf != want) go.SetActive(want);
-            }
-            catch (Exception ex)
-            {
-                ModRuntime.Log?.Warning("[BossSync] stab prompt: " + ex.Message);
-            }
+            var go = b.StabInteraction;
+            if (go == null) return;
+            // Native CheckDowned enables StabInteraction only when hasItem(SpearItem) (ring-aware);
+            // `deployed` alone lets the boss go down but never shows the prompt.
+            bool want = b.state == END_Boss.states.downed
+                && b.SpearItem != null && InventoryManager.hasItem(b.SpearItem);
+            if (go.activeSelf != want) go.SetActive(want);
         }
 
         /// <summary>
@@ -548,236 +531,101 @@ namespace SyncRADation.Networking
         /// </summary>
         private static void SnapFalkePresentation(END_Boss b, int stage, bool corrupt)
         {
-            if (b == null) return;
             if (stage < 0) stage = 0;
             if (stage > 6) stage = 6;
+            b.stage = stage;
+            b.corrupt = corrupt;
 
-            // Keep field mirror aligned with the presentation we just chose (stage regress /
-            // corrupt toggle from a partial field write cannot desync GO active flags).
-            try { b.stage = stage; } catch (Exception e) { Guard.Swallow(e); }
-            try { b.corrupt = corrupt; } catch (Exception e) { Guard.Swallow(e); }
-
-            try
+            var arenas = b.Arenas;
+            if (arenas != null)
             {
-                var arenas = b.Arenas;
-                if (arenas != null)
+                int n = Mathf.Min(arenas.Length, 6);
+                for (int i = 0; i < n; i++)
                 {
-                    int n = arenas.Length;
-                    if (n > 6) n = 6;
-                    for (int i = 0; i < n; i++)
-                    {
-                        try
-                        {
-                            if (arenas[i] != null)
-                                arenas[i].SetActive(i == stage);
-                        }
-                        catch (Exception e) { Guard.Swallow(e); }
-                    }
+                    if (arenas[i] != null)
+                        arenas[i].SetActive(i == stage);
                 }
             }
-            catch (Exception e) { Guard.Swallow(e); }
 
-            try
+            var spears = b.HeadSpears;
+            if (spears != null)
             {
-                var spears = b.HeadSpears;
-                if (spears != null)
+                int n = Mathf.Min(spears.Length, 6);
+                for (int i = 0; i < n; i++)
                 {
-                    int n = spears.Length;
-                    if (n > 6) n = 6;
-                    for (int i = 0; i < n; i++)
-                    {
-                        try
-                        {
-                            if (spears[i] != null)
-                                spears[i].SetActive(i < stage);
-                        }
-                        catch (Exception e) { Guard.Swallow(e); }
-                    }
+                    if (spears[i] != null)
+                        spears[i].SetActive(i < stage);
                 }
             }
-            catch (Exception e) { Guard.Swallow(e); }
 
-            try
-            {
-                if (b.FloatShields != null)
-                    b.FloatShields.SetActive(stage >= 3);
-            }
-            catch (Exception e) { Guard.Swallow(e); }
-            try
-            {
-                if (b.FloatShields2 != null)
-                    b.FloatShields2.SetActive(stage >= 5);
-            }
-            catch (Exception e) { Guard.Swallow(e); }
-
-            try
-            {
-                if (b.CorruptedMesh != null)
-                    b.CorruptedMesh.SetActive(corrupt);
-            }
-            catch (Exception e) { Guard.Swallow(e); }
-            try
-            {
-                if (b.NormalMesh != null)
-                    b.NormalMesh.SetActive(!corrupt);
-            }
-            catch (Exception e) { Guard.Swallow(e); }
+            if (b.FloatShields != null) b.FloatShields.SetActive(stage >= 3);
+            if (b.FloatShields2 != null) b.FloatShields2.SetActive(stage >= 5);
+            if (b.CorruptedMesh != null) b.CorruptedMesh.SetActive(corrupt);
+            if (b.NormalMesh != null) b.NormalMesh.SetActive(!corrupt);
 
             // Stabbed / DeploySpears also refresh BodySpears from ammo/deployed (already snapped).
-            try { b.SetBodySpearStates(); } catch (Exception e) { Guard.Swallow(e); }
+            b.SetBodySpearStates();
         }
 
         private static void ApplyLAB(LAB_ChimeraBoss b, BossSnapshotNet snap)
         {
-            if (b == null || b.gameObject == null) return;
-            if (b.Chimera != null && b.Chimera.gameObject != null)
+            var body = b.Chimera;
+            if (body != null && body.gameObject != null)
             {
-                try
-                {
-                    b.Chimera.transform.position = new Vector3(snap.PosX, snap.PosY, snap.PosZ);
-                    var rot = b.Chimera.transform.eulerAngles;
-                    rot.y = snap.RotY;
-                    b.Chimera.transform.eulerAngles = rot;
-                }
-                catch (Exception e) { Guard.Swallow(e); }
+                var bt = body.transform;
+                bt.position = new Vector3(snap.PosX, snap.PosY, snap.PosZ);
+                var rot = bt.eulerAngles;
+                rot.y = snap.RotY;
+                bt.eulerAngles = rot;
             }
 
-            try { b.inOperation = snap.Bool0; } catch (Exception e) { Guard.Swallow(e); }
-            try { b.done = snap.Bool1; } catch (Exception e) { Guard.Swallow(e); }
-            try { b.remainingBossTime = snap.Float0; } catch (Exception e) { Guard.Swallow(e); }
-            // Bossfight coroutine is host-only: mirror the Isa stand-up (GetUp trigger) on the edge.
-            try
+            b.inOperation = snap.Bool0;
+            b.done = snap.Bool1;
+            b.remainingBossTime = snap.Float0;
+            // The Bossfight coroutine is host-only: mirror the Isa stand-up (GetUp trigger) on the edge.
+            if (snap.Bool2 && !b.isaUp)
             {
-                if (snap.Bool2 && !b.isaUp)
-                {
-                    b.isaUp = true;
-                    if (b.IsaAnim != null) b.IsaAnim.SetTrigger(b.anim_GetUp);
-                }
-                else if (!snap.Bool2 && b.isaUp)
-                    b.isaUp = false;
+                b.isaUp = true;
+                if (b.IsaAnim != null) b.IsaAnim.SetTrigger(b.anim_GetUp);
             }
-            catch (Exception ex)
-            {
-                ModRuntime.Log?.Warning("[BossSync] chimera isa: " + ex.Message);
-            }
+            else if (!snap.Bool2 && b.isaUp)
+                b.isaUp = false;
         }
 
         private static void ApplyMED(MED_MynahBoss b, BossSnapshotNet snap)
         {
-            if (b == null || b.gameObject == null) return;
-            if (b.Mynah != null && b.Mynah.gameObject != null)
+            var body = b.Mynah;
+            if (body != null && body.gameObject != null)
             {
-                try
-                {
-                    b.Mynah.transform.position = new Vector3(snap.PosX, snap.PosY, snap.PosZ);
-                    var rot = b.Mynah.transform.eulerAngles;
-                    rot.y = snap.RotY;
-                    b.Mynah.transform.eulerAngles = rot;
-                }
-                catch (Exception e) { Guard.Swallow(e); }
+                var bt = body.transform;
+                bt.position = new Vector3(snap.PosX, snap.PosY, snap.PosZ);
+                var rot = bt.eulerAngles;
+                rot.y = snap.RotY;
+                bt.eulerAngles = rot;
             }
 
-            try { b.inProgress = snap.Bool0; } catch (Exception e) { Guard.Swallow(e); }
-            try { b.phaseTwo = snap.Bool1; } catch (Exception e) { Guard.Swallow(e); }
-            try { b.phaseThree = snap.Bool2; } catch (Exception e) { Guard.Swallow(e); }
-            try { b.schonfrist = snap.Float0; } catch (Exception e) { Guard.Swallow(e); }
-        }
-
-        private MonoBehaviour FindLocalBossByWorldId(long worldIdLong, out BossType type)
-        {
-            ulong want = unchecked((ulong)worldIdLong);
-            var hit = FindInBossCache(want, out type);
-            if (hit != null) return hit;
-
-            // Premature Ensure during transient/partial load sticks an empty cache —
-            // only refresh when empty so other-scene WorldId misses do not FindObjects spam.
-            if (_bossCacheReady && BossCacheEmpty())
-            {
-                _bossCacheReady = false;
-                EnsureBossCache();
-                if (_clientDisabled)
-                    DisableLocalAI();
-                hit = FindInBossCache(want, out type);
-                if (hit != null) return hit;
-            }
-
-            type = BossType.END_Boss;
-            return null;
-        }
-
-        private MonoBehaviour FindInBossCache(ulong want, out BossType type)
-        {
-            EnsureBossCache();
-
-            var ends = _endBosses;
-            for (int i = 0; i < ends.Length; i++)
-            {
-                var e = ends[i];
-                if (e != null && _endIds[i] == want)
-                {
-                    type = BossType.END_Boss;
-                    return e;
-                }
-            }
-
-            var labs = _chimeras;
-            for (int i = 0; i < labs.Length; i++)
-            {
-                var l = labs[i];
-                if (l != null && _chimeraIds[i] == want)
-                {
-                    type = BossType.LAB_ChimeraBoss;
-                    return l;
-                }
-            }
-
-            var meds = _mynahs;
-            for (int i = 0; i < meds.Length; i++)
-            {
-                var m = meds[i];
-                if (m != null && _mynahIds[i] == want)
-                {
-                    type = BossType.MED_MynahBoss;
-                    return m;
-                }
-            }
-
-            type = BossType.END_Boss;
-            return null;
-        }
-
-        bool BossCacheEmpty()
-        {
-            return (_endBosses == null || _endBosses.Length == 0)
-                && (_chimeras == null || _chimeras.Length == 0)
-                && (_mynahs == null || _mynahs.Length == 0);
+            b.inProgress = snap.Bool0;
+            b.phaseTwo = snap.Bool1;
+            b.phaseThree = snap.Bool2;
+            b.schonfrist = snap.Float0;
         }
 
         private void DisableLocalAI()
         {
             EnsureBossCache();
             int n = 0;
-            var ends = _endBosses;
-            for (int i = 0; i < ends.Length; i++)
-                if (HaltBossController(ends[i])) n++;
-
-            var labs = _chimeras;
-            for (int i = 0; i < labs.Length; i++)
-                if (HaltBossController(labs[i], keepEnabled: true)) n++;
-
-            var meds = _mynahs;
-            for (int i = 0; i < meds.Length; i++)
-                if (HaltBossController(meds[i])) n++;
-
+            for (int i = 0; i < _endBosses.Length; i++)
+                if (HaltBossController(_endBosses[i])) n++;
+            for (int i = 0; i < _chimeras.Length; i++)
+                if (HaltBossController(_chimeras[i], keepEnabled: true)) n++;
+            for (int i = 0; i < _mynahs.Length; i++)
+                if (HaltBossController(_mynahs[i])) n++;
             ModRuntime.Log?.Msg("[BossSync] Disabled " + n + " boss controllers");
         }
 
         /// <summary>
-        /// enabled=false stops Update/LateUpdate but not running coroutines (Bossfight /
-        /// Stabbed / Airstrike). StopAllCoroutines first so mid-fight clients cannot keep
-        /// advancing phase/nests locally while host snaps.
-        /// </summary>
-        /// <summary>
+        /// enabled=false stops Update/LateUpdate but not running coroutines (Bossfight / Stabbed / Airstrike):
+        /// StopAllCoroutines first so mid-fight clients cannot keep advancing phase/nests locally while the host snaps.
         /// keepEnabled (LAB Chimera): LateUpdate is the only thing besides Start/Bossfight and it plays the
         /// Isa rifle muzzle flash / projectile / SFX off the private gunShot flag, which the host relays
         /// (BossHit ChimeraShot). Disabling the component would leave clients with a silent, flash-less Isa
@@ -786,28 +634,30 @@ namespace SyncRADation.Networking
         private static bool HaltBossController(MonoBehaviour b, bool keepEnabled = false)
         {
             if (b == null) return false;
-            try { b.StopAllCoroutines(); } catch (Exception e) { Guard.Swallow(e); }
-            if (keepEnabled) return true;
-            try { b.enabled = false; } catch { return false; }
-            return true;
+            try
+            {
+                b.StopAllCoroutines();
+                if (!keepEnabled) b.enabled = false;
+                return true;
+            }
+            catch (Exception e) { Guard.Swallow("BossSync.Halt", e); return false; }
         }
 
         public static void EnableLocalAI()
         {
-            var ends = WorldLookup.All<END_Boss>();
-            if (ends != null)
-                for (int i = 0; i < ends.Length; i++)
-                    if (ends[i] != null) ends[i].enabled = true;
+            Enable(WorldLookup.All<END_Boss>());
+            Enable(WorldLookup.All<LAB_ChimeraBoss>());
+            Enable(WorldLookup.All<MED_MynahBoss>());
+        }
 
-            var labs = WorldLookup.All<LAB_ChimeraBoss>();
-            if (labs != null)
-                for (int i = 0; i < labs.Length; i++)
-                    if (labs[i] != null) labs[i].enabled = true;
-
-            var meds = WorldLookup.All<MED_MynahBoss>();
-            if (meds != null)
-                for (int i = 0; i < meds.Length; i++)
-                    if (meds[i] != null) meds[i].enabled = true;
+        static void Enable<T>(T[] bosses) where T : MonoBehaviour
+        {
+            if (bosses == null) return;
+            for (int i = 0; i < bosses.Length; i++)
+            {
+                MonoBehaviour b = bosses[i];
+                if (b != null) b.enabled = true;
+            }
         }
 
         /// <summary>SessionReset (also after a wipe reload in the same scene): the spears are back on the floor, so a
@@ -820,10 +670,10 @@ namespace SyncRADation.Networking
         public void OnSceneChanged()
         {
             _clientDisabled = false;
-            _hostToLocal.Clear();
             _lastHp.Clear();
             _spearTaker.Clear();
             _bossCacheReady = false;
+            _byId.Clear();
             _endBosses = Array.Empty<END_Boss>();
             _chimeras = Array.Empty<LAB_ChimeraBoss>();
             _mynahs = Array.Empty<MED_MynahBoss>();
@@ -842,7 +692,8 @@ namespace SyncRADation.Networking
             _forceSend = false;
         }
 
-        // PuzzleStateMessage ownership for Kolibri/Adler intensity (wire stays PuzzleType).
+        // ------------------------------------------------------------------ PuzzleState (Kolibri / Adler)
+
         internal static bool TryReadPuzzle(PuzzleType type, Component c, long wid, out PuzzleStateEntry entry)
         {
             entry = default;
@@ -874,7 +725,7 @@ namespace SyncRADation.Networking
             x.frequency = e.Int0;
             x.intensity = e.Float0;
             x.radioIntensity = e.Float1;
-            // Client Update recomputes glitch from local Elster/radio — hold host snaps.
+            // Client Update recomputes glitch from local Elster/radio: hold the host snap.
             SyncRADation.Patches.KolibriAdlerAuthPatches.HoldKolibri(e.Bool0, e.Int0, e.Float0, e.Float1);
         }
 

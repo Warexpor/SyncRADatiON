@@ -9,9 +9,9 @@ namespace SyncRADation.Patches
     /// <summary>
     /// KolibriManager / BOS_Adler stay enabled on clients so glitch/SFX presentation runs,
     /// but their Update recomputes intensity/progress (and Kolibri frequency) from local
-    /// Elster/radio. Re-apply the last host PuzzleState snap each frame on clients —
+    /// Elster/radio. Re-apply the last host PuzzleState snap each frame on clients:
     /// Prefix feeds inputs Update may read; Postfix wins after Update writes back.
-    /// END/Chimera/Mynah are HaltBossController-disabled (StopAllCoroutines + enabled=false) instead (BossSyncService.DisableLocalAI).
+    /// END/Chimera/Mynah are halted instead (BossSyncService.DisableLocalAI).
     /// </summary>
     public static class KolibriAdlerAuthPatches
     {
@@ -75,17 +75,25 @@ namespace SyncRADation.Patches
         static void ApplyKolibriHold(KolibriManager inst)
         {
             if (inst == null || !_kolibriHeld || !NetGate.Live || NetGate.Host) return;
-            try { inst.dead = _kolibriDead; } catch (System.Exception e) { Guard.Swallow(e); }
-            try { inst.frequency = _kolibriFreq; } catch (System.Exception e) { Guard.Swallow(e); }
-            try { inst.intensity = _kolibriIntensity; } catch (System.Exception e) { Guard.Swallow(e); }
-            try { inst.radioIntensity = _kolibriRadio; } catch (System.Exception e) { Guard.Swallow(e); }
+            try
+            {
+                inst.dead = _kolibriDead;
+                inst.frequency = _kolibriFreq;
+                inst.intensity = _kolibriIntensity;
+                inst.radioIntensity = _kolibriRadio;
+            }
+            catch (System.Exception e) { Guard.Swallow("BossAuth.HoldKolibri", e); }
         }
 
         static void ApplyAdlerHold(BOS_Adler inst)
         {
             if (inst == null || !_adlerHeld || !NetGate.Live || NetGate.Host) return;
-            try { inst.intensity = _adlerIntensity; } catch (System.Exception e) { Guard.Swallow(e); }
-            try { inst.progress = _adlerProgress; } catch (System.Exception e) { Guard.Swallow(e); }
+            try
+            {
+                inst.intensity = _adlerIntensity;
+                inst.progress = _adlerProgress;
+            }
+            catch (System.Exception e) { Guard.Swallow("BossAuth.HoldAdler", e); }
         }
 
         [HarmonyPatch(typeof(KolibriManager), "Update")]
