@@ -485,7 +485,7 @@ namespace SyncRADation.Networking
             // Vitals ~5 Hz for remote damage/death presentation
             if (ModConfig.SyncPlayerVitals?.Value == true)
             {
-                _vitalTimer += Mathf.Min(Time.deltaTime, 0.1f);
+                _vitalTimer += Mathf.Min(Time.unscaledDeltaTime, 0.1f);
                 if (_vitalTimer >= 0.2f)
                 {
                     _vitalTimer = 0f;
@@ -495,7 +495,7 @@ namespace SyncRADation.Networking
                 }
             }
 
-            _sendTimer += Mathf.Min(Time.deltaTime, 0.1f);
+            _sendTimer += Mathf.Min(Time.unscaledDeltaTime, 0.1f);
             if (_sendTimer < PluginInfo.SendInterval)
                 return;
             _sendTimer = 0f;

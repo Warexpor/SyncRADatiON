@@ -75,8 +75,8 @@ namespace SyncRADation.Networking
             var pos = player.transform.position;
             float dt = PluginInfo.SendInterval;
             if (_lastSentTime > 0f)
-                dt = Mathf.Max(0.016f, Time.time - _lastSentTime);
-            _lastSentTime = Time.time;
+                dt = Mathf.Max(0.016f, Time.unscaledTime - _lastSentTime);
+            _lastSentTime = Time.unscaledTime;
             Vector3 vel = (pos - _lastSentPosition) / dt;
             // A room-to-room door moves Elster hundreds of units in one frame: that "velocity" made the
             // receiver's Hermite fling the proxy ~100 units back and forth after every door.
