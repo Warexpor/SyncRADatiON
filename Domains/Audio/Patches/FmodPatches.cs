@@ -15,6 +15,9 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static bool Prefix(StudioEventEmitter __instance)
         {
+            // Client copy of the Kolibri feedback hurt: the host plays and relays the real one.
+            if (KolibriAdlerAuthPatches.SuppressClientEmitter(__instance))
+                return false;
             if (NetGate.IsApplying && FmodEmitterSync.IsDoorEmitter(__instance))
                 return false;
             // A remote action applied here (puzzle onSolved, interaction) must not sound in another room: the
@@ -28,6 +31,8 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(StudioEventEmitter __instance)
         {
+            // Harmony runs postfixes after a skipping prefix too: a suppressed Play is not forwarded either.
+            if (KolibriAdlerAuthPatches.SuppressClientEmitter(__instance)) return;
             FmodEmitterSync.EmitterChanged(__instance, true);
         }
     }

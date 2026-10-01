@@ -104,18 +104,30 @@ namespace SyncRADation.Cheats
             GUI.EndScrollView();
         }
 
+        // OnGUI runs several times per frame while the Rooms tab is open: scan + sort once per registry generation
+        // (every scene load / rebuild bumps it), not per repaint.
+        private static readonly List<Room> _rooms = new List<Room>();
+        private static int _roomsGeneration = -1;
+
         private static List<Room> CollectRooms()
         {
-            var list = new List<Room>();
+            int g = WorldRegistry.Generation;
+            if (g == _roomsGeneration)
+            {
+                _rooms.RemoveAll(r => r == null);
+                return _rooms;
+            }
+            _roomsGeneration = g;
+            _rooms.Clear();
             try
             {
                 var all = Object.FindObjectsOfType<Room>();
-                if (all == null) return list;
+                if (all == null) return _rooms;
                 foreach (var r in all)
                 {
-                    if (r != null) list.Add(r);
+                    if (r != null) _rooms.Add(r);
                 }
-                list.Sort((a, b) =>
+                _rooms.Sort((a, b) =>
                 {
                     string an = a.roomName ?? a.name;
                     string bn = b.roomName ?? b.name;
@@ -123,7 +135,7 @@ namespace SyncRADation.Cheats
                 });
             }
             catch (System.Exception e) { Guard.Swallow(e); }
-            return list;
+            return _rooms;
         }
 
         /// <summary>Chapter load by scene name (same path as the F7 click); used by the <c>--sync-scene</c> boot argument.</summary>
@@ -137,6 +149,12 @@ namespace SyncRADation.Cheats
         {
             if (NetGate.Client)
             {
+                // A client F7 makes the host load the chapter for everyone: only when the host allows client cheats.
+                if (!Config.ModConfig.ClientCheatsAllowed)
+                {
+                    SetStatus("Host does not allow client cheats", true);
+                    return;
+                }
                 SceneFollowService.RequestFollow(loc.Scene);
                 SetStatus("Requested host load: " + loc.Scene);
                 ShowMenu = false;
@@ -238,20 +256,19 @@ namespace SyncRADation.Cheats
 
                 string name = !string.IsNullOrEmpty(room.roomName) ? room.roomName : room.gameObject.name;
 
-                // Native goto first
-                bool cheated = false;
-                try { global::Cheats.cheat("goto " + name); cheated = true; } catch (System.Exception e) { Guard.Swallow(e); }
-
-                // Direct fallback: move player to gotoSpawn + EnterRoom
+                // One path only: move the player to gotoSpawn + EnterRoom. The native console "goto" used to run
+                // first and then this teleport + EnterRoom ran again on top of it; the console is often locked anyway.
                 var player = PlayerState.player;
                 Transform spawn = room.gotoSpawn != null ? room.gotoSpawn : room.transform;
-                if (player != null && spawn != null)
+                if (player == null || spawn == null)
                 {
-                    player.transform.position = spawn.position;
-                    try { room.EnterRoom(); } catch (System.Exception e) { Guard.Swallow(e); }
+                    SetStatus("No player / spawn for " + name, true);
+                    return;
                 }
+                player.transform.position = spawn.position;
+                try { room.EnterRoom(); } catch (System.Exception e) { Guard.Swallow(e); }
 
-                SetStatus((cheated ? "goto " : "teleport ") + name);
+                SetStatus("teleport " + name);
                 ShowMenu = false;
             }
             catch (System.Exception ex)

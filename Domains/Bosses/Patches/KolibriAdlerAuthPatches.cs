@@ -1,6 +1,8 @@
 // Host-authoritative Kolibri/Adler phase fields. Client Update must not clobber snaps.
+using FMODUnity;
 using HarmonyLib;
 using SyncRADation.Sync;
+using UnityEngine;
 
 namespace SyncRADation.Patches
 {
@@ -23,10 +25,33 @@ namespace SyncRADation.Patches
         static float _adlerIntensity;
         static float _adlerProgress;
 
+        // Client: the KolibriManager whose Update is running right now (held), and the frame it started in.
+        static KolibriManager _inUpdate;
+        static int _inUpdateFrame = -1;
+
         public static void Clear()
         {
             _kolibriHeld = false;
             _adlerHeld = false;
+            _inUpdate = null;
+            _inUpdateFrame = -1;
+        }
+
+        /// <summary>
+        /// Client inside a held KolibriManager.Update. Its feedback branch (Ghidra KolibriManager.c Update:
+        /// Real.hitbox.HP -= stepdamage; Real.TakeDamage(0,0,100); HurtSFX.Play()) runs off the host's held
+        /// radioIntensity, so it is the host's hit replayed: TakeDamage must not be forwarded and HurtSFX comes
+        /// from the host's relay.
+        /// </summary>
+        public static bool InClientKolibriUpdate
+            => _inUpdate != null && _inUpdateFrame == Time.frameCount;
+
+        /// <summary>StudioEventEmitter.Play on the client during a held Kolibri Update: the host's HurtSFX relay covers it.</summary>
+        public static bool SuppressClientEmitter(StudioEventEmitter e)
+        {
+            if (e == null || !InClientKolibriUpdate) return false;
+            try { return _inUpdate.HurtSFX != null && _inUpdate.HurtSFX == e; }
+            catch (System.Exception ex) { Guard.Swallow(ex); return false; }
         }
 
         public static void HoldKolibri(bool dead, int frequency, float intensity, float radioIntensity)
@@ -67,10 +92,23 @@ namespace SyncRADation.Patches
         public static class KolibriUpdateAuthPatch
         {
             [HarmonyPrefix]
-            public static void Prefix(KolibriManager __instance) => ApplyKolibriHold(__instance);
+            public static void Prefix(KolibriManager __instance)
+            {
+                _inUpdate = null;
+                ApplyKolibriHold(__instance);
+                if (_kolibriHeld && NetGate.Client)
+                {
+                    _inUpdate = __instance;
+                    _inUpdateFrame = Time.frameCount;
+                }
+            }
 
             [HarmonyPostfix]
-            public static void Postfix(KolibriManager __instance) => ApplyKolibriHold(__instance);
+            public static void Postfix(KolibriManager __instance)
+            {
+                _inUpdate = null;
+                ApplyKolibriHold(__instance);
+            }
         }
 
         [HarmonyPatch(typeof(BOS_Adler), "Update")]

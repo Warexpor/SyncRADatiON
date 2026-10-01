@@ -8,8 +8,6 @@ namespace SyncRADation.Networking
 {
     public static class DoorNative
     {
-        private static MethodInfo _doubleOpen;
-        private static MethodInfo _doubleClose;
         private static MethodInfo _slideCycle;
         private static bool _resolved;
 
@@ -18,15 +16,12 @@ namespace SyncRADation.Networking
             if (_resolved) return;
             _resolved = true;
             const BindingFlags f = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-            _doubleOpen = typeof(Doorway_Double).GetMethod("openDoors", f);
-            _doubleClose = typeof(Doorway_Double).GetMethod("closeDoors", f);
             _slideCycle = typeof(EventSlidingDoor).GetMethod("cycle", f);
         }
 
         public static void ApplyDoubleDoor(Doorway_Double d, bool open, bool locked)
         {
             if (d == null) return;
-            Resolve();
             // Flavor / DLC seals keep locked=false on the host. Writing that across
             // still runs native Update/indicator as "you can walk in".
             if (!locked && SealedFace(d.gameObject))
@@ -52,28 +47,12 @@ namespace SyncRADation.Networking
                 return;
 
             PlaytestLog.Event("Door", "apply " + (open ? "open" : "close") + " " + d.gameObject.name);
-            NetGate.BeginApply();
-            try
-            {
-                if (open)
-                {
-                    if (_doubleOpen != null)
-                        _doubleOpen.Invoke(d, null);
-                }
-                else
-                {
-                    if (_doubleClose != null)
-                        _doubleClose.Invoke(d, null);
-                }
-                d.open = open;
-            }
+            // `open` is the whole state: native Update calls openDoors / closeDoors every frame to lerp the leaves
+            // toward it (Ghidra Doorway_Double.c Update), so one extra reflected lerp step added nothing.
+            try { d.open = open; }
             catch (System.Exception ex)
             {
                 ModRuntime.Log?.Warning("[DoorNative] DoubleDoor: " + ex.Message);
-            }
-            finally
-            {
-                NetGate.EndApply();
             }
 
             PlayWorld(open ? d.OpenSFX : d.CloseSFX, d.gameObject);
@@ -461,19 +440,30 @@ namespace SyncRADation.Networking
             try { atd.blocker.SetActive(on); } catch (System.Exception e) { Guard.Swallow(e); }
         }
 
+        /// <summary>
+        /// Native cycle (Ghidra EventSlidingDoor.c): no-op while moving, else moving=true and an open/close coroutine
+        /// that sets opened/moving when it ends. A peer's cycle hook reports (opened = state it moved FROM,
+        /// moving = true); a full dump reports the settled state (moving = false). Either way the target is reached
+        /// by one native cycle here; opened/moving are never written directly (a forced moving=true without a
+        /// running coroutine wedged the door for good, cycle() ignores a moving door).
+        /// </summary>
         public static void ApplySlidingDoor(EventSlidingDoor sd, bool opened, bool moving)
         {
             if (sd == null) return;
             Resolve();
 
-            bool was = sd.opened;
-            if (opened == was && !moving)
+            bool target = moving ? !opened : opened;
+            bool localMoving = sd.moving;
+            bool localOpened = sd.opened;
+            // In motion: the running coroutine ends at !opened. Already heading there = nothing to do; the other
+            // way cannot be reversed mid-move (native cycle ignores it), the next edge / dump settles it.
+            if (localMoving || localOpened == target)
                 return;
 
             NetGate.BeginApply();
             try
             {
-                if (opened != was && _slideCycle != null)
+                if (_slideCycle != null)
                     _slideCycle.Invoke(sd, null);
             }
             catch (System.Exception ex)
@@ -485,10 +475,7 @@ namespace SyncRADation.Networking
                 NetGate.EndApply();
             }
 
-            sd.opened = opened;
-            sd.moving = moving;
-            if (opened != was)
-                PlayWorldPath(opened ? sd.openSFX : sd.closeSFX, sd.gameObject);
+            PlayWorldPath(target ? sd.openSFX : sd.closeSFX, sd.gameObject);
         }
 
         static void PlayWorld(StudioEventEmitter emitter, GameObject at)

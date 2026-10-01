@@ -18,13 +18,47 @@ namespace SyncRADation.Patches
         static bool TryBossId(END_Boss b, out long wid)
         {
             wid = 0;
-            if (b == null) return false;
-            try
+            var net = LanNetworkManager.Instance;
+            if (b == null || net == null) return false;
+            wid = unchecked((long)net.BossSync.BossId(b));
+            return wid != 0;
+        }
+
+        /// <summary>
+        /// Chimera / Mynah startFightSequence starts the Bossfight coroutine (Ghidra LAB_ChimeraBoss.c,
+        /// MED_MynahBoss.c). The fight is host-only: DisableLocalAI halts the client copy once at the first boss
+        /// snapshot, but a cutscene / UnityEvent replay that calls startFightSequence later would run the whole
+        /// fight again locally (double shots, local phase edges). A client in the host's scene never starts it.
+        /// </summary>
+        static bool ClientInHostScene()
+        {
+            if (!NetGate.Client) return false;
+            var net = LanNetworkManager.Instance;
+            return net != null && !net.SceneMismatch;
+        }
+
+        [HarmonyPatch(typeof(LAB_ChimeraBoss), nameof(LAB_ChimeraBoss.startFightSequence))]
+        public static class ChimeraStartFightPatch
+        {
+            [HarmonyPrefix]
+            public static bool Prefix()
             {
-                wid = unchecked((long)WorldId.FromGameObject(b.gameObject));
-                return wid != 0;
+                if (!ClientInHostScene()) return true;
+                PlaytestLog.Event("Boss", "chimera startFightSequence skipped (host runs the fight)");
+                return false;
             }
-            catch { return false; }
+        }
+
+        [HarmonyPatch(typeof(MED_MynahBoss), nameof(MED_MynahBoss.startFightSequence))]
+        public static class MynahStartFightPatch
+        {
+            [HarmonyPrefix]
+            public static bool Prefix()
+            {
+                if (!ClientInHostScene()) return true;
+                PlaytestLog.Event("Boss", "mynah startFightSequence skipped (host runs the fight)");
+                return false;
+            }
         }
 
         static bool ClientForward(END_Boss b)
@@ -123,13 +157,14 @@ namespace SyncRADation.Patches
             [HarmonyPrefix]
             public static void Prefix(LAB_ChimeraBoss __instance)
             {
-                if (!NetGate.Host) return;
+                if (!NetGate.Host || !NetGate.Party) return;
                 try
                 {
                     if (!__instance.gunShot) return;
-                    long wid = unchecked((long)WorldId.FromGameObject(__instance.gameObject));
+                    var net = LanNetworkManager.Instance;
+                    long wid = unchecked((long)net.BossSync.BossId(__instance));
                     if (wid != 0)
-                        LanNetworkManager.Instance.BossHandlers.BroadcastBossEvent(wid, BossHitKind.ChimeraShot, 0);
+                        net.BossHandlers.BroadcastBossEvent(wid, BossHitKind.ChimeraShot, 0);
                 }
                 catch (System.Exception ex)
                 {

@@ -25,6 +25,8 @@ namespace SyncRADation.Config
         public const int HardMaxPlayers = 8;
         /// <summary>Seconds a downed player waits before respawning next to a living teammate.</summary>
         public static MelonPreferences_Entry<float> DownedRespawnDelay;
+        /// <summary>Host: let clients use the F6 / F7 / F11 cheats that touch the shared world. Default off.</summary>
+        public static MelonPreferences_Entry<bool> AllowClientCheats;
 
         public static void Bind()
         {
@@ -50,6 +52,9 @@ namespace SyncRADation.Config
                 MaxPlayers.Value = System.Math.Max(MinMaxPlayers, System.Math.Min(HardMaxPlayers, MaxPlayers.Value));
             DownedRespawnDelay = Category.CreateEntry("DownedRespawnDelay", 20f,
                 "Seconds a downed player (host or client) waits before respawning next to the nearest living teammate. The party wipes (host reloads its last save) only when everyone is down.");
+
+            AllowClientCheats = Category.CreateEntry("AllowClientCheats", false,
+                "Host: allow clients' F6 (keys onto the party ring), F7 (chapter loads) and F11 (enemy spawns). Off = only the host can cheat.");
         }
 
         public static float DownedRespawnSeconds
@@ -69,6 +74,7 @@ namespace SyncRADation.Config
         public const byte FlagWorldPickups = 2;
         public const byte FlagPlayerVitals = 4;
         public const byte FlagFriendlyFire = 8;
+        public const byte FlagClientCheats = 16;
 
         // Session state (cleared by SessionReset "HostSyncFlags" on start / stop).
         private static bool _hasHostFlags;
@@ -79,7 +85,8 @@ namespace SyncRADation.Config
             (byte)((SyncPuzzles?.Value == true ? FlagPuzzles : 0)
                 | (SyncWorldPickups?.Value == true ? FlagWorldPickups : 0)
                 | (SyncPlayerVitals?.Value == true ? FlagPlayerVitals : 0)
-                | (FriendlyFire?.Value == true ? FlagFriendlyFire : 0));
+                | (FriendlyFire?.Value == true ? FlagFriendlyFire : 0)
+                | (AllowClientCheats?.Value == true ? FlagClientCheats : 0));
 
         /// <summary>Client: the host's toggles arrived (PlayerRoster). Logged when they differ from the local prefs.</summary>
         public static void ApplyHostSyncFlags(byte flags)
@@ -104,9 +111,12 @@ namespace SyncRADation.Config
         public static bool WorldPickupsEnabled => Effective(FlagWorldPickups, SyncWorldPickups);
         public static bool PlayerVitalsEnabled => Effective(FlagPlayerVitals, SyncPlayerVitals);
         public static bool FriendlyFireEnabled => Effective(FlagFriendlyFire, FriendlyFire);
+        /// <summary>Clients may use the shared-world cheats (host's AllowClientCheats while connected).</summary>
+        public static bool ClientCheatsAllowed => Effective(FlagClientCheats, AllowClientCheats);
 
         public static string Describe(byte flags) =>
             "FF=" + ((flags & FlagFriendlyFire) != 0 ? "ON" : "OFF")
+            + " clientCheats=" + ((flags & FlagClientCheats) != 0 ? "ON" : "OFF")
             + " puzzles=" + ((flags & FlagPuzzles) != 0 ? "ON" : "OFF")
             + " pickups=" + ((flags & FlagWorldPickups) != 0 ? "ON" : "OFF")
             + " vitals=" + ((flags & FlagPlayerVitals) != 0 ? "ON" : "OFF");

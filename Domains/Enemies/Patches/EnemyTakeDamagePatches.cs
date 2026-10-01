@@ -8,7 +8,7 @@ namespace SyncRADation.Patches
 {
     /// <summary>
     /// Host: allow game TakeDamage as usual (AI + local shots).
-    /// Client: suppress local HP mutation on puppets; report chances to host.
+    /// Client: roll back the local HP drop on puppets; report the damage + chances to the host.
     /// </summary>
     [HarmonyPatch(typeof(EnemyController))]
     public static class EnemyTakeDamagePatches
@@ -29,7 +29,6 @@ namespace SyncRADation.Patches
         public static bool PrefixSimple(EnemyController __instance)
         {
             float fire = 0f, crit = 0f, hurt = 0f;
-            bool noSneak = true;
             try
             {
                 fire = PlayerAttack.fireChance;
@@ -37,8 +36,8 @@ namespace SyncRADation.Patches
                 hurt = PlayerAttack.hurtChance;
             }
             catch (System.Exception e) { Guard.Swallow(e); }
-            try { noSneak = !PlayerState.sneaking; } catch (System.Exception e) { Guard.Swallow(e); }
-            return Handle(__instance, fire, crit, hurt, noSneak);
+            // Native 0-arg TakeDamage always forwards noSneak=true (Ghidra EnemyController.c TakeDamage()).
+            return Handle(__instance, fire, crit, hurt, true);
         }
 
         private static bool Handle(EnemyController enemy, float fire, float crit, float hurt, bool noSneak)
@@ -71,7 +70,16 @@ namespace SyncRADation.Patches
             if (id == 0)
                 return false;
 
-            net.SendNativeEnemyHit(id, fire, crit, hurt, noSneak);
+            // The local hit already lowered the puppet's Hitbox.HP (PlayerAttack / Kolibri feedback do it before
+            // TakeDamage): take that amount back so only the host's snapshot moves HP, and send it along.
+            int damage = net.EnemySync.TakeLocalHitDelta(id, enemy);
+
+            // Client KolibriManager.Update runs on the host's held radioIntensity, so its feedback branch hurts the
+            // Kolibri here too. The host's own Update already does that hit: drop the copy.
+            if (KolibriAdlerAuthPatches.InClientKolibriUpdate)
+                return false;
+
+            net.SendNativeEnemyHit(id, damage, fire, crit, hurt, noSneak);
             return false;
         }
     }

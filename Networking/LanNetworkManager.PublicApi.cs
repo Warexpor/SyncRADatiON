@@ -23,8 +23,8 @@ namespace SyncRADation.Networking
         public void SendEnemyDamage(int targetPlayerId, ulong enemyWorldId, float damage, bool stagger) =>
             EnemyHandlers.SendEnemyDamage(targetPlayerId, enemyWorldId, damage, stagger);
 
-        public void SendNativeEnemyHit(ulong enemyWorldId, float fire, float crit, float hurt, bool noSneak) =>
-            EnemyHandlers.SendNativeEnemyHit(enemyWorldId, fire, crit, hurt, noSneak);
+        public void SendNativeEnemyHit(ulong enemyWorldId, int damage, float fire, float crit, float hurt, bool noSneak) =>
+            EnemyHandlers.SendNativeEnemyHit(enemyWorldId, damage, fire, crit, hurt, noSneak);
 
         public void SendBossState(IList<BossSnapshotNet> snaps) => BossHandlers.SendBossState(snaps);
 

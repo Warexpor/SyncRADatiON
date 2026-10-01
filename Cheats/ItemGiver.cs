@@ -1,4 +1,4 @@
-// SyncRADation — IMGUI debug window: add any game item to inventory
+// SyncRADation ï¿½ IMGUI debug window: add any game item to inventory
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -158,6 +158,15 @@ namespace SyncRADation.Cheats
             {
                 var target = FindAnItem(item.ItemId);
                 if (target == null) { SetStatus("Can't find '" + item.ItemId + "'", true); return; }
+
+                // Keys / story objects go onto the shared party ring and unlock the world for everyone: a client
+                // needs the host's AllowClientCheats for those. Consumables stay personal.
+                if (Sync.NetGate.Client && !Config.ModConfig.ClientCheatsAllowed
+                    && (target.type == AnItem.AnItemType.Object || target.type == AnItem.AnItemType.Key))
+                {
+                    SetStatus("Host does not allow client cheats (keys)", true);
+                    return;
+                }
 
                 InventoryManager.AddItem(target, 1);
                 try
