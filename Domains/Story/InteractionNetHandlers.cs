@@ -174,8 +174,11 @@ namespace SyncRADation.Networking
 
         internal static void Reset()
         {
-            // Session ended with a put in flight: give the bag copy back (ack will never arrive).
-            if (_putReserved) Restore();
+            // Session ended with a put in flight: the host applies a put even after the sender is gone
+            // (InteractionSyncService.HandleRequest only rejects DroppedPickup / StorageTake), so the item may
+            // already be boxed. Giving the bag copy back would duplicate it; the reserve stays consumed.
+            if (_putReserved)
+                PlaytestLog.Event("StorageBox", "session end with put in flight " + _item + " x" + _count + " — left to the host box");
             _busy = false;
             _putReserved = false;
             _count = 0;

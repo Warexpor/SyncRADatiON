@@ -51,17 +51,6 @@ namespace SyncRADation.Networking
             // Recycled player id + restarted index counter must not collide with its old floor drops.
             try { _net.DroppedItemHandlers.RehomeDropsOf(playerId); }
             catch (System.Exception ex) { Guard.Swallow(ex); }
-            // Mid-claim WorldPickupGrant softlock: ammo/docs claimed then peer gone.
-            try
-            {
-                int n = _net.PickupSync.ReleaseOrphanClaimsForPlayer(playerId);
-                if (n > 0)
-                    PlaytestLog.Event("Pickup", "peer gone orphan releases=" + n + " p" + playerId);
-            }
-            catch (System.Exception ex)
-            {
-                ModRuntime.Log?.Warning("[Pickup] orphan release: " + ex.Message);
-            }
         }
 
         /// <summary>

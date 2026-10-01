@@ -65,19 +65,20 @@ namespace SyncRADation.Networking
 
         // Claims whose native release must be measured: what the bag really gained vs the claim count.
         private readonly Dictionary<ulong, NativePending> _gainCheck = new Dictionary<ulong, NativePending>();
-
-        // Client: remainder measured at native release, held until the host's grant confirms the claim
-        // (a deny must never leave a duplicate on the floor). Key = WorldId.
-        private struct WaitingOverflow
-        {
-            public Items.itemlist Item;
-            public int Remainder;
-            public float Time;
-        }
-        private readonly Dictionary<ulong, WaitingOverflow> _overflowWait = new Dictionary<ulong, WaitingOverflow>();
-        // Client: host grant that arrived before the native release measured its gain (value = arrival time).
-        private readonly Dictionary<ulong, float> _grantSeen = new Dictionary<ulong, float>();
         private readonly List<ulong> _extendScratch = new List<ulong>(2);
+
+        // Scan-time list of Key/Object props: the only ones IsClaimedPickup can hide by item enum
+        // (a second instance of a claimed unique). HideClaimed(null) walks _claimed + this, not every prop.
+        private struct UniqueProp
+        {
+            public ulong Id;
+            public ItemPickup P;
+            public ushort Item;
+        }
+        private readonly List<UniqueProp> _uniqueProps = new List<UniqueProp>(8);
+        // A miss in _byId (prop instantiated after the scan) rescans at most this often.
+        private float _lastRescanAt = -10f;
+        private const float RescanCooldown = 1f;
 
         /// <summary>
         /// Native release runs ~0.1s after dialoguerCallback. Record the bag count now so a later
@@ -205,7 +206,7 @@ namespace SyncRADation.Networking
             catch (System.Exception e) { Guard.Swallow(e); return false; }
         }
 
-        /// <summary>Native release finished: measure the gain, spawn any overflow, then hide.</summary>
+        /// <summary>Native release finished: measure the gain, settle a partial take, then hide.</summary>
         public void OnNativeRelease(ItemPickup p)
         {
             ulong id = IdOf(p);
@@ -239,41 +240,20 @@ namespace SyncRADation.Networking
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
 
-            if (net.Role == NetworkRole.Host)
+            // Native release kept the remainder on the prop (count = remainder + SProgress SetInt, no Destroy;
+            // Ghidra ItemPickup.c release) and that SProgress write reaches every peer through story sync.
+            // The prop is the only home of the remainder: it is never also spawned on the floor.
+            if (net.Role == NetworkRole.Host && !NetGate.Party)
             {
-                if (!NetGate.Party)
-                {
-                    // Lone host is vanilla: native release left the remainder on the prop (count = remainder,
-                    // not destroyed). Give the claim back so the prop stays, visible and takeable.
-                    ReleaseClaimIf(id, net.LocalPlayerId);
-                    PlaytestLog.Verbose("Pickup", "lone host partial " + np.Item + " x" + remainder + " stays on prop");
-                    return;
-                }
-                SpawnOverflow(np.Item, remainder, "release");
+                // Lone host is vanilla: give the claim back so the prop stays, visible and takeable.
+                ReleaseClaimIf(id, net.LocalPlayerId);
+                PlaytestLog.Verbose("Pickup", "lone host partial " + np.Item + " x" + remainder + " stays on prop");
                 return;
             }
-
-            // Client: only a host grant makes the claim real. Spawn the remainder after it (never before a
-            // deny could arrive), or right now when the grant already got here.
-            if (_grantSeen.Remove(id))
-            {
-                SpawnOverflow(np.Item, remainder, "release+grant");
-                return;
-            }
-            _overflowWait[id] = new WaitingOverflow { Item = np.Item, Remainder = remainder, Time = Time.unscaledTime };
-        }
-
-        /// <summary>AddItem/AddItemToMax cap at maxNumber: the part that did not fit goes on the floor.</summary>
-        static void SpawnOverflow(Items.itemlist item, int remainder, string why)
-        {
-            if (remainder <= 0 || item == Items.itemlist.None) return;
-            // Key/Object ride the party key ring; they never stack or overflow.
-            if (PartyKeyRing.IsKeyOrObject(item)) return;
-            var net = LanNetworkManager.Instance;
-            if (net == null || !net.IsConnected) return;
-            PlaytestLog.Event("Pickup", "overflow " + why + " " + item + " x" + remainder + " -> floor");
-            try { net.DropOverflow(item, remainder); }
-            catch (System.Exception ex) { ModRuntime.Log?.Warning("[WorldPickup] overflow drop: " + ex.Message); }
+            // Party: other peers' live props still show the full count (no count on the wire), so the claim
+            // stays for this visit; the prop comes back with the remainder (LoadState) on the next scene load.
+            PlaytestLog.Event("Pickup", "partial " + np.Item + " x" + remainder
+                + " stays on prop id=" + id.ToString("X16") + " (returns on revisit)");
         }
 
         /// <summary>
@@ -427,20 +407,6 @@ namespace SyncRADation.Networking
                     }
                 }
             }
-            if (_overflowWait.Count > 0 || _grantSeen.Count > 0)
-            {
-                float now = Time.unscaledTime;
-                _expiredScratch.Clear();
-                foreach (var kvp in _overflowWait)
-                    if (now - kvp.Value.Time > 30f) _expiredScratch.Add(kvp.Key);
-                foreach (var kvp in _grantSeen)
-                    if (now - kvp.Value > 30f) _expiredScratch.Add(kvp.Key);
-                for (int i = 0; i < _expiredScratch.Count; i++)
-                {
-                    _overflowWait.Remove(_expiredScratch[i]);
-                    _grantSeen.Remove(_expiredScratch[i]);
-                }
-            }
         }
 
         /// <summary>Client: host refused the claim — someone else owns the prop; undo the native add.</summary>
@@ -455,9 +421,6 @@ namespace SyncRADation.Networking
             try { if (p != null && p.gameObject == null) p = null; } catch { p = null; }
 
             _gainCheck.Remove(id);
-            // The claim lost: a remainder measured for it must never reach the floor.
-            _overflowWait.Remove(id);
-            _grantSeen.Remove(id);
             NativePending np;
             if (!_nativePending.TryGetValue(id, out np))
             {
@@ -483,6 +446,8 @@ namespace SyncRADation.Networking
             _claimerOf.Clear();
             _claimedItemOf.Clear();
             _byId.Clear();
+            _uniqueProps.Clear();
+            _lastRescanAt = -10f;
             _partyOnPickupFired.Clear();
             // Props of the old scene are gone: their held-back hides / release waits die with them.
             // In-flight claims (_nativePending/_reverts/_gainCheck) keep their own 4-30 s expiry so a
@@ -505,6 +470,8 @@ namespace SyncRADation.Networking
             _claimerOf.Clear();
             _claimedItemOf.Clear();
             _byId.Clear();
+            _uniqueProps.Clear();
+            _lastRescanAt = -10f;
             _partyOnPickupFired.Clear();
             ClearPending();
             _timer = 0f;
@@ -516,8 +483,6 @@ namespace SyncRADation.Networking
             _releasePending.Clear();
             _deferredHide.Clear();
             _gainCheck.Clear();
-            _overflowWait.Clear();
-            _grantSeen.Clear();
         }
 
         public void RequestFullSend() => _needFull = true;
@@ -676,7 +641,7 @@ namespace SyncRADation.Networking
             catch (System.Exception e) { Guard.Swallow(e); }
         }
 
-        /// <summary>Undo HideOnePickup after an orphan claim release (peer gone mid-grant).</summary>
+        /// <summary>Undo HideOnePickup after the host gave a claim back (declined yes/no, Triggered=false broadcast).</summary>
         static void RestorePickup(ItemPickup p)
         {
             if (p == null) return;
@@ -738,18 +703,39 @@ namespace SyncRADation.Networking
                 return;
             }
 
-            foreach (var kvp in _byId)
+            // Runs on every state message / door event: only claimed ids and the scan's unique props, ids cached.
+            foreach (var id in _claimed)
             {
-                if (kvp.Value == null) continue;
-                if (_claimed.Contains(kvp.Key) || IsClaimedPickup(kvp.Value))
-                    HidePickup(kvp.Value);
+                ItemPickup p;
+                if (!_byId.TryGetValue(id, out p) || p == null) continue;
+                if (!AlreadyHidden(p)) HidePickup(p);
             }
+            if (_claimedItems.Count == 0) return;
+            for (int i = 0; i < _uniqueProps.Count; i++)
+            {
+                var u = _uniqueProps[i];
+                if (u.P == null || _claimed.Contains(u.Id) || !_claimedItems.Contains(u.Item)) continue;
+                if (!AlreadyHidden(u.P)) HidePickup(u.P);
+            }
+        }
+
+        /// <summary>HideOnePickup already ran and nothing re-enabled the prop itself (parent wakes keep activeSelf false).</summary>
+        static bool AlreadyHidden(ItemPickup p)
+        {
+            try
+            {
+                if (p.gameObject == null) return true;
+                return p.dontDestroyOnPickup ? !p.enabled : !p.gameObject.activeSelf;
+            }
+            catch { return true; }
         }
 
         private void EnsureScanned()
         {
             if (_scanned) return;
             _byId.Clear();
+            _uniqueProps.Clear();
+            _lastRescanAt = Time.unscaledTime;
             var all = WorldLookup.All<ItemPickup>();
 
             if (all != null)
@@ -762,12 +748,31 @@ namespace SyncRADation.Networking
                     if (DroppedItemManager.IsDropped(p)) continue;
                     ulong id = WorldId.FromGameObject(p.gameObject);
                     if (id == 0) continue;
-                    if (!_byId.ContainsKey(id))
-                        _byId[id] = p;
+                    if (_byId.ContainsKey(id)) continue;
+                    _byId[id] = p;
+                    if (UniqueWorldItem(p))
+                    {
+                        try { _uniqueProps.Add(new UniqueProp { Id = id, P = p, Item = (ushort)p._item._item }); }
+                        catch (System.Exception e) { Guard.Swallow(e); }
+                    }
                 }
             }
             _scanned = true;
             ModRuntime.Log?.Msg("[WorldPickup] Scanned " + _byId.Count + " ItemPickup (WorldId)");
+        }
+
+        /// <summary>
+        /// Prop by WorldId. Ids are cached per instance at scene load, so a miss is a prop instantiated after the
+        /// scan (or one in another room/scene): rescan at most once per RescanCooldown, never per entry.
+        /// </summary>
+        bool TryFind(ulong id, out ItemPickup p)
+        {
+            EnsureScanned();
+            if (_byId.TryGetValue(id, out p) && p != null) return true;
+            if (Time.unscaledTime - _lastRescanAt < RescanCooldown) { p = null; return false; }
+            _scanned = false;
+            EnsureScanned();
+            return _byId.TryGetValue(id, out p) && p != null;
         }
 
         public void TickHost(LanNetworkManager net)
@@ -777,7 +782,8 @@ namespace SyncRADation.Networking
             if (net == null || net.Role != NetworkRole.Host || !net.IsConnected) return;
             if (Config.ModConfig.SyncWorldPickups?.Value != true) return;
 
-            _timer += Mathf.Min(Time.deltaTime, 0.1f);
+            // Send cadence is wall-clock: slow-mo / timeScale must not stretch the pickup state stream.
+            _timer += Mathf.Min(Time.unscaledDeltaTime, 0.1f);
             if (_timer < Interval && !_needFull) return;
             _timer = 0f;
 
@@ -886,12 +892,7 @@ namespace SyncRADation.Networking
             }
 
             ItemPickup p;
-            if (!_byId.TryGetValue(worldId, out p) || p == null)
-            {
-                _scanned = false;
-                EnsureScanned();
-                _byId.TryGetValue(worldId, out p);
-            }
+            TryFind(worldId, out p);
 
             if (p != null)
             {
@@ -993,56 +994,6 @@ namespace SyncRADation.Networking
             if (_byId.TryGetValue(worldId, out p) && p != null) RestorePickup(p);
         }
 
-        /// <summary>
-        /// Host: peer disconnect mid WorldPickupClaim/grant. Key/Object already Noted onto
-        /// the party ring — keep claimed+hidden. Ammo/docs/etc. never reached the claimer's
-        /// bag if grant could not deliver → release + restore prop + broadcast untriggered.
-        /// </summary>
-        public int ReleaseOrphanClaimsForPlayer(int claimerPlayerId)
-        {
-            if (claimerPlayerId < 1) return 0;
-            EnsureScanned();
-            var release = new System.Collections.Generic.List<ulong>(4);
-            foreach (var kvp in _claimerOf)
-            {
-                if (kvp.Value != claimerPlayerId) continue;
-                Items.itemlist noted = Items.itemlist.None;
-                _claimedItemOf.TryGetValue(kvp.Key, out noted);
-                // Party-ring uniques stay claimed (ring already has them).
-                if (noted != Items.itemlist.None && PartyKeyRing.IsKeyOrObject(noted))
-                    continue;
-                release.Add(kvp.Key);
-            }
-            if (release.Count == 0) return 0;
-
-            var net = LanNetworkManager.Instance;
-            int n = 0;
-            for (int i = 0; i < release.Count; i++)
-            {
-                ulong id = release[i];
-                if (!ReleaseClaimIf(id, claimerPlayerId)) continue;
-                n++;
-                ItemPickup p;
-                if (_byId.TryGetValue(id, out p) && p != null)
-                    RestorePickup(p);
-                if (net != null)
-                {
-                    net.SendWorldPickupState(new[]
-                    {
-                        new WorldPickupEntry
-                        {
-                            WorldId = unchecked((long)id),
-                            Triggered = false,
-                            Active = true
-                        }
-                    }, false);
-                }
-                PlaytestLog.Event("Pickup", "orphan release id=" + id.ToString("X16")
-                    + " peer=" + claimerPlayerId);
-            }
-            return n;
-        }
-
         public void BroadcastTriggered(ulong worldId, bool triggered)
         {
             var net = LanNetworkManager.Instance;
@@ -1086,7 +1037,6 @@ namespace SyncRADation.Networking
         public void ApplyHide(WorldPickupStateMessage msg)
         {
             if (msg.Entries == null) return;
-            _scanned = false;
             EnsureScanned();
 
             for (int i = 0; i < msg.Entries.Length; i++)
@@ -1096,12 +1046,7 @@ namespace SyncRADation.Networking
                 if (id == 0) continue;
 
                 ItemPickup p;
-                if (!_byId.TryGetValue(id, out p) || p == null)
-                {
-                    _scanned = false;
-                    EnsureScanned();
-                    _byId.TryGetValue(id, out p);
-                }
+                TryFind(id, out p);
                 if (p != null)
                 {
                     try
@@ -1187,15 +1132,8 @@ namespace SyncRADation.Networking
                 ulong id = unchecked((ulong)msg.WorldId);
                 _claimed.Add(id);
                 NoteClaimedItem((Items.itemlist)msg.ItemEnum);
-                EnsureScanned();
                 ItemPickup p;
-                _byId.TryGetValue(id, out p);
-                if (p == null)
-                {
-                    _scanned = false;
-                    EnsureScanned();
-                    _byId.TryGetValue(id, out p);
-                }
+                TryFind(id, out p);
                 if (p != null)
                 {
                     try
@@ -1206,7 +1144,6 @@ namespace SyncRADation.Networking
                     catch { p = null; }
                 }
 
-                KeyValuePair<Items.itemlist, int> pendingOverflow = default(KeyValuePair<Items.itemlist, int>);
                 NetGate.BeginApply();
                 try
                 {
@@ -1239,35 +1176,25 @@ namespace SyncRADation.Networking
                     // ammo/health/batteries are hidden for all peers and granted to nobody.
                     bool nativeAdds = _nativePending.Remove(id);
                     int grantCount = msg.Count > 0 ? msg.Count : 1;
-                    int overflow = 0;
                     if (!nativeAdds)
                     {
+                        // Non-inspect props only (the BOS_Adler spears, count 1; the claim Prefix checked bag room).
                         int before = DroppedItemManager.CountInBag(kind);
                         InventoryManager.AddItem(item, grantCount);
                         // AddItem silently caps at maxNumber: measure what the bag really took.
                         int gained = DroppedItemManager.CountInBag(kind) - before;
-                        overflow = grantCount - (gained > 0 ? gained : 0);
+                        if (gained < grantCount)
+                            PlaytestLog.Warn("Pickup", "grant " + kind + " took " + (gained > 0 ? gained : 0)
+                                + "/" + grantCount + " (stack cap)");
                     }
                     else
                     {
-                        // Native release owns the add (and its onPickup Invoke): partial gains are
-                        // measured there (CheckGain), and party onPickup must not fire a second time.
+                        // Native release owns the add (and its onPickup Invoke): a partial gain stays on the
+                        // prop natively (CheckGain), and party onPickup must not fire a second time.
                         NoteOnPickupFired(id);
-                        // The host grant confirms the claim: spawn the remainder the release measured, or
-                        // tell CheckGain the grant is already in (release has not run yet).
-                        WaitingOverflow wo;
-                        if (_overflowWait.TryGetValue(id, out wo))
-                        {
-                            _overflowWait.Remove(id);
-                            pendingOverflow = new KeyValuePair<Items.itemlist, int>(wo.Item, wo.Remainder);
-                        }
-                        else
-                            _grantSeen[id] = Time.unscaledTime;
                     }
                     PartyKeyRing.Note(item);
                     PartyKeyRing.BindUseDialogue(item);
-                    if (overflow > 0)
-                        pendingOverflow = new KeyValuePair<Items.itemlist, int>(kind, overflow);
 
                     // Client Prefix blocks ItemPickup.pickUp, so onPickup never ran.
                     // Host-claim comment was false when client claims — host+non-claimers
@@ -1279,9 +1206,6 @@ namespace SyncRADation.Networking
                 {
                     NetGate.EndApply();
                 }
-
-                if (pendingOverflow.Value > 0)
-                    SpawnOverflow(pendingOverflow.Key, pendingOverflow.Value, "grant");
 
                 if (p != null)
                 {

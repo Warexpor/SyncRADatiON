@@ -108,11 +108,24 @@ namespace SyncRADation.Patches
 
     // SaveManager.Save/Load/NewGame dump and restore *per-player* state (hp, position, enemies, minimap,
     // inventory, END statics) through SProgress.Set*: never forward those to the host.
+    // Save also writes every hasItem item with its getCount into the saved bag (Ghidra SaveManager.c Save):
+    // the party key ring masquerade is off for its duration so other peers' ring keys are not saved here.
     [HarmonyPatch(typeof(SaveManager), nameof(SaveManager.Save))]
     public static class SaveManagerSaveScopePatch
     {
-        [HarmonyPrefix] public static void Prefix() => StorySyncService.BeginSuppressForward();
-        [HarmonyFinalizer] public static void Finalizer() => StorySyncService.EndSuppressForward();
+        [HarmonyPrefix]
+        public static void Prefix()
+        {
+            StorySyncService.BeginSuppressForward();
+            PartyKeyRing.SuspendMasquerade();
+        }
+
+        [HarmonyFinalizer]
+        public static void Finalizer()
+        {
+            PartyKeyRing.ResumeMasquerade();
+            StorySyncService.EndSuppressForward();
+        }
     }
 
     [HarmonyPatch(typeof(SaveManager), nameof(SaveManager.Load))]
@@ -364,7 +377,7 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(AnItem item, ref bool __result)
         {
-            if (__result || item == null || !NetGate.Live || ItemPickupTakeScope.Active) return;
+            if (__result || item == null || !NetGate.Live || ItemPickupTakeScope.Active || PartyKeyRing.MasqueradeOff) return;
             if (PartyKeyRing.Has(item))
                 __result = true;
         }
@@ -376,7 +389,7 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(Items.itemlist item, ref bool __result)
         {
-            if (__result || !NetGate.Live || ItemPickupTakeScope.Active) return;
+            if (__result || !NetGate.Live || ItemPickupTakeScope.Active || PartyKeyRing.MasqueradeOff) return;
             if (PartyKeyRing.Has(item))
                 __result = true;
         }
@@ -387,14 +400,49 @@ namespace SyncRADation.Patches
     {
         static bool _counting;
 
-        /// <summary>SessionReset: re-entrancy flag, cleared in case an exception path ever left it set.</summary>
-        internal static void ResetSession() => _counting = false;
+        // Item types with no other bag instance, valid for one frame at one bag entry count. A miss can only
+        // turn into a hit by adding a new bag entry (Count changes), so the cache never hides a real stack.
+        // EquipmentSlots.Update alone calls getCount 3x a frame; each miss walked the whole bag.
+        static readonly System.Collections.Generic.HashSet<int> _noOtherInstance = new System.Collections.Generic.HashSet<int>();
+        static int _missFrame = -1;
+        static int _missBagCount = -1;
+
+        /// <summary>SessionReset: re-entrancy flag (cleared in case an exception path ever left it set) and the miss cache.</summary>
+        internal static void ResetSession()
+        {
+            _counting = false;
+            _noOtherInstance.Clear();
+            _missFrame = -1;
+            _missBagCount = -1;
+        }
+
+        static AnItem OtherBagInstance(AnItem item)
+        {
+            int frame = Time.frameCount;
+            int bagCount = -1;
+            try { var d = InventoryManager.elsterItems; bagCount = d != null ? d.Count : 0; }
+            catch (Exception e) { Guard.Swallow(e); }
+            if (frame != _missFrame || bagCount != _missBagCount)
+            {
+                _noOtherInstance.Clear();
+                _missFrame = frame;
+                _missBagCount = bagCount;
+            }
+            if (bagCount == 0) return null;
+            int kind;
+            try { kind = (int)item._item; } catch { return PartyKeyRing.FindInBag(item); }
+            if (_noOtherInstance.Contains(kind)) return null;
+            var held = PartyKeyRing.FindInBag(item);
+            if (held == null) _noOtherInstance.Add(kind);
+            return held;
+        }
 
         [HarmonyPostfix]
         public static void Postfix(AnItem item, ref int __result)
         {
-            if (__result > 0 || item == null || !NetGate.Live || _counting || ItemPickupTakeScope.Active) return;
-            var held = PartyKeyRing.FindInBag(item);
+            if (__result > 0 || item == null || !NetGate.Live || _counting || ItemPickupTakeScope.Active
+                || PartyKeyRing.MasqueradeOff) return;
+            var held = OtherBagInstance(item);
             if (held != null && held != item)
             {
                 _counting = true;

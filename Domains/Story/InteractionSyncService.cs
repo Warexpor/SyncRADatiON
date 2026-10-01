@@ -788,8 +788,17 @@ namespace SyncRADation.Networking
             }
             int have = BoxStock(item);
             if (have <= 0) return 0;
+            // unboxItem removes the whole entry (Ghidra InventoryManager.c unboxItem: boxItems.Remove): only
+            // exact when the taker wants the full stack. A partial take that cannot edit the stack fails.
+            if (have > n)
+            {
+                ModRuntime.Log?.Warning("[StorageBox] take " + n + "/" + have + " " + item._item
+                    + ": box entry not editable, refused");
+                return 0;
+            }
             try { InventoryManager.unboxItem(item); } catch { return 0; }
-            return have < n ? have : n;
+            int removed = have - BoxStock(item);
+            return removed > 0 ? removed : 0;
         }
 
         static int BoxStock(AnItem item)

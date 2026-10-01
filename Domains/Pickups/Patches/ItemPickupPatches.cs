@@ -10,25 +10,22 @@ namespace SyncRADation.Patches
     {
         static ulong _pendingId;
         static Items.itemlist _pendingItem;
-        static float _pendingTime;
 
-        /// <summary>SessionReset: the in-flight world-pickup claim and the pre-drop bag count belong to the session that just ended.</summary>
+        /// <summary>SessionReset: the in-flight world-pickup claim and the armed floor take belong to the session that just ended.</summary>
         internal static void ResetSession()
         {
             _pendingId = 0;
             _pendingItem = Items.itemlist.None;
-            _pendingTime = 0f;
-            _countBeforeDrop = 0;
             ClearPendingDrop();
         }
 
-        /// <summary>Forget the armed floor item (declined / session end) so a later AddItem cannot claim it.</summary>
+        /// <summary>Forget the armed floor item (declined / session end / take finished).</summary>
         internal static void ClearPendingDrop()
         {
             _pendingDropKey = -1;
             _pendingDropItem = Items.itemlist.None;
             _pendingDropCount = 0;
-            _countBeforeDrop = 0;
+            _pendingDropAdded = 0;
         }
 
         internal static void NoteTakenFromCallback(ItemPickup p)
@@ -40,8 +37,6 @@ namespace SyncRADation.Patches
                 if (!AnsweredYes())
                 {
                     PlaytestLog.Verbose("Drop", "take declined");
-                    // pickUp Prefix armed this drop; nothing consumes it on a "no", and a later AddItem of
-                    // anything would claim + despawn the floor item for everyone without granting it.
                     ClearPendingDrop();
                     return;
                 }
@@ -69,36 +64,87 @@ namespace SyncRADation.Patches
             }
         }
 
+        /// <summary>
+        /// Confirmed "yes" on a floor item (dialoguerCallback, then again from the release prefix): add what
+        /// the bag really takes, claim the drop, and spill the part that did not fit as a new floor item.
+        /// The only path that claims a drop, so an unrelated AddItem can never retire one.
+        /// </summary>
         internal static bool TakeDropped(ItemPickup p)
         {
+            ClearPendingDrop();
             ArmDropped(p);
-            if (_pendingDropKey < 0) return false;
-            EnsureGranted();
-            FinishDroppedNative(p, true, ignoreCount: true);
+            int key = _pendingDropKey;
+            if (key < 0 || !ItemSystem.DroppedItemManager.TryGet(key, out _, out _))
+            {
+                ClearPendingDrop();
+                return false;
+            }
+            // Second call of the same take (release prefix after the callback): already granted + claimed.
+            if (!_claimedDrops.Contains(key))
+            {
+                int added = GrantDropped();
+                if (added <= 0)
+                {
+                    // Stack at max / no free slot: nothing moved, the floor item stays for everyone.
+                    PlaytestLog.Event("Drop", "take " + _pendingDropItem + " x" + _pendingDropCount
+                        + " key=" + key + " — bag took nothing, drop stays");
+                    ClearPendingDrop();
+                    try { ItemSystem.DroppedItemManager.RestorePlay(); } catch (System.Exception e) { Guard.Swallow(e); }
+                    return true;
+                }
+                _pendingDropAdded = added;
+            }
+            FinishDroppedNative(p);
             try { ItemSystem.DroppedItemManager.RestorePlay(); } catch (System.Exception e) { Guard.Swallow(e); }
             return true;
         }
 
-        static void EnsureGranted()
+        /// <summary>AddItem the armed stack and return how many units the bag really took (AddItem caps at maxNumber).</summary>
+        static int GrantDropped()
         {
             var id = _pendingDropItem;
-            if (id == Items.itemlist.None && _pendingDropKey >= 0)
-                ItemSystem.DroppedItemManager.TryGet(_pendingDropKey, out id, out _);
-            if (id == Items.itemlist.None) return;
-            if (ItemSystem.DroppedItemManager.CountInBag(id) > 0) return;
+            if (id == Items.itemlist.None) return 0;
+            int want = _pendingDropCount > 0 ? _pendingDropCount : 1;
+            int before = ItemSystem.DroppedItemManager.CountInBag(id);
+            // Native AddItem ignores maxSlots: a new stack needs a free slot (native pickUp shows _nospaceDialogue).
+            if (before <= 0 && !ItemSystem.DroppedItemManager.BagHasRoom(id)) return 0;
             try
             {
                 var item = InventoryManager.getItem(id);
-                if (item != null)
-                    InventoryManager.AddItem(item, _pendingDropCount > 0 ? _pendingDropCount : 1);
+                if (item == null) return 0;
+                InventoryManager.AddItem(item, want);
             }
             catch (System.Exception ex)
             {
                 ModRuntime.Log?.Warning("[Drop] grant: " + ex.Message);
             }
+            int added = ItemSystem.DroppedItemManager.CountInBag(id) - before;
+            return added > 0 ? added : 0;
         }
 
-        internal static void ArmDropped(ItemPickup p)
+        static void RemoveAdded(Items.itemlist itemEnum, int n)
+        {
+            if (itemEnum == Items.itemlist.None || n <= 0) return;
+            try
+            {
+                var item = InventoryManager.getItem(itemEnum);
+                if (item != null)
+                    InventoryManager.RemoveItem(PartyKeyRing.FindInBag(item) ?? item, n);
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+        }
+
+        static void SpillOverflow(Items.itemlist itemEnum, int n)
+        {
+            if (itemEnum == Items.itemlist.None || n <= 0) return;
+            var net = LanNetworkManager.Instance;
+            if (net == null) return;
+            PlaytestLog.Event("Drop", "overflow " + itemEnum + " x" + n + " -> floor");
+            try { net.DropOverflow(itemEnum, n); }
+            catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] overflow: " + ex.Message); }
+        }
+
+        static void ArmDropped(ItemPickup p)
         {
             if (p == null || !ItemSystem.DroppedItemManager.IsDropped(p)) return;
             int key;
@@ -122,41 +168,6 @@ namespace SyncRADation.Patches
                     if (c > 0) _pendingDropCount = c;
                 }
             }
-            _countBeforeDrop = ItemSystem.DroppedItemManager.CountInBag(_pendingDropItem);
-        }
-
-        internal static void TickPendingDrop()
-        {
-            if (_pendingDropKey < 0) return;
-            if (!ItemSystem.DroppedItemManager.TryGet(_pendingDropKey, out _, out _))
-            {
-                _pendingDropKey = -1;
-                return;
-            }
-            if (!BagGained(null)) return;
-            FinishDroppedNative(null, true, ignoreCount: true);
-        }
-
-        static bool BagGained(ItemPickup p)
-        {
-            var id = _pendingDropItem;
-            if (id == Items.itemlist.None && p != null)
-            {
-                try { if (p._item != null) id = p._item._item; } catch (System.Exception e) { Guard.Swallow(e); }
-            }
-            if (id == Items.itemlist.None && _pendingDropKey >= 0)
-                ItemSystem.DroppedItemManager.TryGet(_pendingDropKey, out id, out _);
-            if (id == Items.itemlist.None) return false;
-            return ItemSystem.DroppedItemManager.CountInBag(id) > _countBeforeDrop;
-        }
-
-        internal static void CommitDroppedIfTaken(ItemPickup p)
-        {
-            if (p != null && IsInspect(p)) return;
-            bool trig = false;
-            try { if (p != null) trig = p.triggered; } catch (System.Exception e) { Guard.Swallow(e); }
-            if (!trig) return;
-            FinishDroppedNative(p, true, ignoreCount: true);
         }
 
         /// <summary>Notes craft/grant <b>result</b> on AddItem. Ingredients: see CombineRecipesCraftPatch.</summary>
@@ -202,7 +213,20 @@ namespace SyncRADation.Patches
         static int _pendingDropKey = -1;
         static Items.itemlist _pendingDropItem;
         static int _pendingDropCount;
-        static int _countBeforeDrop;
+        // Units the confirmed take really added to the bag (what a failed claim takes back).
+        static int _pendingDropAdded;
+
+        /// <summary>
+        /// Prefix vetoed native pickUp without sending a claim. ItemPickup.Update set <c>triggered</c> before
+        /// calling pickUp (Ghidra ItemPickup.c Update) and only release clears it: left set, the host's TickHost
+        /// reads it as an ownerless claim (hidden for everyone) and Update never lets this peer try again.
+        /// </summary>
+        static void UntriggerVeto(ItemPickup p)
+        {
+            if (p == null) return;
+            try { p.triggered = false; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (p.inter != null) p.inter.triggered = false; } catch (System.Exception e) { Guard.Swallow(e); }
+        }
 
         [HarmonyPrefix]
         public static bool Prefix(ItemPickup __instance)
@@ -210,11 +234,9 @@ namespace SyncRADation.Patches
             if (__instance == null) return true;
             BindPickupName(__instance);
 
+            // Floor items: the claim runs on the confirmed answer (TakeDropped), never here.
             if (ItemSystem.DroppedItemManager.IsDropped(__instance))
-            {
-                ArmDropped(__instance);
                 return true;
-            }
 
             if (NetGate.IsApplying) return true;
 
@@ -228,6 +250,7 @@ namespace SyncRADation.Patches
                     && netHold.PickupSync.HoldTarotDeathForSacrifice(deathItem))
                 {
                     PlaytestLog.Event("Pickup", "hold TarotDeath until KeyOfSacrifice");
+                    UntriggerVeto(__instance);
                     return false;
                 }
             }
@@ -249,7 +272,6 @@ namespace SyncRADation.Patches
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             if (id == 0) return true;
             _pendingId = id;
-            _pendingTime = UnityEngine.Time.unscaledTime;
             try
             {
                 if (__instance._item != null)
@@ -274,13 +296,17 @@ namespace SyncRADation.Patches
                 return true;
             }
 
-            if (WorldClaimNeedsBagRoom(_pendingItem) && !BagHasRoomForWorld(_pendingItem))
+            if (WorldClaimNeedsBagRoom(_pendingItem) && !ItemSystem.DroppedItemManager.BagHasRoom(_pendingItem))
             {
                 // Host: let native pickUp show _nospaceDialogue (no reservation).
                 // Client: block native (would dual-grant) and skip claim wire.
                 PlaytestLog.Event("Pickup", "deny bag full " + __instance.gameObject.name
                     + " item=" + _pendingItem);
-                if (net.Role != NetworkRole.Host) return false;
+                if (net.Role != NetworkRole.Host)
+                {
+                    UntriggerVeto(__instance);
+                    return false;
+                }
                 net.PickupSync.MarkReleasePending(__instance, false);
                 return true;
             }
@@ -310,11 +336,7 @@ namespace SyncRADation.Patches
         public static void Postfix(ItemPickup __instance, bool __runOriginal)
         {
             if (!__runOriginal) return;
-            if (__instance != null && ItemSystem.DroppedItemManager.IsDropped(__instance))
-            {
-                CommitDroppedIfTaken(__instance);
-                return;
-            }
+            if (__instance != null && ItemSystem.DroppedItemManager.IsDropped(__instance)) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
             if (Config.ModConfig.SyncWorldPickups?.Value != true) return;
@@ -398,7 +420,7 @@ namespace SyncRADation.Patches
             // confirm (NoteTaken) so declining never hides the prop for everyone.
             if (__instance != null && IsInspect(__instance)) return;
             if (net.PickupSync.IsClaimed(id)) return;
-            if (WorldClaimNeedsBagRoom(_pendingItem) && !BagHasRoomForWorld(_pendingItem))
+            if (WorldClaimNeedsBagRoom(_pendingItem) && !ItemSystem.DroppedItemManager.BagHasRoom(_pendingItem))
             {
                 PlaytestLog.Event("Pickup", "deny bag full after inspect item=" + _pendingItem);
                 return;
@@ -454,7 +476,7 @@ namespace SyncRADation.Patches
                     return;
                 }
                 // Native release (0.1 s away) does the add: measure it so a partial AddItemToMax
-                // leaves the remainder on the floor instead of vanishing with the claimed prop.
+                // (remainder left on the prop natively) is settled in CheckGain.
                 net.PickupSync.ExpectGain(id, item, takeCount);
                 // Inspect/confirm path: native already Invoked — Note before Broadcast (Dig H).
                 net.PickupSync.NoteOnPickupFired(id);
@@ -478,7 +500,7 @@ namespace SyncRADation.Patches
                 net.PickupSync.RevertNativeGrantNow(item, takeCount, p);
                 return;
             }
-            if (WorldClaimNeedsBagRoom(item) && !BagHasRoomForWorld(item)
+            if (WorldClaimNeedsBagRoom(item) && !ItemSystem.DroppedItemManager.BagHasRoom(item)
                 && !WorldPickupSyncService.WouldMagFill(item))
             {
                 PlaytestLog.Event("Pickup", "deny bag full confirm item=" + item);
@@ -507,43 +529,6 @@ namespace SyncRADation.Patches
             return true;
         }
 
-        static bool BagHasRoomForWorld(Items.itemlist kind)
-        {
-            try
-            {
-                var item = InventoryManager.getItem(kind);
-                if (item != null && PartyKeyRing.InLocalBag(item))
-                    return !ItemSystem.DroppedItemManager.StackAtCap(kind);
-                int used = 0;
-                var dict = InventoryManager.elsterItems;
-                if (dict == null) return true;
-                var en = dict.GetEnumerator();
-                while (en.MoveNext())
-                {
-                    if (en.Current.key != null && en.Current.value > 0)
-                        used++;
-                }
-                en.Dispose();
-                int max = InventoryManager.maxSlots;
-                if (max <= 0) max = 6;
-                return used < max;
-            }
-            catch { return true; }
-        }
-
-        internal static void NoteDroppedGrant(AnItem item)
-        {
-            if (_pendingDropKey < 0) return;
-            // Only the armed drop's own item completes it; any other AddItem is unrelated.
-            if (_pendingDropItem != Items.itemlist.None)
-            {
-                Items.itemlist added = Items.itemlist.None;
-                try { if (item != null) added = item._item; } catch (System.Exception e) { Guard.Swallow(e); }
-                if (added != _pendingDropItem) return;
-            }
-            FinishDroppedNative(null, true, ignoreCount: true);
-        }
-
         /// <summary>A drop spawned (local / remote / respawn) under this key: an old claim of the same key is stale.</summary>
         internal static void ForgetDropClaim(int key)
         {
@@ -567,7 +552,10 @@ namespace SyncRADation.Patches
         struct AwaitingDrop
         {
             public Items.itemlist Item;
+            /// <summary>Units the take really added (a FAIL ack removes exactly these).</summary>
             public int Count;
+            /// <summary>Part of the stack the bag could not hold: spawned on the floor once the claim is confirmed.</summary>
+            public int Spill;
         }
 
         // Host ack for client DroppedPickup — keyed so a second claim before the first
@@ -584,14 +572,12 @@ namespace SyncRADation.Patches
         {
             _claimedDrops.Clear();
             _awaitingDrops.Clear();
-            _pendingDropKey = -1;
-            _pendingDropItem = Items.itemlist.None;
-            _pendingDropCount = 0;
+            ClearPendingDrop();
         }
 
-        static void FinishDroppedNative(ItemPickup p, bool confirmed, bool ignoreCount = false)
+        /// <summary>Claim the armed drop after TakeDropped granted <c>_pendingDropAdded</c> units.</summary>
+        static void FinishDroppedNative(ItemPickup p)
         {
-            if (!confirmed) return;
             int key = _pendingDropKey;
             if (p != null)
             {
@@ -602,111 +588,70 @@ namespace SyncRADation.Patches
             if (key < 0) return;
             if (!ItemSystem.DroppedItemManager.TryGet(key, out _, out _)) return;
 
-            if (!ignoreCount && !BagGained(p)) return;
-
             if (!_claimedDrops.Add(key))
             {
                 ItemSystem.DroppedItemManager.DespawnWhenIdle(key);
-                _pendingDropKey = -1;
+                ClearPendingDrop();
                 return;
             }
 
+            var item = _pendingDropItem;
+            int added = _pendingDropAdded;
+            int spill = (_pendingDropCount > 0 ? _pendingDropCount : 1) - added;
+            if (spill < 0) spill = 0;
             var net = LanNetworkManager.Instance;
-            ModRuntime.Log?.Msg("[Drop] claim key=" + key + " " + _pendingDropItem
+            ModRuntime.Log?.Msg("[Drop] claim key=" + key + " " + item + " added=" + added + " spill=" + spill
                 + " by=" + (net != null ? net.LocalPlayerId.ToString() : "?")
                 + " host=" + (net != null && net.Role == NetworkRole.Host));
             if (net != null && net.IsConnected)
             {
                 if (net.Role == NetworkRole.Host)
                 {
-                    // Host never stages awaiting-ack entries (client-only). Do not
-                    // Clear() here — a mistaken wipe would drop FAIL-revert keys if
-                    // any ever landed on this process (role recycle / StopNetwork race).
-                    net.TryClaimDropped(key, net.LocalPlayerId, out _, skipLocalGrant: true);
+                    // The take already granted locally (skipLocalGrant). A refused claim gives the items back
+                    // and leaves the floor item where it is.
+                    string reason;
+                    if (!net.TryClaimDropped(key, net.LocalPlayerId, out reason, skipLocalGrant: true))
+                    {
+                        PlaytestLog.Event("Drop", "host claim refused key=" + key + " " + reason + " — undo x" + added);
+                        RemoveAdded(item, added);
+                        _claimedDrops.Remove(key);
+                        ClearPendingDrop();
+                        return;
+                    }
+                    SpillOverflow(item, spill);
                 }
                 else
                 {
-                    // WorldId carries drop key so FAIL ack can match (Int0 is also key).
-                    _awaitingDrops[key] = new AwaitingDrop
-                    {
-                        Item = _pendingDropItem,
-                        Count = _pendingDropCount > 0 ? _pendingDropCount : 1
-                    };
+                    // WorldId carries drop key so the ack matches this claim (Int0 is also key).
+                    _awaitingDrops[key] = new AwaitingDrop { Item = item, Count = added, Spill = spill };
                     net.SendInteractionRequest(unchecked((ulong)(uint)key), InteractionKind.DroppedPickup, key);
                 }
             }
             else
+            {
                 _awaitingDrops.Remove(key);
+                SpillOverflow(item, spill);
+            }
             ItemSystem.DroppedItemManager.DespawnWhenIdle(key);
-            _pendingDropKey = -1;
+            ClearPendingDrop();
         }
 
+        /// <summary>Host answer to a DroppedPickup claim. The ack always echoes the drop key (request WorldId).</summary>
         internal static void NoteDropClaimAck(bool ok, long ackWorldId)
         {
-            int ackKey = ackWorldId != 0 ? (int)ackWorldId : -1;
+            int ackKey = (int)ackWorldId;
+            AwaitingDrop pending;
+            if (!_awaitingDrops.TryGetValue(ackKey, out pending)) return;
+            _awaitingDrops.Remove(ackKey);
             if (ok)
             {
-                if (ackKey >= 0)
-                    _awaitingDrops.Remove(ackKey);
-                else if (_awaitingDrops.Count == 1)
-                {
-                    // Legacy ack without WorldId — only safe when a single claim is in flight.
-                    _awaitingDrops.Clear();
-                }
+                // Confirmed: only now can the overflow reach the floor (a FAIL must never leave a copy).
+                SpillOverflow(pending.Item, pending.Spill);
                 return;
             }
-            RevertPendingNativeGrant(ackWorldId);
-        }
-
-        internal static void RevertPendingNativeGrant(long ackWorldId = 0)
-        {
-            int ackKey = ackWorldId != 0 ? (int)ackWorldId : -1;
-            Items.itemlist itemEnum = Items.itemlist.None;
-            int count = 1;
-            int clearKey = -1;
-
-            if (ackKey >= 0 && _awaitingDrops.TryGetValue(ackKey, out var pending))
-            {
-                itemEnum = pending.Item;
-                count = pending.Count > 0 ? pending.Count : 1;
-                clearKey = ackKey;
-            }
-            else if (ackKey < 0 && _awaitingDrops.Count == 1)
-            {
-                foreach (var kvp in _awaitingDrops)
-                {
-                    clearKey = kvp.Key;
-                    itemEnum = kvp.Value.Item;
-                    count = kvp.Value.Count > 0 ? kvp.Value.Count : 1;
-                    break;
-                }
-            }
-            else if (_pendingDropItem != Items.itemlist.None)
-            {
-                // Legacy / host-local path fallback.
-                itemEnum = _pendingDropItem;
-                count = _pendingDropCount > 0 ? _pendingDropCount : 1;
-                clearKey = _pendingDropKey;
-            }
-            else
-                return;
-
-            try
-            {
-                var item = InventoryManager.getItem(itemEnum);
-                if (item != null)
-                    InventoryManager.RemoveItem(PartyKeyRing.FindInBag(item) ?? item, count);
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
+            RemoveAdded(pending.Item, pending.Count);
             // Allow a later respawn/dump of the same key to be claimed again.
-            if (clearKey >= 0)
-            {
-                _claimedDrops.Remove(clearKey);
-                _awaitingDrops.Remove(clearKey);
-            }
-            _pendingDropKey = -1;
-            _pendingDropItem = Items.itemlist.None;
-            _pendingDropCount = 0;
+            _claimedDrops.Remove(ackKey);
         }
     }
 
@@ -754,7 +699,7 @@ namespace SyncRADation.Patches
                 var net = LanNetworkManager.Instance;
                 if (__instance == null || net == null || !net.IsConnected) return;
                 if (ItemSystem.DroppedItemManager.IsDropped(__instance)) return;
-                // Native release ran: settle the gain (overflow to floor) and run the held-back hide.
+                // Native release ran: settle the gain and run the held-back hide.
                 net.PickupSync.OnNativeRelease(__instance);
             }
             catch (System.Exception ex) { ModRuntime.Log?.Warning("[Pickup] release post: " + ex.Message); }
@@ -767,7 +712,6 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(AnItem item)
         {
-            ItemPickupPatches.NoteDroppedGrant(item);
             ItemPickupPatches.NoteCraftedKey(item);
         }
     }
@@ -778,7 +722,6 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(AnItem item)
         {
-            ItemPickupPatches.NoteDroppedGrant(item);
             ItemPickupPatches.NoteCraftedKey(item);
         }
     }

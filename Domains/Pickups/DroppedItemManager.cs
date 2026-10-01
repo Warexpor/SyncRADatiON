@@ -40,7 +40,6 @@ namespace SyncRADation.ItemSystem
         public static bool IsDropped(ItemPickup p) => DroppedItemRegistry.IsDropped(p);
         public static bool IsDroppedGo(GameObject go) => DroppedItemRegistry.IsDroppedGo(go);
         public static bool TryKeyOf(ItemPickup p, out int key) => DroppedItemRegistry.TryKeyOf(p, out key);
-        public static bool TryKeyOfGo(GameObject go, out int key) => DroppedItemRegistry.TryKeyOfGo(go, out key);
 
         public static Vector3 FloorDropPos(Transform player) => DroppedItemRegistry.FloorDropPos(player);
 
@@ -50,14 +49,12 @@ namespace SyncRADation.ItemSystem
         public static int SanitizeStack(int n, bool unique) => DroppedItemRegistry.SanitizeStack(n, unique);
         public static int CountInBag(Items.itemlist id) => DroppedItemRegistry.CountInBag(id);
         public static bool StackAtCap(Items.itemlist id) => DroppedItemRegistry.StackAtCap(id);
+        public static bool BagHasRoom(Items.itemlist id) => DroppedItemRegistry.BagHasRoom(id);
         public static bool Rekey(int oldKey, int newKey) => DroppedItemRegistry.Rekey(oldKey, newKey);
         public static Interaction NearbyInteraction(Vector3 pos, float maxDist)
             => DroppedItemRegistry.NearbyInteraction(pos, maxDist);
-        public static void SetHighlight(GameObject go, bool on) => DroppedItemRegistry.SetHighlight(go, on);
-        public static bool InspectLocked() => DroppedItemRegistry.InspectLocked();
         public static void RestorePlay() => DroppedItemRegistry.RestorePlay();
         public static void RestorePlayForLoad() => DroppedItemRegistry.RestorePlayForLoad();
-        public static void HideForClaim(int netID) => DroppedItemRegistry.HideForClaim(netID);
         public static void DespawnWhenIdle(int netID) => DroppedItemRegistry.DespawnWhenIdle(netID);
         public static void TickDeferred() => DroppedItemRegistry.TickDeferred();
         public static void DespawnItem(int netID) => DroppedItemRegistry.DespawnItem(netID);
@@ -67,7 +64,5 @@ namespace SyncRADation.ItemSystem
         public static GameObject GetItem(int netID) => DroppedItemRegistry.GetItem(netID);
         public static bool TryGet(int netID, out Items.itemlist item, out int count)
             => DroppedItemRegistry.TryGet(netID, out item, out count);
-
-        public static void RestOnFloor(GameObject go) => DroppedItemSpawner.RestOnFloor(go);
     }
 }

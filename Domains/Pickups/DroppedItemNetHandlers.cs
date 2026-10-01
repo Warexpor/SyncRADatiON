@@ -153,8 +153,8 @@ namespace SyncRADation.Networking
         }
 
         /// <summary>
-        /// Overflow the bag could not hold (partial pickup): drop it at the local player's feet as a normal
-        /// dropped item so the remainder is neither lost nor duplicated.
+        /// Part of a taken floor stack the bag could not hold (spilled only after the claim is confirmed): drop it
+        /// at the local player's feet as a normal dropped item so the remainder is neither lost nor duplicated.
         /// </summary>
         internal bool DropOverflow(Items.itemlist item, int count)
         {
@@ -333,8 +333,9 @@ namespace SyncRADation.Networking
             var item = InventoryManager.getItem(itemEnum);
             if (item == null) return false;
             int count = DroppedItemManager.SanitizeStack(storedCount, PartyKeyRing.IsKeyOrObject(itemEnum));
-            bool shared = IsSharedItem(itemEnum);
-            if (!shared && claimerId == _net.LocalPlayerId && !BagHasRoom(itemEnum))
+            // skipLocalGrant: the local take already added (and measured) what the bag holds.
+            bool needGrant = claimerId == _net.LocalPlayerId && !skipLocalGrant;
+            if (needGrant && !DroppedItemManager.BagHasRoom(itemEnum))
             {
                 reason = "bag full";
                 return false;
@@ -343,13 +344,15 @@ namespace SyncRADation.Networking
             int senderID = (itemKey >> 16) & 0xFF;
             ushort localIdx = (ushort)(itemKey & 0xFFFF);
 
+            // Only the claimer gets the item. Key/Object reach everyone else through the party key ring
+            // (Note + Broadcast below), never as a bag copy on every peer.
             SendItemPickedUp(new ItemPickedUpMessage
             {
                 SenderID = (byte)senderID,
                 LocalIndex = localIdx,
                 ItemEnum = (ushort)itemEnum,
                 Count = count,
-                GrantToReceiver = shared,
+                GrantToReceiver = false,
                 ClaimerPlayerId = (byte)claimerId
             });
 
@@ -361,11 +364,6 @@ namespace SyncRADation.Networking
             PartyKeyRing.Note(item);
             PartyKeyRing.Broadcast();
 
-            if (shared)
-                return true;
-
-            bool needGrant = claimerId == _net.LocalPlayerId
-                && (!skipLocalGrant || DroppedItemManager.CountInBag(itemEnum) <= 0);
             if (needGrant)
             {
                 try { InventoryManager.AddItem(item, count); }
@@ -382,7 +380,7 @@ namespace SyncRADation.Networking
             return true;
         }
 
-        internal bool HasBagRoom(Items.itemlist itemEnum) => BagHasRoom(itemEnum);
+        internal bool HasBagRoom(Items.itemlist itemEnum) => DroppedItemManager.BagHasRoom(itemEnum);
 
         internal void HandleDropItemSpawn(DropItemSpawnMessage msg)
         {
@@ -424,28 +422,6 @@ namespace SyncRADation.Networking
             // ClaimerPlayerId (host-authored) is informational on receivers: the claimer already took the
             // item natively / via ack, everyone else only retires the floor object. Kept for the log.
             PlaytestLog.Verbose("Pickup", "drop " + key + " taken by p" + msg.ClaimerPlayerId);
-
-            if (msg.GrantToReceiver)
-            {
-                try
-                {
-                    var item = InventoryManager.getItem((Items.itemlist)msg.ItemEnum);
-                    int have = 0;
-                    try { if (item != null) have = DroppedItemManager.CountInBag((Items.itemlist)msg.ItemEnum); } catch (Exception e) { Guard.Swallow(e); }
-                    if (item != null && have <= 0)
-                    {
-                        int grant = DroppedItemManager.SanitizeStack(msg.Count,
-                            PartyKeyRing.IsKeyOrObject((Items.itemlist)msg.ItemEnum));
-                        InventoryManager.AddItem(item, grant);
-                        PartyKeyRing.OfferToHost(item);
-                        ModRuntime.Log?.Msg("[Drop] Shared item granted: " + (Items.itemlist)msg.ItemEnum);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    ModRuntime.Log?.Warning("[Drop] Grant shared item failed: " + ex.Message);
-                }
-            }
         }
 
         /// <summary>
@@ -500,41 +476,6 @@ namespace SyncRADation.Networking
                     InventoryManager.CurrentItem = null;
             }
             catch (Exception e) { Guard.Swallow(e); }
-        }
-
-        static bool IsSharedItem(Items.itemlist itemEnum)
-        {
-            try
-            {
-                var itemData = InventoryManager.getItem(itemEnum);
-                if (itemData == null) return false;
-                return itemData.type == AnItem.AnItemType.Object;
-            }
-            catch { return false; }
-        }
-
-        static bool BagHasRoom(Items.itemlist itemEnum)
-        {
-            try
-            {
-                var item = InventoryManager.getItem(itemEnum);
-                if (item != null && PartyKeyRing.InLocalBag(item))
-                    return !DroppedItemManager.StackAtCap(itemEnum);
-                int used = 0;
-                var dict = InventoryManager.elsterItems;
-                if (dict == null) return true;
-                var en = dict.GetEnumerator();
-                while (en.MoveNext())
-                {
-                    if (en.Current.key != null && en.Current.value > 0)
-                        used++;
-                }
-                en.Dispose();
-                int max = InventoryManager.maxSlots;
-                if (max <= 0) max = 6;
-                return used < max;
-            }
-            catch { return true; }
         }
 
         static AnItem ResolveSelectedItem()

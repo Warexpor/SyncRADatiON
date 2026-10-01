@@ -11,10 +11,17 @@ namespace SyncRADation.Networking
         public static void Reset()
         {
             _keys.Clear();
-            _bagAttempt.Clear();
-            _bagEnsureAt.Clear();
             _uiName = null;
+            _masqueradeOff = 0;
         }
+
+        // hasItem/getCount ring masquerade (StoryPatches) is off while > 0: SaveManager.Save writes every
+        // hasItem item with its getCount into the saver's bag (Ghidra SaveManager.c Save), so ring keys
+        // held by other peers would be saved as this player's items.
+        static int _masqueradeOff;
+        public static bool MasqueradeOff => _masqueradeOff > 0;
+        public static void SuspendMasquerade() => _masqueradeOff++;
+        public static void ResumeMasquerade() { if (_masqueradeOff > 0) _masqueradeOff--; }
 
         public static bool IsKeyOrObject(Items.itemlist item)
         {
@@ -68,10 +75,7 @@ namespace SyncRADation.Networking
                 PlaytestLog.Event("KeyRing", "drop " + item + " count=" + _keys.Count);
         }
 
-        /// <summary>
-        /// Client→host craft revoke prefix. Not a real itemlist (AirlockKey=0; None=113).
-        /// Old hosts skip non-Key/Object and no-op-add remaining enums.
-        /// </summary>
+        /// <summary>Client→host craft revoke prefix. Not a real itemlist (AirlockKey=0; None=113).</summary>
         public const ushort CraftRevokeSentinel = 0xFFFF;
 
         public static void ApplyMessage(PartyKeyRingMessage msg)
@@ -215,9 +219,6 @@ namespace SyncRADation.Networking
         public static void StripBagMirrors(Items.itemlist item)
         {
             if (!IsKeyOrObject(item)) return;
-            ushort id = (ushort)item;
-            _bagAttempt.Remove(id);
-            _bagEnsureAt.Remove(id);
             try
             {
                 var dict = InventoryManager.elsterItems;
@@ -273,8 +274,6 @@ namespace SyncRADation.Networking
         public static void Import(ushort[] enums)
         {
             _keys.Clear();
-            _bagAttempt.Clear();
-            _bagEnsureAt.Clear();
             if (enums != null)
             {
                 for (int i = 0; i < enums.Length; i++)
@@ -451,22 +450,18 @@ namespace SyncRADation.Networking
             catch { return false; }
         }
 
-        static bool _ensuringBag;
-        /// <summary>Full-bag refuse set; cleared when BagLikelyHasRoom becomes true.</summary>
-        static readonly HashSet<ushort> _bagAttempt = new HashSet<ushort>();
-        static readonly Dictionary<ushort, float> _bagEnsureAt = new Dictionary<ushort, float>();
-        const float EnsureCooldown = 0.35f;
-
         /// <summary>
         /// Native UseItem / Interactor.InteractItem compare AnItem by reference.
         /// Scene <c>key</c> is the catalog SO; a dropped grant may be a different
         /// instance with the same <c>_item</c>. Point both at the bag copy.
+        /// A ring key held by another peer is never added to this bag: UseItemInteraction.StartDialogue
+        /// only asks hasItem(key) (ring masquerade) and its onMessageEvent RemoveItem is a no-op for an
+        /// item not in the bag (Ghidra UseItemInteraction.c / InventoryManager.c RemoveItem ContainsKey).
         /// </summary>
         public static AnItem BindSceneKey(AnItem sceneKey)
         {
             var cat = CatalogOf(sceneKey) ?? sceneKey;
             if (cat == null) return sceneKey;
-            EnsureInBag(cat);
             return FindInBag(cat) ?? cat;
         }
 
@@ -481,68 +476,6 @@ namespace SyncRADation.Networking
             }
             var cat = CatalogOf(item);
             if (cat != null) item = cat;
-        }
-
-        /// <summary>
-        /// Put a party-ring key into the local 6-slot bag so native UseItem / cutscene
-        /// run as if Elster was carrying it. No-op if already held or not on the ring.
-        /// Full-bag fails are retried once a slot frees (BindSceneKey runs every Update).
-        /// </summary>
-        public static bool EnsureInBag(AnItem item)
-        {
-            if (_ensuringBag) return InLocalBag(item);
-            var cat = CatalogOf(item) ?? item;
-            if (cat == null) return false;
-            if (InLocalBag(cat)) return true;
-            if (!Has(cat)) return false;
-            ushort id = (ushort)cat._item;
-            if (_bagAttempt.Contains(id))
-            {
-                // Prior full-bag refuse — retry only when a slot may have freed.
-                if (!BagLikelyHasRoom())
-                    return false;
-                _bagAttempt.Remove(id);
-            }
-            // BindSceneKey runs every UseItem Update — cooldown avoids AddItem spam.
-            float now = UnityEngine.Time.unscaledTime;
-            float last;
-            if (_bagEnsureAt.TryGetValue(id, out last) && now - last < EnsureCooldown)
-                return false;
-            _bagEnsureAt[id] = now;
-            _ensuringBag = true;
-            try
-            {
-                InventoryManager.AddItem(cat, 1);
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            finally { _ensuringBag = false; }
-            bool ok = InLocalBag(cat);
-            if (ok)
-                PlaytestLog.Event("KeyRing", "ensure bag " + cat._item);
-            else if (!BagLikelyHasRoom())
-                _bagAttempt.Add(id);
-            return ok;
-        }
-
-        static bool BagLikelyHasRoom()
-        {
-            try
-            {
-                int used = 0;
-                var dict = InventoryManager.elsterItems;
-                if (dict == null) return true;
-                var en = dict.GetEnumerator();
-                while (en.MoveNext())
-                {
-                    if (en.Current.key != null && en.Current.value > 0)
-                        used++;
-                }
-                en.Dispose();
-                int max = InventoryManager.maxSlots;
-                if (max <= 0) max = 6;
-                return used < max;
-            }
-            catch { return true; }
         }
 
         public static bool LocalOrRingHas(AnItem item)
