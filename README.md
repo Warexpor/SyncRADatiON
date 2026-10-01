@@ -48,9 +48,9 @@ The F2 menu shows a roster of everyone connected. The host can cap the session w
 | F2 | Multiplayer menu (Host, Connect, Disconnect, Resync world, roster, status) |
 | F3 | Quick connect to the saved address |
 | G | Drop the highlighted inventory slot (or DROP in the item command list) |
-| F6 | Item giver (cheat tool) |
-| F7 | Location teleporter: chapters and rooms in the current level. As a client this loads the chapter on the host and everyone follows |
-| F11 | Entity spawner (cheat tool, host-authoritative) |
+| F6 | Item giver (cheat tool). A client can only give itself keys and story objects when the host allows client cheats |
+| F7 | Location teleporter: chapters and rooms in the current level. As a client this loads the chapter on the host and everyone follows (only when the host allows client cheats) |
+| F11 | Entity spawner (cheat tool, host-authoritative; clients only when the host allows client cheats) |
 
 To pick up something another player dropped, walk up to it and use the normal TAKE prompt. There is no extra pickup key.
 
@@ -59,12 +59,12 @@ To pick up something another player dropped, walk up to it and use the normal TA
 **Shared (the host decides, everyone sees the same result):**
 
 - Enemies and bosses: one set of enemies, hits from any player count on the same enemy.
-- Story progress, dialogue, cutscenes, endings.
+- Story progress, cutscenes, endings.
 - Chapter loads (everyone follows the host).
 - Doors, locks and puzzles. A door or lock solved by one player is open for everyone, including people who join later.
 - Puzzle screens are live: if two players look at the same keypad, pattern lock, dial or board, each sees the other's presses as they happen (one shared code on keypads). Anyone standing near the panel hears the button presses from where the panel is.
 - Elevators, radio, pumps and pipes, storage boxes (box contents are shared).
-- Items lying in the world. Each one exists once: whoever picks it up gets it. Unique keys and key objects go onto a **party key ring**, so one key opens the door for the whole party.
+- Items lying in the world. Each one exists once: whoever picks it up gets it, and if your bag can't hold the whole stack the rest stays there for everyone. Unique keys and key objects go onto a **party key ring**, so one key opens the door for the whole party.
 - Sounds from world objects.
 - Death and revive (see below).
 
@@ -72,6 +72,7 @@ To pick up something another player dropped, walk up to it and use the normal TA
 
 - Your 6-slot inventory, ammo and health items.
 - Books, notes, photos and other pure reading or inspect screens.
+- Dialogue lines: each player reads, skips and answers their own.
 - Walking through room-to-room doors and climbing ladders (each player does their own).
 - Airlock and wreck/hole entry in Penrose: each player loads the next area when they finish it.
 - Cutscenes and event zones in a room you are not in do not play for you.
@@ -109,9 +110,12 @@ Edited in `SIGNALIS/UserData/MelonPreferences.cfg` under `[SyncRADation]` (creat
 | `SyncPuzzles` | `true` | Sync puzzles, locks, elevators, radio, storage, interactions |
 | `SyncWorldPickups` | `true` | Sync items lying in the world |
 | `SyncPlayerVitals` | `true` | Share HP, death and game state for remote player display |
+| `AllowClientCheats` | `false` | Host only. Let clients use the F6 (keys / story objects), F7 (chapter loads) and F11 (enemy spawns) cheats that change the shared world |
 | `VerboseLogging` | `false` | Extra log noise for diagnosing sound, player-model and puzzle issues. Turn on for **both** installs only when hunting a bug |
+| `Diagnostics` | `false` | Developer traces (room / movement / bag / puzzle-click / proxy visibility, per-frame timing, full patch audit). Costs a little every frame; turn on for **both** installs only when hunting a bug. Restart after changing |
 | `FreeCursor` | `false` | Never confine the mouse to the game window (handy when running two copies side by side) |
-| `ExperimentalPuzzles` | `true` | Deprecated alias of `SyncPuzzles`, kept for old config files |
+
+The sync toggles (`SyncPuzzles`, `SyncWorldPickups`, `SyncPlayerVitals`, `FriendlyFire`, `AllowClientCheats`) are the **host's**: a connected client uses the host's values for the session, whatever its own config says.
 
 ## Troubleshooting
 

@@ -30,7 +30,7 @@ Sync/        WorldId, WorldRegistry, NetGate, Guard, SessionReset, traces
 UI/ Config/ Cheats/
 ```
 
-Namespaces stay `SyncRADation.Networking` / `.Patches` / `.Players` / `.ItemSystem` regardless of folder. New static session state gets a reset in `Bootstrap/SessionResetRegistrations.cs`.
+Namespaces stay `SyncRADation.Networking` / `.Patches` / `.Players` / `.ItemSystem` regardless of folder. New mutable static state gets a reset in `Bootstrap/SessionResetRegistrations.cs` (scope `Scene`, `Session` and/or `Connection`) or a `// persistent: <reason>` line directly above it; `StaticStateGuardTests` fails otherwise. A domain whose full dump records "already sent" state registers a `FlushDiffNow` in `Bootstrap/DumpFlushRegistrations.cs`.
 
 ## Hard rules
 
