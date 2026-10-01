@@ -9,6 +9,8 @@ Protocol **v17** (no wire change). Fixes from the second human dual-box session 
 
 ### Added
 - **Flicker trace** (`Sync/FlickerTrace.cs`, always on, one line per change, 25 lines per tag per 5 s then a `flapping:` summary): `[Room] chunk ON|OFF <room> by=game|mod flips=N here=<room>` and `[Room] enter`; `[Proxy] vis pN active/renderers/drawn/onScreen/mode` and `[Proxy] jump pN d=` (> 2 units in one frame); client `[Enemy] client <id> active=… hostAlive=…`, `client snap-jump`, `client unknown <id>` (host enemy this client lacks); host `[Enemy] wake ok|REFUSED <name> <why>` once per enemy.
+- **Event-screen click trace** (`Sync/EventCamTrace.cs`): `[EventCam] screen open|closed` and one `[EventCam] click …` line per click in a zoom-in puzzle (Use/Attack/mouse edge, input device, native cursor + mouse position, screen/scale, cursor lock, focus, `zoom`/`depth`, current interaction, and the interaction under the cursor with `MOD-KILLED` when the mod's solved-overlay guard would eat it). `[Puzzle] overlay kill trigger <name>` when that guard swallows a trigger.
+- `scripts/signalis-volume-watch.sh` + user service `signalis-volume` (this machine): host SIGNALIS stream 60%, client stream muted, keyed by the stream owner's Proton prefix.
 
 Protocol **17**. Product **0.5.64** (not 1.0).
 

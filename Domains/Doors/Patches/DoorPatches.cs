@@ -224,6 +224,8 @@ namespace SyncRADation.Patches
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected || __instance == null) return true;
             if (!net.PuzzleSync.ShouldKillOverlay(__instance)) return true;
+            try { PlaytestLog.Event("Puzzle", "overlay kill trigger " + __instance.gameObject.name + " (already solved/held)"); }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try { __instance.triggered = true; } catch (System.Exception e) { Guard.Swallow(e); }
             try { __instance.enabled = false; } catch (System.Exception e) { Guard.Swallow(e); }
             return false;
