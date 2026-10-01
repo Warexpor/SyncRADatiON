@@ -893,7 +893,7 @@ namespace SyncRADation.Networking
                 {
                     if (e.state == EnemyController.enemystate.dead) continue;
                     if ((e.transform.position - pos).sqrMagnitude > r2) continue;
-                    EnemySyncService.WakeForCombat(e);
+                    if (!EnemySyncService.WakeForCombat(e)) continue; // level-disabled enemies stay off
                     Transform t = FindShooterTransform(pos, net);
                     if (t != null) e.playerPos = t;
                     e.WakeUpfromGunShot();

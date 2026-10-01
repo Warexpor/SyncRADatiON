@@ -173,6 +173,8 @@ namespace SyncRADation.Networking
             _scanned = false;
             _needFullSend = true;
             _lastSent.Clear();
+            _clientEcho.Clear();
+            _echoLogged.Clear();
             _held.Clear();
             _worldAnimStarted.Clear();
             _maps.Clear();
@@ -597,6 +599,7 @@ namespace SyncRADation.Networking
                 }
                 _tickLocal.Clear();
                 ReadAll(_tickLocal, false, clientFilter: true, activeOnly: true, firstIsBaseline: true);
+                DampClientEcho(_tickLocal);
                 if (_tickLocal.Count > 0)
                 {
                     StampOutgoing(_tickLocal, host: false, full: false);
@@ -809,6 +812,44 @@ namespace SyncRADation.Networking
                 var ariane = ResidencyPuzzleSyncService.ReadArianePhotoCodeGlobal();
                 if (ChangedOrFirst(ref ariane, full, firstIsBaseline)) entries.Add(ariane);
             }
+        }
+
+        struct EchoRec { public PuzzleStateEntry Entry; public float At; }
+        readonly Dictionary<PKey, EchoRec> _clientEcho = new Dictionary<PKey, EchoRec>();
+        readonly HashSet<PKey> _echoLogged = new HashSet<PKey>();
+        const float EchoWindow = 10f;
+
+        /// <summary>
+        /// A state the client cannot converge on (its read differs from what applying the host's entry produces,
+        /// e.g. a door plate driven by local room traversal) ping-ponged forever: client re-reads X, host applies
+        /// X, re-reads Y, client applies Y, re-reads X... (PEN_Wreck, one InteractiveLockSingle ~1/s). The same
+        /// local state is sent once per <see cref="EchoWindow"/>; a different state always goes out at once.
+        /// </summary>
+        void DampClientEcho(List<PuzzleStateEntry> entries)
+        {
+            float now = Time.unscaledTime;
+            for (int i = entries.Count - 1; i >= 0; i--)
+            {
+                var e = entries[i];
+                var key = Key(e);
+                EchoRec rec;
+                if (_clientEcho.TryGetValue(key, out rec) && SameCells(rec.Entry, e) && now - rec.At < EchoWindow)
+                {
+                    entries.RemoveAt(i);
+                    if (_echoLogged.Add(key))
+                        PlaytestLog.Event("Puzzle", "echo damp " + e.Type + " " + unchecked((ulong)e.WorldId).ToString("X16")
+                            + " (host keeps a different state)");
+                    continue;
+                }
+                _clientEcho[key] = new EchoRec { Entry = e, At = now };
+            }
+        }
+
+        static bool SameCells(PuzzleStateEntry a, PuzzleStateEntry b)
+        {
+            return a.Bool0 == b.Bool0 && a.Bool1 == b.Bool1 && a.Bool2 == b.Bool2
+                && a.Int0 == b.Int0 && a.Int1 == b.Int1 && a.Int2 == b.Int2 && a.Int3 == b.Int3
+                && Mathf.Approximately(a.Float0, b.Float0) && Mathf.Approximately(a.Float1, b.Float1);
         }
 
         private static bool IsActiveInScene(Component c)

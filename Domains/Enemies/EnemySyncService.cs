@@ -76,9 +76,12 @@ namespace SyncRADation.Networking
                 Transform nearest = null;
                 if (e.state != EnemyController.enemystate.dead)
                 {
-                    nearest = FindNearestTarget(et.position, net, pm);
-                    if (nearest != null && !EnemyVisiblyInChunk(e))
+                    // The host's own room chunks are native; only a remote peer standing in a room the host
+                    // left asleep needs a wake. A level-disabled enemy is never a target.
+                    if (!EnemyVisiblyInChunk(e) && pm != null && PeerInEnemyRoom(e, et.position, net, pm))
                         WakeForCombat(e, wakeAi: true);
+                    if (EnemyVisiblyInChunk(e))
+                        nearest = FindNearestTarget(et.position, net, pm);
                 }
 
                 Vector3 pos;
@@ -395,8 +398,7 @@ namespace SyncRADation.Networking
             try
             {
                 if (action != EnemyActionKind.WakeUp && enemy.state == EnemyController.enemystate.dead) return;
-                WakeForCombat(enemy);
-                if (enemy == null || enemy.gameObject == null) return;
+                if (!WakeForCombat(enemy)) return; // switched off by the level, not a sleeping chunk
                 NetGate.BeginApply();
                 try
                 {
@@ -609,8 +611,7 @@ namespace SyncRADation.Networking
 
             try
             {
-                WakeForCombat(enemy);
-                if (enemy == null || enemy.gameObject == null) return false;
+                if (!WakeForCombat(enemy)) return false;
 
                 enemy.TakeDamage(fire, crit, hurt, noSneak);
                 _forceSend = true;
@@ -642,8 +643,7 @@ namespace SyncRADation.Networking
             }
             try
             {
-                WakeForCombat(enemy);
-                if (enemy == null || enemy.gameObject == null) return false;
+                if (!WakeForCombat(enemy)) return false;
                 if (enemy.hitbox != null)
                 {
                     enemy.hitbox.HP -= (int)damage;
@@ -698,30 +698,92 @@ namespace SyncRADation.Networking
         }
 
         /// <summary>
-        /// Host: sleeping-chunk enemies have no AI and TakeDamage no-ops.
-        /// Wake the parent Room chain when a peer is in that room or a hit arrives.
+        /// Host: sleeping-chunk enemies have no AI and TakeDamage no-ops. Wake one when a peer is in its room
+        /// or a hit arrives — but only by native <c>Room.SetChunkStatus(true)</c>, and only when the room's
+        /// chunk / instantChunk / Cell is the sole reason it is inactive. An enemy (or any container) switched
+        /// off by the level itself stays off: PEN_Wreck keeps real EULR/STCR managers disabled for the
+        /// prologue, and force-activating every inactive parent spawned them (plus their event objects) on
+        /// the host. Returns false when the enemy is not awake afterwards.
         /// </summary>
-        public static void WakeForCombat(EnemyController enemy, bool wakeAi = false)
+        public static bool WakeForCombat(EnemyController enemy, bool wakeAi = false)
         {
-            if (enemy == null || enemy.gameObject == null) return;
+            if (enemy == null || enemy.gameObject == null) return false;
             try
             {
-                Transform t = enemy.transform;
-                while (t != null)
+                if (!enemy.gameObject.activeInHierarchy)
                 {
-                    if (!t.gameObject.activeSelf)
-                        t.gameObject.SetActive(true);
-                    if (t.GetComponent<Room>() != null) break;
-                    t = t.parent;
+                    Room room;
+                    if (!OnlyChunkAsleep(enemy, out room)) return false;
+                    NetGate.BeginApply(); // RoomChunkPuzzlePatch: not a local room entry, no re-apply sweep
+                    try { room.SetChunkStatus(true); }
+                    finally { NetGate.EndApply(); }
+                    if (!enemy.gameObject.activeInHierarchy) return false;
                 }
                 enemy.enabled = true;
                 if (enemy.agent != null) enemy.agent.enabled = true;
                 // EnemyController.WakeUp is a no-op without host LOS and, WITH it, also shakes the host
                 // screen / rumbles / plays WakeSFX (Ghidra EnemyController.c). Only the chunk-wake tick
-                // (a peer is near a sleeping enemy) asks for it; combat side effects never do.
+                // (a peer is in a sleeping enemy's room) asks for it; combat side effects never do.
                 if (wakeAi) enemy.WakeUp();
+                return true;
+            }
+            catch (Exception e) { Guard.Swallow(e); return false; }
+        }
+
+        /// <summary>True when every inactive object between the enemy and its Room is that room's chunk object.</summary>
+        static bool OnlyChunkAsleep(EnemyController enemy, out Room room)
+        {
+            room = null;
+            var inactive = _inactiveScratch;
+            inactive.Clear();
+            Transform t = enemy.transform;
+            while (t != null)
+            {
+                var r = t.GetComponent<Room>();
+                if (r != null) { room = r; break; }
+                if (!t.gameObject.activeSelf) inactive.Add(t.gameObject);
+                t = t.parent;
+            }
+            if (room == null || inactive.Count == 0) return false;
+            if (!room.gameObject.activeInHierarchy) return false;
+            GameObject chunk = null, instant = null, cell = null;
+            try { chunk = room.chunk; } catch (Exception e) { Guard.Swallow(e); }
+            try { instant = room.instantChunk; } catch (Exception e) { Guard.Swallow(e); }
+            try { cell = room.Cell; } catch (Exception e) { Guard.Swallow(e); }
+            for (int i = 0; i < inactive.Count; i++)
+            {
+                var go = inactive[i];
+                if (go != chunk && go != instant && go != cell) return false;
+            }
+            return true;
+        }
+        static readonly List<GameObject> _inactiveScratch = new List<GameObject>(4);
+
+        /// <summary>A remote, non-downed peer whose reported room is this enemy's room (and within 30 units).</summary>
+        static bool PeerInEnemyRoom(EnemyController enemy, Vector3 pos, LanNetworkManager net, PlayerProxyManager pm)
+        {
+            string roomName = null;
+            try
+            {
+                var t = enemy.transform;
+                while (t != null)
+                {
+                    var r = t.GetComponent<Room>();
+                    if (r != null) { roomName = r.roomName; break; }
+                    t = t.parent;
+                }
             }
             catch (Exception e) { Guard.Swallow(e); }
+            if (string.IsNullOrEmpty(roomName)) return false;
+            foreach (int pid in net.GetRemotePlayerIds())
+            {
+                var proxy = pm.GetProxy(pid);
+                if (proxy == null || proxy.GameObject == null) continue;
+                if (PartyVitals.IsProxyDown(pid, proxy)) continue;
+                if (PartyVitals.RoomOf(pid) != roomName) continue;
+                if ((proxy.GameObject.transform.position - pos).sqrMagnitude < 30f * 30f) return true;
+            }
+            return false;
         }
 
         public void PuppetAllNow()

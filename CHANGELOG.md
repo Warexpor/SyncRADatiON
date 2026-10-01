@@ -1,3 +1,14 @@
+## 0.5.64 — 2026-10-01
+
+Protocol **v17** (no wire change). Fixes from the second human dual-box session (Penrose wreck).
+
+### Fixed
+- **Level-disabled enemies force-spawned** — the host enemy tick "woke" any inactive enemy within 30 units of any player by `SetActive(true)` up the whole hierarchy plus `WakeUp()`. In `PEN_Wreck` that switched on the prologue's disabled EULR/STCR managers and their event containers when the host walked in: wake stinger and screen shake, a hostile in an empty room, the client hit for 18 by an enemy it did not have (`[Damage] … from enemy 0`), and the host/enemies flickering on the client. `EnemySyncService.WakeForCombat` now only wakes an enemy whose sole inactive ancestors are its room's `chunk` / `instantChunk` / `Cell` (via native `Room.SetChunkStatus(true)`), only for a **remote** peer standing in that room, and returns false otherwise; client hits, enemy actions, legacy HP and gunshot noise respect it.
+- **Remote player "dance" after a local inventory/menu pause** — the proxy timeline (pose stamps, render time, bone clock, animator update mode) ran on scaled time, which stops at `timeScale 0`; the backlog then replayed at once. All proxy timing is on `Time.unscaledTime`.
+- **Lock ping-pong** — a client whose read of a lock never converged on the host's merged state re-sent it every tick (`InteractiveLockSingle` flipping once a second). The client now drops an entry identical to the one it last sent for that key within 10 s and logs `[Puzzle] echo damp <Type> <id>` once.
+
+Protocol **17**. Product **0.5.64** (not 1.0).
+
 ## 0.5.63 — 2026-10-01
 
 Protocol **v17** (player velocity field changed meaning). Fixes from the first human dual-box session.
