@@ -117,7 +117,8 @@ Edited in `SIGNALIS/UserData/MelonPreferences.cfg` under `[SyncRADation]` (creat
 - `Handshake OK` means the connection was accepted. A rejection shows a reason in the client's F2 menu (version, protocol or schema mismatch: everyone needs the same build).
 - `[Guard]` lines are errors the mod caught and swallowed so the game keeps running. A few are harmless; the same tag repeating every 30 seconds with a growing count is worth reporting.
 - `[Harmony]` lines about a failed patch usually mean a wrong MelonLoader or game version.
-- `[Hitch]` lines appear only on a real stutter (frame time spikes, send or receive gaps, slow sync ticks). Include them if the game stutters in multiplayer.
+- `[Hitch]` lines appear only on a real stutter (frame time spikes, send or receive gaps, slow sync ticks). Include them if the game stutters in multiplayer. A `[Hitch] stall` line whose `renderGap` is about the whole `dt` while `modUpdate` is tiny means the frame was lost outside the mod (window presentation / compositor, e.g. an unfocused Proton window).
+- `[Scene] WorldId divergence` means the two games disagree about which objects exist in the level; the `missing:` / `extra:` lines that follow say which. Include them in a bug report.
 
 **Common problems**
 
@@ -125,7 +126,7 @@ Edited in `SIGNALIS/UserData/MelonPreferences.cfg` under `[SyncRADation]` (creat
 | --- | --- |
 | No F2 menu | MelonLoader is not loading. Check it is 0.5.7 and the DLLs are in `Mods/`. On Proton set `WINEDLLOVERRIDES="version=n,b"` |
 | Cannot connect | Host pressed Host Game? UDP 7777 open on the host? Correct VPN address? |
-| Connect is rejected | Different mod builds. Install the same zip on every machine |
+| Connect is rejected | Different mod builds or a different SIGNALIS build (the reason is shown in F2). Install the same zip on every machine and update the game on both |
 | Doors or pickups look wrong after joining | Press **Resync world** in the F2 menu |
 | "SCENE MISMATCH" in the menu | Your game is following the host chapter. Wait, or load the same chapter manually |
 | Stuck after a disconnect | The client goes offline and restores play on its own. If input is stuck, open F2 and Disconnect |

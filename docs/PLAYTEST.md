@@ -1,6 +1,6 @@
 # SyncRADation playtest / soak checklist
 
-Target build: **0.5.59, protocol 14**. None of the 0.5.57 / 0.5.58 / 0.5.59 work has been run in game, so this list is the gate. Run it on **two instances** first (host + client), then repeat the marked items with **three** (host + two clients, `MaxPlayers` >= 3).
+Target build: **0.5.62, protocol 16**. The 0.5.57–0.5.62 work is compile- and unit-tested, and an unattended host+client join into `DET_Detention` / `MED_Medical` is smoke-tested (handshake, dump, matching WorldId checksum); nothing past that has been played, so this list is the gate. Run it on **two instances** first (host + client), then repeat the marked items with **three** (host + two clients, `MaxPlayers` >= 3).
 
 Conventions:
 
@@ -10,11 +10,13 @@ Conventions:
 - Same DLL on every peer. Keep `VerboseLogging=false` unless a failure needs detail.
 - A failure counts even if the game keeps running: grep `[Guard]` and `[Harmony]` at the end of each section and note anything new.
 
-Session info to record: date, build (0.5.59), players, chapter, result notes.
+Session info to record: date, build (0.5.62), players, chapter, result notes.
 
 ## 0. Preflight
 
-- [ ] Both logs show the boot banner with version 0.5.59 and `[Harmony] patched` lines with no failed patch.
+- [ ] Both logs show the boot banner with version 0.5.62, `[Harmony] audit: N ok, 0 missing` and `[Harmony] audit (late): shaders ok`; F2 shows the same game build line on both.
+- [ ] After the client follows into a chapter: both logs print `[WorldRegistry] scene='<chapter>' … checksum=X` with the **same X**, and there is no `[Scene] WorldId divergence` line. If there is one, copy the `missing:` / `extra:` lines into the notes.
+- [ ] `[Hitch] stall` lines: if `renderGap` ≈ `dt` and `modUpdate`/`gameScripts` are a few ms, the frame was lost in present/compositor (seen with two unfocused Proton windows), not in the mod — note it, don't file it as a mod bug.
 - [ ] Host Game then Connect: `Handshake OK` on both sides, F2 roster lists both players.
 - [ ] Both players see each other's proxy, animation and held weapon.
 - [ ] Offline (no session) `F2` menu works and the game plays like vanilla (see section 18 for the full pass).

@@ -5,13 +5,17 @@ Protocol **v16** (no wire change). First in-level dual-instance run (host + clie
 ### Fixed
 - **Enemy WorldId drift after load** — 9 of 13 DET_Detention enemies changed hierarchy path between the host's first scan and a later rebuild (`Room/Enemy Manager/EULR[0]` → `Room/Enemy Manager/Enemy 1 EULR[0]`), so a host rebuild on client join gave them ids the client never computed: `WorldId divergence … enemies 13/13!`, client `[Enemy] map misses=639` against 284 hits, those enemies frozen for the client. `WorldRegistry` now pins the first id computed for each enemy instance in a scene (`StickyEnemyId`); later drift is logged once (`[World] enemy id drift '<path>' now X — keeping Y`) and ignored. Re-run: identical checksum on both peers, no divergence, no misses.
 
+- **Proxy ladder sound never played** — the proxy used `event:/Elster/Ladder/Up|Down`, which do not exist in the banks (`[Guard] WorldSfx.Start: EventNotFoundException`). It now plays the two GUID events native `Ladder.ClimbLadder` uses (bottom / top start), once per climb like native, instead of a made-up path every 0.55 s. Every other `event:/` literal in the mod was checked against the exported asset strings.
+- **Client resolved host enemy snapshots while loading / in the menu** — every id became a miss (`map misses=288 puppets=0` during a follow load). The client now drops the enemy stream while `SceneMismatch` or loading; the post-load snapshot and the join dump carry the state. MED_Medical and DET_Detention re-runs: zero misses.
+
 ### Added
 - **`Sync/WorldScan.cs`** — one `FindObjectsOfType<MonoBehaviour>(true)` per scene bucketed by Il2Cpp class (native `il2cpp_class_is_subclass_of` match) instead of one full scene walk per synced type (~85 per load across puzzles, doors, enemies, pickups, emitters). `DET_Detention` (8.4k behaviours, 411 classes): ~17–30 ms once. `WorldLookup.Invalidate<T>()` still forces a direct per-type rescan for runtime-spawned components. Logs `[World] scan objects=N classes=M T ms`.
 - **`--sync-scene <Scene>`** boot argument — host/offline loads that chapter 4 s after MainMenu via the F7 path (`LocationTeleporter.LoadChapterByName`), so a dual-box join into a real level runs unattended. See AGENTS.md "Unattended dual-box run".
 
 ### Open risks
 - Pinned enemy ids assume both peers' first scan sees the same paths (true when both load the scene fresh; observed in DET_Detention). A late joiner whose first scan happens after the host's drift would still diverge for those enemies — `[Scene] WorldId divergence` + `SceneDiff` will say so.
-- Join spike: host `pollEvents` ~310 ms while building the full world dump for the joiner (one frame).
+- Join spike: host `pollEvents` ~310 ms while building the full world dump for the joiner, client ~210 ms applying it on arrival (one frame each).
+- Two Proton windows on one desktop drop frames to ~1 s while unfocused: `[Hitch] stall … renderGap≈dt`, mod/game script time a few ms. Environment, not the mod; test with both windows visible or on two machines.
 
 Protocol **16**. Product **0.5.62** (not 1.0).
 

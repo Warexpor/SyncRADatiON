@@ -30,9 +30,12 @@ namespace SyncRADation.Players
 
         private const float ReloadCooldown = 1.5f;
         private const float HurtCooldown = 1f;
-        private const float LadderClimbInterval = 0.55f;
-        private const string LadderUpPath = "event:/Elster/Ladder/Up";
-        private const string LadderDownPath = "event:/Elster/Ladder/Down";
+        // Native Ladder.ClimbLadder plays ONE event per climb (StringLiteral_1607 from the bottom, 1517 from the top;
+        // GUID paths from stringliteral.json). There is no "event:/Elster/Ladder/*" in the banks. The direction is only
+        // known once the proxy moves, so the cue fires LadderCueDelay after the climb starts.
+        private const float LadderCueDelay = 0.15f;
+        private const string LadderUpPath = "{f1077367-d8e0-482e-bcdb-71ed5ff8a4cf}";
+        private const string LadderDownPath = "{a9714f9b-bb15-493e-a9b2-fa95fb8e90d0}";
 
         // Delayed case-land / pump (proxy has no ParticleCollisionSound MBs)
         private const int PendingCap = 4;
@@ -41,6 +44,7 @@ namespace SyncRADation.Players
         private const float CaseLandDelay = 0.32f;
 
         private float _climbTimer;
+        private float _climbStartY;
         private Vector3 _lastPos;
         private bool _wasClimbing;
 
@@ -222,12 +226,19 @@ namespace SyncRADation.Players
             // Ladder climbing — same 3D falloff pipeline as doors
             if (state.Climbing)
             {
-                _climbTimer -= Time.deltaTime;
-                if (_climbTimer <= 0f)
+                if (!_wasClimbing)
                 {
-                    bool goingUp = (_proxyTransform.position.y - _lastPos.y) >= -0.01f;
-                    WorldSfx.Play(goingUp ? LadderUpPath : LadderDownPath, _audioAnchor.transform, 0.5f);
-                    _climbTimer = LadderClimbInterval;
+                    _climbTimer = LadderCueDelay;
+                    _climbStartY = _proxyTransform.position.y;
+                }
+                else if (_climbTimer > 0f)
+                {
+                    _climbTimer -= Time.deltaTime;
+                    if (_climbTimer <= 0f)
+                    {
+                        bool goingUp = _proxyTransform.position.y >= _climbStartY;
+                        WorldSfx.Play(goingUp ? LadderUpPath : LadderDownPath, _audioAnchor.transform, 0.5f);
+                    }
                 }
                 _wasClimbing = true;
             }

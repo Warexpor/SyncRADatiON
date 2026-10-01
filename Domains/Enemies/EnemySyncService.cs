@@ -256,6 +256,10 @@ namespace SyncRADation.Networking
             var net = LanNetworkManager.Instance;
             if (net != null && net.Role == NetworkRole.Host) return;
             if (msg.Enemies == null) return;
+            // Still loading / in another scene (menu, follow load, personal wreck/hole scene): none of the host's
+            // enemies exist here. Drop the stream instead of resolving every id to a miss; the next snapshot after
+            // the load (and the join dump) carries the full state.
+            if (net != null && (net.SceneMismatch || SceneFollowService.LocalIsTransient())) return;
 
             for (int i = 0; i < msg.Enemies.Length; i++)
                 ApplyEnemyState(msg.Enemies[i]);
