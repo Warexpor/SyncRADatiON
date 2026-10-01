@@ -14,6 +14,7 @@ namespace SyncRADation.Patches
             if (NetGate.IsApplying || !NetGate.Party) return true;
             if (__instance == null) return true;
             if (NetGate.Host) return true;
+            if (AirlockCinematic.ClientSplitFromHost()) return true; // the host has no such object (wreck / hole split)
             LanNetworkManager.Instance.SendInteractionRequest(
                 WorldId.FromGameObject(__instance.gameObject), InteractionKind.MultiCondition, 0);
             return false;
@@ -40,20 +41,15 @@ namespace SyncRADation.Patches
             if (NetGate.IsApplying || !NetGate.Party) return true;
             if (__instance == null) return true;
             if (NetGate.Host) return true;
+            if (AirlockCinematic.ClientSplitFromHost()) return true; // the host has no such object (wreck / hole split)
             LanNetworkManager.Instance.SendInteractionRequest(
                 WorldId.FromGameObject(__instance.gameObject), InteractionKind.MultiCondition, 1);
             return false;
         }
 
-        [HarmonyPostfix]
-        public static void Postfix(MultiConditionEvent __instance)
-        {
-            if (!NetGate.Host || NetGate.IsApplying || !NetGate.Party) return;
-            if (__instance == null) return;
-            ulong id = WorldId.FromGameObject(__instance.gameObject);
-            if (id == 0 || !EventZonePatch.MarkMultiTrigger(id)) return;
-            LanNetworkManager.Instance.StorySync.BroadcastPresentation(
-                StoryCmd.MultiConditionFire, id, 1, StoryWire.HostCounted);
-        }
+        // No host relay: TryTrigger is a counter (tried++ per call, OnTryDone on the call reaching tries), and its
+        // callers are often replayed on peers already (EventZone onInRange, cutscene Proceed), so a live relay counted
+        // those calls twice and fired OnTryDone early. The host's tried rides the PuzzleState poll instead, and
+        // StorySyncService.ApplyMultiConditionEvent fires OnTryDone when it crosses tries past the local count.
     }
 }

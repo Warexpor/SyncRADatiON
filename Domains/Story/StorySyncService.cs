@@ -18,8 +18,6 @@ namespace SyncRADation.Networking
         private float _timer;
         public StoryCmd LastCmd;
         public ulong LastWorldId;
-        /// <summary>Dialoguer dialogue id for late-join replay (packed into ActiveWorldId).</summary>
-        public int LastInt0;
 
         // --- Client-only: commit buffered while the local scene is loading -------------------
         private StoryCommitMessage _pendingCommit;
@@ -43,14 +41,8 @@ namespace SyncRADation.Networking
         // --- END_Manager counters: client sends deltas, host adds them (one shared ending) ----
         private bool _endBaseValid;
         private readonly int[] _endBase = new int[7];
-        private float _endBaseHealed, _endBaseMemory;
+        private float _endBaseHealed;
         private int _endSig = int.MinValue;
-
-        // --- Dialogue sequence (host-authored; clients mirror the last presented step) ---------
-        private int _dlgId = -1;
-        private int _dlgStep;
-        private bool _dlgActive;
-        private float _dlgStartAt = -99f;
 
         // --- Scripted cheat relay / one-shot dedupe (goto / sethp / goToPenny) ----------------
         private readonly Dictionary<string, float> _cheatStamp = new Dictionary<string, float>();
@@ -73,35 +65,8 @@ namespace SyncRADation.Networking
         public static void BeginSuppressForward() => _suppressForward++;
         public static void EndSuppressForward() { if (_suppressForward > 0) _suppressForward--; }
 
-        /// <summary>
-        /// StopNetwork on a client with a party dialogue on screen: its Continue / End came from the host and will never arrive, and
-        /// RestoreLocalControl only flips gameState back to play (the dialogue UI would stay up). Close it locally;
-        /// loads are swallowed so an end callback cannot start one.
-        /// </summary>
-        private static void CloseStickyDialogue()
-        {
-            try
-            {
-                var net = LanNetworkManager.Instance;
-                // Client only: a host stopping the network (F2 stop / EndSession) keeps its own native dialogue, and a
-                // zero-peer host must stay vanilla. The client's Continue / End came from a host that is now gone.
-                if (net == null || net.Role != NetworkRole.Client) return;
-                if (PlayerState.gameState != PlayerState.gameStates.dialogue) return;
-                NetGate.BeginApply();
-                SceneFollowService.BeginSuppressLoads();
-                try { Dialoguer.EndDialogue(); }
-                finally
-                {
-                    SceneFollowService.EndSuppressLoads();
-                    NetGate.EndApply();
-                }
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-        }
-
         public void Reset()
         {
-            CloseStickyDialogue();
             _flags.Clear();
             _dirty.Clear();
             _lastXml = "";
@@ -113,7 +78,6 @@ namespace SyncRADation.Networking
             _timer = 0f;
             LastCmd = StoryCmd.None;
             LastWorldId = 0;
-            LastInt0 = 0;
             _hasPendingCommit = false;
             _outbox.Clear();
             _outboxSentAt.Clear();
@@ -122,17 +86,22 @@ namespace SyncRADation.Networking
             _suppressForward = 0;
             _endBaseValid = false;
             _endSig = int.MinValue;
-            _dlgId = -1;
-            _dlgStep = 0;
-            _dlgActive = false;
             _cheatStamp.Clear();
             _endingBroadcast = false;
         }
 
         public void RequestFullSend()
         {
+            // A join / resync dump unicasts its own full commit: the party does not need another full broadcast after it.
+            if (UnicastActive()) return;
             _needSend = true;
             _fullDump = true;
+        }
+
+        static bool UnicastActive()
+        {
+            var net = LanNetworkManager.Instance;
+            return net != null && net.UnicastActive;
         }
 
         /// <summary>Host: the live slot was replaced wholesale (SaveManager.Load / NewGame): the next full dump is authoritative.</summary>
@@ -149,10 +118,7 @@ namespace SyncRADation.Networking
         {
             LastCmd = StoryCmd.None;
             LastWorldId = 0;
-            LastInt0 = 0;
             _endingBroadcast = false;
-            _dlgActive = false;
-            DialoguerGate.OnSceneChanged(); // a held dialogue callback targets an object of the unloaded scene
             RequestFullSend();
         }
 
@@ -199,15 +165,11 @@ namespace SyncRADation.Networking
                 _needSend = true;
             }
             if (!_needSend) return;
-            _timer += Mathf.Min(Time.deltaTime, 0.1f);
+            // Unscaled: slow-mo / a paused host must not stall the shared story.
+            _timer += Mathf.Min(Time.unscaledDeltaTime, 0.1f);
             if (_timer < 0.75f) return;
             _timer = 0f;
-            bool full = _fullDump;
-            bool auth = full && _authFull;
-            _fullDump = false;
-            if (full) _authFull = false;
-            _needSend = false;
-            Send(net, full, false, auth);
+            Send(net, _fullDump);
         }
 
         // ------------------------------------------------------------------------------------
@@ -228,7 +190,7 @@ namespace SyncRADation.Networking
                 ApplyCommit(m);
             }
 
-            _clientTimer += Mathf.Min(Time.deltaTime, 0.1f);
+            _clientTimer += Mathf.Min(Time.unscaledDeltaTime, 0.1f);
             if (_clientTimer < 0.2f) return;
             _clientTimer = 0f;
             // Not gated on a pending commit: under a permanent scene mismatch (wreck / hole split) the pending commit
@@ -359,7 +321,8 @@ namespace SyncRADation.Networking
                     h = h * 31 + END_Manager.doors;
                     h = h * 31 + END_Manager.healedTimeSegments;
                     h = h * 31 + (int)(END_Manager.healedTime * 10f);
-                    h = h * 31 + (int)(END_Manager.memoryTime * 10f);
+                    // Not memoryTime: MEM_ChecklistLogic.Update adds deltaTime every frame in MEM, which made every tick
+                    // a commit. It still rides each commit the host sends for another reason.
                     return h;
                 }
             }
@@ -367,10 +330,9 @@ namespace SyncRADation.Networking
             return 0;
         }
 
-        static bool ReadEnd(int[] cur, out float healed, out float memory)
+        static bool ReadEnd(int[] cur, out float healed)
         {
             healed = 0f;
-            memory = 0f;
             try
             {
                 cur[0] = END_Manager.Circle;
@@ -381,7 +343,6 @@ namespace SyncRADation.Networking
                 cur[5] = END_Manager.doors;
                 cur[6] = END_Manager.healedTimeSegments;
                 healed = END_Manager.healedTime;
-                memory = END_Manager.memoryTime;
                 return true;
             }
             catch (System.Exception ex) { WarnOnce("ReadEnd", ex); }
@@ -391,22 +352,21 @@ namespace SyncRADation.Networking
         /// <summary>After SaveManager.Load/NewGame the statics were replaced wholesale: do not treat that as a delta.</summary>
         public void ResetEndBase() => _endBaseValid = false;
 
-        private void CaptureEndBase(int[] cur, float healed, float memory)
+        private void CaptureEndBase(int[] cur, float healed)
         {
             for (int i = 0; i < _endBase.Length; i++) _endBase[i] = cur[i];
             _endBaseHealed = healed;
-            _endBaseMemory = memory;
             _endBaseValid = true;
         }
 
         private void FlushEndDelta(LanNetworkManager net)
         {
             var cur = new int[7];
-            float healed, memory;
-            if (!ReadEnd(cur, out healed, out memory)) return;
+            float healed;
+            if (!ReadEnd(cur, out healed)) return;
             if (!_endBaseValid)
             {
-                CaptureEndBase(cur, healed, memory);
+                CaptureEndBase(cur, healed);
                 return;
             }
             var sb = new System.Text.StringBuilder(64);
@@ -419,13 +379,14 @@ namespace SyncRADation.Networking
                 sb.Append(d).Append('|');
             }
             float dh = healed - _endBaseHealed;
-            float dm = memory - _endBaseMemory;
+            // memoryTime is play time in MEM (MEM_ChecklistLogic.Update, per frame): every peer counts the same minutes,
+            // so summing peers multiplied it. The host's own clock is the party's; clients never contribute it.
+            const float dm = 0f;
             if (dh < 0f) dh = 0f;
-            if (dm < 0f) dm = 0f;
-            if (dh > 0.0001f || dm > 0.0001f) any = true;
+            if (dh > 0.0001f) any = true;
             sb.Append(dh.ToString("R", System.Globalization.CultureInfo.InvariantCulture)).Append('|');
             sb.Append(dm.ToString("R", System.Globalization.CultureInfo.InvariantCulture));
-            CaptureEndBase(cur, healed, memory);
+            CaptureEndBase(cur, healed);
             if (!any) return;
             PlaytestLog.Event("Story", "send END delta " + sb);
             net.SendInteractionRequest(0, InteractionKind.InspectFlag, 100 + (int)StoryCmd.EndDelta, 0, 0f, 0f, 0f, sb.ToString());
@@ -442,11 +403,10 @@ namespace SyncRADation.Networking
             {
                 if (!int.TryParse(p[i], out d[i]) || d[i] < 0 || d[i] > 1000) d[i] = 0;
             }
-            float dh, dm;
+            // p[8] (memoryTime) is always 0 and ignored: the host's own MEM clock is the party's (FlushEndDelta).
+            float dh;
             if (!float.TryParse(p[7], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out dh)) dh = 0f;
-            if (!float.TryParse(p[8], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out dm)) dm = 0f;
             if (dh < 0f || dh > 100000f) dh = 0f;
-            if (dm < 0f || dm > 100000f) dm = 0f;
             try
             {
                 END_Manager.Circle += d[0];
@@ -457,7 +417,6 @@ namespace SyncRADation.Networking
                 END_Manager.doors += d[5];
                 END_Manager.healedTimeSegments += d[6];
                 END_Manager.healedTime += dh;
-                END_Manager.memoryTime += dm;
                 if (d[0] + d[1] + d[2] + d[3] > 0)
                 {
                     NetGate.BeginApply();
@@ -476,85 +435,6 @@ namespace SyncRADation.Networking
             try { return END_Manager.Ending; }
             catch (System.Exception ex) { WarnOnce("SafeEnding", ex); }
             return -1;
-        }
-
-        // --- Dialogue sequence ------------------------------------------------------------------
-
-        public int DialogueId => _dlgId;
-        public int DialogueStep => _dlgStep;
-
-        public string DialogueTag() => _dlgId + ":" + _dlgStep;
-
-        /// <summary>Host: a story dialogue begins. False = duplicate Start of the same id (two players triggered it).</summary>
-        public bool HostDialogueStart(int id)
-        {
-            float now = Time.unscaledTime;
-            if (_dlgActive && _dlgId == id && now - _dlgStartAt < 1.5f)
-                return false;
-            _dlgId = id;
-            _dlgStep = 0;
-            _dlgActive = true;
-            _dlgStartAt = now;
-            return true;
-        }
-
-        /// <summary>
-        /// Host: validate a Continue/End. reqId &lt; 0 (local press or unknown) is always accepted; otherwise the
-        /// request must name the dialogue and step the host is on, so duplicates from the other N-1 players drop.
-        /// </summary>
-        public bool HostDialogueAdvance(int reqId, int reqStep, bool end)
-        {
-            bool known = _dlgId >= 0;
-            if (reqId >= 0 && known)
-            {
-                if (!_dlgActive || reqId != _dlgId || reqStep != _dlgStep)
-                {
-                    PlaytestLog.Event("Story", "drop stale dialogue " + (end ? "End" : "Continue")
-                        + " req=" + reqId + ":" + reqStep + " host=" + _dlgId + ":" + _dlgStep
-                        + (_dlgActive ? "" : " (ended)"));
-                    return false;
-                }
-            }
-            _dlgStep++;
-            if (end) _dlgActive = false;
-            return true;
-        }
-
-        public static bool TryParseTag(string tag, out int id, out int step) =>
-            StoryWire.TryParseDialogueTag(tag, out id, out step);
-
-        /// <summary>Client: accept a host dialogue presentation only if it is newer than what this peer already mirrored.</summary>
-        private bool ClientDialogueAccept(StoryCmd cmd, string tag)
-        {
-            int id, step;
-            if (!TryParseTag(tag, out id, out step))
-            {
-                // Untagged = late-join replay of the Start: host step unknown, so stay lenient
-                // (requests tagged -1 are always accepted by the host) until a tagged Continue re-syncs.
-                if (cmd == StoryCmd.DialoguerStartId)
-                {
-                    _dlgId = -1;
-                    _dlgStep = 0;
-                    _dlgActive = true;
-                }
-                return true;
-            }
-            if (cmd == StoryCmd.DialoguerStartId)
-            {
-                _dlgId = id;
-                _dlgStep = step;
-                _dlgActive = true;
-                return true;
-            }
-            if (_dlgId >= 0 && (id != _dlgId || step <= _dlgStep))
-            {
-                PlaytestLog.Event("Story", "drop stale " + cmd + " tag=" + tag + " local=" + _dlgId + ":" + _dlgStep);
-                return false;
-            }
-            _dlgId = id;
-            _dlgStep = step;
-            if (cmd == StoryCmd.DialogueEnd) _dlgActive = false;
-            return true;
         }
 
         // --- Scripted cheats (goto / sethp) -------------------------------------------------------
@@ -640,15 +520,49 @@ namespace SyncRADation.Networking
             return true;
         }
 
-        public void Send(LanNetworkManager net, bool full, bool replayPresentation = false, bool authoritative = false)
+        /// <summary>
+        /// Host: a peer asked for the ending after it was already broadcast (it was loading or in another scene, where
+        /// presentations are dropped): send that peer alone the full table + final END values and the verdict.
+        /// </summary>
+        public void ResendEnding(LanNetworkManager net, int playerId)
         {
+            int prev = net.BeginUnicast(playerId);
+            try
+            {
+                PlaytestLog.Event("Story", "resend DetermineEnding to p" + playerId);
+                Send(net, true);
+                BroadcastPresentation(StoryCmd.DetermineEnding, 0, SafeEnding(), "");
+            }
+            finally { net.EndUnicast(prev); }
+        }
+
+        public void Send(LanNetworkManager net, bool full, bool replayPresentation = false)
+        {
+            // A unicast (join / resync dump, ending re-send to one requester) reaches one peer: it is always a full table,
+            // and the party's broadcast bookkeeping (dirty keys, pending full, authoritative bit, last sent Dialoguer XML)
+            // stays untouched so the next broadcast still carries everything the others have not seen.
+            bool unicast = net.UnicastActive;
+            if (unicast) full = true;
+            bool authoritative = false;
+            if (!unicast)
+            {
+                // A broadcast full is the whole table: it satisfies a pending full (and carries its authoritative bit).
+                if (full)
+                {
+                    authoritative = _authFull;
+                    _authFull = false;
+                    _fullDump = false;
+                }
+                _needSend = false;
+            }
+
             // Full = the whole live table (join / resync / scene change). Incremental = only keys written since the
             // last send: re-sending every flag to N-1 peers on each 0.75 s commit was pure bandwidth.
             StoryFlagEntry[] arr;
             if (full)
             {
                 DumpLiveProgress();
-                _dirty.Clear();
+                if (!unicast) _dirty.Clear();
                 arr = new StoryFlagEntry[_flags.Count];
                 int i = 0;
                 foreach (var kvp in _flags)
@@ -664,7 +578,7 @@ namespace SyncRADation.Networking
             // Dialoguer globals ride every full commit; an incremental one only when they changed (client ignores "").
             string xmlWire = xml;
             if (!full && string.Equals(xml, _lastXml, System.StringComparison.Ordinal)) xmlWire = "";
-            else _lastXml = xml;
+            else if (!unicast) _lastXml = xml;
 
             int circle = 0, death = 0, graves = 0, leave = 0, ending = 0;
             int npc = 0, healedSeg = 0, doors = 0;
@@ -688,8 +602,6 @@ namespace SyncRADation.Networking
             try { gs = (byte)PlayerState.gameState; } catch (System.Exception e) { Guard.Swallow(e); }
 
             bool replay = replayPresentation && CanReplayPresentation(LastCmd, LastWorldId);
-            if (replayPresentation && !replay && LastCmd == StoryCmd.DialoguerStartId)
-                PlaytestLog.Event("Story", "skip dialogue replay (host not at the first node of a live dialogue)");
             net.SendStoryCommit(new StoryCommitMessage
             {
                 FullRefresh = full,
@@ -726,8 +638,6 @@ namespace SyncRADation.Networking
                 case StoryCmd.CutsceneProceed:
                 case StoryCmd.EventZoneFire:
                 case StoryCmd.MultiConditionFire:
-                case StoryCmd.DialogueContinue:
-                case StoryCmd.DialogueEnd:
                 case StoryCmd.GoToPenny:
                 case StoryCmd.PartyCheat:
                 case StoryCmd.EndDelta:
@@ -737,18 +647,6 @@ namespace SyncRADation.Networking
                     // The ending was settled and broadcast this scene: a late joiner replays determineEnding from the
                     // commit's final END values (it starts the ending cutscene natively). Marker id, nothing to look up.
                     return _endingBroadcast;
-                case StoryCmd.DialoguerStartId:
-                {
-                    // Dialogue id is packed into LastWorldId (wire WorldId is always 0 for Dialoguer). LastCmd is not
-                    // cleared by natural ends (DialoguerDialogueManager.endDialogue is not patched), so require the
-                    // host to actually be in a dialogue. Dialoguer.StartDialogue enters at node 0 and the branch path
-                    // of later nodes is not reproducible, so a late joiner is only brought in while the host has not
-                    // advanced yet (step 0); past that the replay is skipped (the next host Continue / End still lands).
-                    bool inDialogue = false;
-                    try { inDialogue = PlayerState.gameState == PlayerState.gameStates.dialogue; }
-                    catch (System.Exception e) { Guard.Swallow(e); }
-                    return inDialogue && _dlgActive && _dlgId == unchecked((int)(uint)id) && _dlgStep == 0;
-                }
                 case StoryCmd.CutsceneStart:
                 {
                     var c = WorldLookup.Find<CutsceneManager>(id);
@@ -940,17 +838,16 @@ namespace SyncRADation.Networking
 
             // Unsent local END contributions survive the overwrite below (client increments between commits).
             var unsent = new int[7];
-            float unsentHeal = 0f, unsentMem = 0f;
+            float unsentHeal = 0f;
             if (_endBaseValid && !authoritative)
             {
                 var cur = new int[7];
-                float ch, cm;
-                if (ReadEnd(cur, out ch, out cm))
+                float ch;
+                if (ReadEnd(cur, out ch))
                 {
                     for (int i = 0; i < 7; i++)
                         unsent[i] = Mathf.Max(0, cur[i] - _endBase[i]);
                     unsentHeal = Mathf.Max(0f, ch - _endBaseHealed);
-                    unsentMem = Mathf.Max(0f, cm - _endBaseMemory);
                 }
             }
 
@@ -965,7 +862,9 @@ namespace SyncRADation.Networking
                     {
                         var f = msg.Flags[i];
                         if (string.IsNullOrEmpty(f.Key)) continue;
-                        _flags[f.Key] = f;
+                        // A full commit repeats the whole table: a Set* is a Harmony prefix plus a native linear key
+                        // search (and append), so keys this peer already holds are skipped.
+                        if (SameAsLocal(f)) continue;
                         try
                         {
                             switch (f.Kind)
@@ -998,6 +897,7 @@ namespace SyncRADation.Networking
                     END_Manager.NPC = msg.EndNpc;
                     END_Manager.healedTime = msg.EndHealedTime;
                     END_Manager.healedTimeSegments = msg.EndHealedSegments;
+                    // memoryTime mirrors the host's clock (clients never contribute it, see FlushEndDelta).
                     END_Manager.memoryTime = msg.EndMemoryTime;
                     END_Manager.doors = msg.EndDoors;
 
@@ -1007,7 +907,7 @@ namespace SyncRADation.Networking
                         msg.EndCircle, msg.EndDeath, msg.EndGraves, msg.EndLeave,
                         msg.EndNpc, msg.EndDoors, msg.EndHealedSegments
                     };
-                    CaptureEndBase(hostVals, msg.EndHealedTime, msg.EndMemoryTime);
+                    CaptureEndBase(hostVals, msg.EndHealedTime);
                     if (unsent[0] > 0) END_Manager.Circle += unsent[0];
                     if (unsent[1] > 0) END_Manager.Death += unsent[1];
                     if (unsent[2] > 0) END_Manager.Graves += unsent[2];
@@ -1016,7 +916,6 @@ namespace SyncRADation.Networking
                     if (unsent[5] > 0) END_Manager.doors += unsent[5];
                     if (unsent[6] > 0) END_Manager.healedTimeSegments += unsent[6];
                     if (unsentHeal > 0f) END_Manager.healedTime += unsentHeal;
-                    if (unsentMem > 0f) END_Manager.memoryTime += unsentMem;
                 }
                 catch (System.Exception ex) { WarnOnce("ApplyCommit END", ex); }
             }
@@ -1034,8 +933,6 @@ namespace SyncRADation.Networking
             if (msg.FullRefresh && msg.ActiveStoryCmd != 0)
             {
                 var replay = (StoryCmd)msg.ActiveStoryCmd;
-                if (IsLocalInspect(replay))
-                    return;
                 if (replay == StoryCmd.DetermineEnding)
                 {
                     // Late join into the finale: the commit above already holds the final END values; Int0 = the verdict.
@@ -1046,20 +943,6 @@ namespace SyncRADation.Networking
                         Cmd = StoryCmd.DetermineEnding,
                         Int0 = msg.EndingId,
                         Text = "replay"
-                    });
-                }
-                else if (replay == StoryCmd.DialoguerStartId)
-                {
-                    // ActiveWorldId carries packed dialogue id (presentation WorldId is 0).
-                    int dialogueId = (int)msg.ActiveWorldId;
-                    PlaytestLog.Event("Story", "late-join Dialoguer replay id=" + dialogueId);
-                    // The host only replays while it is at node 0, so the tag is exactly id:0.
-                    ApplyPresentation(new StoryPresentationMessage
-                    {
-                        WorldId = 0,
-                        Cmd = StoryCmd.DialoguerStartId,
-                        Int0 = dialogueId,
-                        Text = StoryWire.DialogueTag(dialogueId, 0)
                     });
                 }
                 else if (msg.ActiveWorldId != 0)
@@ -1075,29 +958,43 @@ namespace SyncRADation.Networking
             }
         }
 
-        /// <summary>Empty the live SProgress slot's key / value lists (what a fresh slot starts with); slotID is kept.</summary>
+        /// <summary>
+        /// Empty the live SProgress slot of every shared key (what a fresh slot starts with); slotID is kept. Per-player
+        /// keys (minimap, radio frequency, inventory slot, enemy saves, ...) are never in the host's dump, so they stay.
+        /// </summary>
         private static void ClearLocalProgress()
         {
             try
             {
                 var p = SProgress.progress;
                 if (p == null) return;
-                try { p.boolKeys?.Clear(); p.bools?.Clear(); } catch (System.Exception e) { Guard.Swallow(e); }
-                try { p.intKeys?.Clear(); p.ints?.Clear(); } catch (System.Exception e) { Guard.Swallow(e); }
-                try { p.floatKeys?.Clear(); p.floats?.Clear(); } catch (System.Exception e) { Guard.Swallow(e); }
-                try { p.stringKeys?.Clear(); p.strings?.Clear(); } catch (System.Exception e) { Guard.Swallow(e); }
-                try { p.vectorKeys?.Clear(); p.vectors?.Clear(); } catch (System.Exception e) { Guard.Swallow(e); }
+                try { DropSharedKeys(p.boolKeys, i => p.bools.RemoveAt(i)); } catch (System.Exception e) { Guard.Swallow(e); }
+                try { DropSharedKeys(p.intKeys, i => p.ints.RemoveAt(i)); } catch (System.Exception e) { Guard.Swallow(e); }
+                try { DropSharedKeys(p.floatKeys, i => p.floats.RemoveAt(i)); } catch (System.Exception e) { Guard.Swallow(e); }
+                try { DropSharedKeys(p.stringKeys, i => p.strings.RemoveAt(i)); } catch (System.Exception e) { Guard.Swallow(e); }
+                try { DropSharedKeys(p.vectorKeys, i => p.vectors.RemoveAt(i)); } catch (System.Exception e) { Guard.Swallow(e); }
             }
             catch (System.Exception ex) { WarnOnce("ClearLocalProgress", ex); }
         }
 
+        /// <summary>Remove every non-per-player key and its parallel value (back to front, the lists stay aligned).</summary>
+        private static void DropSharedKeys(Il2CppSystem.Collections.Generic.List<string> keys, System.Action<int> removeValueAt)
+        {
+            if (keys == null) return;
+            for (int i = keys.Count - 1; i >= 0; i--)
+            {
+                if (StoryWire.IsPerPlayerKey(keys[i])) continue;
+                keys.RemoveAt(i);
+                removeValueAt(i);
+            }
+        }
+
         public void BroadcastPresentation(StoryCmd cmd, ulong worldId, int int0, string text)
         {
-            if (IsLocalInspect(cmd)) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
             // Bookkeeping (late-join replay target) runs on any live host; only the send needs a ready peer.
-            NoteActivePresentation(cmd, worldId, int0);
+            NoteActivePresentation(cmd, worldId);
             if (!net.HasReadyPeers) return;
             PlaytestLog.Event("Story", "send " + cmd + " id=" + worldId.ToString("X16") + " i=" + int0
                 + (string.IsNullOrEmpty(text) ? "" : " '" + text + "'"));
@@ -1110,46 +1007,19 @@ namespace SyncRADation.Networking
             });
         }
 
-        void NoteActivePresentation(StoryCmd cmd, ulong worldId, int int0)
+        void NoteActivePresentation(StoryCmd cmd, ulong worldId)
         {
             // One-shot relays must not displace the active cutscene/dialogue kept for join replay.
             if (cmd == StoryCmd.PartyCheat || cmd == StoryCmd.GoToPenny) return;
-            if (cmd == StoryCmd.DialoguerStartId)
-            {
-                LastCmd = StoryCmd.DialoguerStartId;
-                LastInt0 = int0;
-                // Pack dialogue id into LastWorldId (presentation WorldId is always 0 for Dialoguer).
-                LastWorldId = unchecked((ulong)(uint)int0);
-                return;
-            }
-            if (cmd == StoryCmd.DialogueContinue)
-            {
-                // Keep Start as the late-join replay target (orphan Continue softlocks UI).
-                if (LastCmd != StoryCmd.DialoguerStartId && LastInt0 != 0)
-                {
-                    LastCmd = StoryCmd.DialoguerStartId;
-                    LastWorldId = unchecked((ulong)(uint)LastInt0);
-                }
-                return;
-            }
             if (cmd == StoryCmd.DetermineEnding)
             {
                 // Replaces the ending cutscene's own CutsceneStart record; the replay re-runs determineEnding instead.
                 LastCmd = StoryCmd.DetermineEnding;
                 LastWorldId = 1; // non-zero marker (the commit replay branch needs one); the verdict rides EndingId
-                LastInt0 = int0;
-                return;
-            }
-            if (cmd == StoryCmd.DialogueEnd)
-            {
-                LastCmd = StoryCmd.None;
-                LastWorldId = 0;
-                LastInt0 = 0;
                 return;
             }
             LastCmd = cmd;
             LastWorldId = worldId;
-            LastInt0 = int0;
         }
 
         public void ApplyPresentation(StoryPresentationMessage msg)
@@ -1162,7 +1032,9 @@ namespace SyncRADation.Networking
                 PlaytestLog.Verbose("Story", "skip presentation " + msg.Cmd + " (loading)");
                 return;
             }
-            if (net != null && net.SceneMismatch)
+            // DetermineEnding is the exception: a client can reach the finale while the host is elsewhere (the host
+            // then settles the ending without a Finale), and it only runs this peer's own Finale if the scene has one.
+            if (net != null && net.SceneMismatch && msg.Cmd != StoryCmd.DetermineEnding)
             {
                 PlaytestLog.Verbose("Story", "skip presentation " + msg.Cmd + " (scene mismatch)");
                 return;
@@ -1185,58 +1057,10 @@ namespace SyncRADation.Networking
             {
                 ulong id = unchecked((ulong)msg.WorldId);
                 PlaytestLog.Event("Story", "apply " + msg.Cmd + " id=" + id.ToString("X16") + " i=" + msg.Int0);
+                // Dialogue* / EventScreen* / Book* commands are wire values only: dialogues and inspect screens are
+                // local to the peer that opened them (DialoguerGate), nothing sends them.
                 switch (msg.Cmd)
                 {
-                    case StoryCmd.DialogueStart:
-                    {
-                        var d = Find<Dialogue>(id);
-                        if (d == null || LocalInspect.Dialogue(d))
-                            PlaytestLog.Verbose("Story", "skip local inspect DialogueStart");
-                        break;
-                    }
-                    case StoryCmd.DialoguerStartId:
-                        if (LocalInspect.DialoguerFlavor(msg.Int0))
-                            PlaytestLog.Verbose("Story", "skip flavor DialoguerStartId i=" + msg.Int0);
-                        else if (ClientDialogueAccept(msg.Cmd, msg.Text))
-                        {
-                            // A client-initiated start kept its native callback (the request itself never ran it).
-                            var cb = DialoguerGate.TakeCallback(msg.Int0);
-                            try
-                            {
-                                if (cb != null) Dialoguer.StartDialogue(msg.Int0, cb);
-                                else Dialoguer.StartDialogue(msg.Int0);
-                                // After the start (its gate clears the held-callback flag): this peer's end runs the callback.
-                                if (cb != null) DialoguerGate.NoteActiveCallback(msg.Int0);
-                            }
-                            catch (System.Exception ex) { WarnOnce("Dialoguer.StartDialogue", ex); }
-                        }
-                        break;
-                    case StoryCmd.DialogueContinue:
-                    {
-                        if (!ClientDialogueAccept(msg.Cmd, msg.Text)) break;
-                        // The callback of a client-initiated start runs here (the host started without it), under apply:
-                        // author scope so the flags it writes still reach the host.
-                        bool author = DialoguerGate.HoldsCallback;
-                        if (author) BeginAuthorScope();
-                        try
-                        {
-                            if (msg.Int0 != 0) Dialoguer.ContinueDialogue(msg.Int0);
-                            else Dialoguer.ContinueDialogue();
-                        }
-                        catch (System.Exception ex) { WarnOnce("Dialoguer.ContinueDialogue", ex); }
-                        finally { if (author) EndAuthorScope(); }
-                        break;
-                    }
-                    case StoryCmd.DialogueEnd:
-                    {
-                        if (!ClientDialogueAccept(msg.Cmd, msg.Text)) break;
-                        bool author = DialoguerGate.HoldsCallback;
-                        if (author) BeginAuthorScope();
-                        try { Dialoguer.EndDialogue(); }
-                        catch (System.Exception ex) { WarnOnce("Dialoguer.EndDialogue", ex); }
-                        finally { if (author) EndAuthorScope(); }
-                        break;
-                    }
                     case StoryCmd.CutsceneStart:
                     {
                         var c = FindAlive<CutsceneManager>(id);
@@ -1331,12 +1155,6 @@ namespace SyncRADation.Networking
                         }
                         break;
                     }
-                    case StoryCmd.EventScreenStart:
-                    case StoryCmd.EventScreenExit:
-                    case StoryCmd.OpenBookMemory:
-                    case StoryCmd.BookOpen:
-                        PlaytestLog.Verbose("Story", "skip local inspect " + msg.Cmd);
-                        break;
                     case StoryCmd.EventZoneFire:
                     {
                         var z = FindAlive<EventZone>(id);
@@ -1375,9 +1193,10 @@ namespace SyncRADation.Networking
                         if (m == null) break;
                         try
                         {
-                            if (!LocalInspect.InLocalRoom(m.gameObject)) break;
+                            // Only TryOnce is relayed (Int0 0); a TryTrigger count arrives through the PuzzleState poll.
+                            if (msg.Int0 == 1 || !LocalInspect.InLocalRoom(m.gameObject)) break;
                             BeginAuthorScope();
-                            try { ReplayMultiCondition(m, msg.Int0 == 1); }
+                            try { ReplayMultiCondition(m); }
                             finally { EndAuthorScope(); }
                         }
                         catch (System.Exception ex) { WarnOnce("MultiConditionFire", ex); }
@@ -1457,49 +1276,25 @@ namespace SyncRADation.Networking
         {
             if (!_endBaseValid) return;
             var cur = new int[7];
-            float healed, memory;
-            if (ReadEnd(cur, out healed, out memory)) CaptureEndBase(cur, healed, memory);
+            float healed;
+            if (ReadEnd(cur, out healed)) CaptureEndBase(cur, healed);
         }
 
         /// <summary>
-        /// Native TryOnce / TryTrigger invoke OnTryDone themselves (MultiConditionEvent.c: tried &gt;= tries, and
-        /// TryOnce only while !triedOnce), which is exactly what the host request path relies on. Never call
-        /// OnTryDone on top: ApplyMultiConditionEvent (PuzzleState poll) already fires it on the triedOnce rising
-        /// edge, and the two paths latch triedOnce first, so OnTryDone runs exactly once per peer.
+        /// Replays the host's TryOnce natively (MultiConditionEvent.c): tried++ and OnTryDone on the call where tried
+        /// reaches tries, only while !triedOnce (latched after the invoke), so a second replay of the same event is a
+        /// no-op. TryTrigger is not replayed (see MultiConditionTriggerPatch). Never call OnTryDone on top:
+        /// ApplyMultiConditionEvent (PuzzleState poll) fires it only when the host's tried crosses tries past the
+        /// local count, which this replay already moved.
         /// </summary>
-        private static void ReplayMultiCondition(MultiConditionEvent m, bool trigger)
+        private static void ReplayMultiCondition(MultiConditionEvent m)
         {
-            try
-            {
-                if (trigger) m.TryTrigger();
-                else m.TryOnce();
-            }
+            try { m.TryOnce(); }
             catch (System.Exception ex) { WarnOnce("Multi Try", ex); }
         }
 
-        private static bool IsLocalInspect(StoryCmd cmd)
-        {
-            return cmd == StoryCmd.EventScreenStart
-                || cmd == StoryCmd.EventScreenExit
-                || cmd == StoryCmd.OpenBookMemory
-                || cmd == StoryCmd.BookOpen;
-        }
-
-        private static T Find<T>(ulong worldId) where T : Component =>
-            WorldLookup.Find<T>(worldId, "Story");
-
-        // Unity destroyed objects compare equal to null via overloaded ==.
-        private static T FindAlive<T>(ulong worldId) where T : Component
-        {
-            var c = Find<T>(worldId);
-            if (c == null) return null;
-            try
-            {
-                if (c.gameObject == null) return null;
-            }
-            catch { return null; }
-            return c;
-        }
+        private static T FindAlive<T>(ulong worldId) where T : Component =>
+            InteractionSyncService.FindAlive<T>(worldId, "Story");
 
         // PuzzleStateMessage MultiCondition / SaveRoom / Cutscene / Dialogue ownership.
         internal static bool TryReadPuzzle(PuzzleType type, Component c, long wid, out PuzzleStateEntry entry)
@@ -1542,23 +1337,25 @@ namespace SyncRADation.Networking
         internal static void ApplyMultiConditionEvent(MultiConditionEvent x, PuzzleStateEntry e)
         {
             if (x == null) return;
-            // Rising-edge OnTryDone: Melon triedOnce / tried / OnTryDone (PascalCase
-            // UnityEvent). Native TryOnce early-outs on triedOnce — consequence never
-            // recoverable once latched without Invoke. Live StoryCmd.MultiConditionFire
-            // already TryOnce/TryTrigger + OnTryDone.Invoke (OK). Late-join FullRefresh
-            // previously only latched triedOnce — softlock (Proceed / ProceedDelayed /
-            // delayedEvent / SetTrigger never fire). Dig M: mirror ApplyDoorLockEvent
-            // 0.5.31 both-path rising-edge: capture was=triedOnce; latch; if !e.Bool0
-            // return; if !was → BeginApply + OnTryDone.Invoke(). Live StoryCmd path
-            // sets triedOnce first → Apply sees was=true → no double-fire. Protocol 10
-            // unchanged (reuse MultiConditionEvent Bool0 triedOnce + Int0 tried).
-            bool was = false;
-            try { was = x.triedOnce; } catch (System.Exception ex) { Guard.Swallow(ex); }
+            // Rising edge on the host's count (Bool0 triedOnce, Int0 tried). Native TryOnce / TryTrigger invoke
+            // OnTryDone on the call where tried reaches tries (MultiConditionEvent.c), and a latched triedOnce / count
+            // never re-fires it, so a peer that missed the live call (late join, other room) fires it here when the
+            // host's tried crosses tries past the local count. Covers TryTrigger events (they never set triedOnce, so
+            // a triedOnce edge missed them) and no longer fires a TryOnce event whose count is still below tries.
+            // A live MultiConditionFire replay already moved the local count, so it never fires twice.
+            int was = 0;
+            try { was = x.tried; } catch (System.Exception ex) { Guard.Swallow(ex); }
+            int need = 1;
+            try { need = Mathf.Max(1, x.tries); } catch (System.Exception ex) { Guard.Swallow(ex); }
             x.triedOnce = e.Bool0;
             x.tried = e.Int0;
-            if (!e.Bool0) return;
-            if (!was)
+            if (was < need && e.Int0 >= need)
             {
+                // The host counted any END writes of OnTryDone when it ran natively: a client sends its own pending
+                // delta first and re-baselines after, so the replay is never added to the host's tally again.
+                var net = LanNetworkManager.Instance;
+                var story = net != null && net.Role == NetworkRole.Client ? net.StorySync : null;
+                story?.FlushEndDelta(net);
                 NetGate.BeginApply();
                 try
                 {
@@ -1567,6 +1364,7 @@ namespace SyncRADation.Networking
                 }
                 catch (System.Exception ex) { Guard.Swallow(ex); }
                 finally { NetGate.EndApply(); }
+                story?.RebaseEnd();
             }
         }
 

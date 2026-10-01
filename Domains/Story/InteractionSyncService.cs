@@ -58,96 +58,15 @@ namespace SyncRADation.Networking
                         if (!ok) reason = "no key";
                         else if (!string.IsNullOrEmpty(multiReason)) reason = multiReason;
                         break;
-                    case InteractionKind.KeypadSubmit:
-                        // Retired (0.5.65): no build sends it; keypads sync as live puzzle state (KeypadLive).
-                        ok = true;
-                        break;
-                    case InteractionKind.DialogueStart:
-                        if (LocalInspect.DialoguerFlavor(msg.Int0))
-                        {
-                            ok = true;
-                            break;
-                        }
-                        if (id == 0 && msg.Int0 != 0)
-                        {
-                            // Two players can trigger the same story dialogue at once: first Start wins.
-                            if (!net.StorySync.HostDialogueStart(msg.Int0))
-                            {
-                                reason = "dup-start";
-                                ok = true;
-                                break;
-                            }
-                            NetGate.BeginApply();
-                            try { Dialoguer.StartDialogue(msg.Int0); }
-                            finally { NetGate.EndApply(); }
-                            net.StorySync.BroadcastPresentation(StoryCmd.DialoguerStartId, 0, msg.Int0,
-                                net.StorySync.DialogueTag());
-                            ok = true;
-                        }
-                        else
-                            ok = true;
-                        break;
+                    // KeypadSubmit / Dialogue* / EventScreen* / Book* / SceneFollowRequest are wire values only: no
+                    // build sends them (keypads are live puzzle state, dialogues and inspect screens stay local, scene
+                    // requests ride SceneFollow). Anything unhandled is acked FAIL below.
                     case InteractionKind.CutsceneStart:
                         ok = ApplyCutscene(id, net);
-                        break;
-                    case InteractionKind.EventScreenStart:
-                    case InteractionKind.EventScreenExit:
-                    case InteractionKind.BookMemory:
-                    case InteractionKind.BookOpen:
-                        ok = true;
                         break;
                     case InteractionKind.CutsceneSkip:
                         ok = ApplyCutsceneSkip(id, net, msg.SenderPlayerId);
                         break;
-                    case InteractionKind.DialogueContinue:
-                    {
-                        // Text = "dialogueId:step" the sender was on. Any player may advance; only the
-                        // first request for a given step is applied, the other N-1 are stale and dropped.
-                        int reqId, reqStep;
-                        if (!StorySyncService.TryParseTag(msg.Text, out reqId, out reqStep))
-                        {
-                            reqId = -1;
-                            reqStep = 0;
-                        }
-                        if (!net.StorySync.HostDialogueAdvance(reqId, reqStep, false))
-                        {
-                            reason = "stale";
-                            ok = true;
-                            break;
-                        }
-                        NetGate.BeginApply();
-                        try
-                        {
-                            if (msg.Int0 != 0) Dialoguer.ContinueDialogue(msg.Int0);
-                            else Dialoguer.ContinueDialogue();
-                        }
-                        finally { NetGate.EndApply(); }
-                        net.StorySync.BroadcastPresentation(StoryCmd.DialogueContinue, 0, msg.Int0,
-                            net.StorySync.DialogueTag());
-                        ok = true;
-                        break;
-                    }
-                    case InteractionKind.DialogueEnd:
-                    {
-                        int reqId, reqStep;
-                        if (!StorySyncService.TryParseTag(msg.Text, out reqId, out reqStep))
-                        {
-                            reqId = -1;
-                            reqStep = 0;
-                        }
-                        if (!net.StorySync.HostDialogueAdvance(reqId, reqStep, true))
-                        {
-                            reason = "stale";
-                            ok = true;
-                            break;
-                        }
-                        NetGate.BeginApply();
-                        try { Dialoguer.EndDialogue(); }
-                        finally { NetGate.EndApply(); }
-                        net.StorySync.BroadcastPresentation(StoryCmd.DialogueEnd, 0, 0, net.StorySync.DialogueTag());
-                        ok = true;
-                        break;
-                    }
                     case InteractionKind.StoragePut:
                         ok = ApplyStorage(msg, put: true, out reason);
                         break;
@@ -160,10 +79,6 @@ namespace SyncRADation.Networking
                         break;
                     case InteractionKind.MultiCondition:
                         ok = ApplyMultiCondition(id, msg.Int0);
-                        break;
-                    case InteractionKind.SceneFollowRequest:
-                        ok = SceneFollowService.TryApplyRequest(msg.Text);
-                        if (!ok) reason = "unknown scene";
                         break;
                     case InteractionKind.CutsceneProceed:
                         ok = ApplyCutsceneProceed(id, net, msg.SenderPlayerId);
@@ -874,8 +789,10 @@ namespace SyncRADation.Networking
                 else m.TryOnce();
             }
             finally { NetGate.EndApply(); }
-            LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.MultiConditionFire, id, kind,
-                StoryWire.HostCounted);
+            // TryTrigger's count reaches peers through the PuzzleState poll only (MultiConditionTriggerPatch).
+            if (kind != 1)
+                LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.MultiConditionFire, id, kind,
+                    StoryWire.HostCounted);
             return true;
         }
 
@@ -899,7 +816,7 @@ namespace SyncRADation.Networking
                     story.MarkDirty();
                     return true;
                 case StoryCmd.DetermineEnding:
-                    HostDetermineEnding(net);
+                    HostDetermineEnding(net, msg.SenderPlayerId);
                     return true;
                 case StoryCmd.GoToPenny:
                     HostGoToPenny(net);
@@ -923,11 +840,19 @@ namespace SyncRADation.Networking
             return null;
         }
 
-        internal static void HostDetermineEnding(LanNetworkManager net)
+        internal static void HostDetermineEnding(LanNetworkManager net, int requesterId)
         {
             // Finale.determineEnding has a per-object `once`; the broadcast has the same once-per-scene guard,
             // so two players reaching the finale at once start the ending a single time for everyone.
-            if (net.StorySync.EndingBroadcasted) return;
+            if (net.StorySync.EndingBroadcasted)
+            {
+                // The requester missed that broadcast (loading / not yet in the finale scene: presentations are dropped
+                // there) and its own determineEnding is blocked: hand it the ending again, to that peer only. A peer that
+                // did get it replays a native no-op (Finale.once) and the ending cutscene start is deduped.
+                if (requesterId != net.LocalPlayerId && net.HasPeer(requesterId))
+                    net.StorySync.ResendEnding(net, requesterId);
+                return;
+            }
             var f = FirstFinale();
             if (f == null)
             {
@@ -1028,9 +953,12 @@ namespace SyncRADation.Networking
             return true;
         }
 
-        private static T Find<T>(ulong worldId) where T : Component
+        private static T Find<T>(ulong worldId) where T : Component => FindAlive<T>(worldId, "Interact");
+
+        /// <summary>WorldId lookup that also rejects a destroyed object (Unity's overloaded == null). Shared by both Story services.</summary>
+        internal static T FindAlive<T>(ulong worldId, string tag) where T : Component
         {
-            var c = WorldLookup.Find<T>(worldId, "Interact");
+            var c = WorldLookup.Find<T>(worldId, tag);
             if (c == null) return null;
             try
             {

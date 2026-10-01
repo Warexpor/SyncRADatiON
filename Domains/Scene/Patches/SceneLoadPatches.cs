@@ -29,7 +29,6 @@ namespace SyncRADation.Patches
             if (SceneFollowService.IsTransient(scene)) return true;
             if (AirlockCinematic.IsPersonalChapterLoad(scene))
             {
-                AirlockCinematic.NotePersonalLoad(scene);
                 PlaytestLog.Event("Scene", "local airlock load '" + scene + "'");
                 return true;
             }

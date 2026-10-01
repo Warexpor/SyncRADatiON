@@ -41,7 +41,9 @@ def patch_targets():
     """(file, line, class, method, arg types | None) for every [HarmonyPatch(...)] in the mod sources."""
     out = []
     for dp, _, files in os.walk(ROOT):
-        if any(s in dp for s in SKIP_DIRS):
+        # Relative to ROOT: a checkout inside .claude/worktrees/ must not skip itself.
+        rel = "/" + os.path.relpath(dp, ROOT).replace(os.sep, "/")
+        if any(s in rel for s in SKIP_DIRS):
             continue
         for f in files:
             if not f.endswith(".cs"):

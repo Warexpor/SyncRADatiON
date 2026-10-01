@@ -32,7 +32,9 @@ namespace SyncRADation.Patches
                 LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.CutsceneSkip, id, 0, StoryWire.HostCounted);
                 return running;
             }
-            LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.CutsceneSkip);
+            // Wreck / hole split: the host has no such cutscene; the skip stays local like the start did.
+            if (!AirlockCinematic.ClientSplitFromHost())
+                LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.CutsceneSkip);
             return running;
         }
     }
@@ -80,6 +82,9 @@ namespace SyncRADation.Patches
             try { if (__instance.completed) return false; } catch (System.Exception e) { Guard.Swallow(e); }
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             if (InteractionSyncService.WasSkipped(id)) return false;
+            // Wreck / hole split (per-player scenes): the host is not in this scene, so asking it would never start the
+            // cutscene (the hole's end loads LOV_Reeducation). Run it here like solo.
+            if (AirlockCinematic.ClientSplitFromHost()) return true;
             // Host runs native + broadcasts. A client does not start it from here: it asks the host, and the
             // host's CutsceneStart presentation replay starts it on the requester like every other peer.
             // The client must NOT stamp "started" here (RememberStart): that made the replay look like a
@@ -142,16 +147,15 @@ namespace SyncRADation.Patches
                 }
             }
             catch (System.Exception e) { Guard.Swallow(e); }
-            if (ArmWorldSkippers())
-            {
-                try { CutsceneSkippingUI.skippableCutscene = true; } catch (System.Exception e) { Guard.Swallow(e); }
-                return false;
-            }
+            // No PEN_HoleSnowblind / PEN_CodeRoomEnd branch: SkippableCutscene has no Update / OnEnable (only Check /
+            // continousCheck), so "arming" one did nothing, and any not-done skipper in PEN_Hole blocked the pause menu.
             bool inCut = false;
             try { inCut = PlayerState.cutscene || PlayerState.gameState == PlayerState.gameStates.cutscene; } catch (System.Exception e) { Guard.Swallow(e); }
             try { inCut = inCut || CutsceneSkippingUI.skippableCutscene; } catch (System.Exception e) { Guard.Swallow(e); }
 
-            // One scene-cached scan (not Update) — detect running + pick skip target.
+            // One scene-cached scan (not Update) — detect running + pick skip target. Only a manager whose coroutine is
+            // live counts (CutsceneManager.Cutscene sets completed after its last cut): an unplayed one also has
+            // skipper.done == false, and skipping it stamped it skipped (30 s start block) while the real one played on.
             CutsceneManager target = null;
             var managers = WorldLookup.All<CutsceneManager>();
             if (managers != null)
@@ -162,11 +166,9 @@ namespace SyncRADation.Patches
                     if (c == null) continue;
                     try
                     {
-                        if (!inCut && c.cutscene != null && !c.completed)
-                            inCut = true;
-                        if (target == null
-                            && !LocalInspect.AirlockCinematic(c.gameObject)
-                            && (c.cutscene != null || (c.skipper != null && !c.skipper.done)))
+                        if (c.cutscene == null || c.completed) continue;
+                        inCut = true;
+                        if (target == null && !LocalInspect.AirlockCinematic(c.gameObject))
                             target = c;
                     }
                     catch (System.Exception e) { Guard.Swallow(e); }
@@ -176,54 +178,6 @@ namespace SyncRADation.Patches
             if (target == null) return true;
             try { target.Skip(); } catch (System.Exception e) { Guard.Swallow(e); }
             return false;
-        }
-
-        static bool ArmWorldSkippers()
-        {
-            bool armed = false;
-            try
-            {
-                var holes = WorldLookup.All<PEN_HoleSnowblind>();
-                if (holes != null)
-                {
-                    for (int i = 0; i < holes.Length; i++)
-                    {
-                        var h = holes[i];
-                        if (h == null) continue;
-                        armed |= ArmSkipper(h.skipper) | ArmSkipper(h.skipper2);
-                    }
-                }
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            try
-            {
-                var ends = WorldLookup.All<PEN_CodeRoomEnd>();
-                if (ends != null)
-                {
-                    for (int i = 0; i < ends.Length; i++)
-                    {
-                        var e = ends[i];
-                        if (e == null) continue;
-                        armed |= ArmSkipper(e.skipper);
-                    }
-                }
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            return armed;
-        }
-
-        static bool ArmSkipper(SkippableCutscene s)
-        {
-            if (s == null) return false;
-            try
-            {
-                bool done = false;
-                try { done = s.done; } catch (System.Exception e) { Guard.Swallow(e); }
-                if (done) return false;
-                s.enabled = true;
-                return true;
-            }
-            catch { return false; }
         }
     }
 
@@ -244,6 +198,8 @@ namespace SyncRADation.Patches
                 LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.CutsceneProceed, id, 0, StoryWire.HostCounted);
                 return true;
             }
+            // Wreck / hole split: the host has no such cut, a request would leave this cutscene stuck.
+            if (AirlockCinematic.ClientSplitFromHost()) return true;
             LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.CutsceneProceed);
             return false;
         }
