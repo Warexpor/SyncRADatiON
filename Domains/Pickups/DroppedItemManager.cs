@@ -58,8 +58,6 @@ namespace SyncRADation.ItemSystem
         public static void DespawnWhenIdle(int netID) => DroppedItemRegistry.DespawnWhenIdle(netID);
         public static void TickDeferred() => DroppedItemRegistry.TickDeferred();
         public static void DespawnItem(int netID) => DroppedItemRegistry.DespawnItem(netID);
-        public static void ClearVisuals() => DroppedItemRegistry.ClearVisuals();
-        public static void RespawnCurrentScene() => DroppedItemRegistry.RespawnCurrentScene();
         public static void ClearAll() => DroppedItemRegistry.ClearAll();
         public static GameObject GetItem(int netID) => DroppedItemRegistry.GetItem(netID);
         public static bool TryGet(int netID, out Items.itemlist item, out int count)

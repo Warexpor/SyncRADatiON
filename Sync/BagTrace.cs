@@ -25,8 +25,7 @@ namespace SyncRADation.Sync
         public static void Tick()
         {
             if (!ModConfig.DiagnosticsOn) return;
-            var net = LanNetworkManager.Instance;
-            if (net == null || !net.IsConnected) { _primed = false; return; }
+            if (!NetGate.Live) { _primed = false; return; }
             float t = Time.unscaledTime;
             if (t < _next) return;
             _next = t + Interval;

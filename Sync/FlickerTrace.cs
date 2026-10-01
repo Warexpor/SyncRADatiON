@@ -56,12 +56,6 @@ namespace SyncRADation.Sync
             _wakeLogged.Clear();
         }
 
-        static bool Connected()
-        {
-            var n = LanNetworkManager.Instance;
-            return n != null && n.IsConnected;
-        }
-
         static void Emit(string tag, string msg)
         {
             float now = Time.unscaledTime;
@@ -94,7 +88,7 @@ namespace SyncRADation.Sync
 
         public static void RoomChunk(Room room, bool value)
         {
-            if (!ModConfig.DiagnosticsOn || room == null || !Connected()) return;
+            if (!ModConfig.DiagnosticsOn || room == null || !NetGate.Live) return;
             int key = room.GetInstanceID(); // local-only bookkeeping, never on the wire
             bool prev;
             bool had = _chunkOn.TryGetValue(key, out prev);
@@ -111,7 +105,7 @@ namespace SyncRADation.Sync
 
         public static void RoomEnter(Room room)
         {
-            if (!ModConfig.DiagnosticsOn || room == null || !Connected()) return;
+            if (!ModConfig.DiagnosticsOn || room == null || !NetGate.Live) return;
             Emit("Room", "enter " + Name(room));
         }
 

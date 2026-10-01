@@ -280,7 +280,7 @@ namespace SyncRADation.Networking
         /// </summary>
         private static void ResetRetryWorldState(LanNetworkManager net)
         {
-            DroppedItemManager.ClearAll();
+            DroppedItemRegistry.ClearAll();
             ItemPickupPatches.ResetDropClaims();
             net?.PickupSync.Reset();
             var bag = _retryBag;
@@ -296,7 +296,7 @@ namespace SyncRADation.Networking
         {
             PartyKeyRing.Import(PartySaveService.RingForCurrent());
             PartyKeyRing.Broadcast();
-            DroppedItemManager.ClearAll();
+            DroppedItemRegistry.ClearAll();
             ItemPickupPatches.ResetDropClaims();
             net?.PickupSync.Reset();
         }

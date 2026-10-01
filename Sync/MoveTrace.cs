@@ -5,7 +5,6 @@
 // the 3D colliders around the player; [Move] free when walking works again. Diagnostics pref only, while connected; at
 // most one BLOCKED line per 4 s.
 using SyncRADation.Config;
-using SyncRADation.Networking;
 using UnityEngine;
 
 namespace SyncRADation.Sync
@@ -32,8 +31,7 @@ namespace SyncRADation.Sync
         public static void Tick()
         {
             if (!ModConfig.DiagnosticsOn) return;
-            var net = LanNetworkManager.Instance;
-            if (net == null || !net.IsConnected) { Reset(); return; }
+            if (!NetGate.Live) { Reset(); return; }
             GameObject player = null;
             try { player = PlayerState.player; } catch (System.Exception e) { Guard.Swallow(e); }
             if (player == null) { Reset(); return; }
