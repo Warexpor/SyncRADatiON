@@ -1,4 +1,4 @@
-// Door state tracking via WorldId; host/any peer can emit; host relays.
+// Door state by WorldId: any peer emits, the host judges and relays (DoorNetHandlers).
 using System.Collections.Generic;
 using SyncRADation.Sync;
 using UnityEngine;
@@ -7,6 +7,7 @@ namespace SyncRADation.Networking
 {
     public static class DoorSyncService
     {
+        // Last state this peer sent or applied per door: only changes go out.
         private static readonly Dictionary<ulong, bool> LastDoubleOpen = new Dictionary<ulong, bool>();
         private static readonly Dictionary<ulong, bool> LastDoubleLocked = new Dictionary<ulong, bool>();
         // ConnectedDoors: lock only. Never sync inProgress/forwards (those are room-traverse).
@@ -17,8 +18,9 @@ namespace SyncRADation.Networking
         // Unlock facts outlive scene reloads (WorldId hashes the scene, so other scenes' entries never resolve).
         // Only unlock transitions are held: a solved key/code/lock door must stay open for late joiners and after
         // a reload. A later Locked=true for the same door drops the entry (falling edge). Cleared when the session ends.
-        private static readonly Dictionary<ulong, bool> HeldDoubleUnlock = new Dictionary<ulong, bool>();
-        private static readonly Dictionary<ulong, bool> HeldCdUnlock = new Dictionary<ulong, bool>();
+        private static readonly HashSet<ulong> HeldDoubleUnlock = new HashSet<ulong>();
+        private static readonly HashSet<ulong> HeldCdUnlock = new HashSet<ulong>();
+        private static readonly List<ulong> _heldScratch = new List<ulong>(8);
 
         // Client open of a still-locked door whose unlocker may simply not have been polled yet: judged again
         // after a short grace instead of being rejected at once.
@@ -35,60 +37,14 @@ namespace SyncRADation.Networking
         private const float ScanInterval = 0.3f;
         private static bool _ready;
 
-        // Local Unity instance id -> registry WorldId (never sent), rebuilt when WorldRegistry.Generation moves.
-        // The open/close hooks fire every frame per active door: no hierarchy hashing there.
-        private static readonly Dictionary<int, ulong> _doubleIdByInst = new Dictionary<int, ulong>();
-        private static readonly Dictionary<int, ulong> _slidingIdByInst = new Dictionary<int, ulong>();
-        private static int _idGeneration = -1;
-        // Last open flag each door instance reported through the per-frame hook (only edges go further).
+        // Last open flag each door instance reported through the per-frame hook (local instance id, never sent):
+        // only edges go further, so the WorldId lookup runs on edges only.
         private static readonly Dictionary<int, bool> _instOpen = new Dictionary<int, bool>();
-
-        static void EnsureIdMaps()
-        {
-            int g = WorldRegistry.Generation;
-            if (g == _idGeneration) return;
-            _idGeneration = g;
-            _doubleIdByInst.Clear();
-            _slidingIdByInst.Clear();
-            _instOpen.Clear();
-            foreach (var kvp in WorldRegistry.AllDoubleDoors())
-            {
-                try { if (kvp.Value != null) _doubleIdByInst[kvp.Value.GetInstanceID()] = kvp.Key; }
-                catch (System.Exception e) { Guard.Swallow(e); }
-            }
-            foreach (var kvp in WorldRegistry.AllSlidingDoors())
-            {
-                try { if (kvp.Value != null) _slidingIdByInst[kvp.Value.GetInstanceID()] = kvp.Key; }
-                catch (System.Exception e) { Guard.Swallow(e); }
-            }
-        }
-
-        static ulong DoubleDoorId(Doorway_Double d, int inst)
-        {
-            EnsureIdMaps();
-            ulong id;
-            if (_doubleIdByInst.TryGetValue(inst, out id)) return id;
-            // Not registered (instantiated after the scan): hash once and remember.
-            id = WorldId.FromGameObject(d.gameObject);
-            _doubleIdByInst[inst] = id;
-            return id;
-        }
-
-        static ulong SlidingDoorId(EventSlidingDoor sd)
-        {
-            EnsureIdMaps();
-            int inst = sd.GetInstanceID();
-            ulong id;
-            if (_slidingIdByInst.TryGetValue(inst, out id)) return id;
-            id = WorldId.FromGameObject(sd.gameObject);
-            _slidingIdByInst[inst] = id;
-            return id;
-        }
 
         public static void RefreshScene()
         {
             ResetScene();
-            // Snapshot current states so we only send deltas after connect
+            // Baseline of the mounted scene: only deltas go out after connect.
             foreach (var kvp in WorldRegistry.AllDoubleDoors())
             {
                 if (kvp.Value == null) continue;
@@ -135,10 +91,7 @@ namespace SyncRADation.Networking
             LastCdLocked.Clear();
             LastSdOpened.Clear();
             LastSdMoving.Clear();
-            _doubleIdByInst.Clear();
-            _slidingIdByInst.Clear();
             _instOpen.Clear();
-            _idGeneration = -1;
             SyncRADation.Patches.DoubleDoorOpenPatch.ResetScene();
             _scanTimer = 0f;
             _ready = false;
@@ -161,7 +114,24 @@ namespace SyncRADation.Networking
             if (!NetGate.Party) return;
             var net = LanNetworkManager.Instance;
             if (net == null) return;
+            Poll(net);
+        }
 
+        /// <summary>
+        /// Send pending lock edges to everyone now (before a unicast join dump, whose full send must not be the only
+        /// place a change goes out). Open/slide edges are sent from the hooks the moment they happen.
+        /// </summary>
+        public static void FlushDiffNow()
+        {
+            if (!_ready || !NetGate.Party) return;
+            var net = LanNetworkManager.Instance;
+            if (net == null || net.UnicastActive) return;
+            Poll(net);
+        }
+
+        /// <summary>Lock-edge poll: ConnectedDoors lock flips, script relocks of double doors, deferred client opens.</summary>
+        private static void Poll(LanNetworkManager net)
+        {
             foreach (var kvp in WorldRegistry.AllConnectedDoors())
             {
                 var cd = kvp.Value;
@@ -188,7 +158,7 @@ namespace SyncRADation.Networking
                 ulong id = kvp.Key;
                 bool lk;
                 try { lk = d.locked; }
-                catch (System.Exception ex) { PuzzleSyncService.WarnOnce("door-poll-locked", ex.Message); continue; }
+                catch (System.Exception ex) { Guard.Swallow("Door.PollLocked", ex); continue; }
                 bool prev;
                 if (!LastDoubleLocked.TryGetValue(id, out prev)) { LastDoubleLocked[id] = lk; continue; }
                 if (prev == lk) continue;
@@ -230,12 +200,11 @@ namespace SyncRADation.Networking
             if (!NetGate.Live) return;
             int inst;
             try { inst = d.GetInstanceID(); } catch { return; }
-            EnsureIdMaps();
-            // Per-frame hook: same flag as last frame = nothing happened. Lock edges ride the 0.3 s Tick poll.
+            // Per-frame hook: same flag as last frame = nothing happened. Lock edges ride the 0.3 s poll.
             bool was;
             if (_instOpen.TryGetValue(inst, out was) && was == open) return;
             _instOpen[inst] = open;
-            ulong id = DoubleDoorId(d, inst);
+            ulong id = WorldId.FromGameObject(d.gameObject);
             if (id == 0) return;
             bool lo;
             LastDoubleOpen.TryGetValue(id, out lo);
@@ -249,28 +218,32 @@ namespace SyncRADation.Networking
                 return;
             }
             LastDoubleOpen[id] = open;
-            LastDoubleLocked[id] = d.locked;
+            LastDoubleLocked[id] = lockedNow;
             PlaytestLog.Event("Door", (open ? "open" : "close") + " id=" + id.ToString("X16"));
-            SendDoorChange(DoorType.DoorwayDouble, id, open, d.locked, false, false, false);
+            SendDoorChange(DoorType.DoorwayDouble, id, open, lockedNow, false, false, false);
         }
 
         public static void NotifySlidingDoor(EventSlidingDoor sd)
         {
             if (sd == null || NetGate.IsApplying) return;
             if (!NetGate.Live) return;
-            ulong id = SlidingDoorId(sd);
+            ulong id = WorldId.FromGameObject(sd.gameObject);
             if (id == 0) return;
+            bool opened = sd.opened, moving = sd.moving;
             bool lo, lm;
             LastSdOpened.TryGetValue(id, out lo);
             LastSdMoving.TryGetValue(id, out lm);
-            if (lo == sd.opened && lm == sd.moving) return;
-            LastSdOpened[id] = sd.opened;
-            LastSdMoving[id] = sd.moving;
-            PlaytestLog.Event("Door", (sd.opened ? "slide-open" : "slide-close") + " id=" + id.ToString("X16"));
-            SendDoorChange(DoorType.EventSlidingDoor, id, sd.opened, false, false, false, sd.moving);
+            if (lo == opened && lm == moving) return;
+            LastSdOpened[id] = opened;
+            LastSdMoving[id] = moving;
+            PlaytestLog.Event("Door", (opened ? "slide-open" : "slide-close") + " id=" + id.ToString("X16"));
+            SendDoorChange(DoorType.EventSlidingDoor, id, opened, false, false, false, moving);
         }
 
-        /// <summary>Host: push every door state (join resync / scene load).</summary>
+        /// <summary>
+        /// Host: push every door state (join resync / scene load). Inside a unicast dump only the joiner hears it, so
+        /// the Last* records stay as they were: a change still pending for the others goes out with the next poll.
+        /// </summary>
         public static void ForceFullSend()
         {
             if (!_ready)
@@ -283,36 +256,44 @@ namespace SyncRADation.Networking
 
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
+            bool record = !net.UnicastActive;
 
             foreach (var kvp in WorldRegistry.AllDoubleDoors())
             {
-                if (kvp.Value == null) continue;
-                SendDoorChange(DoorType.DoorwayDouble, kvp.Key, kvp.Value.open, kvp.Value.locked, false, false, false);
-                LastDoubleOpen[kvp.Key] = kvp.Value.open;
-                LastDoubleLocked[kvp.Key] = kvp.Value.locked;
+                var d = kvp.Value;
+                if (d == null) continue;
+                bool open = d.open, locked = d.locked;
+                SendDoorChange(DoorType.DoorwayDouble, kvp.Key, open, locked, false, false, false);
+                if (!record) continue;
+                LastDoubleOpen[kvp.Key] = open;
+                LastDoubleLocked[kvp.Key] = locked;
             }
             foreach (var kvp in WorldRegistry.AllConnectedDoors())
             {
-                if (kvp.Value == null) continue;
-                SendDoorChange(DoorType.ConnectedDoors, kvp.Key, false, kvp.Value.locked, false, false, false);
-                LastCdLocked[kvp.Key] = kvp.Value.locked;
+                var cd = kvp.Value;
+                if (cd == null) continue;
+                bool locked = cd.locked;
+                SendDoorChange(DoorType.ConnectedDoors, kvp.Key, false, locked, false, false, false);
+                if (record) LastCdLocked[kvp.Key] = locked;
             }
             foreach (var kvp in WorldRegistry.AllSlidingDoors())
             {
-                if (kvp.Value == null) continue;
-                SendDoorChange(DoorType.EventSlidingDoor, kvp.Key, kvp.Value.opened, false, false, false, kvp.Value.moving);
-                LastSdOpened[kvp.Key] = kvp.Value.opened;
-                LastSdMoving[kvp.Key] = kvp.Value.moving;
+                var sd = kvp.Value;
+                if (sd == null) continue;
+                bool opened = sd.opened, moving = sd.moving;
+                SendDoorChange(DoorType.EventSlidingDoor, kvp.Key, opened, false, false, false, moving);
+                if (!record) continue;
+                LastSdOpened[kvp.Key] = opened;
+                LastSdMoving[kvp.Key] = moving;
             }
-            ModRuntime.Log?.Msg("[DoorSync] Full dump sent");
+            ModRuntime.Log?.Msg("[DoorSync] Full dump sent" + (record ? "" : " (unicast)"));
         }
 
         /// <summary>Record (unlock) or drop (relock) the held solve for a door. Only edges are held.</summary>
-        private static void NoteLockEdge(Dictionary<ulong, bool> held, ulong id, bool locked)
+        private static void NoteLockEdge(HashSet<ulong> held, ulong id, bool locked)
         {
-            if (locked)
-                held.Remove(id);
-            else held[id] = true;
+            if (locked) held.Remove(id);
+            else held.Add(id);
         }
 
         /// <summary>
@@ -339,22 +320,29 @@ namespace SyncRADation.Networking
         public static void ReapplyHeldDoors()
         {
             if (HeldDoubleUnlock.Count == 0 && HeldCdUnlock.Count == 0) return;
-            foreach (var id in new List<ulong>(HeldDoubleUnlock.Keys))
+            // Native Unlock below can run door hooks that edit the held sets: walk a copy.
+            _heldScratch.Clear();
+            foreach (ulong id in HeldDoubleUnlock) _heldScratch.Add(id);
+            for (int i = 0; i < _heldScratch.Count; i++)
             {
+                ulong id = _heldScratch[i];
                 Doorway_Double d;
                 if (!WorldRegistry.TryGetDoubleDoor(id, out d) || d == null) continue;
                 try
                 {
-                    if (!d.locked) continue; // polled live: a door the script relocked and the poll dropped is not in the map
+                    if (!d.locked) continue; // polled live: a door the script relocked and the poll dropped is not held
                     if (DoorNative.IsFlavorSeal(d.gameObject) || DoorNative.HasUnsolvedLock(d)) continue;
                     d.locked = false;
                     LastDoubleLocked[id] = false;
                     PlaytestLog.Event("Door", "reapply unlock " + d.gameObject.name);
                 }
-                catch (System.Exception ex) { PuzzleSyncService.WarnOnce("door-reapply-double", ex.Message); }
+                catch (System.Exception ex) { Guard.Swallow("Door.ReapplyDouble", ex); }
             }
-            foreach (var id in new List<ulong>(HeldCdUnlock.Keys))
+            _heldScratch.Clear();
+            foreach (ulong id in HeldCdUnlock) _heldScratch.Add(id);
+            for (int i = 0; i < _heldScratch.Count; i++)
             {
+                ulong id = _heldScratch[i];
                 ConnectedDoors cd;
                 if (!WorldRegistry.TryGetConnectedDoor(id, out cd) || cd == null) continue;
                 try
@@ -363,13 +351,15 @@ namespace SyncRADation.Networking
                     DoorNative.ApplyConnectedDoors(cd, false);
                     LastCdLocked[id] = cd.locked;
                 }
-                catch (System.Exception ex) { PuzzleSyncService.WarnOnce("door-reapply-cd", ex.Message); }
+                catch (System.Exception ex) { Guard.Swallow("Door.ReapplyConnected", ex); }
             }
+            _heldScratch.Clear();
         }
 
         /// <summary>
-        /// Apply a received door state. Returns the message to relay (host), or false when the host rejected it.
-        /// On a host rejection msg holds the corrective state (broadcast to everyone, incl. the sender).
+        /// Apply a received door state. Returns true when the (possibly corrected) message is to be relayed (host);
+        /// false when the host deferred it. On a host rejection msg holds the corrective state (broadcast to
+        /// everyone, incl. the sender).
         /// </summary>
         public static bool HandleMessage(ref DoorStateMessage msg)
         {
@@ -393,11 +383,12 @@ namespace SyncRADation.Networking
             }
 
             var net = LanNetworkManager.Instance;
+            bool isHost = net != null && net.Role == NetworkRole.Host;
             bool hostLocked = false;
-            try { hostLocked = d.locked; } catch (System.Exception ex) { PuzzleSyncService.WarnOnce("door-read-locked", ex.Message); }
-            if (net != null && net.Role == NetworkRole.Host && !msg.Open)
+            try { hostLocked = d.locked; } catch (System.Exception ex) { Guard.Swallow("Door.ReadLocked", ex); }
+            if (isHost && !msg.Open)
                 _pendingOpens.Remove(id); // a later close/relock supersedes a deferred open
-            if (net != null && net.Role == NetworkRole.Host && hostLocked)
+            if (isHost && hostLocked)
             {
                 if (msg.Open)
                 {
@@ -413,7 +404,7 @@ namespace SyncRADation.Networking
                         PlaytestLog.Event("Door", "defer client open (lock not solved yet) " + d.gameObject.name);
                         return false; // neither relayed nor rejected yet
                     }
-                    try { d.locked = false; } catch (System.Exception ex) { PuzzleSyncService.WarnOnce("door-unlock", ex.Message); }
+                    try { d.locked = false; } catch (System.Exception ex) { Guard.Swallow("Door.Unlock", ex); }
                     msg.Locked = false;
                     _pendingOpens.Remove(id);
                     PlaytestLog.Event("Door", "honor client open (lock solved) " + d.gameObject.name);
@@ -421,7 +412,7 @@ namespace SyncRADation.Networking
                 else
                     msg.Locked = true;
             }
-            else if (net != null && net.Role == NetworkRole.Host)
+            else if (isHost)
             {
                 _pendingOpens.Remove(id);
                 if (msg.Locked)
@@ -436,12 +427,11 @@ namespace SyncRADation.Networking
 
             DoorNative.ApplyDoubleDoor(d, msg.Open, msg.Locked);
             LastDoubleOpen[id] = msg.Open;
-            LastDoubleLocked[id] = msg.Locked;
-            // Held solve: unlock edge holds, relock drops. ApplyDoubleDoor keeps flavor seals sealed, so
-            // record the door's real flag instead of the message.
+            // ApplyDoubleDoor keeps flavor seals sealed: record the door's real flag (or the lock poll reads a phantom
+            // edge for a flavor seal), and hold the solve from it. Unlock edge holds, relock drops.
             bool nowLocked = msg.Locked;
-            try { nowLocked = d.locked; } catch (System.Exception ex) { PuzzleSyncService.WarnOnce("door-read-locked2", ex.Message); }
-            LastDoubleLocked[id] = nowLocked; // the real flag, or the lock poll reads a phantom edge for a flavor seal
+            try { nowLocked = d.locked; } catch (System.Exception ex) { Guard.Swallow("Door.ReadLocked", ex); }
+            LastDoubleLocked[id] = nowLocked;
             if (!nowLocked) NoteLockEdge(HeldDoubleUnlock, id, false);
             else if (msg.Locked) NoteLockEdge(HeldDoubleUnlock, id, true);
             return true;
@@ -479,14 +469,14 @@ namespace SyncRADation.Networking
                     continue;
                 }
                 bool locked = true;
-                try { locked = d.locked; } catch (System.Exception ex) { PuzzleSyncService.WarnOnce("door-pending-read", ex.Message); }
+                try { locked = d.locked; } catch (System.Exception ex) { Guard.Swallow("Door.PendingRead", ex); }
                 bool solved = !locked || HostLockSolved(d);
                 if (!solved && now < p.DueAt) continue;
                 _pendingOpens.Remove(id);
                 var msg = p.Msg;
                 if (solved)
                 {
-                    try { d.locked = false; } catch (System.Exception ex) { PuzzleSyncService.WarnOnce("door-unlock", ex.Message); }
+                    try { d.locked = false; } catch (System.Exception ex) { Guard.Swallow("Door.Unlock", ex); }
                     msg.Locked = false;
                     msg.SenderPlayerId = net.LocalPlayerId;
                     PlaytestLog.Event("Door", "honor deferred client open " + d.gameObject.name);
@@ -499,6 +489,7 @@ namespace SyncRADation.Networking
                     RejectOpen(net, d, ref msg);
                 net.SendDoorState(msg);
             }
+            _pendingScratch.Clear();
         }
 
         private static bool ApplyConnectedDoors(ulong id, ref DoorStateMessage msg)
@@ -516,7 +507,7 @@ namespace SyncRADation.Networking
             if (net != null && net.Role == NetworkRole.Client && msg.SenderPlayerId == net.LocalPlayerId)
             {
                 bool cur = msg.Locked;
-                try { cur = cd.locked; } catch (System.Exception ex) { PuzzleSyncService.WarnOnce("door-cd-read-echo", ex.Message); }
+                try { cur = cd.locked; } catch (System.Exception ex) { Guard.Swallow("Door.CdReadEcho", ex); }
                 if (cur == msg.Locked)
                 {
                     LastCdLocked[id] = cur;
@@ -526,7 +517,7 @@ namespace SyncRADation.Networking
             if (net != null && net.Role == NetworkRole.Host && msg.Locked)
             {
                 bool hostLocked = true;
-                try { hostLocked = cd.locked; } catch (System.Exception ex) { PuzzleSyncService.WarnOnce("door-cd-read-host", ex.Message); }
+                try { hostLocked = cd.locked; } catch (System.Exception ex) { Guard.Swallow("Door.CdReadHost", ex); }
                 if (!hostLocked)
                 {
                     // Same rule as Doorway_Double: a client never locks a connected door the host holds unlocked.
@@ -537,12 +528,12 @@ namespace SyncRADation.Networking
                 }
             }
 
-            // Ignore InProgress/Forwards — those must stay local (room entry).
+            // InProgress/Forwards are never applied: room entry stays local.
             DoorNative.ApplyConnectedDoors(cd, msg.Locked);
             // ApplyConnectedDoors refuses to unlock a door without an unlocker: record the real flag, or the
             // next poll reads a phantom unlock edge and sends Locked=true for a door the host unlocked.
             bool realLocked = msg.Locked;
-            try { realLocked = cd.locked; } catch (System.Exception ex) { PuzzleSyncService.WarnOnce("door-cd-read", ex.Message); }
+            try { realLocked = cd.locked; } catch (System.Exception ex) { Guard.Swallow("Door.CdRead", ex); }
             NoteLockEdge(HeldCdUnlock, id, realLocked);
             LastCdLocked[id] = realLocked;
             return true;
