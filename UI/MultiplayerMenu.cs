@@ -12,10 +12,15 @@ namespace SyncRADation.UI
         private const float BaseHeight = 400f;
         private const float RowHeight = 18f;
 
+        // persistent: F2 window state
         private static bool _showMenu;
+        // persistent: F2 window state
         private static string _address = "127.0.0.1";
+        // persistent: F2 window state
         private static int _port = PluginInfo.DefaultPort;
+        // persistent: F2 window state
         private static Rect _windowRect = new Rect(100f, 100f, 360f, BaseHeight);
+        // persistent: layout scratch rect
         private static Rect _contentRect = new Rect(0f, 0f, 300f, 20f);
 
         public static void Toggle()

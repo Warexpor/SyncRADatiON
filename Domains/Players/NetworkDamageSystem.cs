@@ -840,9 +840,6 @@ namespace SyncRADation.Players
             _roomRefresh = 0f;
             _lastRoomSent = "";
             _prevCloaked = false;
-            PartyVitals.Reset();
-            PartySaveService.Reset();
-            HostReload.Reset();
             // suspendInput is restored by ClearDownedLocal when we were downed; touching it while never downed would
             // un-pause a menu/inventory the player has open (StartHost/Connect call StopNetwork first).
         }

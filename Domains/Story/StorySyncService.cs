@@ -296,6 +296,7 @@ namespace SyncRADation.Networking
             return false;
         }
 
+        // persistent: warn-once set
         private static readonly HashSet<string> _warned = new HashSet<string>();
 
         internal static void WarnOnce(string site, System.Exception ex)

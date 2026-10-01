@@ -340,6 +340,7 @@ namespace SyncRADation.Players
         }
 
         // ElsterNewController base-layer state names (decompile), for readable [Proxy] hips lines.
+        // persistent: constant name table, built once
         private static System.Collections.Generic.Dictionary<int, string> _stateNames;
 
         private static string StateName(int hash)

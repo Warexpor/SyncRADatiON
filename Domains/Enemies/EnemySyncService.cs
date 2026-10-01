@@ -351,6 +351,7 @@ namespace SyncRADation.Networking
             catch (System.Exception ex) { WarnStompOnce(ex); }
         }
 
+        // persistent: warn-once flag
         static bool _stompWarned;
 
         static void WarnStompOnce(System.Exception ex)
@@ -789,6 +790,7 @@ namespace SyncRADation.Networking
             }
             return true;
         }
+        // persistent: per-call scratch buffer
         static readonly List<GameObject> _inactiveScratch = new List<GameObject>(4);
 
         /// <summary>A remote, non-downed peer whose reported room is this enemy's room (and within 30 units).</summary>

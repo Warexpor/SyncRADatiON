@@ -53,12 +53,17 @@ namespace SyncRADation.Networking
 
         // Run origin + start scene: per-process, deliberately not reset by StopNetwork (the run outlives the session).
         // Run origin, tracked even in solo (two bool writes, no IO): a fresh run must never reload a stale slot.
+        // persistent: run origin outlives the session
         private static bool _freshRun;
+        // persistent: run origin outlives the session
         private static bool _newGameArmed;
+        // persistent: run origin outlives the session
         private static string _newGameScene = "";
         // Scene the run's slot last saved / loaded (read from SProgress in memory at that moment: a disk read
         // at wipe time would clobber the live progress when the wipe ends up as a Retry).
+        // persistent: run's save slot outlives the session
         private static string _savedScene = "";
+        // persistent: run's save slot outlives the session
         private static int _savedSlot;
 
         /// <summary>A reload was started and SaveManager.Load has not run yet.</summary>

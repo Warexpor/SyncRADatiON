@@ -39,6 +39,7 @@ namespace SyncRADation.Networking
         public const int MaxSceneDiffTotalIds = 2048;
 
         // Warn-once keys: intentionally persistent (a wire warning is not repeated every session).
+        // persistent: warn-once set
         private static readonly HashSet<string> Warned = new HashSet<string>();
 
         internal static void WarnOnce(string key, string msg)
@@ -116,7 +117,9 @@ namespace SyncRADation.Networking
     public static class NetSchema
     {
         // Pure computed caches of this dll's schema: persistent by definition.
+        // persistent: computed schema hash of this dll
         private static uint _hash;
+        // persistent: computed schema hash of this dll
         private static bool _ready;
 
         public static string ModVersion => PluginInfo.Version;
@@ -139,7 +142,9 @@ namespace SyncRADation.Networking
             }
         }
 
+        // persistent: computed schema hash of this dll
         private static uint _structural;
+        // persistent: computed schema hash of this dll
         private static bool _structuralReady;
 
         /// <summary>Hash without the module id (what the tests pin: stable across rebuilds).</summary>

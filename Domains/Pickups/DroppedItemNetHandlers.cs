@@ -30,10 +30,7 @@ namespace SyncRADation.Networking
         {
             _nextItemIndex = 1;
             _rekeyed.Clear();
-            // Player ids + local indices recycle; stale FinishDroppedNative dedupe soft-locks take.
-            try { SyncRADation.Patches.ItemPickupPatches.ResetDropClaims(); } catch (Exception e) { Guard.Swallow(e); }
-            // Session end: an in-flight storage ack will never arrive.
-            StorageTxn.Reset();
+            // Drop claims (SessionReset "DropClaims") and StorageTxn ("StorageTxn") are their own registry steps.
         }
 
         internal void SendDropItem(DropItemSpawnMessage msg)

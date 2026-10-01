@@ -11,11 +11,15 @@ namespace SyncRADation.Sync
 {
     internal static class WorldScan
     {
+        // persistent: one scene scan, rebuilt on every scene load (WorldLookup.Invalidate -> Invalidate)
         static readonly Dictionary<IntPtr, List<MonoBehaviour>> _byClass = new Dictionary<IntPtr, List<MonoBehaviour>>();
         // (bucket class, target class) -> is-subclass, so a query costs one interop call per distinct class pair once.
         // Keyed on the pointer pair itself: a packed/xor-ed long can collide and answer for the wrong pair.
+        // persistent: per-process Il2Cpp class-pair cache
         static readonly Dictionary<(IntPtr, IntPtr), bool> _subclass = new Dictionary<(IntPtr, IntPtr), bool>();
+        // persistent: scene scan state (see _byClass)
         static bool _built;
+        // persistent: scene scan state (see _byClass)
         static int _objects;
 
         public static void Invalidate()

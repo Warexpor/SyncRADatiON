@@ -8,7 +8,9 @@ namespace SyncRADation.Networking
 {
     public static class DoorNative
     {
+        // persistent: per-process reflection cache
         private static MethodInfo _slideCycle;
+        // persistent: per-process reflection cache
         private static bool _resolved;
 
         private static void Resolve()

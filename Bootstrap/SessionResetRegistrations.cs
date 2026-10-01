@@ -89,8 +89,9 @@ namespace SyncRADation
             // ---- connection scope: the session itself (NetGate first: the service resets below may re-enable AI)
             SessionReset.Register("NetGate", Connection, NetGate.Reset);
             SessionReset.Register("PartyKeyRing", Connection, PartyKeyRing.Reset);        // wipe re-imports the save's ring
-            SessionReset.Register("PartyVitals", Connection, PartyVitals.Reset);
+            // Damage first: its downed-state clear (ClearDownedLocal) may touch the party vitals / save state reset next.
             SessionReset.Register("Damage", Connection, NetworkDamageSystem.Reset);
+            SessionReset.Register("PartyVitals", Connection, PartyVitals.Reset);
             SessionReset.Register("PartySave", Connection, PartySaveService.Reset);
             SessionReset.Register("HostReload", Connection, HostReload.Reset);
             SessionReset.Register("SceneFollow", Connection, SceneFollowService.Reset);

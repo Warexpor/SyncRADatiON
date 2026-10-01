@@ -9,14 +9,18 @@ namespace SyncRADation.Sync
 {
     public static class WorldLookup
     {
+        // persistent: scene-keyed cache, invalidated on every scene load (ModRuntime.OnSceneChanged) and scene name change
         static string _sceneName = "";
+        // persistent: scene-keyed cache (see _sceneName)
         static readonly Dictionary<Type, UnityEngine.Object[]> _allByType
             = new Dictionary<Type, UnityEngine.Object[]>();
+        // persistent: scene-keyed cache (see _sceneName)
         static readonly Dictionary<Type, Dictionary<ulong, Component>> _idByType
             = new Dictionary<Type, Dictionary<ulong, Component>>();
 
         // Types whose cache was dropped mid-scene (runtime-instantiated components): the next All<T> walks the
         // scene for that one type instead of re-reading the shared WorldScan buckets, which predate the spawn.
+        // persistent: scene-keyed cache (see _sceneName)
         static readonly HashSet<Type> _directRescan = new HashSet<Type>();
 
         public static void Invalidate()
@@ -133,6 +137,7 @@ namespace SyncRADation.Sync
             return map;
         }
 
+        // persistent: warn-once set (bounded at 1024)
         static readonly HashSet<ulong> _loggedDuplicateIds = new HashSet<ulong>();
 
         /// <summary>Log a WorldId collision once per id (Rebuild runs several times per scene load).</summary>
@@ -148,6 +153,7 @@ namespace SyncRADation.Sync
         }
 
         // PreferOver runs per registration (several rebuilds per scene load): one tie line per path.
+        // persistent: warn-once set
         static readonly HashSet<string> _loggedTies = new HashSet<string>();
 
         /// <summary>

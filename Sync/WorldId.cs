@@ -21,7 +21,9 @@ namespace SyncRADation.Sync
 
         // Scene-scoped (GameObject instance id -> WorldId; local key, never on the wire). Deliberately not session state:
         // ids pinned at load must survive a session that starts later in the same scene. BeginScene clears it.
+        // persistent: scene-scoped id pins, cleared by BeginScene on a scene change
         static readonly Dictionary<int, ulong> _cache = new Dictionary<int, ulong>(4096);
+        // persistent: scene key of _cache
         static string _cacheScene;
 
         public static int CachedCount => _cache.Count;

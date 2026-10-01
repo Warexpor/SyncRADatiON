@@ -598,6 +598,7 @@ namespace SyncRADation.Players
 
         // Camera.main per frame per aiming proxy: cached, refetched when destroyed (scene load) or switched off (cutscene camera).
         // Pure cache: intentionally persistent (self-heals on the null / disabled check).
+        // persistent: camera cache, self-heals on the null / disabled check
         private static Camera _cam;
 
         private void BillboardLaserPoint()

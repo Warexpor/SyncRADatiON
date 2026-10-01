@@ -1,4 +1,4 @@
-// SyncRADation — single source of truth: Items.itemlist > WeaponType mapping
+// SyncRADation ï¿½ single source of truth: Items.itemlist > WeaponType mapping
 namespace SyncRADation.Networking
 {
     public static class WeaponUtils
@@ -63,6 +63,7 @@ namespace SyncRADation.Networking
         };
 
         /// <summary>Cached Animator.StringToHash of <see cref="AnimatorBoolNames"/> (same order).</summary>
+        // persistent: constant hash table
         public static readonly int[] AnimatorBoolHashes = HashAll();
 
         static int[] HashAll()

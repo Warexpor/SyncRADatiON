@@ -9,12 +9,18 @@ namespace SyncRADation.Cheats
 {
     public static class LocationTeleporter
     {
+        // persistent: F7 window state
         public static bool ShowMenu;
 
+        // persistent: F7 window state
         private static Vector2 _scrollPos;
+        // persistent: F7 window state
         private static string _statusMessage = "";
+        // persistent: F7 window state
         private static float _statusTimer;
+        // persistent: F7 window state
         private static int _tab; // 0 = chapters, 1 = rooms in current level
+        // persistent: F7 window state
         private static Rect _windowRect = new Rect(220f, 80f, 420f, 520f);
 
         private static readonly LocationEntry[] Chapters =
@@ -106,7 +112,9 @@ namespace SyncRADation.Cheats
 
         // OnGUI runs several times per frame while the Rooms tab is open: scan + sort once per registry generation
         // (every scene load / rebuild bumps it), not per repaint.
+        // persistent: cache keyed by WorldRegistry.Generation (self-invalidating)
         private static readonly List<Room> _rooms = new List<Room>();
+        // persistent: cache key of _rooms
         private static int _roomsGeneration = -1;
 
         private static List<Room> CollectRooms()

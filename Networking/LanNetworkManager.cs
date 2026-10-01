@@ -18,6 +18,7 @@ namespace SyncRADation.Networking
 {
     public sealed partial class LanNetworkManager : INetEventListener
     {
+        // persistent: the process-lifetime manager (created once by ModRuntime.EnsureRunning)
         public static LanNetworkManager Instance { get; private set; }
 
         private NetManager _net;
@@ -79,7 +80,9 @@ namespace SyncRADation.Networking
         public void SetLocalPlayer(GameObject go) { _localPlayer = go; }
 
         // Subscriber lists of the Connected/Disconnected events: registered once by domains, persistent by design.
+        // persistent: boot-time event subscribers
         private static Action _connected;
+        // persistent: boot-time event subscribers
         private static Action _disconnected;
 
         public static event Action Connected

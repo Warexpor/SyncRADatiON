@@ -253,6 +253,7 @@ namespace SyncRADation.Players
                 DestroyProxy(_staleScratch[i]);
         }
 
+        // persistent: trace label of the last SamplePose branch, rewritten every sample
         static string _mode = "hold"; // last SamplePose branch, for FlickerTrace
 
         static void SamplePose(InterpState ist, float renderTime, out Vector3 pos, out Quaternion facing)

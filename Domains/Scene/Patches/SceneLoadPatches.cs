@@ -9,7 +9,9 @@ namespace SyncRADation.Patches
 {
     internal static class SceneLoadGate
     {
+        // persistent: log throttle
         static string _lastBlockedScene;
+        // persistent: log throttle
         static float _lastBlockedLog;
 
         /// <summary>True when the load must run untouched: a mod apply scope, or no live party (vanilla host / offline).</summary>

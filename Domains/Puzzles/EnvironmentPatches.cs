@@ -717,6 +717,7 @@ namespace SyncRADation.Patches
     [HarmonyPatch(typeof(RES_LibraryPC), "Update")]
     public static class LibraryPcUpdatePatch
     {
+        // persistent: moving-edge set keyed by local instance id (a reloaded scene's new ids never match stale ones)
         static readonly System.Collections.Generic.HashSet<int> _wasMoving = new System.Collections.Generic.HashSet<int>();
 
         [HarmonyPostfix]
