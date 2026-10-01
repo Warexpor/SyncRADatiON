@@ -273,11 +273,9 @@ namespace SyncRADation.Players
             var net = ModRuntime.Network;
             if (net == null || msg.SenderPlayerId == net.LocalPlayerId) return;
 
+            // Wipes travel as PartyLife(Wipe); DeathKind.HostWipeReload is never sent (its wire id stays reserved).
             if (msg.Kind == DeathKind.ClientDowned)
                 PartyVitals.NoteDown(msg.SenderPlayerId);
-            // Legacy HostWipeReload: wipes now travel as PartyLife(Wipe); clients never load their own slot.
-            else if (msg.Kind == DeathKind.HostWipeReload)
-                PlaytestLog.Event("Damage", "legacy HostWipeReload ignored (PartyLife wipe is authoritative)");
         }
 
         /// <summary>Every peer: host announced a revive.</summary>
