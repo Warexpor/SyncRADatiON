@@ -134,6 +134,7 @@ namespace SyncRADation.Patches
             __state = false;
             if (!NetworkDamageSystem.PartyLive) return true;
             if (NetworkDamageSystem.IsDead) return false; // downed: nothing can hurt us
+            if (NoPausePatch.Held) return false;          // would be paused in vanilla (co-op keeps time running)
             __state = NetworkDamageSystem.HurtGateOpen();
             return true;
         }
@@ -154,6 +155,7 @@ namespace SyncRADation.Patches
             __state = false;
             if (!NetworkDamageSystem.PartyLive) return true;
             if (NetworkDamageSystem.IsDead) return false;
+            if (NoPausePatch.Held) return false; // native Hug has no gameState gate; vanilla time was frozen here
             __state = true;
             return true;
         }
