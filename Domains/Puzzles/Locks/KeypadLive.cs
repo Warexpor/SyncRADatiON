@@ -1,7 +1,7 @@
 // Live shared keypads: Keypad3D (safes, radio code lock), ROT_Keypad, PEN_Codepad (six-wheel cryo codepad).
 // Both players type into one shared code; each press replays on the other side through the native coroutine
 // (button push / wheel flip, its sound, the red blink on a wrong code), Ghidra Keypad3D.c / ROT_Keypad.c /
-// PEN_Codepad.c. Wire (PuzzleStateEntry, merged whole by PuzzleMerge.IsAtomicIntsType):
+// PEN_Codepad.c. Wire (PuzzleStateEntry, merged whole: MergeKind.AtomicInts):
 //   Keypad3D / ROT_Keypad: Int0..Int2 = code digits, one nibble each (8 per int, 24 max);
 //     Int3 = length | key << 8 (last pressed key index + 1, 0 = none) | seq << 13 | wrong << 21.
 //   PEN_Codepad: Int0 = six 3-bit wheel values; Int3 = op | seq << 8 (op 1..6 up wheel, 7..12 down, 13 reset,
@@ -114,68 +114,68 @@ namespace SyncRADation.Networking
         public static void ApplyKeypad3D(Keypad3D x, PuzzleStateEntry e)
         {
             if (x == null) return;
-            ulong id = unchecked((ulong)e.WorldId);
-            string code = UnpackCode(e);
-            int key = ((e.Int3 >> 8) & 0x1F) - 1;
-            int seq = (e.Int3 >> 13) & 0xFF;
-            bool wrong = ((e.Int3 >> 21) & 1) != 0;
-            bool press = NewPress(id, seq, key, wrong);
-            _code[id] = code;
-            try { if (x.code != code) x.code = code; } catch (System.Exception ex) { Guard.Swallow(ex); }
-            if (!press || !PuzzleFx.LiveApply || key < 0) return;
-            try
+            int key;
+            bool wrong;
+            string code;
+            if (!ApplyCode(e, out code, out key, out wrong)) { SetCode3D(x, code); return; }
+            SetCode3D(x, code);
+            var keys = x.Keys;
+            if (keys != null && key < keys.Length && keys[key] != null)
+                PuzzleFx.Run(x, x.pushButton(keys[key].transform));
+            if (key == KeySubmit)
             {
-                var keys = x.Keys;
-                if (keys != null && key < keys.Length && keys[key] != null)
-                    PuzzleFx.Run(x, x.pushButton(keys[key].transform));
-                if (key == KeySubmit)
+                if (wrong)
+                    PuzzleFx.Run(x, x.verify("\u0001")); // never the solution: native red blink + Denied
+                else if (e.Bool0)
                 {
-                    if (wrong)
-                        PuzzleFx.Run(x, x.verify("\u0001")); // never the solution: native red blink + Denied
-                    else if (e.Bool0)
-                    {
-                        if (x.green != null) x.green.enabled = true;
-                        PuzzleFx.Press(x, x.greenSFX);
-                    }
+                    if (x.green != null) x.green.enabled = true;
+                    PuzzleFx.Press(x, x.greenSFX);
                 }
             }
-            catch (System.Exception ex) { Guard.Swallow(ex); }
             // verify() cleared code; the shared code is what the entry says.
-            try { if (x.code != code) x.code = code; } catch (System.Exception ex) { Guard.Swallow(ex); }
+            SetCode3D(x, code);
         }
 
         public static void ApplyRotKeypad(ROT_Keypad x, PuzzleStateEntry e)
         {
             if (x == null) return;
-            ulong id = unchecked((ulong)e.WorldId);
-            string code = UnpackCode(e);
-            int key = ((e.Int3 >> 8) & 0x1F) - 1;
-            int seq = (e.Int3 >> 13) & 0xFF;
-            bool wrong = ((e.Int3 >> 21) & 1) != 0;
-            bool press = NewPress(id, seq, key, wrong);
-            _code[id] = code;
-            try { if (x.code != code) x.code = code; } catch (System.Exception ex) { Guard.Swallow(ex); }
-            if (!press || !PuzzleFx.LiveApply || key < 0) return;
-            try
+            int key;
+            bool wrong;
+            string code;
+            if (!ApplyCode(e, out code, out key, out wrong)) { SetCodeRot(x, code); return; }
+            SetCodeRot(x, code);
+            var keys = x.Keys;
+            if (keys != null && key < keys.Length && keys[key] != null)
+                PuzzleFx.Run(x, x.pushButton(keys[key].transform));
+            if (key == KeySubmit)
             {
-                var keys = x.Keys;
-                if (keys != null && key < keys.Length && keys[key] != null)
-                    PuzzleFx.Run(x, x.pushButton(keys[key].transform));
-                if (key == KeySubmit)
+                if (wrong)
+                    PuzzleFx.Run(x, x.verify("\u0001")); // native fail sound + red blink
+                else if (e.Bool0)
                 {
-                    if (wrong)
-                        PuzzleFx.Run(x, x.verify("\u0001")); // native fail sound + red blink
-                    else if (e.Bool0)
-                    {
-                        // The solve itself (onSuccess) runs from ApplyRotKeypad's live edge; this is the light + chime.
-                        if (x.green != null) x.green.enabled = true;
-                        PuzzleFx.Press(x, x.open);
-                    }
+                    // The solve itself (onSuccess) runs from ApplyRotKeypad's live edge; this is the light + chime.
+                    if (x.green != null) x.green.enabled = true;
+                    PuzzleFx.Press(x, x.open);
                 }
             }
-            catch (System.Exception ex) { Guard.Swallow(ex); }
-            try { if (x.code != code) x.code = code; } catch (System.Exception ex) { Guard.Swallow(ex); }
+            SetCodeRot(x, code);
         }
+
+        /// <summary>Records the press; true when it should replay here now (a live press this peer has not seen).</summary>
+        static bool ApplyCode(PuzzleStateEntry e, out string code, out int key, out bool wrong)
+        {
+            ulong id = unchecked((ulong)e.WorldId);
+            code = UnpackCode(e);
+            key = ((e.Int3 >> 8) & 0x1F) - 1;
+            int seq = (e.Int3 >> 13) & 0xFF;
+            wrong = ((e.Int3 >> 21) & 1) != 0;
+            bool press = NewPress(id, seq, key, wrong);
+            _code[id] = code;
+            return press && PuzzleFx.LiveApply && key >= 0;
+        }
+
+        static void SetCode3D(Keypad3D x, string code) { if (x.code != code) x.code = code; }
+        static void SetCodeRot(ROT_Keypad x, string code) { if (x.code != code) x.code = code; }
 
         /// <summary>Native OnEnable cleared the code (chunk remount): put the shared one back.</summary>
         public static void RestoreCode(Component pad, System.Func<string> get, System.Action<string> set)
@@ -184,7 +184,7 @@ namespace SyncRADation.Networking
             ulong id = WorldId.FromGameObject(pad.gameObject);
             string code;
             if (id == 0 || !_code.TryGetValue(id, out code) || string.IsNullOrEmpty(code)) return;
-            try { if (get() != code) set(code); } catch (System.Exception e) { Guard.Swallow(e); }
+            if (get() != code) set(code);
         }
 
         // ---- PEN_Codepad ------------------------------------------------------------------------------------
@@ -192,14 +192,10 @@ namespace SyncRADation.Networking
         public static int PackWheels(PEN_Codepad x, ulong id, out int i3)
         {
             int v = 0;
-            try
-            {
-                var input = x.input;
-                if (input != null)
-                    for (int i = 0; i < 6 && i < input.Length; i++)
-                        v |= (input[i] & 7) << (3 * i);
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
+            var input = x.input;
+            if (input != null)
+                for (int i = 0; i < 6 && i < input.Length; i++)
+                    v |= (input[i] & 7) << (3 * i);
             Op o;
             _op.TryGetValue(id, out o);
             i3 = (o.Seq != 0 ? o.Key & 0xFF : 0) | ((o.Seq & 0xFF) << 8);
@@ -225,38 +221,34 @@ namespace SyncRADation.Networking
             bool press = NewPress(id, seq, op, false);
             _wheels[id] = e.Int0;
             bool replay = press && PuzzleFx.LiveApply && op != 0;
-            try
+            var input = x.input;
+            if (input == null) return;
+            for (int i = 0; i < 6 && i < input.Length; i++)
             {
-                var input = x.input;
-                if (input == null) return;
-                for (int i = 0; i < 6 && i < input.Length; i++)
-                {
-                    int want = (e.Int0 >> (3 * i)) & 7;
-                    bool animated = replay && (op == 1 + i || op == 7 + i);
-                    if (input[i] == want && !animated) continue;
-                    input[i] = want;
-                    // The wheel flip coroutine draws digits[input[i]] at its end; otherwise draw it now.
-                    if (!animated && !replay) SetDigit(x, i, want);
-                }
-                if (!replay)
-                    return;
-                if (op >= 1 && op <= 12)
-                {
-                    int w = op <= 6 ? op - 1 : op - 7;
-                    PuzzleFx.Run(x, x.UpdateDigitDiplay(w, op <= 6));
-                }
-                else if (op == OpReset)
-                {
-                    for (int i = 0; i < 6; i++) PuzzleFx.Run(x, x.ResetDigitDiplay(i));
-                    PuzzleFx.Run(x, x.UpdateDigitDiplay(6, true));
-                }
-                else if (op == OpSubmit)
-                {
-                    PuzzleFx.Run(x, x.UpdateDigitDiplay(7, true));
-                    PuzzleFx.Run(x, x.Buzz(e.Bool0));
-                }
+                int want = (e.Int0 >> (3 * i)) & 7;
+                bool animated = replay && (op == 1 + i || op == 7 + i);
+                if (input[i] == want && !animated) continue;
+                input[i] = want;
+                // The wheel flip coroutine draws digits[input[i]] at its end; otherwise draw it now.
+                if (!animated && !replay) SetDigit(x, i, want);
             }
-            catch (System.Exception ex) { Guard.Swallow(ex); }
+            if (!replay)
+                return;
+            if (op >= 1 && op <= 12)
+            {
+                int w = op <= 6 ? op - 1 : op - 7;
+                PuzzleFx.Run(x, x.UpdateDigitDiplay(w, op <= 6));
+            }
+            else if (op == OpReset)
+            {
+                for (int i = 0; i < 6; i++) PuzzleFx.Run(x, x.ResetDigitDiplay(i));
+                PuzzleFx.Run(x, x.UpdateDigitDiplay(6, true));
+            }
+            else if (op == OpSubmit)
+            {
+                PuzzleFx.Run(x, x.UpdateDigitDiplay(7, true));
+                PuzzleFx.Run(x, x.Buzz(e.Bool0));
+            }
         }
 
         /// <summary>Native OnEnable zeroed the wheels (chunk remount): put the shared values back.</summary>
@@ -266,30 +258,22 @@ namespace SyncRADation.Networking
             ulong id = WorldId.FromGameObject(x.gameObject);
             int v;
             if (id == 0 || !_wheels.TryGetValue(id, out v) || v == 0) return;
-            try
+            var input = x.input;
+            if (input == null) return;
+            for (int i = 0; i < 6 && i < input.Length; i++)
             {
-                var input = x.input;
-                if (input == null) return;
-                for (int i = 0; i < 6 && i < input.Length; i++)
-                {
-                    int want = (v >> (3 * i)) & 7;
-                    input[i] = want;
-                    SetDigit(x, i, want);
-                }
+                int want = (v >> (3 * i)) & 7;
+                input[i] = want;
+                SetDigit(x, i, want);
             }
-            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         static void SetDigit(PEN_Codepad x, int i, int v)
         {
-            try
-            {
-                var displays = x.displays;
-                var digits = x.digits;
-                if (displays == null || digits == null || i >= displays.Length || v >= digits.Length) return;
-                if (displays[i] != null) displays[i].sprite = digits[v];
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
+            var displays = x.displays;
+            var digits = x.digits;
+            if (displays == null || digits == null || i >= displays.Length || v >= digits.Length) return;
+            if (displays[i] != null) displays[i].sprite = digits[v];
         }
     }
 }

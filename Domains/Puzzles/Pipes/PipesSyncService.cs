@@ -1,68 +1,39 @@
-using UnityEngine;
+using System;
+using SyncRADation.Sync;
+using static SyncRADation.Networking.PuzzleDomainUtil;
 
 namespace SyncRADation.Networking
 {
     /// <summary>ROT_Pipes valve / leak snap + read/apply.</summary>
     public sealed class PipesSyncService
     {
-        public static bool TryRead(ROT_Pipes x, long wid, out PuzzleStateEntry entry)
+        internal static PuzzleStateEntry Read(ROT_Pipes x, long wid)
         {
-            entry = default;
-            if (x == null) return false;
             bool off = x.loaded || (x.Blockers != null && !x.Blockers.activeSelf);
-            entry = PuzzleDomainUtil.Mk(PuzzleType.ROT_Pipes, wid, off, false, false, 0, 0, 0, 0, 0);
-            return true;
+            return Mk(PuzzleType.ROT_Pipes, wid, off, false, false, 0, 0, 0, 0, 0);
         }
 
-        public static void Apply(ROT_Pipes x, PuzzleStateEntry e, bool cinematic)
+        /// <summary>Live: the native TurnValve (once per scene); otherwise / on failure the valve-closed end pose.</summary>
+        internal static void Apply(ROT_Pipes x, PuzzleStateEntry e)
         {
-            if (x != null && e.Bool0)
-                SnapPipes(x, cinematic);
-        }
-
-        public static void SnapPipes(ROT_Pipes x, bool play)
-        {
-            if (x == null) return;
-            try { x.loaded = true; } catch (System.Exception e) { Guard.Swallow(e); }
-            if (play && PuzzleSyncService.TryStartWorldAnim(PuzzleType.ROT_Pipes, x.gameObject))
+            if (x == null || !e.Bool0) return;
+            x.loaded = true;
+            if (PuzzleSyncService.LiveEdge && PuzzleSyncService.TryStartWorldAnim(PuzzleType.ROT_Pipes, x.gameObject))
             {
-                try { x.TurnValve(); }
-                catch { PosePipes(x); }
+                try { x.TurnValve(); return; }
+                catch (Exception ex) { Guard.Swallow("Puzzle.pipes-valve", ex); }
             }
-            else
-                PosePipes(x);
-        }
-
-        static void PosePipes(ROT_Pipes x)
-        {
-            if (x == null) return;
-            try { if (x.Blockers != null) x.Blockers.SetActive(false); } catch (System.Exception e) { Guard.Swallow(e); }
-            try { if (x.interaction != null) x.interaction.SetActive(false); } catch (System.Exception e) { Guard.Swallow(e); }
-            try
-            {
-                var leaks = x.leaks;
-                if (leaks != null)
-                {
-                    for (int i = 0; i < leaks.Length; i++)
-                    {
-                        try { if (leaks[i] != null) leaks[i].Stop(); } catch (System.Exception e) { Guard.Swallow(e); }
-                    }
-                }
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            try
-            {
-                var lights = x.lights;
-                if (lights != null)
-                {
-                    for (int i = 0; i < lights.Length; i++)
-                    {
-                        try { if (lights[i] != null) lights[i].enabled = false; } catch (System.Exception e) { Guard.Swallow(e); }
-                    }
-                }
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            try { if (x.loopSFX != null) x.loopSFX.Stop(); } catch (System.Exception e) { Guard.Swallow(e); }
+            if (x.Blockers != null) x.Blockers.SetActive(false);
+            if (x.interaction != null) x.interaction.SetActive(false);
+            var leaks = x.leaks;
+            if (leaks != null)
+                for (int i = 0; i < leaks.Length; i++)
+                    if (leaks[i] != null) leaks[i].Stop();
+            var lights = x.lights;
+            if (lights != null)
+                for (int i = 0; i < lights.Length; i++)
+                    if (lights[i] != null) lights[i].enabled = false;
+            if (x.loopSFX != null) x.loopSFX.Stop();
         }
     }
 }

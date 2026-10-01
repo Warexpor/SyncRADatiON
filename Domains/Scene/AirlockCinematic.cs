@@ -9,16 +9,12 @@ namespace SyncRADation.Patches
     {
         static readonly System.Collections.Generic.HashSet<ulong> _localUnlock
             = new System.Collections.Generic.HashSet<ulong>();
-        static readonly System.Collections.Generic.HashSet<ulong> _remoteUnlock
-            = new System.Collections.Generic.HashSet<ulong>();
-
         static bool _localCinematic;
         static float _cinematicAt;
 
         public static void Reset()
         {
             _localUnlock.Clear();
-            _remoteUnlock.Clear();
             _localCinematic = false;
             _cinematicAt = 0f;
         }
@@ -28,14 +24,6 @@ namespace SyncRADation.Patches
             ulong id = Id(u);
             if (id == 0) return;
             _localUnlock.Add(id);
-            _remoteUnlock.Remove(id);
-        }
-
-        public static void NoteRemoteUnlock(UseItemInteraction u)
-        {
-            ulong id = Id(u);
-            if (id == 0 || _localUnlock.Contains(id)) return;
-            _remoteUnlock.Add(id);
         }
 
         public static bool IsLocalUnlock(UseItemInteraction u)
