@@ -1,5 +1,6 @@
-// Hitch instrumentation: times every Harmony-patched Update/LateUpdate/FixedUpdate (original + all our prefixes/postfixes)
-// and prints "[Hitch] phase=<Type.Method> Nms" only when one call exceeds the phase threshold (see HitchTrace.EndMethod).
+// Hitch instrumentation (Diagnostics pref only, installed at boot): times every Harmony-patched Update/LateUpdate/FixedUpdate
+// (original + all our prefixes/postfixes) and prints "[Hitch] phase=<Type.Method> Nms" only when one call exceeds the phase
+// threshold (see HitchTrace.EndMethod).
 // Not a [HarmonyPatch] class on purpose: it piggybacks on the targets the real patches already resolved.
 using System;
 using System.Collections.Generic;
@@ -11,10 +12,17 @@ namespace SyncRADation.Sync
 {
     internal static class HarmonyPhaseTiming
     {
+        // persistent: constant name table
         private static readonly string[] FrameMethods = { "Update", "LateUpdate", "FixedUpdate" };
 
         internal static void Install(HarmonyLib.Harmony harmony, Type[] types)
         {
+            // Two extra patch calls per Update-family call of every patched game type: only for a diagnostics run.
+            if (!Config.ModConfig.DiagnosticsOn)
+            {
+                ModRuntime.Log?.Msg("[Hitch] phase timing off (Diagnostics=false)");
+                return;
+            }
             var targets = new HashSet<MethodBase>();
             for (int i = 0; i < types.Length; i++)
             {

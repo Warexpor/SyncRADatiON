@@ -46,13 +46,19 @@ namespace SyncRADation.Players
         private float _climbTimer;
         private bool _wasClimbing;
 
+        // persistent: per-process FMOD path catalog
         private static bool _weaponCacheBuilt;
+        // persistent: per-process FMOD path catalog
         private static readonly Dictionary<WeaponType, string> _shootFMOD = new Dictionary<WeaponType, string>();
+        // persistent: per-process FMOD path catalog
         private static readonly Dictionary<WeaponType, string> _reloadFMOD = new Dictionary<WeaponType, string>();
+        // persistent: per-process FMOD path catalog
         private static readonly Dictionary<WeaponType, string> _emptyFMOD = new Dictionary<WeaponType, string>();
 
         // CombatSfxManager paths — weapon secondary action sounds
+        // persistent: per-process FMOD path catalog
         private static bool _combatSfxCached;
+        // persistent: per-process FMOD path catalog
         private static string _shotgunPumpPath;
 
         public ProxyAudioSync(GameObject proxy)

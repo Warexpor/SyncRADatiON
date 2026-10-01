@@ -1,7 +1,8 @@
 // Flicker diagnostics: one line per CHANGE (room chunk on/off, proxy visibility / jumps, client enemy
-// active / in-chunk / snap jumps / unknown ids). Always on, budgeted per tag so a toggle loop shows up
-// as a "flapping" summary instead of flooding Latest.log.
+// active / in-chunk / snap jumps / unknown ids). Only with the Diagnostics pref (every entry point returns first
+// thing when off); budgeted per tag so a toggle loop shows up as a "flapping" summary instead of flooding Latest.log.
 using System.Collections.Generic;
+using SyncRADation.Config;
 using SyncRADation.Networking;
 using SyncRADation.Players;
 using UnityEngine;
@@ -24,6 +25,7 @@ namespace SyncRADation.Sync
             public int Used;
             public int Dropped;
         }
+        // persistent: per-tag log budget windows (time-based, self-expiring)
         static readonly Dictionary<string, TagBudget> _budgets = new Dictionary<string, TagBudget>();
 
         static readonly Dictionary<int, bool> _chunkOn = new Dictionary<int, bool>();
@@ -52,12 +54,6 @@ namespace SyncRADation.Sync
             _enemyState.Clear();
             _missSeen.Clear();
             _wakeLogged.Clear();
-        }
-
-        static bool Connected()
-        {
-            var n = LanNetworkManager.Instance;
-            return n != null && n.IsConnected;
         }
 
         static void Emit(string tag, string msg)
@@ -92,7 +88,7 @@ namespace SyncRADation.Sync
 
         public static void RoomChunk(Room room, bool value)
         {
-            if (room == null || !Connected()) return;
+            if (!ModConfig.DiagnosticsOn || room == null || !NetGate.Live) return;
             int key = room.GetInstanceID(); // local-only bookkeeping, never on the wire
             bool prev;
             bool had = _chunkOn.TryGetValue(key, out prev);
@@ -109,7 +105,7 @@ namespace SyncRADation.Sync
 
         public static void RoomEnter(Room room)
         {
-            if (room == null || !Connected()) return;
+            if (!ModConfig.DiagnosticsOn || room == null || !NetGate.Live) return;
             Emit("Room", "enter " + Name(room));
         }
 
@@ -128,7 +124,7 @@ namespace SyncRADation.Sync
         /// <summary>LateUpdate, after the pose is written. mode = hold / extrap / lerp.</summary>
         public static void Proxy(int pid, GameObject go, string mode)
         {
-            if (go == null) return;
+            if (!ModConfig.DiagnosticsOn || go == null) return;
             ProxyVis v;
             if (!_proxy.TryGetValue(pid, out v))
             {
@@ -208,7 +204,7 @@ namespace SyncRADation.Sync
         /// <summary>Client, per applied snapshot: active / in-chunk transitions of a puppet.</summary>
         public static void ClientEnemy(ulong id, EnemyController e, bool snapAlive, byte snapState)
         {
-            if (e == null) return;
+            if (!ModConfig.DiagnosticsOn || e == null) return;
             bool active = false, self = false;
             try { active = e.gameObject.activeInHierarchy; self = e.gameObject.activeSelf; } catch { }
             int state = (active ? 1 : 0) | (self ? 2 : 0) | (snapAlive ? 4 : 0);
@@ -224,12 +220,13 @@ namespace SyncRADation.Sync
 
         public static void ClientEnemySnapJump(ulong id, EnemyController e, float dist)
         {
+            if (!ModConfig.DiagnosticsOn) return;
             Emit("Enemy", "client snap-jump " + id.ToString("X16") + " " + SafeName(e) + " d=" + dist.ToString("F1"));
         }
 
         public static void ClientEnemyMiss(ulong id, Vector3 hostPos, byte state)
         {
-            if (!_missSeen.Add(id)) return;
+            if (!ModConfig.DiagnosticsOn || !_missSeen.Add(id)) return;
             Emit("Enemy", "client unknown " + id.ToString("X16") + " at=" + Fmt(hostPos) + " hostState=" + state
                 + " (host has it, this client does not) here=" + Here());
         }
@@ -237,7 +234,7 @@ namespace SyncRADation.Sync
         /// <summary>Host: one line per enemy instance the first time a wake is attempted.</summary>
         public static void HostWake(EnemyController e, bool ok, string why)
         {
-            if (e == null) return;
+            if (!ModConfig.DiagnosticsOn || e == null) return;
             int key;
             try { key = e.GetInstanceID(); } catch { return; } // local-only bookkeeping
             if (!_wakeLogged.Add(key)) return;

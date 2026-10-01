@@ -396,6 +396,7 @@ namespace SyncRADation.ItemSystem
             return any;
         }
 
+        // persistent: one-frame deferral queue, drained every frame
         static readonly List<GameObject> _restNextFrame = new List<GameObject>(4);
 
         /// <summary>Second floor pass one frame after spawn (skinned / late-bound renderer bounds).</summary>

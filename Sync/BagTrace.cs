@@ -1,7 +1,8 @@
 // Bag trace: one [Bag] line whenever the local 6-slot inventory changes (+item / -item with counts), so a
 // pickup that "vanished" shows whether it ever reached the bag and what removed it. Polled twice a second
-// while connected; cheap (≤ 6 entries).
+// while connected, Diagnostics pref only.
 using System.Collections.Generic;
+using SyncRADation.Config;
 using SyncRADation.Networking;
 using UnityEngine;
 
@@ -23,8 +24,8 @@ namespace SyncRADation.Sync
 
         public static void Tick()
         {
-            var net = LanNetworkManager.Instance;
-            if (net == null || !net.IsConnected) { _primed = false; return; }
+            if (!ModConfig.DiagnosticsOn) return;
+            if (!NetGate.Live) { _primed = false; return; }
             float t = Time.unscaledTime;
             if (t < _next) return;
             _next = t + Interval;

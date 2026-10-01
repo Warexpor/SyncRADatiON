@@ -13,7 +13,8 @@ namespace SyncRADation.Patches
     [HarmonyPatch(typeof(EnemyController))]
     public static class EnemyTakeDamagePatches
     {
-        // Warn-once set (persistent on purpose): one warning per enemy instance instead of one per shot.
+        // One warning per enemy instance instead of one per shot.
+        // persistent: warn-once set
         private static readonly System.Collections.Generic.HashSet<int> _warnedUnmapped
             = new System.Collections.Generic.HashSet<int>();
 

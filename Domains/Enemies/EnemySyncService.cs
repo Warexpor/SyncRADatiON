@@ -447,6 +447,7 @@ namespace SyncRADation.Networking
             }
             return true;
         }
+        // persistent: per-call scratch buffer
         static readonly List<GameObject> _inactiveScratch = new List<GameObject>(4);
 
         // ------------------------------------------------------------------ host: client requests
@@ -857,8 +858,6 @@ namespace SyncRADation.Networking
         public void OnSceneChanged()
         {
             _puppets.Clear();
-            SyncRADation.Patches.EnemySpawnerPatches.ClearAdopted();
-            ClientDamageService.OnSceneChanged();
             _mapHits = 0;
             _mapMisses = 0;
             _sendTimer = 0f;

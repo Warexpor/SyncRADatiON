@@ -58,7 +58,7 @@ namespace SyncRADation
         private void QuickConnect()
         {
             var net = Networking.LanNetworkManager.Instance;
-            if (net == null || net.Role != Networking.NetworkRole.Offline)
+            if (net == null || Sync.NetGate.Active)
             {
                 LoggerInstance.Msg("[QuickConnect] Already connected or network offline");
                 return;

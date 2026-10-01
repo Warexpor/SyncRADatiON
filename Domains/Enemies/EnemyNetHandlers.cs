@@ -20,6 +20,7 @@ namespace SyncRADation.Networking
         }
 
         // Persistent on purpose: serialized size of an empty snapshot struct, a pure cache that never depends on session state.
+        // persistent: serialized size of an empty snapshot (pure cache)
         private static int _snapBytes;
         // Snapshot packets are built one at a time and copied by LiteNetLib on send: one writer serves them all.
         private readonly NetDataWriter _stateWriter = new NetDataWriter();

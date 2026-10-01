@@ -11,6 +11,7 @@ namespace SyncRADation.Patches
     [HarmonyPatch(typeof(Doorway_Double), "openDoors")]
     public static class DoubleDoorOpenPatch
     {
+        // persistent: warn-once set (local instance ids)
         static readonly System.Collections.Generic.HashSet<int> _blockLogged = new System.Collections.Generic.HashSet<int>();
 
         /// <summary>Scene change: the per-door "blocked" log may fire again.</summary>
@@ -323,6 +324,7 @@ namespace SyncRADation.Patches
     {
         const float PerpMax = 4f;
         const float AheadMax = 80f;
+        // persistent: log throttle
         static float _lastLog = -99f;
 
         [HarmonyPostfix]

@@ -13,6 +13,7 @@ namespace SyncRADation.UI
     /// </summary>
     public static class FreeCursor
     {
+        // persistent: frame counter for the cursor poll
         private static int _tick;
 
         public static bool Enabled => ModConfig.FreeCursor?.Value == true;

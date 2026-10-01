@@ -8,7 +8,9 @@ namespace SyncRADation.Players
 {
     public sealed class RemoteWeaponSync
     {
+        // persistent: per-process weapon damage catalog
         private static bool _damageCacheBuilt;
+        // persistent: per-process weapon damage catalog
         private static readonly Dictionary<WeaponType, float> _weaponDamageCache = new Dictionary<WeaponType, float>();
 
         private static void BuildDamageCache()

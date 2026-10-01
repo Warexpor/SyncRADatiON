@@ -6,14 +6,20 @@ namespace SyncRADation.Cheats
 {
     public static class ItemGiver
     {
+        // persistent: F6 window state
         public static bool ShowMenu;
 
+        // persistent: F6 window state
         private static Vector2 _scrollPos;
+        // persistent: F6 window state
         private static string _statusMessage = "";
+        // persistent: F6 window state
         private static float _statusTimer;
+        // persistent: F6 window state
         private static int _activeTab;
         private static readonly string[] Tabs = { "Useful", "Weapons", "Keys/Story" };
 
+        // persistent: constant item table
         private static readonly List<ItemEntry> UsefulItems = new List<ItemEntry>
         {
             new ItemEntry("Pistol Ammo",   "PistolAmmo"),
@@ -33,6 +39,7 @@ namespace SyncRADation.Cheats
             new ItemEntry("Medication",    "Medication"),
         };
 
+        // persistent: constant item table
         private static readonly List<ItemEntry> WeaponItems = new List<ItemEntry>
         {
             new ItemEntry("Pistol",       "Pistol"),
@@ -46,6 +53,7 @@ namespace SyncRADation.Cheats
             new ItemEntry("Taser",        "Taser"),
         };
 
+        // persistent: constant item table
         private static readonly List<ItemEntry> StoryItems = new List<ItemEntry>
         {
             new ItemEntry("Bone Key",         "BoneKey"),
@@ -93,6 +101,7 @@ namespace SyncRADation.Cheats
             new ItemEntry("Photo QR",         "PhotoQR"),
         };
 
+        // persistent: F6 window state
         private static Rect _windowRect = new Rect(200f, 100f, 420f, 520f);
 
         public static void OnGUI()

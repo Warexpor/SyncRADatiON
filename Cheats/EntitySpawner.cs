@@ -8,6 +8,7 @@ namespace SyncRADation.Cheats
 {
     public static class EntitySpawner
     {
+        // persistent: F11 window state
         public static bool ShowMenu;
 
         public const string SpawnPrefix = "SR_Spawn_";
@@ -18,6 +19,7 @@ namespace SyncRADation.Cheats
             "EULR", "STAR", "ARAR", "STCR", "MNHR", "KLBR", "KNCR", "ADLR"
         };
 
+        // persistent: constant lookup table
         private static readonly Dictionary<string, string> HomeHint = new Dictionary<string, string>
         {
             { "EULR", "PEN_Wreck" },
@@ -30,13 +32,17 @@ namespace SyncRADation.Cheats
             { "ADLR", "BOS_Adler" },
         };
 
-        // Persistent on purpose: banked templates (DontDestroyOnLoad clones) and the spawn sequence, which must never
-        // reuse an SR_Spawn_* name still alive in the scene from an earlier session.
+        // persistent: per-process enemy template cache (banked DontDestroyOnLoad clones, null-checked and re-harvested)
         private static readonly Dictionary<string, EnemyController> Vault = new Dictionary<string, EnemyController>();
+        // persistent: SR_Spawn_* sequence never reused in a process, so names cannot collide with a live spawn
         private static int _nextSeq = 1;
+        // persistent: F11 window state
         private static Vector2 _scrollPos;
+        // persistent: F11 window state
         private static string _statusMessage = "";
+        // persistent: F11 window state
         private static float _statusTimer;
+        // persistent: F11 window state
         private static Rect _windowRect = new Rect(250f, 120f, 450f, 480f);
 
         public static void OnGUI()

@@ -23,6 +23,13 @@ namespace SyncRADation.Sync
             Emit(tag, msg, false);
         }
 
+        /// <summary>Event that is never collapsed (the scene-loaded line): same as Reset() + Event().</summary>
+        public static void EventAlways(string tag, string msg)
+        {
+            Reset();
+            Emit(tag, msg, false);
+        }
+
         public static void Verbose(string tag, string msg)
         {
             if (!ModRuntime.VerboseLogging) return;
@@ -58,9 +65,8 @@ namespace SyncRADation.Sync
         {
             try
             {
-                var n = ModRuntime.Network;
-                if (n == null || !n.IsConnected) return "";
-                return n.Role == Networking.NetworkRole.Host ? "H " : "C ";
+                if (!NetGate.Live) return "";
+                return NetGate.HostRole ? "H " : "C ";
             }
             catch
             {

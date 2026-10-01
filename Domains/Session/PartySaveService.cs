@@ -54,29 +54,45 @@ namespace SyncRADation.Networking
         private const int MaxInstanceSlots = 16;
 
         // Token/ring/bag tables mirror files under UserData: persistent across sessions on purpose (Reset only drops Current/_bagAtDeath).
+        // persistent: mirrors host_saves.txt
         private static bool _hostLoaded;
+        // persistent: mirrors the bag file
         private static bool _bagsLoaded;
+        // persistent: mirrors host_saves.txt
         private static long _stamp;
+        // persistent: mirrors host_saves.txt
         private static int _next;
+        // persistent: mirrors host_saves.txt
         private static readonly Dictionary<int, PartySaveToken> _slotTokens = new Dictionary<int, PartySaveToken>();
+        // persistent: mirrors host_saves.txt
         private static readonly Dictionary<string, ushort[]> _rings = new Dictionary<string, ushort[]>();
+        // persistent: mirrors the bag file
         private static readonly List<string> _bagOrder = new List<string>();
+        // persistent: mirrors the bag file
         private static readonly Dictionary<string, BagEntry[]> _bags = new Dictionary<string, BagEntry[]>();
         private static BagEntry[] _bagAtDeath;
 
         // Run tracking (solo + hosted): which slot this run was last saved to / loaded from.
+        // persistent: the run outlives the session
         private static int _runSlot;
+        // persistent: the run outlives the session
         private static bool _runDirty;
         // Client: the join token restores a bag once per (host stamp, slot) (a reconnect to the same host and save mid-session
         // must not roll the bag back; a different host or save is a different run). Persistent on purpose: not a session value.
+        // persistent: once per (host stamp, slot)
         private static bool _joinSeen;
+        // persistent: once per (host stamp, slot)
         private static long _joinStamp;
+        // persistent: once per (host stamp, slot)
         private static int _joinSlot;
         // Solo: key/object items in the bag at the last solo save / load (in memory, no IO). A solo-saved run is
         // minted into a token only when hosting starts, by which time PartyKeyRing.Reset() has emptied the ring.
+        // persistent: solo run state, read when hosting starts
         private static ushort[] _soloKeys;
         // Per-process bag file slot (see BagPath): two client processes from one install never share a file.
+        // persistent: per-process file slot
         private static int _instanceSlot = -1;
+        // persistent: per-process file lock
         private static System.IO.FileStream _instanceLock;
 
         /// <summary>Host: token of the save the session is running from (set by Save / Load). Unused on clients.</summary>
@@ -430,7 +446,7 @@ namespace SyncRADation.Networking
         /// <summary>Host: unicast the token the session runs from to a joining client.</summary>
         public static void SendJoinToken(LanNetworkManager net, int targetPlayerId)
         {
-            if (net == null || net.Role != NetworkRole.Host || targetPlayerId < 1) return;
+            if (net == null || !NetGate.HostRole || targetPlayerId < 1) return;
             EnsureHostLoaded();
             if (!Current.Valid) return;
             net.PartyHandlers.SendPartySave(Current, PartySaveMessage.FlagJoin, targetPlayerId);

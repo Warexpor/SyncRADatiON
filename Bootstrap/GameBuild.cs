@@ -16,12 +16,15 @@ namespace SyncRADation
 
         // Boot-time constants (computed once in ModRuntime.Start): persistent by definition.
         /// <summary>0 when the build could not be fingerprinted (handshake then skips the comparison).</summary>
+        // persistent: per-process game build fingerprint
         public static uint Hash { get; private set; }
 
         /// <summary>Short label for logs / F2 / reject reasons, e.g. "1.0.3 / Unity 2021.3.12f1 #1A2B3C4D".</summary>
+        // persistent: per-process game build fingerprint
         public static string Label { get; private set; } = "unknown";
 
         /// <summary>Label without the hash (what goes on the wire for display).</summary>
+        // persistent: per-process game build fingerprint
         public static string Version { get; private set; } = "unknown";
 
         public static void Compute()

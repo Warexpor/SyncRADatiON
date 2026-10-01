@@ -15,6 +15,8 @@ namespace SyncRADation.Config
         public static MelonPreferences_Entry<bool> SyncWorldPickups;
         public static MelonPreferences_Entry<bool> SyncPlayerVitals;
         public static MelonPreferences_Entry<bool> VerboseLogging;
+        /// <summary>Diagnostic instrumentation (traces, phase timing, stall breakdown, full patch audit). Read DiagnosticsOn.</summary>
+        public static MelonPreferences_Entry<bool> Diagnostics;
         /// <summary>Rewrite Cursor.lockState Confined/Locked to None (free pointer for dual-box).</summary>
         public static MelonPreferences_Entry<bool> FreeCursor;
         /// <summary>Host only: session capacity (host + clients). 2..8, default 4.</summary>
@@ -41,7 +43,10 @@ namespace SyncRADation.Config
             SyncPlayerVitals = Category.CreateEntry("SyncPlayerVitals", true,
                 "Share HP / death / game-state for remote Elster display");
             VerboseLogging = Category.CreateEntry("VerboseLogging", false,
-                "OFF unless diagnosing. When true: FMOD Play/Stop, proxy clone/FX internals, incremental puzzle apply. Set in MelonPreferences.cfg under [SyncRADation] on BOTH installs.");
+                "Log volume only: extra lines from code that runs anyway (FMOD Play/Stop, proxy clone/FX internals, incremental puzzle apply). Costs nothing but log size. Instrumentation is the separate Diagnostics pref. Set in MelonPreferences.cfg under [SyncRADation] on BOTH installs.");
+            Diagnostics = Category.CreateEntry("Diagnostics", false,
+                "Instrumentation that costs CPU every frame, read once at game start (restart to change). When true: [Room]/[Proxy]/[Enemy] flicker trace, [Move] blocked trace, [Bag] trace, [EventCam] click trace, [Hitch] phase= timing (wraps every patched Update/LateUpdate/FixedUpdate) and stall breakdowns, and the full boot [Harmony] audit. Off: only the cheap always-on [Hitch] spike lines and 5 s summary remain. Set on BOTH installs for a dual-box hunt.");
+            DiagnosticsOn = Diagnostics.Value;
 
             FreeCursor = Category.CreateEntry("FreeCursor", false,
                 "Never confine/lock the mouse to the game window (dual-box testing under Proton/Wayland). Off = vanilla.");
@@ -56,6 +61,13 @@ namespace SyncRADation.Config
             AllowClientCheats = Category.CreateEntry("AllowClientCheats", false,
                 "Host: allow clients' F6 (keys onto the party ring), F7 (chapter loads) and F11 (enemy spawns). Off = only the host can cheat.");
         }
+
+        /// <summary>
+        /// Diagnostics pref, latched at Bind (game start). A plain static read so every gated trace costs one branch when off;
+        /// Harmony phase timing is installed (or not) at boot, so a runtime flip could not take full effect anyway.
+        /// </summary>
+        // persistent: pref latched at boot
+        public static bool DiagnosticsOn { get; private set; }
 
         public static float DownedRespawnSeconds
         {

@@ -57,9 +57,11 @@ namespace SyncRADation
         }
 
         // Guard statics: log-throttle bookkeeping, intentionally process-lifetime (survives sessions so a recurring fault stays throttled).
+        // persistent: per-process log throttle
         static readonly Dictionary<Key, Entry> _seen = new Dictionary<Key, Entry>(256);
         static readonly object _lock = new object();
         static readonly long _repeatStopwatchTicks = 30L * Stopwatch.Frequency;
+        // persistent: per-process failure counter
         static int _internalFailures;
 
         public static int InternalFailures => _internalFailures;

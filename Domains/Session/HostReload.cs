@@ -53,12 +53,17 @@ namespace SyncRADation.Networking
 
         // Run origin + start scene: per-process, deliberately not reset by StopNetwork (the run outlives the session).
         // Run origin, tracked even in solo (two bool writes, no IO): a fresh run must never reload a stale slot.
+        // persistent: run origin outlives the session
         private static bool _freshRun;
+        // persistent: run origin outlives the session
         private static bool _newGameArmed;
+        // persistent: run origin outlives the session
         private static string _newGameScene = "";
         // Scene the run's slot last saved / loaded (read from SProgress in memory at that moment: a disk read
         // at wipe time would clobber the live progress when the wipe ends up as a Retry).
+        // persistent: run's save slot outlives the session
         private static string _savedScene = "";
+        // persistent: run's save slot outlives the session
         private static int _savedSlot;
 
         /// <summary>A reload was started and SaveManager.Load has not run yet.</summary>
@@ -255,12 +260,12 @@ namespace SyncRADation.Networking
             {
                 if (mode == Mode.NewGame && NetGate.Host)
                 {
-                    ResetHostWorldState(ModRuntime.Network); // fresh run: Current is invalid, so the ring becomes empty
+                    ResetHostWorldState(LanNetworkManager.Instance); // fresh run: Current is invalid, so the ring becomes empty
                     PlaytestLog.Event("Damage", "wipe reload NewGame arrived '" + scene + "'");
                 }
                 else if (NetGate.Host)
                 {
-                    ResetRetryWorldState(ModRuntime.Network);
+                    ResetRetryWorldState(LanNetworkManager.Instance);
                     PlaytestLog.Event("Damage", "wipe reload Retry arrived '" + scene + "' (drops/claims reset, bag restored)");
                 }
                 if (wipe && NetGate.Host)
@@ -275,7 +280,7 @@ namespace SyncRADation.Networking
         /// </summary>
         private static void ResetRetryWorldState(LanNetworkManager net)
         {
-            DroppedItemManager.ClearAll();
+            DroppedItemRegistry.ClearAll();
             ItemPickupPatches.ResetDropClaims();
             net?.PickupSync.Reset();
             var bag = _retryBag;
@@ -291,7 +296,7 @@ namespace SyncRADation.Networking
         {
             PartyKeyRing.Import(PartySaveService.RingForCurrent());
             PartyKeyRing.Broadcast();
-            DroppedItemManager.ClearAll();
+            DroppedItemRegistry.ClearAll();
             ItemPickupPatches.ResetDropClaims();
             net?.PickupSync.Reset();
         }
@@ -355,7 +360,7 @@ namespace SyncRADation.Networking
             _retryBag = null;
             PlaytestLog.Event("Damage", "wipe reload aborted (" + why + ")");
             // Dumps held back while pending must not stay queued forever (the world is whatever it is now).
-            try { ModRuntime.Network?.SessionHandlers.DeferDump(-1); }
+            try { LanNetworkManager.Instance?.SessionHandlers.DeferDump(-1); }
             catch (Exception ex) { Guard.Swallow("HostReload.abortDump", ex); }
         }
 
