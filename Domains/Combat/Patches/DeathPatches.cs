@@ -5,6 +5,7 @@ using SyncRADation.ItemSystem;
 using SyncRADation.Networking;
 using SyncRADation.Players;
 using SyncRADation.Sync;
+using UnityEngine;
 
 namespace SyncRADation.Patches
 {
@@ -125,16 +126,31 @@ namespace SyncRADation.Patches
         }
     }
 
+    // BlackSleekGuiSubs (native) ends the open dialogue when the local player is hurt. Make a cancelled yes/no
+    // prompt read as "no": ItemPickup.release / UseItem answers read Dialoguer global bool 1, which could still
+    // hold a stale "yes" from the previous prompt and grant the item to a player who never confirmed it.
+    [HarmonyPatch(typeof(BlackSleekGuiSubs), "CancelDialogueOnDamageReceived")]
+    public static class CancelDialogueAnswersNoPatch
+    {
+        [HarmonyPrefix]
+        public static void Prefix()
+        {
+            if (!NetworkDamageSystem.PartyLive) return;
+            try { Dialoguer.SetGlobalBoolean(1, false); } catch (System.Exception e) { Guard.Swallow(e); }
+        }
+    }
+
     [HarmonyPatch(typeof(PlayerState), nameof(PlayerState.HurtElster))]
     public static class PlayerStateHurtElsterPatch
     {
         [HarmonyPrefix]
-        public static bool Prefix(out bool __state)
+        public static bool Prefix(int __0, Vector2 __1, out bool __state)
         {
             __state = false;
             if (!NetworkDamageSystem.PartyLive) return true;
             if (NetworkDamageSystem.IsDead) return false; // downed: nothing can hurt us
-            if (NoPausePatch.Held) return false;          // would be paused in vanilla (co-op keeps time running)
+            // No safe menus in co-op: a hit in the inventory / pause / book / event screen closes it, then lands.
+            if (!MenuHit.Intercept(__0, __1, hug: false)) return false;
             __state = NetworkDamageSystem.HurtGateOpen();
             return true;
         }
@@ -150,12 +166,13 @@ namespace SyncRADation.Patches
     public static class PlayerStateHurtElsterHugPatch
     {
         [HarmonyPrefix]
-        public static bool Prefix(out bool __state)
+        public static bool Prefix(int __0, Vector2 __1, out bool __state)
         {
             __state = false;
             if (!NetworkDamageSystem.PartyLive) return true;
             if (NetworkDamageSystem.IsDead) return false;
-            if (NoPausePatch.Held) return false; // native Hug has no gameState gate; vanilla time was frozen here
+            // Native Hug has no gameState gate: close an open screen first, then the grab damage lands.
+            if (!MenuHit.Intercept(__0, __1, hug: true)) return false;
             __state = true;
             return true;
         }

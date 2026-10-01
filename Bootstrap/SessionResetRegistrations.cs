@@ -41,6 +41,7 @@ namespace SyncRADation
             SessionReset.Register("KeyRingCount", InventoryGetCountPatch.ResetSession); // StoryPatches _counting
             SessionReset.Register("PickupTakeScope", ItemPickupTakeScope.ResetSession);
             SessionReset.Register("NoPause", NoPausePatch.ResetSession);
+            SessionReset.Register("MenuHit", MenuHit.Reset);
             SessionReset.Register("KeyRingName", ItemLocalizedNamePatch.ResetSession);  // PartyKeyRingPatches _resolving (x2)
             SessionReset.Register("KeyRingGetName", InventoryGetNamePatch.ResetSession);
 
