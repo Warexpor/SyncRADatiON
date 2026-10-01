@@ -11,15 +11,30 @@ namespace SyncRADation.Patches
     {
         private static readonly System.Collections.Generic.HashSet<ulong> _sent
             = new System.Collections.Generic.HashSet<ulong>();
+        // Local-only per-frame dedupe (never on the wire): unlocked UseItems whose Update postfix already ran
+        // the full path, so the per-frame call stops before IsPenTitlesCard / WorldId work.
+        private static readonly System.Collections.Generic.HashSet<int> _updateDone
+            = new System.Collections.Generic.HashSet<int>();
 
-        public static void OnSceneChanged() => _sent.Clear();
+        public static void OnSceneChanged()
+        {
+            _sent.Clear();
+            _updateDone.Clear();
+        }
 
         internal static void OnLocalUnlocked(UseItemInteraction u, bool fromUpdate)
         {
             if (NetGate.IsApplying || !NetGate.Live) return;
             if (u == null || !u.unlocked) return;
+            int inst = 0;
+            if (fromUpdate)
+            {
+                try { inst = u.GetInstanceID(); } catch (System.Exception e) { Guard.Swallow(e); }
+                if (inst != 0 && _updateDone.Contains(inst)) return;
+            }
             ulong id = WorldId.FromGameObject(u.gameObject);
             if (id == 0) return;
+            if (inst != 0) _updateDone.Add(inst);
             if (!fromUpdate || !AirlockCinematic.IsPenTitlesCard(u))
                 AirlockCinematic.NoteLocalUnlock(u);
             if (!_sent.Add(id)) return;
@@ -48,9 +63,13 @@ namespace SyncRADation.Patches
             if (!NetGate.Live || __instance == null) return true;
             try
             {
-                if (__instance.inter != null && __instance.inter.inRange)
+                var inter = __instance.inter;
+                if (inter != null && inter.inRange)
                 {
-                    __instance.key = PartyKeyRing.BindSceneKey(__instance.key);
+                    // Native Update starts the use dialogue this frame (inter.triggered, Ghidra UseItemInteraction.c
+                    // Update): bind the key then, not every in-range frame (FindInBag walks the bag).
+                    if (inter.triggered)
+                        __instance.key = PartyKeyRing.BindSceneKey(__instance.key);
                     if (InteractorDropUpdatePatch.InteractPressed())
                     {
                         string cur = "";

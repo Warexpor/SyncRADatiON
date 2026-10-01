@@ -37,7 +37,7 @@ namespace SyncRADation
             SessionReset.Register("BossSpear", () => Net()?.BossSync.ResetSession());  // _spearTaker (first taker per spear)
             SessionReset.Register("PuzzleSync", () => Net()?.PuzzleSync.Reset());       // durable solve memory + held entries
             SessionReset.Register("PuzzleFlags", PuzzleSyncService.ResetFlags);         // ApplyingPeerPacket, _liveEdge, _mutateWorld
-            SessionReset.Register("ItemPickup", ItemPickupPatches.ResetSession);        // _pendingId/_pendingItem/_pendingTime/_countBeforeDrop
+            SessionReset.Register("ItemPickup", ItemPickupPatches.ResetSession);        // _pendingId/_pendingItem + armed floor take
             SessionReset.Register("DropInteract", InteractorDropUpdatePatch.ResetSession); // _interactThisFrame, _highlighted
             SessionReset.Register("KeyRingCount", InventoryGetCountPatch.ResetSession); // StoryPatches _counting
             SessionReset.Register("PickupTakeScope", ItemPickupTakeScope.ResetSession);
@@ -59,7 +59,7 @@ namespace SyncRADation
             SessionReset.RegisterConnection("HostReload", HostReload.Reset);
             SessionReset.RegisterConnection("SceneFollow", SceneFollowService.Reset);
             SessionReset.RegisterConnection("SceneWorldDiff", () => Net()?.SceneHandlers.Reset()); // WorldId divergence state
-            SessionReset.RegisterConnection("StorageTxn", StorageTxn.Reset);            // gives a reserved put back to the bag
+            SessionReset.RegisterConnection("StorageTxn", StorageTxn.Reset);            // drops an in-flight put/take (a put stays boxed host-side)
             SessionReset.RegisterConnection("DroppedItems", DroppedItemManager.ClearAll); // wipe clears them in the Load postfix
             SessionReset.RegisterConnection("Hitch", HitchTrace.Reset);
             SessionReset.RegisterConnection("PlaytestLog", PlaytestLog.Reset);

@@ -453,34 +453,6 @@ namespace SyncRADation.ItemSystem
             return null;
         }
 
-        static void FitSpriteToNative(SpriteRenderer sr, Transform vis)
-        {
-            if (sr == null || sr.sprite == null || vis == null) return;
-            float target = 1.1f;
-            try
-            {
-                var near = NearestNativeModel(vis.position);
-                if (near != null)
-                {
-                    var r = near.GetComponent<Renderer>();
-                    if (r == null) r = near.GetComponentInChildren<Renderer>();
-                    if (r != null)
-                    {
-                        var s = r.bounds.size;
-                        float m = Mathf.Max(s.x, s.y);
-                        if (m > 0.2f && m < 4f) target = m;
-                    }
-                }
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-
-            Vector3 ext = sr.sprite.bounds.size;
-            float src = Mathf.Max(ext.x, ext.y);
-            if (src < 0.001f) return;
-            float k = target / src;
-            vis.localScale = Vector3.one * k;
-        }
-
         static Transform NearestNativeModel(Vector3 pos)
         {
             var all = ScenePickups();
@@ -501,15 +473,6 @@ namespace SyncRADation.ItemSystem
                 }
             }
             return bestT;
-        }
-
-        static Sprite SpriteOf(AnItem catalog)
-        {
-            if (catalog == null) return null;
-            try { if (catalog.worldSprite != null) return catalog.worldSprite; } catch (System.Exception e) { Guard.Swallow(e); }
-            try { if (catalog.Image != null) return catalog.Image; } catch (System.Exception e) { Guard.Swallow(e); }
-            try { if (catalog.Icon != null) return catalog.Icon; } catch (System.Exception e) { Guard.Swallow(e); }
-            return null;
         }
 
         static GameObject SpawnFallbackPickup(Items.itemlist item, int count, int netID, Vector3 pos)

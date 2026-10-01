@@ -23,7 +23,7 @@ namespace SyncRADation.Networking
         public void TickHost(LanNetworkManager net)
         {
             if (net == null || net.Role != NetworkRole.Host || !net.IsConnected) return;
-            _timer += UnityEngine.Mathf.Min(UnityEngine.Time.deltaTime, 0.1f);
+            _timer += UnityEngine.Mathf.Min(UnityEngine.Time.unscaledDeltaTime, 0.1f);
             if (_timer < 0.5f && !_needSend) return;
             _timer = 0f;
             _needSend = false;

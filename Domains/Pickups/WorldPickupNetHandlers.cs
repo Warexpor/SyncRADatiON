@@ -145,20 +145,8 @@ namespace SyncRADation.Networking
             }
             else if (item != Items.itemlist.None)
             {
-                if (!_net.HasPeer(claim.ClaimerPlayerId))
-                {
-                    // Claim reserved then peer dropped before grant — Key/Object stay on ring;
-                    // ammo/docs must not stay hidden with nobody holding them.
-                    if (!PartyKeyRing.IsKeyOrObject(item))
-                    {
-                        int rolled = _net.PickupSync.ReleaseOrphanClaimsForPlayer(claim.ClaimerPlayerId);
-                        ModRuntime.Log?.Msg("[WorldPickup] Claim rolled back — peer gone mid-grant id="
-                            + id.ToString("X16") + " released=" + rolled);
-                        return;
-                    }
-                }
-                else
-                    SendWorldPickupGrant(claim.ClaimerPlayerId, id, item, count > 0 ? count : 1);
+                // HasPeer was checked on entry and the grant goes out in this same call: no orphan window.
+                SendWorldPickupGrant(claim.ClaimerPlayerId, id, item, count > 0 ? count : 1);
             }
             else
                 ModRuntime.Log?.Warning("[WorldPickup] Claim OK but item None id=" + id.ToString("X16"));

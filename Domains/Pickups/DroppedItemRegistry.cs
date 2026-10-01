@@ -172,6 +172,34 @@ namespace SyncRADation.ItemSystem
             catch (System.Exception e) { Guard.Swallow(e); return false; }
         }
 
+        /// <summary>
+        /// The bag can take this item: an existing stack below its max, or a free slot for a new stack
+        /// (native AddItem ignores maxSlots, so every mod-side add checks this first).
+        /// </summary>
+        public static bool BagHasRoom(Items.itemlist id)
+        {
+            try
+            {
+                var item = InventoryManager.getItem(id);
+                if (item != null && SyncRADation.Networking.PartyKeyRing.InLocalBag(item))
+                    return !StackAtCap(id);
+                int used = 0;
+                var dict = InventoryManager.elsterItems;
+                if (dict == null) return true;
+                var en = dict.GetEnumerator();
+                while (en.MoveNext())
+                {
+                    if (en.Current.key != null && en.Current.value > 0)
+                        used++;
+                }
+                en.Dispose();
+                int max = InventoryManager.maxSlots;
+                if (max <= 0) max = 6;
+                return used < max;
+            }
+            catch { return true; }
+        }
+
         /// <summary>Move a registered drop to a new key (and rename its GameObject). False when absent / newKey taken.</summary>
         public static bool Rekey(int oldKey, int newKey)
         {
@@ -389,7 +417,6 @@ namespace SyncRADation.ItemSystem
 
         public static void TickDeferred()
         {
-            try { SyncRADation.Patches.ItemPickupPatches.TickPendingDrop(); } catch (System.Exception e) { Guard.Swallow(e); }
             try { DroppedItemSpawner.TickRest(); } catch (System.Exception e) { Guard.Swallow(e); }
             if (_deferKey < 0) return;
             bool wait = InspectLocked();

@@ -15,6 +15,7 @@ namespace SyncRADation.Patches
         {
             _interactThisFrame = false;
             _highlighted = null;
+            _hlOutlines = null;
         }
 
         [HarmonyPrefix]
@@ -43,6 +44,8 @@ namespace SyncRADation.Patches
         }
 
         static Interaction _highlighted;
+        // Outlines of _highlighted, fetched once per drop (GetComponentsInChildren ran twice a frame near a drop).
+        static cakeslice.Outline[] _hlOutlines;
 
         static Interaction FeedCurrent(Interactor inst)
         {
@@ -57,14 +60,20 @@ namespace SyncRADation.Patches
                 if (_highlighted != null)
                 {
                     try { _highlighted.setInRange(false); } catch (System.Exception e) { Guard.Swallow(e); }
-                    try { DroppedItemManager.SetHighlight(_highlighted.gameObject, false); } catch (System.Exception e) { Guard.Swallow(e); }
+                    SetOutlines(_hlOutlines, false);
                 }
                 _highlighted = drop;
+                _hlOutlines = null;
+                if (drop != null)
+                {
+                    try { _hlOutlines = drop.gameObject.GetComponentsInChildren<cakeslice.Outline>(true); }
+                    catch (System.Exception e) { Guard.Swallow(e); }
+                }
             }
             if (drop == null) return null;
 
             try { drop.setInRange(true); } catch (System.Exception e) { Guard.Swallow(e); }
-            try { DroppedItemManager.SetHighlight(drop.gameObject, true); } catch (System.Exception e) { Guard.Swallow(e); }
+            SetOutlines(_hlOutlines, true);
 
             Interaction cur = null;
             try { cur = inst.currentInter; } catch (System.Exception e) { Guard.Swallow(e); }
@@ -74,6 +83,17 @@ namespace SyncRADation.Patches
                 try { inst.currentInter = drop; } catch (System.Exception e) { Guard.Swallow(e); }
             }
             return drop;
+        }
+
+        static void SetOutlines(cakeslice.Outline[] outlines, bool on)
+        {
+            if (outlines == null) return;
+            for (int i = 0; i < outlines.Length; i++)
+            {
+                var o = outlines[i];
+                if (o == null) continue;
+                try { if (o.enabled != on) o.enabled = on; } catch (System.Exception e) { Guard.Swallow(e); }
+            }
         }
 
         static bool InPlay()
@@ -142,36 +162,6 @@ namespace SyncRADation.Patches
 
             try { __instance.currentInter = drop; } catch (System.Exception e) { Guard.Swallow(e); }
             return true;
-        }
-    }
-
-    [HarmonyPatch(typeof(Interaction), nameof(Interaction.trigger))]
-    public static class DroppedTriggerArmPatch
-    {
-        [HarmonyPrefix]
-        public static void Prefix(Interaction __instance)
-        {
-            if (__instance == null) return;
-            try
-            {
-                var p = __instance.GetComponent<ItemPickup>();
-                if (p == null) p = __instance.GetComponentInParent<ItemPickup>();
-                ItemPickupPatches.ArmDropped(p);
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-        }
-
-        [HarmonyPostfix]
-        public static void Postfix(Interaction __instance)
-        {
-            if (__instance == null) return;
-            try
-            {
-                var p = __instance.GetComponent<ItemPickup>();
-                if (p == null) p = __instance.GetComponentInParent<ItemPickup>();
-                ItemPickupPatches.CommitDroppedIfTaken(p);
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 }
