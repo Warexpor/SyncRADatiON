@@ -1,5 +1,6 @@
 // Party-held unique keys/objects so UseItemInteraction works for either Elster.
 using System.Collections.Generic;
+using SyncRADation.ItemSystem;
 using SyncRADation.Sync;
 
 namespace SyncRADation.Networking
@@ -219,31 +220,14 @@ namespace SyncRADation.Networking
         public static void StripBagMirrors(Items.itemlist item)
         {
             if (!IsKeyOrObject(item)) return;
-            try
+            var bag = ItemBag.Bag(new List<ItemBag.Stack>(6));
+            for (int i = 0; i < bag.Count; i++)
             {
-                var dict = InventoryManager.elsterItems;
-                if (dict != null)
-                {
-                    var extra = new List<AnItem>();
-                    var counts = new List<int>();
-                    var en = dict.GetEnumerator();
-                    while (en.MoveNext())
-                    {
-                        var key = en.Current.key;
-                        if (key != null && key._item == item && en.Current.value > 0)
-                        {
-                            extra.Add(key);
-                            counts.Add(en.Current.value);
-                        }
-                    }
-                    en.Dispose();
-                    for (int i = 0; i < extra.Count; i++)
-                    {
-                        try { InventoryManager.RemoveItem(extra[i], counts[i]); } catch (System.Exception e) { Guard.Swallow(e); }
-                    }
-                }
+                var held = bag[i].Item;
+                if (held == null || bag[i].Count <= 0) continue;
+                try { if (held._item == item) InventoryManager.RemoveItem(held, bag[i].Count); }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
-            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (InventoryManager.CurrentItem != null && InventoryManager.CurrentItem._item == item)
@@ -416,39 +400,11 @@ namespace SyncRADation.Networking
         public static AnItem FindInBag(AnItem item)
         {
             if (item == null) return null;
-            try
-            {
-                var dict = InventoryManager.elsterItems;
-                if (dict == null) return null;
-                Items.itemlist want = item._item;
-                var en = dict.GetEnumerator();
-                while (en.MoveNext())
-                {
-                    var held = en.Current.key;
-                    if (held != null && en.Current.value > 0 && held._item == want)
-                    {
-                        en.Dispose();
-                        return held;
-                    }
-                }
-                en.Dispose();
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            return null;
+            try { return ItemBag.FindInBag(item._item); }
+            catch (System.Exception e) { Guard.Swallow(e); return null; }
         }
 
         public static bool InLocalBag(AnItem item) => FindInBag(item) != null;
-
-        public static bool InLocalBag(Items.itemlist item)
-        {
-            if (item == Items.itemlist.None) return false;
-            try
-            {
-                var cat = InventoryManager.getItem(item);
-                return cat != null && InLocalBag(cat);
-            }
-            catch { return false; }
-        }
 
         /// <summary>
         /// Native UseItem / Interactor.InteractItem compare AnItem by reference.

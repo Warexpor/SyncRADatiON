@@ -1,4 +1,4 @@
-// Party key ring binds — held use pick, InteractItem args, display names, reject None adds.
+// Party key ring — held use pick, InteractItem args, display names, reject None adds, craft notes, hasItem/getCount masquerade.
 using HarmonyLib;
 using SyncRADation.Networking;
 using SyncRADation.Sync;
@@ -231,5 +231,145 @@ namespace SyncRADation.Patches
         {
             return InventoryAddItemNonePatch.Prefix(item);
         }
+    }
+
+    // ---- crafted / granted uniques: the AddItem result goes on the ring, consumed ingredients come off it
+
+    [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.AddItem), typeof(AnItem), typeof(int))]
+    public static class InventoryAddItemCountPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(AnItem item) => NoteCraftedKey(item);
+
+        /// <summary>Notes craft/grant <b>result</b> on AddItem. Ingredients: see CombineRecipesCraftPatch.</summary>
+        internal static void NoteCraftedKey(AnItem item)
+        {
+            if (NetGate.IsApplying || !NetGate.Live) return;
+            if (!PartyKeyRing.IsKeyOrObject(item)) return;
+            PartyKeyRing.OfferToHost(item);
+        }
+    }
+
+    [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.AddItem), typeof(AnItem))]
+    public static class InventoryAddItemPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(AnItem item) => InventoryAddItemCountPatch.NoteCraftedKey(item);
+    }
+
+    /// <summary>
+    /// CombineRecipes.combine success → PartyKeyRing.Remove ingredients (NoteCraftedKey
+    /// only Offers the result). Mirrors ConsumeKey / DetachDroppedKey ring drops.
+    /// </summary>
+    [HarmonyPatch(typeof(CombineRecipes), nameof(CombineRecipes.combine))]
+    public static class CombineRecipesCraftPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(AnItem itemA, AnItem itemB, AnItem __result)
+        {
+            if (__result == null || NetGate.IsApplying || !NetGate.Live) return;
+            try { PartyKeyRing.ConsumeCraftIngredients(itemA, itemB); }
+            catch (System.Exception ex) { ModRuntime.Log?.Warning("[KeyRing] craft remove: " + ex.Message); }
+        }
+    }
+
+    // ---- ring masquerade: a key another peer holds answers hasItem / getCount on this peer.
+    // Off inside native ItemPickup.release (ItemPickupTakeScope: release only adds when getCount < maxNumber)
+    // and inside SaveManager.Save (it saves every hasItem item with its getCount into this player's bag).
+
+    [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.hasItem), new[] { typeof(AnItem) })]
+    public static class InventoryHasItemPatch
+    {
+        internal static bool Masquerading => NetGate.Live && !ItemPickupTakeScope.Active && !PartyKeyRing.MasqueradeOff;
+
+        [HarmonyPostfix]
+        public static void Postfix(AnItem item, ref bool __result)
+        {
+            if (__result || item == null || !Masquerading) return;
+            if (PartyKeyRing.Has(item))
+                __result = true;
+        }
+    }
+
+    [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.hasItem), new[] { typeof(Items.itemlist) })]
+    public static class InventoryHasItemEnumPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(Items.itemlist item, ref bool __result)
+        {
+            if (__result || !InventoryHasItemPatch.Masquerading) return;
+            if (PartyKeyRing.Has(item))
+                __result = true;
+        }
+    }
+
+    [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.getCount), new[] { typeof(AnItem) })]
+    public static class InventoryGetCountPatch
+    {
+        static bool _counting;
+
+        // Item types with no other bag instance, valid for one frame at one bag entry count. A miss can only
+        // turn into a hit by adding a new bag entry (Count changes), so the cache never hides a real stack.
+        // EquipmentSlots.Update alone calls getCount 3x a frame; each miss walked the whole bag.
+        static readonly System.Collections.Generic.HashSet<int> _noOtherInstance = new System.Collections.Generic.HashSet<int>();
+        static int _missFrame = -1;
+        static int _missBagCount = -1;
+
+        /// <summary>SessionReset: re-entrancy flag (cleared in case an exception path ever left it set) and the miss cache.</summary>
+        internal static void ResetSession()
+        {
+            _counting = false;
+            _noOtherInstance.Clear();
+            _missFrame = -1;
+            _missBagCount = -1;
+        }
+
+        static AnItem OtherBagInstance(AnItem item)
+        {
+            int frame = Time.frameCount;
+            int bagCount = -1;
+            try { var d = InventoryManager.elsterItems; bagCount = d != null ? d.Count : 0; }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            if (frame != _missFrame || bagCount != _missBagCount)
+            {
+                _noOtherInstance.Clear();
+                _missFrame = frame;
+                _missBagCount = bagCount;
+            }
+            if (bagCount == 0) return null;
+            int kind;
+            try { kind = (int)item._item; } catch { return PartyKeyRing.FindInBag(item); }
+            if (_noOtherInstance.Contains(kind)) return null;
+            var held = PartyKeyRing.FindInBag(item);
+            if (held == null) _noOtherInstance.Add(kind);
+            return held;
+        }
+
+        [HarmonyPostfix]
+        public static void Postfix(AnItem item, ref int __result)
+        {
+            if (__result > 0 || item == null || _counting || !InventoryHasItemPatch.Masquerading) return;
+            var held = OtherBagInstance(item);
+            if (held != null && held != item)
+            {
+                _counting = true;
+                try { __result = InventoryManager.getCount(held); }
+                catch { __result = 1; }
+                finally { _counting = false; }
+                return;
+            }
+            if (PartyKeyRing.Has(item))
+                __result = 1;
+        }
+    }
+
+    // SaveManager.Save writes every hasItem item with its getCount into the saved bag (Ghidra SaveManager.c Save):
+    // the masquerade is off for its duration so other peers' ring keys are not saved as this player's items.
+    // (Story's SaveManagerSaveScopePatch suppresses the SProgress forward on the same call.)
+    [HarmonyPatch(typeof(SaveManager), nameof(SaveManager.Save))]
+    public static class SaveManagerKeyRingScopePatch
+    {
+        [HarmonyPrefix] public static void Prefix() => PartyKeyRing.SuspendMasquerade();
+        [HarmonyFinalizer] public static void Finalizer() => PartyKeyRing.ResumeMasquerade();
     }
 }

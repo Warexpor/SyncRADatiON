@@ -1,4 +1,4 @@
-// Dropped-item spawn / clone / floor placement (Domains peel from DroppedItemManager).
+// Dropped-item spawn / clone / floor placement.
 using System.Collections.Generic;
 using SyncRADation.Networking;
 using SyncRADation.Sync;
@@ -40,10 +40,10 @@ namespace SyncRADation.ItemSystem
             LogSpawn(go, item, pos);
 
             Vector3 stored = pos;
-            try { if (go != null) stored = go.transform.position; } catch (System.Exception e) { Guard.Swallow(e); }
             string scene = "";
             try
             {
+                if (go != null) stored = go.transform.position;
                 scene = SceneManager.GetActiveScene().name ?? "";
                 if (SceneFollowService.IsTransient(scene)) scene = "";
             }
@@ -68,29 +68,16 @@ namespace SyncRADation.ItemSystem
                 ModRuntime.Log?.Warning("[Drop] spawn failed " + item);
                 return;
             }
-            int rends = 0;
             try
             {
+                int rends = 0;
                 var rs = go.GetComponentsInChildren<Renderer>(true);
                 if (rs != null)
-                {
                     for (int i = 0; i < rs.Length; i++)
-                    {
-                        try { if (rs[i] != null && rs[i].enabled) rends++; } catch (System.Exception e) { Guard.Swallow(e); }
-                    }
-                }
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            string parent = "null";
-            try { if (go.transform.parent != null) parent = go.transform.parent.name; } catch (System.Exception e) { Guard.Swallow(e); }
-            bool active = false;
-            try { active = go.activeInHierarchy; } catch (System.Exception e) { Guard.Swallow(e); }
-            bool trig = false;
-            float cx = 0f, cy = 0f;
-            int layer = -1;
-            try
-            {
-                layer = go.layer;
+                        if (rs[i] != null && rs[i].enabled) rends++;
+                var parent = go.transform.parent;
+                bool trig = false;
+                float cx = 0f, cy = 0f;
                 var col = go.GetComponent<BoxCollider2D>();
                 if (col != null)
                 {
@@ -99,18 +86,17 @@ namespace SyncRADation.ItemSystem
                     cx = Mathf.Max(col.size.x, b.x);
                     cy = Mathf.Max(col.size.y, b.y);
                 }
+                var at = go.transform.position;
+                ModRuntime.Log?.Msg("[Drop] spawn " + go.name + " " + item
+                    + " pos=" + at.x.ToString("F1") + "," + at.y.ToString("F1") + "," + at.z.ToString("F1")
+                    + " parent=" + (parent != null ? parent.name : "null")
+                    + " active=" + go.activeInHierarchy
+                    + " rends=" + rends
+                    + " layer=" + go.layer
+                    + " trigger=" + trig
+                    + " col=" + cx.ToString("F1") + "x" + cy.ToString("F1"));
             }
             catch (System.Exception e) { Guard.Swallow(e); }
-            ModRuntime.Log?.Msg("[Drop] spawn " + go.name + " " + item
-                + " pos=" + go.transform.position.x.ToString("F1") + ","
-                + go.transform.position.y.ToString("F1") + ","
-                + go.transform.position.z.ToString("F1")
-                + " parent=" + parent
-                + " active=" + active
-                + " rends=" + rends
-                + " layer=" + layer
-                + " trigger=" + trig
-                + " col=" + cx.ToString("F1") + "x" + cy.ToString("F1"));
         }
 
         static GameObject TryCloneNative(Items.itemlist item, int count, int netID, Vector3 pos)
@@ -140,7 +126,7 @@ namespace SyncRADation.ItemSystem
             Object.Destroy(holder);
             try { go.transform.localScale = Vector3.one; } catch (System.Exception e) { Guard.Swallow(e); }
 
-            bool same = ResolveItem(src) == item;
+            bool same = WorldPickupSyncService.ResolveItem(src, bindCatalog: false) == item;
             ApplyPickupFields(go, item, count, same);
             if (!same)
                 ApplyCatalogMesh(go, item);
@@ -162,91 +148,83 @@ namespace SyncRADation.ItemSystem
         {
             var p = go.GetComponent<ItemPickup>();
             if (p == null) return;
-
-            AnItem catalog = null;
-            try { catalog = InventoryManager.getItem(item); } catch (System.Exception e) { Guard.Swallow(e); }
-
-            try { p.triggered = false; } catch (System.Exception e) { Guard.Swallow(e); }
-            try { p.slave = false; } catch (System.Exception e) { Guard.Swallow(e); }
-            try { p.count = DroppedItemRegistry.SanitizeStack(count, PartyKeyRing.IsKeyOrObject(item)); } catch (System.Exception e) { Guard.Swallow(e); }
-            // Native pickUp re-rolls count through DynamicDifficulty.calculateCount on the first look
-            // (firstObserved false): a dropped 1-round stack became 2 for a low-ammo taker.
-            try { p.firstObserved = true; } catch (System.Exception e) { Guard.Swallow(e); }
-            try { p.focusCamera = true; } catch (System.Exception e) { Guard.Swallow(e); }
-            try { p.pauseGame = true; } catch (System.Exception e) { Guard.Swallow(e); }
-            try { p.showItemView = true; } catch (System.Exception e) { Guard.Swallow(e); }
-            try { p.fadeOnPickup = false; } catch (System.Exception e) { Guard.Swallow(e); }
-            try { p.playPickupAnimation = false; } catch (System.Exception e) { Guard.Swallow(e); }
-            try { p.dontDestroyOnPickup = true; } catch (System.Exception e) { Guard.Swallow(e); }
-            try { p.message = ""; } catch (System.Exception e) { Guard.Swallow(e); }
-            try { p.onPickup = new UnityEvent(); } catch (System.Exception e) { Guard.Swallow(e); }
-            if (catalog != null)
-            {
-                try { p._item = catalog; } catch (System.Exception e) { Guard.Swallow(e); }
-                try { p._itemEnum = catalog._item; } catch (System.Exception e) { Guard.Swallow(e); }
-            }
-
-            var inter = go.GetComponent<Interaction>();
-            if (inter != null)
-            {
-                try { inter.triggered = false; } catch (System.Exception e) { Guard.Swallow(e); }
-                try { inter.inRange = false; } catch (System.Exception e) { Guard.Swallow(e); }
-                try { inter.enabled = true; } catch (System.Exception e) { Guard.Swallow(e); }
-                try { inter.anyAngle = true; } catch (System.Exception e) { Guard.Swallow(e); }
-                try { inter.type = Interaction.interType.take; } catch (System.Exception e) { Guard.Swallow(e); }
-                try { p.inter = inter; } catch (System.Exception e) { Guard.Swallow(e); }
-            }
-
-            var col = go.GetComponent<BoxCollider2D>();
-            if (col == null) col = go.AddComponent<BoxCollider2D>();
-            try { col.enabled = true; } catch (System.Exception e) { Guard.Swallow(e); }
-            try { col.isTrigger = false; } catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
+                var catalog = InventoryManager.getItem(item);
+                p.triggered = false;
+                p.slave = false;
+                p.count = DroppedItemRegistry.SanitizeStack(count, PartyKeyRing.IsKeyOrObject(item));
+                // Native pickUp re-rolls count through DynamicDifficulty.calculateCount on the first look
+                // (firstObserved false): a dropped 1-round stack became 2 for a low-ammo taker.
+                p.firstObserved = true;
+                p.focusCamera = true;
+                p.pauseGame = true;
+                p.showItemView = true;
+                p.fadeOnPickup = false;
+                p.playPickupAnimation = false;
+                p.dontDestroyOnPickup = true;
+                p.message = "";
+                p.onPickup = new UnityEvent();
+                if (catalog != null)
+                {
+                    p._item = catalog;
+                    p._itemEnum = catalog._item;
+                }
+                SetTakeInteraction(go, p);
+                var col = go.GetComponent<BoxCollider2D>();
+                if (col == null) col = go.AddComponent<BoxCollider2D>();
+                col.enabled = true;
+                col.isTrigger = false;
                 if (col.size.x < 4f || col.size.y < 4f)
                     col.size = new Vector2(6.4f, 6.4f);
             }
             catch (System.Exception e) { Guard.Swallow(e); }
+            SetLayer(go, InteractablesLayer());
+        }
 
+        static int InteractablesLayer()
+        {
             int layer = LayerMask.NameToLayer("Interactables");
-            if (layer < 0) layer = 19;
-            SetLayer(go, layer);
+            return layer < 0 ? 19 : layer;
+        }
+
+        /// <summary>The floor item's Interaction: an untriggered any-angle "take" bound to its ItemPickup.</summary>
+        static void SetTakeInteraction(GameObject go, ItemPickup p)
+        {
+            var inter = go.GetComponent<Interaction>();
+            if (inter == null) return;
+            inter.enabled = true;
+            inter.triggered = false;
+            inter.inRange = false;
+            inter.anyAngle = true;
+            inter.type = Interaction.interType.take;
+            if (p != null) p.inter = inter;
         }
 
         static void FinishInteractable(GameObject go)
         {
             if (go == null) return;
-            try { go.SetActive(true); } catch (System.Exception e) { Guard.Swallow(e); }
-            var p = go.GetComponent<ItemPickup>();
-            if (p != null)
+            try
             {
-                try { p.enabled = true; } catch (System.Exception e) { Guard.Swallow(e); }
-                try { p.triggered = false; } catch (System.Exception e) { Guard.Swallow(e); }
-                try { p.slave = false; } catch (System.Exception e) { Guard.Swallow(e); }
-            }
-            var inter = go.GetComponent<Interaction>();
-            if (inter != null)
-            {
-                try { inter.enabled = true; } catch (System.Exception e) { Guard.Swallow(e); }
-                try { inter.triggered = false; } catch (System.Exception e) { Guard.Swallow(e); }
-                try { inter.inRange = false; } catch (System.Exception e) { Guard.Swallow(e); }
-                try { inter.anyAngle = true; } catch (System.Exception e) { Guard.Swallow(e); }
-                try { inter.type = Interaction.interType.take; } catch (System.Exception e) { Guard.Swallow(e); }
+                go.SetActive(true);
+                var p = go.GetComponent<ItemPickup>();
                 if (p != null)
                 {
-                    try { p.inter = inter; } catch (System.Exception e) { Guard.Swallow(e); }
+                    p.enabled = true;
+                    p.triggered = false;
+                    p.slave = false;
+                }
+                SetTakeInteraction(go, p);
+                var col = go.GetComponent<BoxCollider2D>();
+                if (col != null)
+                {
+                    col.enabled = true;
+                    col.isTrigger = false;
                 }
             }
-            var col = go.GetComponent<BoxCollider2D>();
-            if (col != null)
-            {
-                try { col.enabled = true; } catch (System.Exception e) { Guard.Swallow(e); }
-                try { col.isTrigger = false; } catch (System.Exception e) { Guard.Swallow(e); }
-            }
+            catch (System.Exception e) { Guard.Swallow(e); }
             RebuildCollider(go);
-            int layer = LayerMask.NameToLayer("Interactables");
-            if (layer < 0) layer = 19;
-            SetLayer(go, layer);
+            SetLayer(go, InteractablesLayer());
             EnsureOutlines(go);
             _restNextFrame.Add(go);
         }
@@ -278,12 +256,9 @@ namespace SyncRADation.ItemSystem
 
         static void ApplyCatalogMesh(GameObject go, Items.itemlist item)
         {
-            AnItem catalog = null;
-            try { catalog = InventoryManager.getItem(item); } catch (System.Exception e) { Guard.Swallow(e); }
-            if (catalog == null || go == null) return;
-
+            if (go == null) return;
             GameObject prefab = null;
-            try { prefab = catalog.Image3D; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { prefab = InventoryManager.getItem(item)?.Image3D; } catch (System.Exception e) { Guard.Swallow(e); }
             if (prefab == null) return;
 
             Transform slot = FindModel(go.transform);
@@ -580,18 +555,6 @@ namespace SyncRADation.ItemSystem
                 }
             }
             catch (System.Exception e) { Guard.Swallow(e); }
-        }
-
-        static Items.itemlist ResolveItem(ItemPickup p)
-        {
-            if (p == null) return Items.itemlist.None;
-            try
-            {
-                if (p._item != null && p._item._item != Items.itemlist.None)
-                    return p._item._item;
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            try { return p._itemEnum; } catch { return Items.itemlist.None; }
         }
 
         static void StripUniqueId(GameObject go, ItemPickup src)

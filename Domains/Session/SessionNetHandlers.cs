@@ -226,8 +226,7 @@ namespace SyncRADation.Networking
                 _net.BossSync.TickHost(_net);
                 _net.StorySync.RequestFullSend();
                 _net.StorySync.Send(_net, true, replayPresentation: true);
-                // Reset clears the change signature: an unchanged box must still reach a late joiner.
-                _net.StorageSync.Reset();
+                // Inside the unicast scope the box is always sent and not recorded, so an unchanged box still reaches the joiner.
                 _net.StorageSync.SendNow(_net);
                 PartyKeyRing.Broadcast();
                 _net.DroppedItemHandlers.DumpDroppedItems();

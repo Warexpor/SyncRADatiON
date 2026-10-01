@@ -69,7 +69,7 @@ namespace SyncRADation.ItemSystem
                 try { spent = p.triggered; } catch (System.Exception e) { Guard.Swallow(e); }
                 if (live && !spent && anyLive == null) anyLive = p;
                 if (inScene && !spent && anyScene == null) anyScene = p;
-                if (ResolveItem(p) == item)
+                if (SyncRADation.Networking.WorldPickupSyncService.ResolveItem(p, bindCatalog: false) == item)
                 {
                     if (live) { matchLive = p; break; }
                     if (inScene && matchScene == null) matchScene = p;
@@ -94,22 +94,5 @@ namespace SyncRADation.ItemSystem
             catch { return false; }
         }
 
-        static Items.itemlist ResolveItem(ItemPickup p)
-        {
-            if (p == null) return Items.itemlist.None;
-            try
-            {
-                if (p._item != null && p._item._item != Items.itemlist.None)
-                    return p._item._item;
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            try
-            {
-                if (p._itemEnum != Items.itemlist.None)
-                    return p._itemEnum;
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            return Items.itemlist.None;
-        }
     }
 }

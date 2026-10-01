@@ -1,5 +1,6 @@
-// Host-authoritative InventoryManager.boxItems.
+// Host-authoritative InventoryManager.boxItems: the whole box goes out as one blob whenever its signature changes.
 using System.Collections.Generic;
+using SyncRADation.ItemSystem;
 using SyncRADation.Sync;
 
 namespace SyncRADation.Networking
@@ -9,6 +10,7 @@ namespace SyncRADation.Networking
         private float _timer;
         private bool _needSend = true;
         private string _lastSig = "";
+        private readonly List<ItemBag.Stack> _boxScratch = new List<ItemBag.Stack>(16);
         private readonly List<StorageBoxItem> _readScratch = new List<StorageBoxItem>(16);
         private StorageBoxItem[] _itemsScratch = System.Array.Empty<StorageBoxItem>();
 
@@ -30,14 +32,30 @@ namespace SyncRADation.Networking
             SendNow(net);
         }
 
+        /// <summary>
+        /// Host: push a box change to every peer now instead of on the next tick. Also the pre-unicast flush: a
+        /// change still waiting for its broadcast must reach everyone before a join dump records it as sent.
+        /// </summary>
+        public void FlushDiffNow()
+        {
+            var net = LanNetworkManager.Instance;
+            if (net == null || net.Role != NetworkRole.Host || !net.IsConnected) return;
+            RequestSend();
+            SendNow(net);
+        }
+
         public void SendNow(LanNetworkManager net)
         {
             ClampUniqueKeyStacks();
             var items = ReadBox();
             string sig = Signature(items);
-            if (sig == _lastSig) return;
-            _lastSig = sig;
-            PlaytestLog.Event("StorageBox", "send items=" + (items != null ? items.Length : 0));
+            // A unicast dump goes to one peer: always send, never record it as the box everyone has.
+            if (!net.UnicastActive)
+            {
+                if (sig == _lastSig) return;
+                _lastSig = sig;
+            }
+            PlaytestLog.Event("StorageBox", "send items=" + items.Length + (net.UnicastActive ? " (unicast)" : ""));
             net.SendStorageBoxBlob(items);
         }
 
@@ -49,44 +67,28 @@ namespace SyncRADation.Networking
         {
             var net = LanNetworkManager.Instance;
             if (net == null || net.Role != NetworkRole.Host) return;
-            try
+            var box = ItemBag.Box(_boxScratch);
+            for (int i = 0; i < box.Count; i++)
             {
-                var dict = InventoryManager.boxItems;
-                if (dict == null) return;
-                var en = dict.GetEnumerator();
-                var fix = new System.Collections.Generic.List<AnItem>();
-                while (en.MoveNext())
+                var item = box[i].Item;
+                if (item == null || box[i].Count <= 1 || !PartyKeyRing.IsKeyOrObject(item)) continue;
+                try
                 {
-                    var item = en.Current.key;
-                    int count = en.Current.value;
-                    if (item == null || count <= 1) continue;
-                    if (!PartyKeyRing.IsKeyOrObject(item)) continue;
-                    fix.Add(item);
-                }
-                en.Dispose();
-                for (int i = 0; i < fix.Count; i++)
-                {
-                    var item = fix[i];
+                    // Re-write as single via clear-and-box under apply gate.
+                    int have = ItemBag.BoxStock(item);
+                    if (have <= 1) continue;
+                    NetGate.BeginApply();
                     try
                     {
-                        // Re-write as single via clear-and-box under apply gate.
-                        int have = 0;
-                        try { have = InventoryManager.boxContainsItemCount(item); } catch { have = 2; }
-                        if (have <= 1) continue;
-                        Sync.NetGate.BeginApply();
-                        try
-                        {
-                            for (int u = 0; u < have; u++)
-                                InventoryManager.unboxItem(item);
-                            InventoryManager.boxItem(item, 1);
-                        }
-                        finally { Sync.NetGate.EndApply(); }
-                        PlaytestLog.Event("StorageBox", "clamp unique " + item._item + " was=" + have);
+                        for (int u = 0; u < have; u++)
+                            InventoryManager.unboxItem(item);
+                        InventoryManager.boxItem(item, 1);
                     }
-                    catch (System.Exception e) { Guard.Swallow(e); }
+                    finally { NetGate.EndApply(); }
+                    PlaytestLog.Event("StorageBox", "clamp unique " + item._item + " was=" + have);
                 }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
-            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public void Apply(StorageBoxBlobMessage msg)
@@ -95,7 +97,7 @@ namespace SyncRADation.Networking
             if (net != null && net.Role == NetworkRole.Host) return;
             if (msg.Items == null) return;
 
-            var pending = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<AnItem, int>>();
+            var pending = new List<KeyValuePair<AnItem, int>>();
             try
             {
                 for (int i = 0; i < msg.Items.Length; i++)
@@ -103,7 +105,7 @@ namespace SyncRADation.Networking
                     var e = msg.Items[i];
                     var item = InventoryManager.getItem((Items.itemlist)e.ItemEnum);
                     if (item == null || e.Count <= 0) continue;
-                    pending.Add(new System.Collections.Generic.KeyValuePair<AnItem, int>(item, e.Count));
+                    pending.Add(new KeyValuePair<AnItem, int>(item, e.Count));
                 }
             }
             catch (System.Exception ex)
@@ -112,14 +114,11 @@ namespace SyncRADation.Networking
                 return;
             }
 
-            Sync.NetGate.BeginApply();
+            NetGate.BeginApply();
             try
             {
                 var dict = InventoryManager.boxItems;
-                if (dict != null)
-                {
-                    try { dict.Clear(); } catch (System.Exception e) { Guard.Swallow(e); }
-                }
+                if (dict != null) dict.Clear();
                 PlaytestLog.Event("StorageBox", "apply items=" + pending.Count);
                 for (int i = 0; i < pending.Count; i++)
                 {
@@ -137,41 +136,24 @@ namespace SyncRADation.Networking
             }
             finally
             {
-                Sync.NetGate.EndApply();
+                NetGate.EndApply();
             }
         }
 
         private StorageBoxItem[] ReadBox()
         {
             _readScratch.Clear();
-            try
+            var box = ItemBag.Box(_boxScratch);
+            for (int i = 0; i < box.Count; i++)
             {
-                var dict = InventoryManager.boxItems;
-                if (dict == null)
-                {
-                    if (_itemsScratch.Length != 0)
-                        _itemsScratch = System.Array.Empty<StorageBoxItem>();
-                    return _itemsScratch;
-                }
-                var en = dict.GetEnumerator();
-                while (en.MoveNext())
-                {
-                    var kvp = en.Current;
-                    var item = kvp.key;
-                    int count = kvp.value;
-                    if (item == null || count <= 0) continue;
-                    _readScratch.Add(new StorageBoxItem
-                    {
-                        ItemEnum = (ushort)item._item,
-                        Count = count
-                    });
-                }
-                en.Dispose();
+                var item = box[i].Item;
+                if (item == null || box[i].Count <= 0) continue;
+                try { _readScratch.Add(new StorageBoxItem { ItemEnum = (ushort)item._item, Count = box[i].Count }); }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
-            catch (System.Exception e) { Guard.Swallow(e); }
             int n = _readScratch.Count;
             if (_itemsScratch.Length != n)
-                _itemsScratch = new StorageBoxItem[n];
+                _itemsScratch = n == 0 ? System.Array.Empty<StorageBoxItem>() : new StorageBoxItem[n];
             for (int i = 0; i < n; i++)
                 _itemsScratch[i] = _readScratch[i];
             return _itemsScratch;

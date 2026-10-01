@@ -54,7 +54,7 @@ namespace SyncRADation.Patches
             try { t = inst.transform; } catch { return null; }
             if (t == null) return null;
 
-            var drop = DroppedItemManager.NearbyInteraction(t.position, 1.8f);
+            var drop = DroppedItemRegistry.NearbyInteraction(t.position, 1.8f);
             if (drop != _highlighted)
             {
                 if (_highlighted != null)
@@ -77,7 +77,7 @@ namespace SyncRADation.Patches
 
             Interaction cur = null;
             try { cur = inst.currentInter; } catch (System.Exception e) { Guard.Swallow(e); }
-            bool ours = cur != null && DroppedItemManager.IsDroppedGo(cur.gameObject);
+            bool ours = cur != null && DroppedItemRegistry.IsDroppedGo(cur.gameObject);
             if (cur == null || ours)
             {
                 try { inst.currentInter = drop; } catch (System.Exception e) { Guard.Swallow(e); }
@@ -152,12 +152,12 @@ namespace SyncRADation.Patches
             try { t = __instance.transform; } catch { return true; }
             if (t == null) return true;
 
-            var drop = DroppedItemManager.NearbyInteraction(t.position, 1.8f);
+            var drop = DroppedItemRegistry.NearbyInteraction(t.position, 1.8f);
             if (drop == null) return true;
 
             Interaction cur = null;
             try { cur = __instance.currentInter; } catch (System.Exception e) { Guard.Swallow(e); }
-            if (cur != null && !DroppedItemManager.IsDroppedGo(cur.gameObject))
+            if (cur != null && !DroppedItemRegistry.IsDroppedGo(cur.gameObject))
                 return true;
 
             try { __instance.currentInter = drop; } catch (System.Exception e) { Guard.Swallow(e); }

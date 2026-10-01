@@ -162,12 +162,15 @@ namespace SyncRADation.Networking
         public long WorldId;
         public bool Triggered;
         public bool Active;
+        /// <summary>Untriggered only: units a partial take left on the prop (0 = count unchanged).</summary>
+        public int Count;
 
         public void Serialize(NetDataWriter w)
         {
             w.Put(WorldId);
             w.Put(Triggered);
             w.Put(Active);
+            w.Put(Count);
         }
 
         public static WorldPickupEntry Deserialize(NetDataReader r) =>
@@ -175,7 +178,8 @@ namespace SyncRADation.Networking
             {
                 WorldId = r.GetLong(),
                 Triggered = r.GetBool(),
-                Active = r.GetBool()
+                Active = r.GetBool(),
+                Count = r.GetInt()
             };
     }
 
@@ -1170,6 +1174,8 @@ namespace SyncRADation.Networking
         public long WorldId;
         public ushort ItemEnum;
         public int Count;
+        /// <summary>0 = a claim. &gt;0 = the claimer's native take left this many on the prop: release its claim.</summary>
+        public int Remaining;
 
         public void Serialize(NetDataWriter w)
         {
@@ -1177,6 +1183,7 @@ namespace SyncRADation.Networking
             w.Put(WorldId);
             w.Put(ItemEnum);
             w.Put(Count);
+            w.Put(Remaining);
         }
 
         public static WorldPickupClaimMessage Deserialize(NetDataReader r) =>
@@ -1185,7 +1192,8 @@ namespace SyncRADation.Networking
                 ClaimerPlayerId = r.GetInt(),
                 WorldId = r.GetLong(),
                 ItemEnum = r.GetUShort(),
-                Count = r.GetInt()
+                Count = r.GetInt(),
+                Remaining = r.GetInt()
             };
     }
 
