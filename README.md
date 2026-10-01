@@ -107,6 +107,7 @@ Edited in `SIGNALIS/UserData/MelonPreferences.cfg` under `[SyncRADation]` (creat
 | `SyncWorldPickups` | `true` | Sync items lying in the world |
 | `SyncPlayerVitals` | `true` | Share HP, death and game state for remote player display |
 | `VerboseLogging` | `false` | Extra log noise for diagnosing sound, player-model and puzzle issues. Turn on for **both** installs only when hunting a bug |
+| `FreeCursor` | `false` | Never confine the mouse to the game window (handy when running two copies side by side) |
 | `ExperimentalPuzzles` | `true` | Deprecated alias of `SyncPuzzles`, kept for old config files |
 
 ## Troubleshooting

@@ -16,6 +16,8 @@ namespace SyncRADation.Config
         public static MelonPreferences_Entry<bool> SyncWorldPickups;
         public static MelonPreferences_Entry<bool> SyncPlayerVitals;
         public static MelonPreferences_Entry<bool> VerboseLogging;
+        /// <summary>Rewrite Cursor.lockState Confined/Locked to None (free pointer for dual-box).</summary>
+        public static MelonPreferences_Entry<bool> FreeCursor;
         /// <summary>Host only: session capacity (host + clients). 2..8, default 4.</summary>
         public static MelonPreferences_Entry<int> MaxPlayers;
 
@@ -41,6 +43,9 @@ namespace SyncRADation.Config
                 "Share HP / death / game-state for remote Elster display");
             VerboseLogging = Category.CreateEntry("VerboseLogging", false,
                 "OFF unless diagnosing. When true: FMOD Play/Stop, proxy clone/FX internals, incremental puzzle apply. Set in MelonPreferences.cfg under [SyncRADation] on BOTH installs.");
+
+            FreeCursor = Category.CreateEntry("FreeCursor", false,
+                "Never confine/lock the mouse to the game window (dual-box testing under Proton/Wayland). Off = vanilla.");
 
             MaxPlayers = Category.CreateEntry("MaxPlayers", DefaultMaxPlayers,
                 "Host session capacity incl. host (2-8). Applies on next Host Game.");
