@@ -13,7 +13,7 @@ namespace SyncRADation.Patches
     [HarmonyPatch(typeof(EnemyController))]
     public static class EnemyTakeDamagePatches
     {
-        // One warning per enemy instead of one per shot.
+        // Warn-once set (persistent on purpose): one warning per enemy instance instead of one per shot.
         private static readonly System.Collections.Generic.HashSet<int> _warnedUnmapped
             = new System.Collections.Generic.HashSet<int>();
 
@@ -57,14 +57,12 @@ namespace SyncRADation.Patches
             if (net.SceneMismatch)
                 return true;
 
-            // WorldId cached at WorldRegistry.Rebuild/Register: the hierarchy hash is sibling-index
-            // based and shifts when spawns/adoptions reorder children, so never recompute per hit.
+            // Registry reverse map first (the id the host knows this enemy by), else the WorldId pinned at scene load.
             ulong id;
             if (!WorldRegistry.TryGetEnemyId(enemy, out id))
             {
                 id = WorldId.FromGameObject(enemy.gameObject);
-                int key = enemy.GetInstanceID();
-                if (id == 0 && _warnedUnmapped.Add(key))
+                if (id == 0 && _warnedUnmapped.Add(enemy.GetInstanceID()))
                     ModRuntime.Log?.Warning("[Damage] Client hit with WorldId 0: " + enemy.gameObject.name);
             }
             if (id == 0)

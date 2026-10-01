@@ -21,6 +21,8 @@ namespace SyncRADation.Networking
 
         // Persistent on purpose: serialized size of an empty snapshot struct, a pure cache that never depends on session state.
         private static int _snapBytes;
+        // Snapshot packets are built one at a time and copied by LiteNetLib on send: one writer serves them all.
+        private readonly NetDataWriter _stateWriter = new NetDataWriter();
 
         static int SnapshotBytes()
         {
@@ -48,7 +50,8 @@ namespace SyncRADation.Networking
             {
                 int n = total - start;
                 if (n > perPacket) n = perPacket;
-                var writer = new NetDataWriter();
+                var writer = _stateWriter;
+                writer.Reset();
                 writer.Put((byte)NetMessageType.EnemyState);
                 writer.Put(n);
                 for (int i = 0; i < n; i++)

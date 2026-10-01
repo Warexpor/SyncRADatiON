@@ -1,4 +1,4 @@
-// Host-authoritative enemy AI + snapshots via WorldId (never GetInstanceID).
+// Host-authoritative enemy AI + snapshots by WorldId; clients run halted puppets of the host's enemies.
 using System;
 using System.Collections.Generic;
 using SyncRADation.Players;
@@ -11,34 +11,43 @@ namespace SyncRADation.Networking
     {
         private float _sendTimer;
         private bool _forceSend;
-        private readonly HashSet<ulong> _clientPuppeted = new HashSet<ulong>();
-        /// <summary>Client puppet pose smoothing target per enemy (snapshots arrive at 15 Hz).</summary>
-        private struct PoseInterp
+        private readonly List<EnemySnapshotNet> _snapList = new List<EnemySnapshotNet>(32);
+
+        /// <summary>Client: one host-driven enemy copy (keyed by WorldId; reset per scene).</summary>
+        private sealed class Puppet
         {
-            public Vector3 From;
-            public Vector3 To;
-            public float FromRot;
-            public float ToRot;
-            public float Start;
+            public bool Halted;                  // AI + agent switched off (Halt)
+            public bool HasPose;                 // From/To valid: TickClientInterp moves the puppet
+            public Vector3 From, To;
+            public float FromRot, ToRot, Start;
+            // Last host-confirmed Hitbox.HP. PlayerAttack lowers the puppet's Hitbox.HP itself before calling
+            // TakeDamage (Ghidra PlayerAttack.c), so the drop below this value is the local hit's damage.
+            public bool HasHp;
+            public int Hp;
+            public bool HasAnim;
+            public float AnimTime;
+            public int ShownHp = int.MinValue, ShownMaxHp;  // what debugHP.text was last set to
         }
-        private readonly Dictionary<ulong, PoseInterp> _interp = new Dictionary<ulong, PoseInterp>();
-        private readonly Dictionary<ulong, float> _lastAnimTime = new Dictionary<ulong, float>();
-        private readonly List<ulong> _interpDead = new List<ulong>(4);
+        private readonly Dictionary<ulong, Puppet> _puppets = new Dictionary<ulong, Puppet>();
         private const float TeleportDist = 8f;
         private int _mapMisses;
         private int _mapHits;
         private float _lastDiag;
 
-        private readonly List<EnemySnapshotNet> _snapList = new List<EnemySnapshotNet>(32);
-        private BasicEnemy[] _basics = Array.Empty<BasicEnemy>();
-        private EnemyCookBase[] _cooks = Array.Empty<EnemyCookBase>();
-        // WorldRegistry.Generation the alt-AI arrays were taken under (-1 = none yet).
-        private int _altAiGeneration = -1;
-        // Client: last host-confirmed Hitbox.HP per enemy. PlayerAttack lowers the puppet's Hitbox.HP itself before
-        // calling TakeDamage (Ghidra PlayerAttack.c), so the drop below this value is the local hit's damage.
-        private readonly Dictionary<ulong, int> _lastSnapHp = new Dictionary<ulong, int>();
-
         public void RequestFullSend() => _forceSend = true;
+
+        Puppet PuppetOf(ulong id)
+        {
+            Puppet p;
+            if (!_puppets.TryGetValue(id, out p))
+            {
+                p = new Puppet();
+                _puppets[id] = p;
+            }
+            return p;
+        }
+
+        // ------------------------------------------------------------------ host tick
 
         public void TickHost(LanNetworkManager net)
         {
@@ -50,137 +59,33 @@ namespace SyncRADation.Networking
             if (net.Role != NetworkRole.Host) return;
             if (!net.IsConnected) return;
 
-            // Enemy/boss weapon hurtboxes vs remote proxies (proxies have no colliders, so the native
-            // Hurtbox.OnTriggerEnter never fires for them). Every frame — a swing window can be shorter
-            // than the 15 Hz snapshot gate below — and it early-outs when there are no remote proxies.
-            ClientDamageService.TickHurtboxes(net);
+            // Join/resync dump (unicast to the joiner): one snapshot now. The broadcast clock and a pending forced
+            // send stay untouched, so everybody else still gets theirs on schedule.
+            bool dump = net.UnicastActive;
+            if (!dump)
+            {
+                // Enemy/boss weapon hurtboxes vs remote proxies (proxies have no colliders, so the native
+                // Hurtbox.OnTriggerEnter never fires for them). Every frame: a swing window can be shorter
+                // than the 15 Hz snapshot gate below. It early-outs when there are no remote proxies.
+                ClientDamageService.TickHurtboxes(net);
 
-            _sendTimer += Mathf.Min(Time.unscaledDeltaTime, 0.1f);
-            if (_sendTimer < PluginInfo.EntitySendInterval && !_forceSend) return;
-            _sendTimer = 0f;
-            _forceSend = false;
+                _sendTimer += Mathf.Min(Time.unscaledDeltaTime, 0.1f);
+                if (_sendTimer < PluginInfo.EntitySendInterval && !_forceSend) return;
+                _sendTimer = 0f;
+                _forceSend = false;
+            }
 
             float t0 = Time.realtimeSinceStartup;
             try
             {
-            _snapList.Clear();
-            var pm = net.ProxyManager;
-
-            foreach (var kvp in WorldRegistry.AllEnemies())
-            {
-                var e = kvp.Value;
-                if (e == null) continue;
-
-                ulong id = kvp.Key;
-                Transform et;
-                try { et = e.transform; }
-                catch { continue; }
-                if (et == null) continue;
-
-                Transform nearest = null;
-                if (e.state != EnemyController.enemystate.dead)
-                {
-                    // The host's own room chunks are native; only a remote peer standing in a room the host
-                    // left asleep needs a wake. A level-disabled enemy is never a target (and is not re-walked
-                    // every tick: a refused wake backs off).
-                    if (!EnemyVisiblyInChunk(e) && pm != null && !WakeBackedOff(e)
-                        && PeerInEnemyRoom(e, et.position, net, pm)
-                        && !WakeForCombat(e, wakeAi: true))
-                        NoteWakeRefused(e);
-                    if (EnemyVisiblyInChunk(e))
-                        nearest = FindNearestTarget(et.position, net, pm);
-                }
-
-                Vector3 pos;
-                try { pos = et.position; }
-                catch { continue; }
-                var anim = e.animator;
-
-                int hp = 100;
-                int maxHp = 100;
-                try
-                {
-                    if (e.Preset != null) maxHp = e.Preset.HP;
-                    if (e.hitbox != null) hp = e.hitbox.HP;
-                    else hp = maxHp;
-                }
-                catch (Exception ex) { Guard.Swallow(ex); }
-
-                int animHash = 0;
-                float animTime = 0f;
-                try
-                {
-                    if (anim != null)
-                    {
-                        var si = anim.GetCurrentAnimatorStateInfo(0);
-                        animHash = si.fullPathHash;
-                        animTime = si.normalizedTime;
-                    }
-                }
-                catch (Exception ex) { Guard.Swallow(ex); }
-
-                float rotY = 0f;
-                try { rotY = et.eulerAngles.y; } catch (Exception ex) { Guard.Swallow(ex); }
-
-                float velX = 0f, velY = 0f, velZ = 0f;
-                try
-                {
-                    if (e.agent != null)
-                    {
-                        var v = e.agent.velocity;
-                        velX = v.x; velY = v.y; velZ = v.z;
-                    }
-                }
-                catch (Exception ex) { Guard.Swallow(ex); }
-
-                _snapList.Add(new EnemySnapshotNet
-                {
-                    WorldId = unchecked((long)id),
-                    State = (byte)e.state,
-                    HurtState = (byte)e.staggerType,
-                    PosX = pos.x,
-                    PosY = pos.y,
-                    PosZ = pos.z,
-                    RotY = rotY,
-                    VelX = velX,
-                    VelY = velY,
-                    VelZ = velZ,
-                    AnimHash = animHash,
-                    AnimTime = animTime,
-                    HP = hp,
-                    MaxHP = maxHp,
-                    Alive = e.state != EnemyController.enemystate.dead,
-                    TargetPlayerId = -1
-                });
-
-                if (e.state != EnemyController.enemystate.dead && nearest != null)
-                {
-                    e.playerPos = nearest;
-                    try
-                    {
-                        e.AimTarget = nearest;
-                        e.IkTarget = nearest;
-                    }
-                    catch (Exception ex) { Guard.Swallow(ex); }
-
-                    int tid = -1;
-                    try
-                    {
-                        tid = pm.GetPlayerIdByGameObject(nearest.gameObject);
-                        if (tid < 0 && nearest.gameObject == net.GetLocalPlayer())
-                            tid = net.LocalPlayerId;
-                    }
-                    catch (Exception ex) { Guard.Swallow(ex); }
-                    var snap = _snapList[_snapList.Count - 1];
-                    snap.TargetPlayerId = (sbyte)Mathf.Clamp(tid, -1, 127);
-                    _snapList[_snapList.Count - 1] = snap;
-                }
-            }
-
-            if (_snapList.Count > 0)
-                net.SendEnemyState(_snapList);
-
-            RetargetAltAi(net, pm);
+                SyncHostCache();
+                var pm = net.ProxyManager;
+                int[] remote = net.GetRemotePlayerIds();
+                BuildSnapshots(net, pm, remote);
+                if (_snapList.Count > 0)
+                    net.SendEnemyState(_snapList);
+                if (!dump)
+                    RetargetAltAi(net, pm, remote);
             }
             finally
             {
@@ -188,504 +93,101 @@ namespace SyncRADation.Networking
             }
         }
 
-        void EnsureAltAiCache()
+        void BuildSnapshots(LanNetworkManager net, PlayerProxyManager pm, int[] remote)
         {
-            // Rebuilt with the registry: spawns / scene changes after the first tick are picked up.
-            int g = WorldRegistry.Generation;
-            if (_altAiGeneration == g) return;
-            _basics = WorldLookup.All<BasicEnemy>() ?? Array.Empty<BasicEnemy>();
-            _cooks = WorldLookup.All<EnemyCookBase>() ?? Array.Empty<EnemyCookBase>();
-            _altAiGeneration = g;
+            _snapList.Clear();
+            foreach (var kvp in WorldRegistry.AllEnemies())
+            {
+                var e = kvp.Value;
+                if (e == null) continue;
+                ulong id = kvp.Key;
+                try
+                {
+                    var et = e.transform;
+                    if (et == null) continue;
+                    Vector3 pos = et.position;
+                    bool alive = e.state != EnemyController.enemystate.dead;
+
+                    Transform nearest = null;
+                    int nearestId = -1;
+                    if (alive)
+                    {
+                        // The host's own room chunks are native; only a remote peer standing in a room the host
+                        // left asleep needs a wake. A level-disabled enemy is never a target (and is not re-walked
+                        // every tick: a refused wake backs off).
+                        if (!EnemyVisiblyInChunk(e) && pm != null && !WakeBackedOff(e)
+                            && PeerInEnemyRoom(e, pos, pm, remote)
+                            && !WakeForCombat(e, wakeAi: true))
+                            NoteWakeRefused(e);
+                        if (EnemyVisiblyInChunk(e))
+                            nearest = Nearest(pos, NearestEnemyRange, net, pm, remote, out nearestId);
+                    }
+
+                    var snap = ReadSnapshot(e, et, pos, id);
+                    if (nearest != null)
+                    {
+                        e.playerPos = nearest;
+                        e.AimTarget = nearest;
+                        e.IkTarget = nearest;
+                        snap.TargetPlayerId = (sbyte)Mathf.Clamp(nearestId, -1, 127);
+                    }
+                    _snapList.Add(snap);
+                }
+                catch (Exception ex) { Guard.Swallow("EnemySync.Snapshot", ex); }
+            }
         }
 
-        private void RetargetAltAi(LanNetworkManager net, PlayerProxyManager pm)
+        static EnemySnapshotNet ReadSnapshot(EnemyController e, Transform et, Vector3 pos, ulong id)
         {
-            EnsureAltAiCache();
+            int maxHp = e.Preset != null ? e.Preset.HP : 100;
+            var hb = e.hitbox;
+            int hp = hb != null ? hb.HP : maxHp;
 
-            try
+            int animHash = 0;
+            float animTime = 0f;
+            var anim = e.animator;
+            if (anim != null)
             {
-                var basics = _basics;
-                if (basics != null)
-                {
-                    for (int i = 0; i < basics.Length; i++)
-                    {
-                        var b = basics[i];
-                        if (b == null) continue;
-                        Transform bt;
-                        try { bt = b.transform; }
-                        catch { continue; }
-                        if (bt == null) continue;
-                        var n = FindNearestStatic(bt.position, net, pm);
-                        if (n != null) b.target = n;
-                    }
-                }
+                var si = anim.GetCurrentAnimatorStateInfo(0);
+                animHash = si.fullPathHash;
+                animTime = si.normalizedTime;
             }
-            catch (Exception e) { Guard.Swallow(e); }
 
-            try
+            Vector3 vel = Vector3.zero;
+            if (e.agent != null) vel = e.agent.velocity;
+
+            var state = e.state;
+            return new EnemySnapshotNet
             {
-                var cooks = _cooks;
-                if (cooks != null)
-                {
-                    for (int i = 0; i < cooks.Length; i++)
-                    {
-                        var c = cooks[i];
-                        if (c == null) continue;
-                        Transform ct;
-                        try { ct = c.transform; }
-                        catch { continue; }
-                        if (ct == null) continue;
-                        var n = FindNearestStatic(ct.position, net, pm);
-                        if (n != null) c.target = n;
-                    }
-                }
-            }
-            catch (Exception e) { Guard.Swallow(e); }
+                WorldId = unchecked((long)id),
+                State = (byte)state,
+                HurtState = (byte)e.staggerType,
+                PosX = pos.x,
+                PosY = pos.y,
+                PosZ = pos.z,
+                RotY = et.eulerAngles.y,
+                VelX = vel.x,
+                VelY = vel.y,
+                VelZ = vel.z,
+                AnimHash = animHash,
+                AnimTime = animTime,
+                HP = hp,
+                MaxHP = maxHp,
+                Alive = state != EnemyController.enemystate.dead,
+                TargetPlayerId = -1
+            };
         }
 
-        private static Transform FindNearestStatic(Vector3 fromPos, LanNetworkManager net, PlayerProxyManager pm)
+        const float NearestEnemyRange = 30f;
+        const float NearestAltAiRange = 40f;
+
+        /// <summary>Nearest live target (local Elster unless dead, non-downed remote proxies) within range, with its player id.</summary>
+        static Transform Nearest(Vector3 fromPos, float range, LanNetworkManager net, PlayerProxyManager pm, int[] remote,
+            out int playerId)
         {
             Transform best = null;
-            float bestDist = 40f * 40f;
-            var localPlayer = net.GetLocalPlayer();
-            if (localPlayer != null && !NetworkDamageSystem.IsDead)
-            {
-                float d = (localPlayer.transform.position - fromPos).sqrMagnitude;
-                if (d < bestDist) { bestDist = d; best = localPlayer.transform; }
-            }
-            foreach (int pid in net.GetRemotePlayerIds())
-            {
-                var proxy = pm.GetProxy(pid);
-                if (proxy == null || proxy.GameObject == null) continue;
-                if (PartyVitals.IsProxyDown(pid, proxy)) continue; // downed peers are not targets
-                float d = (proxy.GameObject.transform.position - fromPos).sqrMagnitude;
-                if (d < bestDist) { bestDist = d; best = proxy.GameObject.transform; }
-            }
-            return best;
-        }
-
-        public void OnEnemyStateReceived(EnemyStateMessage msg)
-        {
-            var net = LanNetworkManager.Instance;
-            if (net != null && net.Role == NetworkRole.Host) return;
-            if (msg.Enemies == null) return;
-            // Still loading / in another scene (menu, follow load, personal wreck/hole scene): none of the host's
-            // enemies exist here. Drop the stream instead of resolving every id to a miss; the next snapshot after
-            // the load (and the join dump) carries the full state.
-            if (net != null && (net.SceneMismatch || SceneFollowService.LocalIsTransient())) return;
-
-            for (int i = 0; i < msg.Enemies.Length; i++)
-                ApplyEnemyState(msg.Enemies[i]);
-
-            if (_mapMisses > 0 && Time.time - _lastDiag > 5f)
-            {
-                PlaytestLog.Event("Enemy", "map hits=" + _mapHits + " misses=" + _mapMisses
-                    + " puppets=" + _clientPuppeted.Count);
-                _lastDiag = Time.time;
-                _mapHits = 0;
-                _mapMisses = 0;
-            }
-        }
-
-        /// <summary>
-        /// Match GameAssembly EnemyController.UpdateDataBlock hitbox GO toggles.
-        /// Peer Puppet disables AI so UpdateDataBlock never runs — Apply must mirror:
-        /// hurtbox inactive when dead; downedHitbox only for critical/fire while alive.
-        /// Do not call KillSilent.
-        /// </summary>
-        static void ApplyHurtboxActive(EnemyController enemy, bool dead, EnemyController.hurtState stagger)
-        {
-            try
-            {
-                if (enemy.hurtbox != null)
-                    enemy.hurtbox.SetActive(!dead);
-            }
-            catch (Exception e) { Guard.Swallow(e); }
-            try
-            {
-                if (enemy.downedHitbox != null)
-                {
-                    bool downed = !dead
-                        && (stagger == EnemyController.hurtState.critical
-                            || stagger == EnemyController.hurtState.fire);
-                    enemy.downedHitbox.SetActive(downed);
-                }
-            }
-            catch (Exception e) { Guard.Swallow(e); }
-        }
-
-        /// <summary>
-        /// Puppet clients never run the Critical coroutine that enables the stomp prompt
-        /// (EnemyController.Critical -> stompInter.SetActive(true), Ghidra EnemyController.c), so a client
-        /// could never finish a downed enemy. Mirror it from the host's critical stagger state.
-        /// </summary>
-        static void ApplyStompPrompt(EnemyController enemy, bool dead, EnemyController.hurtState stagger)
-        {
-            try
-            {
-                var si = enemy.stompInter;
-                if (si == null) return;
-                var go = si.gameObject;
-                if (go == null) return;
-                bool want = !dead && stagger == EnemyController.hurtState.critical;
-                if (want)
-                {
-                    // Never re-arm a prompt this client already triggered (host Kill is on the way).
-                    if (si.triggered) return;
-                    if (!go.activeSelf) go.SetActive(true);
-                    try
-                    {
-                        // Native keeps the prompt on the enemy's AimPoint (x, y, 0).
-                        var aim = enemy.AimPoint;
-                        if (aim != null)
-                        {
-                            var ap = aim.position;
-                            go.transform.position = new Vector3(ap.x, ap.y, 0f);
-                        }
-                    }
-                    catch (System.Exception ex) { WarnStompOnce(ex); }
-                }
-                else if (go.activeSelf)
-                    go.SetActive(false);
-            }
-            catch (System.Exception ex) { WarnStompOnce(ex); }
-        }
-
-        static bool _stompWarned;
-
-        static void WarnStompOnce(System.Exception ex)
-        {
-            if (_stompWarned) return;
-            _stompWarned = true;
-            ModRuntime.Log?.Warning("[EnemySync] stomp prompt: " + ex.Message);
-        }
-
-        /// <summary>Client per-frame: advance puppet poses toward the latest snapshot.</summary>
-        private void TickClientInterp()
-        {
-            if (_interp.Count == 0) return;
-            float now = Time.time;
-            // 1.5x the send interval: a snapshot that lands late no longer leaves the puppet standing still.
-            float dur = PluginInfo.EntitySendInterval * 1.5f;
-            _interpDead.Clear();
-            foreach (var kvp in _interp)
-            {
-                EnemyController e;
-                if (!WorldRegistry.TryGetEnemy(kvp.Key, out e) || e == null)
-                {
-                    _interpDead.Add(kvp.Key);
-                    continue;
-                }
-                var pi = kvp.Value;
-                float k = dur > 0f ? Mathf.Clamp01((now - pi.Start) / dur) : 1f;
-                try
-                {
-                    var tr = e.transform;
-                    if (tr == null || !e.gameObject.activeInHierarchy) continue;
-                    tr.position = Vector3.Lerp(pi.From, pi.To, k);
-                    var rot = tr.eulerAngles;
-                    rot.y = Mathf.LerpAngle(pi.FromRot, pi.ToRot, k);
-                    tr.eulerAngles = rot;
-                }
-                catch { _interpDead.Add(kvp.Key); }
-            }
-            for (int i = 0; i < _interpDead.Count; i++)
-                _interp.Remove(_interpDead[i]);
-        }
-
-        /// <summary>
-        /// Host: side effects a puppeted client triggered on its local copy (stomp Kill, push/knockback,
-        /// fusee burn, wake). Runs the native method on the real sim so the result is shared.
-        /// </summary>
-        public void ApplyActionOnHost(ulong enemyId, EnemyActionKind action, int fromPlayer)
-        {
-            EnemyController enemy;
-            if (!WorldRegistry.TryGetEnemy(enemyId, out enemy) || enemy == null || enemy.gameObject == null)
-            {
-                PlaytestLog.Event("Enemy", "action MISS " + action + " id=" + enemyId.ToString("X16"));
-                return;
-            }
-            try
-            {
-                if (action != EnemyActionKind.WakeUp && enemy.state == EnemyController.enemystate.dead) return;
-                if (!WakeForCombat(enemy)) return; // switched off by the level, not a sleeping chunk
-                NetGate.BeginApply();
-                try
-                {
-                    switch (action)
-                    {
-                        case EnemyActionKind.Kill: enemy.Kill(); break;
-                        case EnemyActionKind.KillSilent: enemy.KillSilent(); break;
-                        case EnemyActionKind.Knockback: enemy.Knockback(); break;
-                        case EnemyActionKind.GetPushed: enemy.GetPushed(); break;
-                        case EnemyActionKind.Burndown:
-                            if (enemy.BurnEffect != null) enemy.BurnEffect.Burn();
-                            enemy.burndown();
-                            break;
-                        case EnemyActionKind.WakeUp: WakeFromFlashlight(enemy, fromPlayer); break;
-                    }
-                }
-                finally { NetGate.EndApply(); }
-                _forceSend = true;
-                PlaytestLog.Event("Enemy", "action " + action + " id=" + enemyId.ToString("X16")
-                    + " from=" + fromPlayer + " state=" + enemy.state);
-            }
-            catch (System.Exception ex)
-            {
-                ModRuntime.Log?.Warning("[EnemySync] action " + action + ": " + ex.Message);
-            }
-        }
-
-        /// <summary>
-        /// Client flashlight wake. Native WakeUpFlashlight also fires PlayerState.fireGun + screen shake +
-        /// rumble on the HOST (and WakeUp needs host LOS), so set just the AI state it changes:
-        /// woken, not tracking/attacking, heading for the waker, pursuit.
-        /// </summary>
-        static void WakeFromFlashlight(EnemyController enemy, int fromPlayer)
-        {
-            if (enemy == null) return;
-            enemy.tracking = false;
-            enemy.attacking = false;
-            enemy.woken = true;
-            try
-            {
-                var net = LanNetworkManager.Instance;
-                var proxy = net != null && net.ProxyManager != null ? net.ProxyManager.GetProxy(fromPlayer) : null;
-                if (proxy != null && proxy.GameObject != null)
-                {
-                    var pp = proxy.GameObject.transform.position;
-                    enemy.targetPosition = new Vector2(pp.x, pp.y);
-                }
-            }
-            catch (Exception ex) { Guard.Swallow(ex); }
-            if (enemy.state == EnemyController.enemystate.sleep)
-                enemy.state = EnemyController.enemystate.pursuit;
-        }
-
-        private void ApplyEnemyState(EnemySnapshotNet snap)
-        {
-            ulong id = unchecked((ulong)snap.WorldId);
-            if (id == 0) return;
-
-            EnemyController enemy;
-            if (!WorldRegistry.TryGetEnemy(id, out enemy) || enemy == null)
-            {
-                _mapMisses++;
-                try { FlickerTrace.ClientEnemyMiss(id, new Vector3(snap.PosX, snap.PosY, snap.PosZ), snap.State); }
-                catch (Exception e) { Guard.Swallow(e); }
-                return;
-            }
-            _mapHits++;
-
-            try
-            {
-                // Unity fake-null: destroyed GOs compare equal to null.
-                if (enemy == null || enemy.gameObject == null) return;
-                FlickerTrace.ClientEnemy(id, enemy, snap.Alive, snap.State);
-
-                // Puppet only after successful map
-                if (!_clientPuppeted.Contains(id))
-                {
-                    Puppet(enemy);
-                    _clientPuppeted.Add(id);
-                }
-                _lastSnapHp[id] = snap.HP;
-
-                // Skip pose snaps for off-chunk enemies so they do not pop through walls.
-                if (!EnemyVisiblyInChunk(enemy))
-                {
-                    if (enemy == null) return;
-                    try { enemy.state = (EnemyController.enemystate)snap.State; } catch (Exception e) { Guard.Swallow(e); }
-                    try { enemy.staggerType = (EnemyController.hurtState)snap.HurtState; } catch (Exception e) { Guard.Swallow(e); }
-                    try
-                    {
-                        if (enemy != null && enemy.hitbox != null)
-                            enemy.hitbox.HP = snap.HP;
-                    }
-                    catch (Exception e) { Guard.Swallow(e); }
-                    // Off-chunk still needs dead hurtbox gate (join dump / sleeping chunk).
-                    {
-                        bool dead = !snap.Alive
-                            || snap.State == (byte)EnemyController.enemystate.dead;
-                        var stagger = (EnemyController.hurtState)snap.HurtState;
-                        ApplyHurtboxActive(enemy, dead, stagger);
-                    }
-                    return;
-                }
-
-                if (enemy == null || enemy.gameObject == null) return;
-                var t = enemy.transform;
-                if (t == null) return;
-                try
-                {
-                    // Smooth toward the snapshot instead of teleporting (15 Hz feed): TickClientInterp
-                    // moves the puppet each frame. First sight / big jump / freshly woken chunk snaps.
-                    var target = new Vector3(snap.PosX, snap.PosY, snap.PosZ);
-                    var cur = t.position;
-                    PoseInterp pi;
-                    bool have = _interp.TryGetValue(id, out pi);
-                    if (!have || (cur - target).sqrMagnitude > TeleportDist * TeleportDist)
-                    {
-                        if (have) FlickerTrace.ClientEnemySnapJump(id, enemy, Vector3.Distance(cur, target));
-                        t.position = target;
-                        var rot0 = t.eulerAngles;
-                        rot0.y = snap.RotY;
-                        t.eulerAngles = rot0;
-                        pi.From = target;
-                        pi.FromRot = snap.RotY;
-                    }
-                    else
-                    {
-                        pi.From = cur;
-                        pi.FromRot = t.eulerAngles.y;
-                    }
-                    pi.To = target;
-                    pi.ToRot = snap.RotY;
-                    pi.Start = Time.time;
-                    _interp[id] = pi;
-                }
-                catch { return; }
-
-                try { enemy.state = (EnemyController.enemystate)snap.State; } catch (Exception e) { Guard.Swallow(e); }
-                // Decompile EnemyController.staggerType (hurtState) — was on wire unused.
-                try { enemy.staggerType = (EnemyController.hurtState)snap.HurtState; } catch (Exception e) { Guard.Swallow(e); }
-
-                // Puppet peers never run UpdateDataBlock — mirror dead/downed hitbox GOs.
-                {
-                    bool dead = !snap.Alive
-                        || snap.State == (byte)EnemyController.enemystate.dead;
-                    var stagger = (EnemyController.hurtState)snap.HurtState;
-                    ApplyHurtboxActive(enemy, dead, stagger);
-                    ApplyStompPrompt(enemy, dead, stagger);
-                }
-
-                try
-                {
-                    if (enemy.hitbox != null)
-                        enemy.hitbox.HP = snap.HP;
-                }
-                catch (Exception e) { Guard.Swallow(e); }
-                try
-                {
-                    if (enemy.debugHP != null)
-                        enemy.debugHP.text = snap.HP + "/" + snap.MaxHP;
-                }
-                catch (Exception e) { Guard.Swallow(e); }
-
-                var anim = enemy.animator;
-                if (anim != null && snap.AnimHash != 0)
-                {
-                    try
-                    {
-                        // Re-Play only when the host moved to a different state. Comparing
-                        // normalizedTime restarted short one-shot clips every snapshot (stutter).
-                        var stateInfo = anim.GetCurrentAnimatorStateInfo(0);
-                        // normalizedTime only grows within a state, so a sharp drop with the same hash is the
-                        // host restarting that clip (a repeated attack): replay it too.
-                        float lastT;
-                        bool restarted = _lastAnimTime.TryGetValue(id, out lastT) && snap.AnimTime < lastT - 0.5f;
-                        _lastAnimTime[id] = snap.AnimTime;
-                        if (stateInfo.fullPathHash != snap.AnimHash || restarted)
-                            anim.Play(snap.AnimHash, 0, snap.AnimTime);
-                    }
-                    catch (Exception e) { Guard.Swallow(e); }
-                }
-            }
-            catch (Exception e) { Guard.Swallow(e); }
-        }
-
-        private static bool EnemyVisiblyInChunk(EnemyController enemy)
-        {
-            // Avoid GetComponentsInChildren every tick (main-thread cliff).
-            // Inactive hierarchy ≈ sleeping chunk; renderer-only hide is rare.
-            try
-            {
-                return enemy != null
-                    && enemy.gameObject != null
-                    && enemy.gameObject.activeInHierarchy;
-            }
-            catch { return false; }
-        }
-
-        /// <summary>
-        /// Client, inside the TakeDamage prefix: the HP the local hit took off the puppet (PlayerAttack / Kolibri
-        /// feedback lower Hitbox.HP before TakeDamage). Restores the last host-confirmed HP so the next local hit
-        /// measures only its own damage; the host applies the returned amount. 0 when nothing was taken.
-        /// </summary>
-        public int TakeLocalHitDelta(ulong id, EnemyController enemy)
-        {
-            if (enemy == null) return 0;
-            try
-            {
-                var hb = enemy.hitbox;
-                if (hb == null) return 0;
-                int cur = hb.HP;
-                int confirmed;
-                if (!_lastSnapHp.TryGetValue(id, out confirmed))
-                {
-                    // No snapshot yet: the puppet still has its native spawn HP.
-                    if (enemy.Preset == null) return 0;
-                    confirmed = enemy.Preset.HP;
-                }
-                if (cur >= confirmed) return 0;
-                hb.HP = confirmed;
-                return confirmed - cur;
-            }
-            catch (Exception ex) { Guard.Swallow(ex); return 0; }
-        }
-
-        /// <summary>
-        /// Host: a client's hit. Lower the real Hitbox.HP by the damage the client's PlayerAttack computed (native
-        /// order: HP first, then TakeDamage, which reads HP &lt; 1 for the kill), then run native TakeDamage.
-        /// </summary>
-        public bool ApplyNativeTakeDamageOnHost(ulong enemyId, float damage, float fire, float crit, float hurt, bool noSneak)
-        {
-            EnemyController enemy;
-            if (!WorldRegistry.TryGetEnemy(enemyId, out enemy) || enemy == null
-                || enemy.gameObject == null)
-            {
-                PlaytestLog.Event("Enemy", "TakeDamage MISS id=" + enemyId.ToString("X16"));
-                return false;
-            }
-
-            try
-            {
-                if (!WakeForCombat(enemy)) return false;
-
-                int dmg = 0;
-                var hb = enemy.hitbox;
-                if (hb != null && enemy.state != EnemyController.enemystate.dead
-                    && !float.IsNaN(damage) && damage > 0f)
-                {
-                    int maxHp = enemy.Preset != null ? enemy.Preset.HP : hb.HP;
-                    dmg = Mathf.Clamp(Mathf.RoundToInt(damage), 0, Mathf.Max(0, maxHp));
-                    hb.HP -= dmg;
-                }
-
-                enemy.TakeDamage(fire, crit, hurt, noSneak);
-                _forceSend = true;
-
-                PlaytestLog.Event("Enemy", "TakeDamage id=" + enemyId.ToString("X16")
-                    + " dmg=" + dmg
-                    + " fire=" + fire.ToString("F2")
-                    + " crit=" + crit.ToString("F2")
-                    + " hurt=" + hurt.ToString("F2")
-                    + " hp=" + (hb != null ? hb.HP.ToString() : "?")
-                    + " state=" + enemy.state);
-                return true;
-            }
-            catch (System.Exception ex)
-            {
-                ModRuntime.Log?.Warning("[EnemySync] TakeDamage failed: " + ex.Message);
-                return false;
-            }
-        }
-
-        private Transform FindNearestTarget(Vector3 fromPos, LanNetworkManager net, PlayerProxyManager pm)
-        {
-            Transform best = null;
-            float bestDist = 30f * 30f;
-
+            playerId = -1;
+            float bestDist = range * range;
             var localPlayer = net.GetLocalPlayer();
             if (localPlayer != null && !NetworkDamageSystem.IsDead)
             {
@@ -694,30 +196,189 @@ namespace SyncRADation.Networking
                 {
                     bestDist = d;
                     best = localPlayer.transform;
+                    playerId = net.LocalPlayerId;
                 }
             }
-
-            foreach (int pid in net.GetRemotePlayerIds())
+            if (pm == null) return best;
+            for (int i = 0; i < remote.Length; i++)
             {
+                int pid = remote[i];
                 var proxy = pm.GetProxy(pid);
                 if (proxy == null || proxy.GameObject == null) continue;
                 if (PartyVitals.IsProxyDown(pid, proxy)) continue; // downed peers are not targets
-                float d = (proxy.GameObject.transform.position - fromPos).sqrMagnitude;
+                var pt = proxy.GameObject.transform;
+                float d = (pt.position - fromPos).sqrMagnitude;
                 if (d < bestDist)
                 {
                     bestDist = d;
-                    best = proxy.GameObject.transform;
+                    best = pt;
+                    playerId = pid;
                 }
             }
-
             return best;
         }
 
-        static void Puppet(EnemyController enemy)
+        // ------------------------------------------------------------------ host per-scene cache (one generation check)
+
+        // Host: enemy (local instance id, never sent) -> its Room and a refused-wake backoff. Rooms do not change under
+        // a sleeping enemy. Rebuilt with the registry, like the alt-AI arrays (spawns / scene changes are picked up).
+        private struct HostEnemy
         {
-            if (enemy == null) return;
-            try { enemy.enabled = false; } catch (Exception e) { Guard.Swallow(e); }
-            try { if (enemy.agent != null) enemy.agent.enabled = false; } catch (Exception e) { Guard.Swallow(e); }
+            public bool RoomKnown;
+            public Room Room;
+            public string RoomName;
+            public float WakeRefusedUntil;
+        }
+        static readonly Dictionary<int, HostEnemy> _hostEnemies = new Dictionary<int, HostEnemy>();
+        static int _hostGeneration = -1;
+        static BasicEnemy[] _basics = Array.Empty<BasicEnemy>();
+        static EnemyCookBase[] _cooks = Array.Empty<EnemyCookBase>();
+        const float WakeRetrySeconds = 2f;
+
+        static void SyncHostCache()
+        {
+            int g = WorldRegistry.Generation;
+            if (g == _hostGeneration) return;
+            _hostGeneration = g;
+            _hostEnemies.Clear();
+            _basics = WorldLookup.All<BasicEnemy>() ?? Array.Empty<BasicEnemy>();
+            _cooks = WorldLookup.All<EnemyCookBase>() ?? Array.Empty<EnemyCookBase>();
+        }
+
+        static void ClearHostCache()
+        {
+            _hostEnemies.Clear();
+            _hostGeneration = -1;
+            _basics = Array.Empty<BasicEnemy>();
+            _cooks = Array.Empty<EnemyCookBase>();
+        }
+
+        static HostEnemy HostEnemyOf(EnemyController enemy, out int key)
+        {
+            SyncHostCache();
+            key = enemy.GetInstanceID();
+            HostEnemy he;
+            _hostEnemies.TryGetValue(key, out he);
+            return he;
+        }
+
+        static EnemyRoomInfo RoomOfEnemy(EnemyController enemy)
+        {
+            int key;
+            HostEnemy he;
+            try { he = HostEnemyOf(enemy, out key); }
+            catch (Exception e) { Guard.Swallow(e); return default(EnemyRoomInfo); }
+            if (!he.RoomKnown)
+            {
+                he.RoomKnown = true;
+                he.RoomName = "";
+                try
+                {
+                    for (var t = enemy.transform; t != null; t = t.parent)
+                    {
+                        var r = t.GetComponent<Room>();
+                        if (r == null) continue;
+                        he.Room = r;
+                        he.RoomName = r.roomName ?? "";
+                        break;
+                    }
+                }
+                catch (Exception e) { Guard.Swallow(e); }
+                _hostEnemies[key] = he;
+            }
+            return new EnemyRoomInfo { Room = he.Room, Name = he.RoomName };
+        }
+
+        struct EnemyRoomInfo
+        {
+            public Room Room;
+            public string Name;
+        }
+
+        static bool WakeBackedOff(EnemyController e)
+        {
+            try
+            {
+                int key;
+                var he = HostEnemyOf(e, out key);
+                return Time.unscaledTime < he.WakeRefusedUntil;
+            }
+            catch (Exception ex) { Guard.Swallow(ex); return false; }
+        }
+
+        static void NoteWakeRefused(EnemyController e)
+        {
+            try
+            {
+                int key;
+                var he = HostEnemyOf(e, out key);
+                he.WakeRefusedUntil = Time.unscaledTime + WakeRetrySeconds;
+                _hostEnemies[key] = he;
+            }
+            catch (Exception ex) { Guard.Swallow(ex); }
+        }
+
+        private void RetargetAltAi(LanNetworkManager net, PlayerProxyManager pm, int[] remote)
+        {
+            int unused;
+            var basics = _basics;
+            for (int i = 0; i < basics.Length; i++)
+            {
+                var b = basics[i];
+                if (b == null) continue;
+                try
+                {
+                    var n = Nearest(b.transform.position, NearestAltAiRange, net, pm, remote, out unused);
+                    if (n != null) b.target = n;
+                }
+                catch (Exception e) { Guard.Swallow("EnemySync.RetargetBasic", e); }
+            }
+            var cooks = _cooks;
+            for (int i = 0; i < cooks.Length; i++)
+            {
+                var c = cooks[i];
+                if (c == null) continue;
+                try
+                {
+                    var n = Nearest(c.transform.position, NearestAltAiRange, net, pm, remote, out unused);
+                    if (n != null) c.target = n;
+                }
+                catch (Exception e) { Guard.Swallow("EnemySync.RetargetCook", e); }
+            }
+        }
+
+        /// <summary>A remote, non-downed peer whose reported room is this enemy's room (and within 30 units).</summary>
+        static bool PeerInEnemyRoom(EnemyController enemy, Vector3 pos, PlayerProxyManager pm, int[] remote)
+        {
+            string roomName = null;
+            for (int i = 0; i < remote.Length; i++)
+            {
+                int pid = remote[i];
+                var proxy = pm.GetProxy(pid);
+                if (proxy == null || proxy.GameObject == null) continue;
+                // Cheap distance first: the room lookup only runs for an enemy a peer is actually near.
+                if ((proxy.GameObject.transform.position - pos).sqrMagnitude >= 30f * 30f) continue;
+                if (PartyVitals.IsProxyDown(pid, proxy)) continue;
+                if (roomName == null)
+                {
+                    roomName = RoomOfEnemy(enemy).Name ?? "";
+                    if (roomName.Length == 0) return false;
+                }
+                if (PartyVitals.RoomOf(pid) == roomName) return true;
+            }
+            return false;
+        }
+
+        private static bool EnemyVisiblyInChunk(EnemyController enemy)
+        {
+            // Inactive hierarchy = sleeping chunk (no GetComponentsInChildren renderer walk per tick).
+            try
+            {
+                return enemy != null
+                    && enemy.gameObject != null
+                    && enemy.gameObject.activeInHierarchy;
+            }
+            catch { return false; }
         }
 
         /// <summary>
@@ -778,10 +439,7 @@ namespace SyncRADation.Networking
             }
             if (t == null || inactive.Count == 0) return false; // reparented out of the cached room
             if (!room.gameObject.activeInHierarchy) return false;
-            GameObject chunk = null, instant = null, cell = null;
-            try { chunk = room.chunk; } catch (Exception e) { Guard.Swallow(e); }
-            try { instant = room.instantChunk; } catch (Exception e) { Guard.Swallow(e); }
-            try { cell = room.Cell; } catch (Exception e) { Guard.Swallow(e); }
+            GameObject chunk = room.chunk, instant = room.instantChunk, cell = room.Cell;
             for (int i = 0; i < inactive.Count; i++)
             {
                 var go = inactive[i];
@@ -791,130 +449,421 @@ namespace SyncRADation.Networking
         }
         static readonly List<GameObject> _inactiveScratch = new List<GameObject>(4);
 
-        /// <summary>A remote, non-downed peer whose reported room is this enemy's room (and within 30 units).</summary>
-        static bool PeerInEnemyRoom(EnemyController enemy, Vector3 pos, LanNetworkManager net, PlayerProxyManager pm)
+        // ------------------------------------------------------------------ host: client requests
+
+        /// <summary>
+        /// Host: side effects a puppeted client triggered on its local copy (stomp Kill, push/knockback,
+        /// fusee burn, wake). Runs the native method on the real sim so the result is shared.
+        /// </summary>
+        public void ApplyActionOnHost(ulong enemyId, EnemyActionKind action, int fromPlayer)
         {
-            string roomName = null;
-            foreach (int pid in net.GetRemotePlayerIds())
+            EnemyController enemy;
+            if (!WorldRegistry.TryGetEnemy(enemyId, out enemy) || enemy == null || enemy.gameObject == null)
             {
-                var proxy = pm.GetProxy(pid);
-                if (proxy == null || proxy.GameObject == null) continue;
-                // Cheap distance first: the room lookup only runs for an enemy a peer is actually near.
-                if ((proxy.GameObject.transform.position - pos).sqrMagnitude >= 30f * 30f) continue;
-                if (PartyVitals.IsProxyDown(pid, proxy)) continue;
-                if (roomName == null)
-                {
-                    roomName = RoomOfEnemy(enemy).Name ?? "";
-                    if (roomName.Length == 0) return false;
-                }
-                if (PartyVitals.RoomOf(pid) == roomName) return true;
+                PlaytestLog.Event("Enemy", "action MISS " + action + " id=" + enemyId.ToString("X16"));
+                return;
             }
-            return false;
-        }
-
-        struct EnemyRoom
-        {
-            public Room Room;
-            public string Name;
-        }
-
-        // Host: enemy -> its Room (local instance id, never sent). Rooms do not change under a sleeping enemy;
-        // cleared per scene and on every registry rebuild.
-        static readonly Dictionary<int, EnemyRoom> _enemyRooms = new Dictionary<int, EnemyRoom>();
-        static int _enemyRoomsGeneration = -1;
-
-        static EnemyRoom RoomOfEnemy(EnemyController enemy)
-        {
-            var none = default(EnemyRoom);
-            if (enemy == null) return none;
-            int g = WorldRegistry.Generation;
-            if (g != _enemyRoomsGeneration)
-            {
-                _enemyRooms.Clear();
-                _wakeRefusedUntil.Clear();
-                _enemyRoomsGeneration = g;
-            }
-            int key;
-            try { key = enemy.GetInstanceID(); } catch { return none; }
-            EnemyRoom er;
-            if (_enemyRooms.TryGetValue(key, out er)) return er;
             try
             {
-                var t = enemy.transform;
-                while (t != null)
+                if (action != EnemyActionKind.WakeUp && enemy.state == EnemyController.enemystate.dead) return;
+                if (!WakeForCombat(enemy)) return; // switched off by the level, not a sleeping chunk
+                NetGate.BeginApply();
+                try
                 {
-                    var r = t.GetComponent<Room>();
-                    if (r != null) { er.Room = r; er.Name = r.roomName ?? ""; break; }
-                    t = t.parent;
+                    switch (action)
+                    {
+                        case EnemyActionKind.Kill: enemy.Kill(); break;
+                        case EnemyActionKind.KillSilent: enemy.KillSilent(); break;
+                        case EnemyActionKind.Knockback: enemy.Knockback(); break;
+                        case EnemyActionKind.GetPushed: enemy.GetPushed(); break;
+                        case EnemyActionKind.Burndown:
+                            if (enemy.BurnEffect != null) enemy.BurnEffect.Burn();
+                            enemy.burndown();
+                            break;
+                        case EnemyActionKind.WakeUp: WakeFromFlashlight(enemy, fromPlayer); break;
+                    }
+                }
+                finally { NetGate.EndApply(); }
+                _forceSend = true;
+                PlaytestLog.Event("Enemy", "action " + action + " id=" + enemyId.ToString("X16")
+                    + " from=" + fromPlayer + " state=" + enemy.state);
+            }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[EnemySync] action " + action + ": " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Client flashlight wake. Native WakeUpFlashlight also fires PlayerState.fireGun + screen shake +
+        /// rumble on the HOST (and WakeUp needs host LOS), so set just the AI state it changes:
+        /// woken, not tracking/attacking, heading for the waker, pursuit.
+        /// </summary>
+        static void WakeFromFlashlight(EnemyController enemy, int fromPlayer)
+        {
+            enemy.tracking = false;
+            enemy.attacking = false;
+            enemy.woken = true;
+            var net = LanNetworkManager.Instance;
+            var proxy = net != null && net.ProxyManager != null ? net.ProxyManager.GetProxy(fromPlayer) : null;
+            if (proxy != null && proxy.GameObject != null)
+            {
+                var pp = proxy.GameObject.transform.position;
+                enemy.targetPosition = new Vector2(pp.x, pp.y);
+            }
+            if (enemy.state == EnemyController.enemystate.sleep)
+                enemy.state = EnemyController.enemystate.pursuit;
+        }
+
+        /// <summary>
+        /// Host: a client's hit. Lower the real Hitbox.HP by the damage the client's PlayerAttack computed (native
+        /// order: HP first, then TakeDamage, which reads HP &lt; 1 for the kill), then run native TakeDamage.
+        /// </summary>
+        public bool ApplyNativeTakeDamageOnHost(ulong enemyId, float damage, float fire, float crit, float hurt, bool noSneak)
+        {
+            EnemyController enemy;
+            if (!WorldRegistry.TryGetEnemy(enemyId, out enemy) || enemy == null
+                || enemy.gameObject == null)
+            {
+                PlaytestLog.Event("Enemy", "TakeDamage MISS id=" + enemyId.ToString("X16"));
+                return false;
+            }
+
+            try
+            {
+                if (!WakeForCombat(enemy)) return false;
+
+                int dmg = 0;
+                var hb = enemy.hitbox;
+                if (hb != null && enemy.state != EnemyController.enemystate.dead
+                    && !float.IsNaN(damage) && damage > 0f)
+                {
+                    int maxHp = enemy.Preset != null ? enemy.Preset.HP : hb.HP;
+                    dmg = Mathf.Clamp(Mathf.RoundToInt(damage), 0, Mathf.Max(0, maxHp));
+                    hb.HP -= dmg;
+                }
+
+                enemy.TakeDamage(fire, crit, hurt, noSneak);
+                _forceSend = true;
+
+                PlaytestLog.Event("Enemy", "TakeDamage id=" + enemyId.ToString("X16")
+                    + " dmg=" + dmg
+                    + " fire=" + fire.ToString("F2")
+                    + " crit=" + crit.ToString("F2")
+                    + " hurt=" + hurt.ToString("F2")
+                    + " hp=" + (hb != null ? hb.HP.ToString() : "?")
+                    + " state=" + enemy.state);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[EnemySync] TakeDamage failed: " + ex.Message);
+                return false;
+            }
+        }
+
+        // ------------------------------------------------------------------ client
+
+        public void OnEnemyStateReceived(EnemyStateMessage msg)
+        {
+            var net = LanNetworkManager.Instance;
+            if (net != null && net.Role == NetworkRole.Host) return;
+            if (msg.Enemies == null) return;
+            // Still loading / in another scene (menu, follow load, personal wreck/hole scene): none of the host's
+            // enemies exist here. Drop the stream instead of resolving every id to a miss; the next snapshot after
+            // the load (and the join dump) carries the full state.
+            if (net != null && (net.SceneMismatch || SceneFollowService.LocalIsTransient())) return;
+
+            for (int i = 0; i < msg.Enemies.Length; i++)
+                ApplyEnemyState(msg.Enemies[i]);
+
+            if (_mapMisses > 0 && Time.time - _lastDiag > 5f)
+            {
+                PlaytestLog.Event("Enemy", "map hits=" + _mapHits + " misses=" + _mapMisses
+                    + " puppets=" + _puppets.Count);
+                _lastDiag = Time.time;
+                _mapHits = 0;
+                _mapMisses = 0;
+            }
+        }
+
+        private void ApplyEnemyState(EnemySnapshotNet snap)
+        {
+            ulong id = unchecked((ulong)snap.WorldId);
+            if (id == 0) return;
+
+            EnemyController enemy;
+            if (!WorldRegistry.TryGetEnemy(id, out enemy) || enemy == null)
+            {
+                _mapMisses++;
+                try { FlickerTrace.ClientEnemyMiss(id, new Vector3(snap.PosX, snap.PosY, snap.PosZ), snap.State); }
+                catch (Exception e) { Guard.Swallow(e); }
+                return;
+            }
+            _mapHits++;
+
+            var p = PuppetOf(id);
+            try
+            {
+                if (enemy.gameObject == null) return;
+                FlickerTrace.ClientEnemy(id, enemy, snap.Alive, snap.State);
+
+                if (!p.Halted)
+                {
+                    Halt(enemy);
+                    p.Halted = true;
+                }
+                p.Hp = snap.HP;
+                p.HasHp = true;
+
+                var state = (EnemyController.enemystate)snap.State;
+                var stagger = (EnemyController.hurtState)snap.HurtState;
+                bool dead = !snap.Alive || state == EnemyController.enemystate.dead;
+
+                // Off-chunk: no pose snap (it would pop through walls), but the dead/downed hurtbox gate still
+                // applies (join dump / sleeping chunk).
+                if (!EnemyVisiblyInChunk(enemy))
+                {
+                    enemy.state = state;
+                    enemy.staggerType = stagger;
+                    if (enemy.hitbox != null) enemy.hitbox.HP = snap.HP;
+                    ApplyHurtboxActive(enemy, dead, stagger);
+                    return;
+                }
+
+                var t = enemy.transform;
+                if (t == null) return;
+                SetPoseTarget(id, p, enemy, t, snap);
+
+                enemy.state = state;
+                enemy.staggerType = stagger;
+                ApplyHurtboxActive(enemy, dead, stagger);
+                ApplyStompPrompt(enemy, dead, stagger);
+                if (enemy.hitbox != null) enemy.hitbox.HP = snap.HP;
+                if (p.ShownHp != snap.HP || p.ShownMaxHp != snap.MaxHP)
+                {
+                    var dbg = enemy.debugHP;
+                    if (dbg != null) dbg.text = snap.HP + "/" + snap.MaxHP;
+                    p.ShownHp = snap.HP;
+                    p.ShownMaxHp = snap.MaxHP;
+                }
+                ApplyAnim(p, enemy, snap);
+            }
+            catch (Exception ex)
+            {
+                // A half-applied snapshot is redone in full by the next one (15 Hz): halt again and snap the pose then.
+                p.Halted = false;
+                p.HasPose = false;
+                Guard.Swallow("EnemySync.Apply", ex);
+            }
+        }
+
+        /// <summary>
+        /// Smooth toward the snapshot instead of teleporting (15 Hz feed): TickClientInterp moves the puppet each
+        /// frame. First sight / big jump / freshly woken chunk snaps.
+        /// </summary>
+        static void SetPoseTarget(ulong id, Puppet p, EnemyController enemy, Transform t, EnemySnapshotNet snap)
+        {
+            var target = new Vector3(snap.PosX, snap.PosY, snap.PosZ);
+            var cur = t.position;
+            if (!p.HasPose || (cur - target).sqrMagnitude > TeleportDist * TeleportDist)
+            {
+                if (p.HasPose) FlickerTrace.ClientEnemySnapJump(id, enemy, Vector3.Distance(cur, target));
+                t.position = target;
+                var rot0 = t.eulerAngles;
+                rot0.y = snap.RotY;
+                t.eulerAngles = rot0;
+                p.From = target;
+                p.FromRot = snap.RotY;
+            }
+            else
+            {
+                p.From = cur;
+                p.FromRot = t.eulerAngles.y;
+            }
+            p.To = target;
+            p.ToRot = snap.RotY;
+            p.Start = Time.time;
+            p.HasPose = true;
+        }
+
+        static void ApplyAnim(Puppet p, EnemyController enemy, EnemySnapshotNet snap)
+        {
+            var anim = enemy.animator;
+            if (anim == null || snap.AnimHash == 0) return;
+            // Re-Play only when the host moved to a different state (comparing normalizedTime restarted short
+            // one-shot clips every snapshot). normalizedTime only grows within a state, so a sharp drop with the
+            // same hash is the host restarting that clip (a repeated attack): replay it too.
+            var stateInfo = anim.GetCurrentAnimatorStateInfo(0);
+            bool restarted = p.HasAnim && snap.AnimTime < p.AnimTime - 0.5f;
+            p.HasAnim = true;
+            p.AnimTime = snap.AnimTime;
+            if (stateInfo.fullPathHash != snap.AnimHash || restarted)
+                anim.Play(snap.AnimHash, 0, snap.AnimTime);
+        }
+
+        /// <summary>
+        /// Mirror EnemyController.UpdateDataBlock's hitbox GO toggles (a puppet's AI is off, so it never runs):
+        /// hurtbox inactive when dead; downedHitbox only for critical/fire while alive. Never KillSilent.
+        /// </summary>
+        static void ApplyHurtboxActive(EnemyController enemy, bool dead, EnemyController.hurtState stagger)
+        {
+            if (enemy.hurtbox != null)
+                enemy.hurtbox.SetActive(!dead);
+            if (enemy.downedHitbox != null)
+            {
+                bool downed = !dead
+                    && (stagger == EnemyController.hurtState.critical
+                        || stagger == EnemyController.hurtState.fire);
+                enemy.downedHitbox.SetActive(downed);
+            }
+        }
+
+        /// <summary>
+        /// Puppet clients never run the Critical coroutine that enables the stomp prompt
+        /// (EnemyController.Critical -> stompInter.SetActive(true), Ghidra EnemyController.c), so a client
+        /// could never finish a downed enemy. Mirror it from the host's critical stagger state.
+        /// </summary>
+        static void ApplyStompPrompt(EnemyController enemy, bool dead, EnemyController.hurtState stagger)
+        {
+            var si = enemy.stompInter;
+            if (si == null) return;
+            var go = si.gameObject;
+            if (go == null) return;
+            bool want = !dead && stagger == EnemyController.hurtState.critical;
+            if (!want)
+            {
+                if (go.activeSelf) go.SetActive(false);
+                return;
+            }
+            // Never re-arm a prompt this client already triggered (host Kill is on the way).
+            if (si.triggered) return;
+            if (!go.activeSelf) go.SetActive(true);
+            // Native keeps the prompt on the enemy's AimPoint (x, y, 0).
+            var aim = enemy.AimPoint;
+            if (aim != null)
+            {
+                var ap = aim.position;
+                go.transform.position = new Vector3(ap.x, ap.y, 0f);
+            }
+        }
+
+        /// <summary>Client per-frame: advance puppet poses toward the latest snapshot.</summary>
+        private void TickClientInterp()
+        {
+            if (_puppets.Count == 0) return;
+            float now = Time.time;
+            // 1.5x the send interval: a snapshot that lands late no longer leaves the puppet standing still.
+            float dur = PluginInfo.EntitySendInterval * 1.5f;
+            foreach (var kvp in _puppets)
+            {
+                var p = kvp.Value;
+                if (!p.HasPose) continue;
+                EnemyController e;
+                if (!WorldRegistry.TryGetEnemy(kvp.Key, out e) || e == null)
+                {
+                    p.HasPose = false;
+                    continue;
+                }
+                float k = dur > 0f ? Mathf.Clamp01((now - p.Start) / dur) : 1f;
+                try
+                {
+                    var tr = e.transform;
+                    if (tr == null || !e.gameObject.activeInHierarchy) continue;
+                    tr.position = Vector3.Lerp(p.From, p.To, k);
+                    var rot = tr.eulerAngles;
+                    rot.y = Mathf.LerpAngle(p.FromRot, p.ToRot, k);
+                    tr.eulerAngles = rot;
+                }
+                catch (Exception ex)
+                {
+                    p.HasPose = false;
+                    Guard.Swallow("EnemySync.Interp", ex);
                 }
             }
-            catch (Exception e) { Guard.Swallow(e); }
-            _enemyRooms[key] = er;
-            return er;
         }
 
-        // Host: a chunk wake the level refused (enemy switched off by the level) is retried after a pause, not per tick.
-        static readonly Dictionary<int, float> _wakeRefusedUntil = new Dictionary<int, float>();
-        const float WakeRetrySeconds = 2f;
-
-        static bool WakeBackedOff(EnemyController e)
+        /// <summary>
+        /// Client, inside the TakeDamage prefix: the HP the local hit took off the puppet (PlayerAttack / Kolibri
+        /// feedback lower Hitbox.HP before TakeDamage). Restores the last host-confirmed HP so the next local hit
+        /// measures only its own damage; the host applies the returned amount. 0 when nothing was taken.
+        /// </summary>
+        public int TakeLocalHitDelta(ulong id, EnemyController enemy)
         {
-            if (_wakeRefusedUntil.Count == 0) return false;
-            float until;
-            try { return _wakeRefusedUntil.TryGetValue(e.GetInstanceID(), out until) && Time.unscaledTime < until; }
-            catch { return false; }
+            if (enemy == null) return 0;
+            try
+            {
+                var hb = enemy.hitbox;
+                if (hb == null) return 0;
+                int cur = hb.HP;
+                int confirmed;
+                Puppet p;
+                if (_puppets.TryGetValue(id, out p) && p.HasHp)
+                    confirmed = p.Hp;
+                else
+                {
+                    // No snapshot yet: the puppet still has its native spawn HP.
+                    if (enemy.Preset == null) return 0;
+                    confirmed = enemy.Preset.HP;
+                }
+                if (cur >= confirmed) return 0;
+                hb.HP = confirmed;
+                return confirmed - cur;
+            }
+            catch (Exception ex) { Guard.Swallow(ex); return 0; }
         }
 
-        static void NoteWakeRefused(EnemyController e)
+        static void Halt(EnemyController enemy)
         {
-            try { _wakeRefusedUntil[e.GetInstanceID()] = Time.unscaledTime + WakeRetrySeconds; }
-            catch (Exception ex) { Guard.Swallow(ex); }
+            enemy.enabled = false;
+            if (enemy.agent != null) enemy.agent.enabled = false;
         }
 
+        /// <summary>Client: halt every registered enemy now (connect / scene arrival, before the first snapshot).</summary>
         public void PuppetAllNow()
         {
             foreach (var kvp in WorldRegistry.AllEnemies())
             {
                 var e = kvp.Value;
                 if (e == null) continue;
-                ulong id = kvp.Key;
-                if (_clientPuppeted.Contains(id)) continue;
-                Puppet(e);
-                _clientPuppeted.Add(id);
+                var p = PuppetOf(kvp.Key);
+                if (p.Halted) continue;
+                try
+                {
+                    Halt(e);
+                    p.Halted = true;
+                }
+                catch (Exception ex) { Guard.Swallow("EnemySync.Halt", ex); }
             }
         }
 
-        /// <summary>Offline / StopNetwork: re-enable AI that PuppetAllNow disabled.</summary>
+        /// <summary>Offline / StopNetwork: re-enable AI that the puppets disabled.</summary>
         public void UnpuppetAllNow()
         {
             foreach (var kvp in WorldRegistry.AllEnemies())
             {
                 var e = kvp.Value;
                 if (e == null) continue;
-                try { e.enabled = true; } catch (Exception ex) { Guard.Swallow(ex); }
-                try { if (e.agent != null) e.agent.enabled = true; } catch (Exception ex) { Guard.Swallow(ex); }
+                try
+                {
+                    e.enabled = true;
+                    if (e.agent != null) e.agent.enabled = true;
+                }
+                catch (Exception ex) { Guard.Swallow("EnemySync.Unhalt", ex); }
             }
-            _clientPuppeted.Clear();
+            _puppets.Clear();
         }
 
         public void OnSceneChanged()
         {
-            _clientPuppeted.Clear();
-            _interp.Clear();
-            _lastAnimTime.Clear();
+            _puppets.Clear();
             SyncRADation.Patches.EnemySpawnerPatches.ClearAdopted();
             ClientDamageService.OnSceneChanged();
             _mapHits = 0;
             _mapMisses = 0;
             _sendTimer = 0f;
             _snapList.Clear();
-            _lastSnapHp.Clear();
-            _altAiGeneration = -1;
-            _basics = Array.Empty<BasicEnemy>();
-            _cooks = Array.Empty<EnemyCookBase>();
-            _enemyRooms.Clear();
-            _wakeRefusedUntil.Clear();
-            _enemyRoomsGeneration = -1;
+            ClearHostCache();
         }
 
         public void Reset()
@@ -923,7 +872,9 @@ namespace SyncRADation.Networking
             OnSceneChanged();
         }
 
-        // PuzzleStateMessage EnemyManagerState — WorldRegistry scan (never FindObjectsOfType).
+        // ------------------------------------------------------------------ PuzzleState (EnemyManager / global alert)
+
+        /// <summary>EnemyManagerState from the registry (never FindObjectsOfType).</summary>
         internal static bool TryReadPuzzle(EnemyManager x, long wid, out PuzzleStateEntry entry)
         {
             entry = default;
