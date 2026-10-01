@@ -64,9 +64,10 @@ namespace SyncRADation.Networking
             try { wasUnlocked = x.unlocked; } catch (System.Exception e) { Guard.Swallow(e); }
             bool localUse = PerPlayerUse(x);
             // Inter snap always (FullRefresh + cinematic): keep party-wide UseItems
-            // inert so joiners cannot re-use mid-refresh. Do NOT latch unlocked=true
-            // when !MutateWorld — late-join FullRefresh would burn the false→true
-            // edge before ReapplyHeld can Invoke onSuccessful (Disk/Tarot/Graves).
+            // inert so joiners cannot re-use mid-refresh. A per-player use does not latch
+            // unlocked on a dump. A party-wide one latches the flag (an unlatched flag would
+            // be polled back to the host as a relock) but runs onSuccessful only on a live
+            // apply (ReplayWorld): a join dump or held re-snap never replays it.
             try
             {
                 if (x.inter != null)
@@ -142,7 +143,8 @@ namespace SyncRADation.Networking
             // Gate false→true so host-local Dialoguer (already Invoked) and re-Emit
             // already-unlocked snaps do not double-fire non-idempotent cinematics.
             // PerPlayerUse (airlock / PEN_Titles) stays local — no party onSuccessful.
-            if (!wasUnlocked && !localUse)
+            // Live only (ReplayWorld): the consequences (disk / tarot card) ride their own puzzle entries in a dump.
+            if (!wasUnlocked && !localUse && PuzzleSyncService.ReplayWorld)
             {
                 NetGate.BeginApply();
                 try

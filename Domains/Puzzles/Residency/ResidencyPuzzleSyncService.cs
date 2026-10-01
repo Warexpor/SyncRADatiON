@@ -59,8 +59,7 @@ namespace SyncRADation.Networking
                 case PuzzleType.MultiKeyLock:
                 {
                     var x = (MultiKeyLock)c;
-                    // Derive unlocked from keys[] — never call checkLock() on the poll path
-                    // (Apply calls it when unlocking).
+                    // Derive unlocked from keys[] (what native checkLock() computes).
                     bool unlocked = false;
                     try
                     {
@@ -354,9 +353,10 @@ namespace SyncRADation.Networking
         public static void ApplyMultiKeyLock(MultiKeyLock x, PuzzleStateEntry e)
         {
             if (x == null) return;
+            // keys[] is the whole lock state: checkLock() is a pure predicate over it (Ghidra MultiKeyLock.c, no
+            // writes), so unpacking keys is the unlock; the door / interaction consequences follow.
             UnpackBoolArray(x.keys, e.Int0);
             if (!e.Bool0) return;
-            try { x.checkLock(); } catch (System.Exception ex) { Guard.Swallow(ex); }
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
             try { PuzzleSyncService.DisableInteractions(x); } catch (System.Exception ex) { Guard.Swallow(ex); }
         }

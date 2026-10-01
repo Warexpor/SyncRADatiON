@@ -1,7 +1,7 @@
 // Live shared keypads: Keypad3D (safes, radio code lock), ROT_Keypad, PEN_Codepad (six-wheel cryo codepad).
 // Both players type into one shared code; each press replays on the other side through the native coroutine
 // (button push / wheel flip, its sound, the red blink on a wrong code), Ghidra Keypad3D.c / ROT_Keypad.c /
-// PEN_Codepad.c. Wire (PuzzleStateEntry, merged whole by PuzzleSyncService.IsAtomicIntsType):
+// PEN_Codepad.c. Wire (PuzzleStateEntry, merged whole by PuzzleMerge.IsAtomicIntsType):
 //   Keypad3D / ROT_Keypad: Int0..Int2 = code digits, one nibble each (8 per int, 24 max);
 //     Int3 = length | key << 8 (last pressed key index + 1, 0 = none) | seq << 13 | wrong << 21.
 //   PEN_Codepad: Int0 = six 3-bit wheel values; Int3 = op | seq << 8 (op 1..6 up wheel, 7..12 down, 13 reset,
@@ -15,7 +15,7 @@ namespace SyncRADation.Networking
     public static class KeypadLive
     {
         const int MaxDigits = 24;
-        const int KeyClear = 10, KeySubmit = 11;
+        const int KeySubmit = 11;
         const int OpReset = 13, OpSubmit = 14;
 
         struct Op { public int Seq; public int Key; public bool Wrong; }

@@ -88,8 +88,6 @@ namespace SyncRADation.Networking
                     }
                     return false;
                 }
-                case PuzzleType.DoorLockControl:
-                    return PuzzleDoorFlagsSyncService.TryRead(type, c, wid, out entry);
                 case PuzzleType.DoorLockEventInteraction:
                 {
                     var x = (DoorLockEventInteraction)c;
@@ -460,9 +458,6 @@ namespace SyncRADation.Networking
             try { x.Gold = (bits & 16) != 0; } catch (System.Exception e) { Guard.Swallow(e); }
             try { x.Star = (bits & 32) != 0; } catch (System.Exception e) { Guard.Swallow(e); }
         }
-
-        public static void ApplyDoorLockControl(DoorLockControl x, PuzzleStateEntry e, bool mutateWorld)
-            => PuzzleDoorFlagsSyncService.ApplyDoorLockControl(x, e, mutateWorld);
 
         public static void ApplyDoorLockEvent(DoorLockEventInteraction x, PuzzleStateEntry e)
         {

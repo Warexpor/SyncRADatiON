@@ -26,15 +26,18 @@ namespace SyncRADation.Networking
                 case PuzzleType.EXC_Elevator:
                 {
                     var x = (EXC_Elevator)c;
-                    float moverY = 0f;
-                    try
+                    // Native Update scrolls pos.z (Repeat over distance) and writes mover.localPosition = pos every
+                    // frame (Ghidra EXC_Elevator.c); mover Y never changes. Float0 = pos.z where the cabin stopped.
+                    // While riding it stays 0: each peer scrolls its own shaft, and a moving float would resend
+                    // every poll and snap the shaft backwards by the latency.
+                    float stopZ = 0f;
+                    bool riding = x.riding, stopped = x.stopped;
+                    if (stopped && !riding)
                     {
-                        if (x.mover != null)
-                            moverY = x.mover.localPosition.y;
+                        try { stopZ = x.pos.z; } catch (System.Exception e) { Guard.Swallow(e); }
                     }
-                    catch (System.Exception e) { Guard.Swallow(e); }
-                    // Bool0=riding Bool1=stopped Float0=mover Y (late-join / mid-ride pose).
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.riding, x.stopped, false, 0, 0, 0, 0, moverY);
+                    // Bool0=riding Bool1=stopped Float0=stopped pos.z.
+                    entry = PuzzleDomainUtil.Mk(type, wid, riding, stopped, false, 0, 0, 0, 0, stopZ);
                     return true;
                 }
                 default:
@@ -75,22 +78,16 @@ namespace SyncRADation.Networking
             try { wasRiding = x.riding; } catch (System.Exception ex) { Guard.Swallow(ex); }
             x.riding = e.Bool0;
             x.stopped = e.Bool1;
-            // Prefer final stopped pose; when riding, start native ride once.
-            if (e.Bool1)
+            // Prefer final stopped pose (the host's pos.z, then native stopInstant re-reads it from the mover);
+            // when riding, start native ride once.
+            if (e.Bool1 && !e.Bool0)
             {
+                SnapExcStop(x, e.Float0);
                 try { x.stopInstant(); }
-                catch
+                catch (System.Exception ex)
                 {
-                    try
-                    {
-                        if (x.mover != null)
-                        {
-                            var p = x.mover.localPosition;
-                            p.y = x.distance;
-                            x.mover.localPosition = p;
-                        }
-                    }
-                    catch (System.Exception ex) { Guard.Swallow(ex); }
+                    Guard.Swallow(ex);
+                    try { x.acc = 0f; } catch (System.Exception ex2) { Guard.Swallow(ex2); }
                 }
                 return;
             }
@@ -99,20 +96,19 @@ namespace SyncRADation.Networking
                 try { x.startRide(); }
                 catch (System.Exception ex) { Guard.Swallow(ex); }
             }
-            // Late-join / mid-ride: snap mover Y when provided.
-            if (e.Float0 != 0f || e.Bool0)
+        }
+
+        /// <summary>pos.z drives the mover (Update: mover.localPosition = pos); write both so the pose holds.</summary>
+        static void SnapExcStop(EXC_Elevator x, float z)
+        {
+            try
             {
-                try
-                {
-                    if (x.mover != null)
-                    {
-                        var p = x.mover.localPosition;
-                        p.y = e.Float0;
-                        x.mover.localPosition = p;
-                    }
-                }
-                catch (System.Exception ex) { Guard.Swallow(ex); }
+                var p = x.pos;
+                p.z = z;
+                x.pos = p;
+                if (x.mover != null) x.mover.localPosition = p;
             }
+            catch (System.Exception ex) { Guard.Swallow(ex); }
         }
     }
 }

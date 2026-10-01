@@ -183,6 +183,9 @@ namespace SyncRADation.Networking
 
         internal void EndUnicast(int previousUnicastPlayerId) => _unicastPlayerId = previousUnicastPlayerId;
 
+        /// <summary>True while a join/resync dump is unicast to one peer (sends go only to that peer).</summary>
+        public bool UnicastActive => _unicastPlayerId >= 0;
+
         internal void NotePeerScene(int playerId, string scene) => _peerScenes[playerId] = scene ?? "";
 
         /// <summary>Host: peer reported the same active scene as the host (unknown/transient = assume yes).</summary>

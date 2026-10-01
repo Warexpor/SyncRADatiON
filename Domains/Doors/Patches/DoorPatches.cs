@@ -395,7 +395,7 @@ namespace SyncRADation.Patches
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
             try { net.PickupSync.HideClaimed(null); } catch (System.Exception e) { Guard.Swallow(e); }
-            net.PuzzleSync.QueueReapply();
+            net.PuzzleSync.QueueReapply(__instance);
         }
     }
 
@@ -410,7 +410,7 @@ namespace SyncRADation.Patches
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
             try { net.PickupSync.HideClaimed(null); } catch (System.Exception e) { Guard.Swallow(e); }
-            net.PuzzleSync.QueueReapply();
+            net.PuzzleSync.QueueReapply(__instance);
         }
     }
 }

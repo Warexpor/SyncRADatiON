@@ -345,7 +345,10 @@ namespace SyncRADation.Networking
             // the klick emitter on the darkmode edge, so the flip animates and clicks here too.
             x.darkmode = e.Bool0;
             if (e.Int3 <= 0) return;
-            ApplyTarotCards(x, e.Int0, e.Int1, e.Int3);
+            // A slot the native take/place could not finish differs from the entry: re-apply it next tick, or the
+            // next poll would author that half-applied slot for everyone.
+            if (!ApplyTarotCards(x, e.Int0, e.Int1, e.Int3))
+                PuzzleSyncService.RetryApply(e);
         }
 
         const int TarotEmpty = 0xFF;
@@ -378,13 +381,15 @@ namespace SyncRADation.Networking
             }
         }
 
-        static void ApplyTarotCards(ROT_Tarot x, int lo, int hi, int n)
+        /// <summary>False when a slot's native take/place threw (the slot may not match the entry).</summary>
+        static bool ApplyTarotCards(ROT_Tarot x, int lo, int hi, int n)
         {
-            if (x == null || n <= 0) return;
+            if (x == null || n <= 0) return true;
             if (n > 6) n = 6;
             Il2CppReferenceArray<AnItem> cards = null;
             try { cards = x.cards; } catch (System.Exception e) { Guard.Swallow(e); }
-            if (cards == null) return;
+            if (cards == null) return true;
+            bool ok = true;
             // Native TakeCard / PlaceCard (Ghidra ROT_Tarot.c) are the whole slot presentation: the card pickup
             // shown on the slot's pivot (or hidden), the empty-slot placer off (or on), cards[] and the card
             // sound. The 0.5.64 field write had the placer inverted (prompt on a full slot) and never showed the
@@ -401,17 +406,35 @@ namespace SyncRADation.Networking
                 AnItem cur = null;
                 try { cur = cards[i]; } catch (System.Exception e) { Guard.Swallow(e); }
                 if (SameItem(cur, item)) continue;
+                bool took = false;
                 PuzzleFx.Begin(x, silent: !live);
                 try
                 {
-                    if (cur != null) x.TakeCard(cur);
+                    if (cur != null) { x.TakeCard(cur); took = true; }
                     if (item != null) x.PlaceCard(i, item);
                 }
-                catch (System.Exception e) { Guard.Swallow(e); }
+                catch (System.Exception e)
+                {
+                    Guard.Swallow(e);
+                    ok = false;
+                    // A take without its place left the slot empty: put the old card back so the slot never shows
+                    // a state nobody authored (the retry then places the entry's card).
+                    if (took && item != null)
+                    {
+                        try
+                        {
+                            AnItem now = null;
+                            try { now = cards[i]; } catch (System.Exception e2) { Guard.Swallow(e2); }
+                            if (now == null) x.PlaceCard(i, cur);
+                        }
+                        catch (System.Exception e2) { Guard.Swallow(e2); }
+                    }
+                }
                 finally { PuzzleFx.End(); }
             }
             // Moon readout follows cards[]. Load/place path; no inventory remove.
             try { x.SetMoons(); } catch (System.Exception e) { Guard.Swallow(e); }
+            return ok;
         }
 
         static bool SameItem(AnItem a, AnItem b)
@@ -977,7 +1000,7 @@ namespace SyncRADation.Networking
                 {
                     LockSyncService.InvokeApplying(x.onSolved);
                     x.useRing();
-                });
+                }, at: x);
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
         }
 
@@ -1147,15 +1170,58 @@ namespace SyncRADation.Networking
                 PuzzleFx.Press(x, x.TurnDialSFX);
             bool was = x.solved;
             if (!e.Bool0) { x.solved = false; return; }
-            // Shutdown is the native lever pull: lever + emitter animation, curve check, hatch. Only once.
-            if (!was)
-            {
-                PuzzleFx.Begin(x, silent: !PuzzleFx.LiveApply);
-                try { x.StartShutdown(); } catch (System.Exception ex) { Guard.Swallow(ex); }
-                finally { PuzzleFx.End(); }
-            }
+            // Shutdown is the native lever pull: lever + emitter animation, curve check, hatch, plus SProgress /
+            // RecordSplit / goBack and later one-shots that outlive PuzzleFx routing. Only a live edge for a player in
+            // the room runs it; a join dump, held re-snap or other-room solve takes the Awake solved pose.
+            PuzzleEdge.Solved("MED_Incinerator", was, true,
+                durable: () => { if (!was) SnapIncineratorSolved(x); },
+                onLive: () =>
+                {
+                    PuzzleFx.Begin(x);
+                    try { x.StartShutdown(); }
+                    finally { PuzzleFx.End(); }
+                },
+                at: x);
             x.solved = true;
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
+        }
+
+        /// <summary>
+        /// Ghidra MED_Incinerator.c Awake, solved branch: shutdown latched, lever down, emitter z 0.5, tiny hatch
+        /// -100, hatch z 100, fire / card glow off, success light on. OnEnable sets the solved FMOD parameter.
+        /// </summary>
+        static void SnapIncineratorSolved(MED_Incinerator x)
+        {
+            if (x == null) return;
+            try { x.shutdown = true; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { x.solved = true; } catch (System.Exception e) { Guard.Swallow(e); }
+            try
+            {
+                if (x.emitter != null)
+                {
+                    var p = x.emitter.localPosition;
+                    p.z = 0.5f;
+                    x.emitter.localPosition = p;
+                }
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.Lever != null) x.Lever.localRotation = Quaternion.Euler(0f, 0f, 0f); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.tinyHatch != null) x.tinyHatch.localRotation = Quaternion.Euler(0f, 0f, -100f); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.tinyLight != null) x.tinyLight.SetActive(false); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.Fire != null) x.Fire.intensity = 0f; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.FireFill != null) x.FireFill.intensity = 0f; } catch (System.Exception e) { Guard.Swallow(e); }
+            try
+            {
+                if (x.hatch != null)
+                {
+                    var r = x.hatch.localRotation.eulerAngles;
+                    x.hatch.localRotation = Quaternion.Euler(r.x, r.y, 100f);
+                }
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.cardGlow != null) x.cardGlow.intensity = 0f; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { if (x.successLight != null) x.successLight.SetActive(true); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { x.OnEnable(); } catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public static void ApplyWaage(LAB_Waage x, PuzzleStateEntry e)
@@ -1302,12 +1368,5 @@ namespace SyncRADation.Networking
             }
             catch (System.Exception e) { Guard.Swallow(e); }
         }
-
-        // Radio peel — façade for any leftover callers.
-        public static void ApplyRadioAlignment(ROT_RadioAlignment x, PuzzleStateEntry e)
-            => RadioPuzzleSyncService.ApplyAlignment(x, e);
-
-        public static void ApplyRadioCode(DET_RadioCodeLock x, PuzzleStateEntry e)
-            => RadioPuzzleSyncService.ApplyCode(x, e);
     }
 }

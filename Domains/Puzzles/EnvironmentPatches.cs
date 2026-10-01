@@ -335,6 +335,9 @@ namespace SyncRADation.Patches
         public static void Postfix(MED_CardWriter __instance)
         {
             if (__instance == null || NetGate.IsApplying) return;
+            // Native Update returns unless gameState == eventScreen (Ghidra MED_CardWriter.c): nothing it writes can
+            // change outside the screen, so the per-frame read + diff runs only while someone is in one.
+            if (PlayerState.gameState != PlayerState.gameStates.eventScreen) return;
             try
             {
                 bool active = false;
@@ -408,7 +411,13 @@ namespace SyncRADation.Patches
     public static class PenReaktorUpdatePatch
     {
         [HarmonyPostfix]
-        public static void Postfix(PEN_Reaktor __instance) => EnvEmit.Reaktor(__instance);
+        public static void Postfix(PEN_Reaktor __instance)
+        {
+            // Native Update moves rods only while its screen is Eventing and gameState == eventScreen (Ghidra
+            // PEN_Reaktor.c): skip the per-frame read + diff the rest of the time.
+            if (PlayerState.gameState != PlayerState.gameStates.eventScreen) return;
+            EnvEmit.Reaktor(__instance);
+        }
     }
 
     [HarmonyPatch(typeof(PEN_Reaktor), "win")]
@@ -427,7 +436,9 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(EXC_Seilbahn __instance)
         {
-            EnvEmit.Progressed(PuzzleType.EXC_Seilbahn, __instance);
+            // goDown() toggles both ways and its coroutine latches down synchronously: read it (a return trip is
+            // down=false; Progressed forced it true).
+            EnvEmit.Read(PuzzleType.EXC_Seilbahn, __instance);
         }
     }
 
@@ -793,18 +804,32 @@ namespace SyncRADation.Patches
     [HarmonyPatch(typeof(BiodomeDoorLock), "Update")]
     public static class BiodomeLockPatch
     {
+        // Last (KeyLevel, hasLock) seen per instance: Update never writes either (Ghidra BiodomeDoorLock.c), so
+        // emit only when one changed instead of a read + diff every frame. Local cache key only, never sent.
+        static readonly System.Collections.Generic.Dictionary<int, int> _last = new System.Collections.Generic.Dictionary<int, int>();
+
+        internal static void Reset() => _last.Clear();
+
         [HarmonyPostfix]
         public static void Postfix(BiodomeDoorLock __instance)
         {
             // Dig AK: KeyLevel mid-hold — ReadOnce only fired once so remount /
             // late-join dropped Int0 until !hasLock. Emit on every KeyLevel /
-            // unlocked change (ChangedOrFirst dedupes).
+            // unlocked change.
             if (__instance == null || NetGate.IsApplying) return;
             try
             {
-                if (__instance.KeyLevel > 0 || !__instance.hasLock)
+                int level = __instance.KeyLevel;
+                bool locked = __instance.hasLock;
+                int sig = (level << 1) | (locked ? 1 : 0);
+                int iid = __instance.GetInstanceID();
+                int prev;
+                if (_last.TryGetValue(iid, out prev) && prev == sig) return;
+                if (_last.Count > 256) _last.Clear();
+                _last[iid] = sig;
+                if (level > 0 || !locked)
                 {
-                    if (!__instance.hasLock)
+                    if (!locked)
                         EnvEmit.Progressed(PuzzleType.BiodomeDoorLock, __instance);
                     else
                         EnvEmit.Read(PuzzleType.BiodomeDoorLock, __instance);

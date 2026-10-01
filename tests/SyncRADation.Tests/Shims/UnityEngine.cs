@@ -22,6 +22,9 @@ namespace UnityEngine
     {
         public static float Sqrt(float f) => (float)Math.Sqrt(f);
         public static float Clamp(float value, float min, float max) => value < min ? min : (value > max ? max : value);
+        // Same formula as UnityEngine.Mathf.Approximately (PuzzleMerge.cs).
+        public static bool Approximately(float a, float b)
+            => Math.Abs(b - a) < Math.Max(1E-06f * Math.Max(Math.Abs(a), Math.Abs(b)), float.Epsilon * 8f);
     }
 
     public class GameObject
