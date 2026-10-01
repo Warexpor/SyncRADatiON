@@ -41,12 +41,25 @@ namespace SyncRADation.Networking
         /// </summary>
         public static void Begin(Component c, bool silent = false)
         {
-            _depth++;
-            if (_depth > 1) return;
-            _at = c != null ? Anchor(c).gameObject : null;
-            _viewing = c != null && Viewing(c);
+            // Never throws: the Unity lookups run before the depth is taken, so a caller outside try cannot leave
+            // Active stuck on (every later one-shot rerouted).
+            if (_depth > 0) { _depth++; return; }
+            GameObject at = null;
+            bool viewing = false;
+            if (c != null)
+            {
+                try
+                {
+                    at = Anchor(c).gameObject;
+                    viewing = Viewing(c);
+                }
+                catch (System.Exception e) { Guard.Swallow(e); }
+            }
+            _at = at;
+            _viewing = viewing;
             _silent = silent;
             NetGate.BeginApply();
+            _depth = 1;
         }
 
         public static void End()

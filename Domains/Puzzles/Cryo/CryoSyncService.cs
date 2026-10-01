@@ -24,7 +24,7 @@ namespace SyncRADation.Networking
             try { id = WorldId.FromGameObject(x.gameObject); } catch (System.Exception e) { Guard.Swallow(e); }
             bool open = false;
             try { open = x.opened; } catch (System.Exception e) { Guard.Swallow(e); }
-            if (!open && !_host.IsHeld(PuzzleType.PEN_Cryo, id) && !_host.CryoFamilyHeldUnmatched())
+            if (!open && !_host.IsHeld(PuzzleType.PEN_Cryo, id) && !_host.HeldUnmatched(PuzzleType.PEN_Cryo, id))
                 return;
             if (!_host.IsHeld(PuzzleType.PEN_Cryo, id))
                 _host.RemapHeld(PuzzleType.PEN_Cryo, id);
@@ -56,7 +56,7 @@ namespace SyncRADation.Networking
                 }
                 catch (System.Exception e) { Guard.Swallow(e); }
             }
-            if (!done && !_host.IsHeld(PuzzleType.CryoDoorLock, id) && !_host.CryoFamilyHeldUnmatched())
+            if (!done && !_host.IsHeld(PuzzleType.CryoDoorLock, id) && !_host.HeldUnmatched(PuzzleType.CryoDoorLock, id))
                 return;
             if (!_host.IsHeld(PuzzleType.CryoDoorLock, id))
                 _host.RemapHeld(PuzzleType.CryoDoorLock, id);

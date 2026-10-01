@@ -106,7 +106,7 @@ namespace SyncRADation.Networking
             // join dump / held re-snap = onLoad (dimPOI only), once. ReapplyHeld used to count as live.
             PuzzleEdge.Solved("MED_Pump", was, true,
                 durable: () => { if (!was) LockSyncService.InvokeApplying(x.onLoad); },
-                onLive: () => LockSyncService.InvokeApplying(x.onSolved));
+                onLive: () => LockSyncService.InvokeApplying(x.onSolved), at: x);
         }
 
         public static void ApplyFlood(MED_FloodedBathroom x, PuzzleStateEntry e, bool cinematic)

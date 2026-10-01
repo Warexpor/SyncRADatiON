@@ -34,7 +34,7 @@ namespace SyncRADation.Networking
                 }
                 catch (System.Exception e) { Guard.Swallow(e); }
             }
-            if (!solved && !_host.IsHeld(PuzzleType.PEN_Codepad, id) && !_host.CryoFamilyHeldUnmatched())
+            if (!solved && !_host.IsHeld(PuzzleType.PEN_Codepad, id) && !_host.HeldUnmatched(PuzzleType.PEN_Codepad, id))
                 return;
             if (!_host.IsHeld(PuzzleType.PEN_Codepad, id))
                 _host.RemapHeld(PuzzleType.PEN_Codepad, id);
@@ -59,7 +59,7 @@ namespace SyncRADation.Networking
                 }
                 catch (System.Exception e) { Guard.Swallow(e); }
             }
-            if (!solved && !_host.IsHeld(PuzzleType.PatternLock, id) && !_host.CryoFamilyHeldUnmatched())
+            if (!solved && !_host.IsHeld(PuzzleType.PatternLock, id) && !_host.HeldUnmatched(PuzzleType.PatternLock, id))
                 return;
             if (!_host.IsHeld(PuzzleType.PatternLock, id))
                 _host.RemapHeld(PuzzleType.PatternLock, id);
@@ -209,9 +209,6 @@ namespace SyncRADation.Networking
                 });
             PuzzleDoorFlagsSyncService.TryUnlockDoors(x.gameObject);
         }
-
-        public static void ApplyCodepadConsequences(PEN_Codepad pad)
-            => ApplyCodepadConsequences(pad, playAnim: true);
 
         public static void ApplyCodepadConsequences(PEN_Codepad pad, bool playAnim)
         {

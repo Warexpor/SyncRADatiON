@@ -84,7 +84,8 @@ namespace SyncRADation.Networking
                 NetGate.BeginApply();
                 try
                 {
-                    if (PuzzleSyncService.LiveEdge)
+                    // EndCutscene is a cutscene: only for a player in this room (PuzzleEdge.InRoom).
+                    if (PuzzleSyncService.LiveEdge && PuzzleEdge.InRoom(x))
                     {
                         try
                         {

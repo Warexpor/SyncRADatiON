@@ -8,9 +8,10 @@ namespace SyncRADation.Networking
     internal interface IPuzzleDomainHost
     {
         bool IsHeld(PuzzleType type, ulong worldId);
-        bool HeldUnmatched(PuzzleType type);
+        /// <summary>A solved entry of this type is held under a WorldId no local component has, and candidateId is a
+        /// local component of the same type the host never sent (so it is that entry's local copy).</summary>
+        bool HeldUnmatched(PuzzleType type, ulong candidateId);
         void RemapHeld(PuzzleType type, ulong newId);
-        bool CryoFamilyHeldUnmatched();
     }
 
     /// <summary>
