@@ -1,6 +1,6 @@
 ## 0.5.65 — 2026-10-01
 
-Protocol **v18** (`PlayerState` gains the humanoid hips position; puzzle entry fields gain meaning). Live shared puzzle screens.
+Protocol **v18** (`PlayerState` rebuilt for an Animator-less proxy, `PlayerRoster.HostFlags`, pickup counts; see `docs/PROTOCOL.md`). Live shared puzzle screens, then a full code audit (7 reviewers) with about 40 verified bugs fixed and a structural refactor of every domain.
 
 ### Added
 - **Live shared puzzles** — two players zoomed into the same puzzle see each other's input as it happens, with the native animation and sound:
@@ -13,7 +13,36 @@ Protocol **v18** (`PlayerState` gains the humanoid hips position; puzzle entry f
 - **Merged concurrent input** — pattern lock and key grid merge per light/node, tarot per slot, keypads and the evidence locker whole (no interleaved codes). A merge-type edit is never dropped as stale, the host relays every merge to everyone, and a client skips stale echoes of its own presses (`IsOwnStaleEcho`), so both screens end on the same state.
 
 ### Fixed
-- **Other player's model lifting off the floor now and then** (both directions, since the first co-op builds) — Elster's clips are humanoid (muscle curves + `RootT`), so the one position the Animator writes is the hips. Bone sync sent rotations only, and the proxy's hips came from its own Animator, which runs on its own clock and drifts in phase and state (walk bob, hurt / pickup / stomp states the proxy enters late, early or not at all) from the sender's. The sender's legs on a hips height that was not theirs left the feet floating. `PlayerState` now carries the sender's hips `localPosition` (`HasHips` + `HipsX/Y/Z`, protocol v18); it rides the bone snapshot timeline and overwrites the proxy Animator's hips after the bone rotations, so the proxy's pose is the sender's. A large correction logs `[Proxy] hips corrected d=… proxyState=…`.
+- **Other player's model lifting off the floor now and then** (both directions, since the first co-op builds) — Elster's clips are humanoid (muscle curves + `RootT`), so the one position the Animator writes is the hips. Bone sync sent rotations only, and the proxy's hips came from its own Animator, which runs on its own clock and drifts in phase and state from the sender's; the sender's legs on a hips height that was not theirs left the feet floating. `PlayerState` now carries the sender's hips `localPosition`, and the proxy no longer has an Animator at all (see Changed): its pose is exactly the sender's bones + hips.
+- **Combat**
+  - **Client shots and melee did no damage to normal enemies** — native `PlayerAttack` lowers `Hitbox.HP` before `TakeDamage`; the client forwarded only the hit chances and the next snapshot restored the HP, so a client could only kill through a crit stagger + stomp. The client now sends the HP its hit took off (`EnemyDamage.Damage`) and the host applies it before native `TakeDamage`. The 0-arg `TakeDamage` keeps vanilla `noSneak = true`; a failed host apply no longer retries (double damage).
+  - **Enemy torso hits never reached a remote player** (hurtbox test point offset along planar Y; up is −Z). Friendly fire (opt-in) was broken the same way and fired on any trigger press: now one ray per live round, damage clamped.
+  - **Chimera / Mynah fight could run a second local copy on a client** (`startFightSequence` unpatched): blocked on clients. **Kolibri** feedback hit no longer double-staggers / double-hurts.
+  - Downed players are no longer chased; a client copy of a spawned enemy no longer plays the host's wake shake/rumble.
+- **Items**
+  - **A peer leaving brought back every item it picked up in that scene** (duplication) — the "orphan release" could not have a real orphan; removed.
+  - **Picking up a world item could shift other items' ids on that machine** (they then duplicated or hid for one player): object ids are now pinned at scene load (`Sync/WorldId` cache), so a native `Destroy` never shifts another object's id. Same fix for door / boss messages that silently missed.
+  - **Taking a dropped stack of a type you already carried gave nothing** and the drop vanished for everyone; now the bag takes what fits and the rest spills back.
+  - **A partial pickup duplicated the remainder** (prop + floor drop); now the prop keeps the remainder and every peer sees it.
+  - **TarotDeath hold / full-bag veto** left the prop stuck as taken for everyone.
+  - **Party ring keys were saved into the saver's bag** (and physically added near locks): the masquerade is off inside `SaveManager.Save` and ring keys are never added to a bag.
+  - **Storage**: a put in flight at session end was returned to the bag after the host boxed it (duplication); a partial take that could not edit the box stack deleted the rest of the stack. A dropped story object no longer lands in every client's bag.
+- **Puzzles**
+  - **A solved cryo/pattern entry the client could not match snapped the next unrelated pad/lock in the scene to solved** and unlocked the cryo doors for the party.
+  - **After re-entering a scene the client ignored the host's puzzle updates** (an old stored sequence number outranked the host's restarted one).
+  - **Solving a puzzle started its cutscene for players in other rooms** (mural, pump, radio, incinerator, cable car): live consequences now run only in the solver's room (`PuzzleEdge.InRoom`).
+  - **Cable car rode the wrong way on the observer** and ping-ponged; **echo damping swallowed a real quick re-toggle**; **storage lid sync never worked** (it now poses the lid only, never opening the other player's box screen); **incinerator replayed its whole shutdown on late join**; **room entry reverted recent puzzle changes**; **EXC elevator late-join pose used the wrong axis**; several `Update` postfixes did full reads every frame.
+- **Story**
+  - **One player skipping a dialogue line closed everyone's dialogue** — dialogues are now local (every shipped dialogue is flavor text).
+  - **Pausing during a cutscene could skip a different, unplayed cutscene and block it** (progression blocker); **the pause menu could not open anywhere in PEN_Hole** in co-op.
+  - **A host reload wiped each client's minimap, radio frequency and selected slot**; **time in the memory scene counted once per player** (ending skew + a commit every 0.75 s); **a client that missed the ending broadcast never got the ending**; **a host pulled to another scene by a client kept stuck input**; full story dumps were sent twice and applied in O(n²).
+  - During the wreck/hole split a client runs its own scene's cutscenes instead of waiting for the host.
+- **Players**: ghost proxies of a peer in another scene (wreck/hole split); the remote outfit and hat never synced; a copy of the local weapon could stay in the proxy's hand; proxy footstep/pump/case sounds played late; the ladder cue was wrong; a re-death right after a revive could leave a player downed forever; a bone-count mismatch scrambled the skeleton.
+- **Doors / sound**: in solo, a locked door the game opened during traversal froze (and logged every frame); two players toggling the same door at once could end split; a sliding-door apply could jam the door; a client heard its own world one-shots twice; one-shots now obey the room rule.
+- **3+ players**: a join / resync dump to one player made the others miss changes made at that moment; the host stopped relaying a client's movement while it was loading.
+- **Config**: `SyncPuzzles=false` was switched back on every boot by the old `ExperimentalPuzzles` alias (removed); the sync toggles were per-install and silently desynced — they are now the host's (`PlayerRoster.HostFlags`).
+- **Cheats**: any client could spawn enemies (F11), add keys to the shared ring (F6) or force chapter loads (F7) — now only with the host's `AllowClientCheats` (default off).
+- **Solo**: no WorldId adoption / template scans / renames when nobody is connected; a scene load no longer scans the scene twice.
 - **Incinerator peer solve failed** — the apply wrote A/B/C only: the knobs never turned and `StartShutdown` integrated the default 1/1/1 curve, so the peer got the error buzz and the hatch never opened. The curve (`Yspeed/Yacc1/Yacc2 = n/10`) and knob rotations are set like native `plusX/minusX`, and the shutdown runs once.
 - **Tarot slot prompt inverted on peers** — the apply turned the empty-slot placer on for a full slot and never showed the placed card; it now uses native `PlaceCard` / `TakeCard`.
 - **Elemental card locks never redrew on peers** — `MED/LAB_MultiLock` have no `Update`; cards, slot icons and red/green lights are painted like native `OnEnable` (the native insert coroutine runs as a cutscene and cannot be replayed on a player outside the screen).
@@ -21,6 +50,15 @@ Protocol **v18** (`PlayerState` gains the humanoid hips position; puzzle entry f
 - **Library robot jumped between poll samples** — a peer's move glides at the native `movementSpeed` (`LibraryRobotGlide`) and the final cell is sent when the robot stops.
 - **Keypad lockout synced** — the native 0.3 s button-push `blocked` flag was copied to the other player and could leave their keypad deaf; it stays local.
 - **Dead keypad paths** — `Keypad3D.openDoor` / `ROT_Keypad.verify` / `PEN_Codepad.CheckSolution` patches never fired (native `Update` inlines them) and the host `KeypadSubmit` handler built an `openDoor` iterator that never ran; removed (the `KeypadSubmit` kind is retired, solves sync as live puzzle state).
+
+### Changed (structure)
+- **Proxy without an Animator**: every one of Elster's 238 clips only drives humanoid muscles / root / IK goals, so the synced 83 bone rotations + hips replace it fully. The parameter plumbing (~580 lines) is gone; `PlayerState` shrank from 605 to 555 bytes (`PoseFlags`, `AvatarCue`, implied-w facing).
+- **One reset system**: `SessionReset` with `Scene` / `Session` / `Connection` scopes replaces three overlapping mechanisms (registry + explicit stop list + ~10 `OnSceneChanged` chains). `StaticStateGuardTests` fails on any mutable static that is neither reset nor marked `// persistent: <reason>`.
+- **Dump completeness**: `DumpFlush` runs every domain's `FlushDiffNow` before a join / resync dump; full sends inside a unicast never record "already sent".
+- **`Diagnostics` pref** (default off) gates the per-frame traces (Flicker / Move / Bag / EventCam, Harmony phase timing, stall breakdown, full patch audit). `VerboseLogging` is log volume only.
+- **Network send cadence on unscaled time** everywhere: no game pause can stall sync.
+- **Inventory owns storage + key ring** (moved out of Story); one claim record per in-flight pickup replaces eight parallel maps; one FMOD emitter table replaces ~10 caches; Story split into cutscene / commit / ending files with one start + one skip window; enemy/boss/door ids from registry lookups (no per-frame hierarchy hashing).
+- Hundreds of single-field `try/catch` collapsed to one per method; dead code and changelog-style comments removed.
 
 ## 0.5.64 — 2026-10-01
 
