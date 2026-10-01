@@ -46,9 +46,7 @@ namespace SyncRADation.Players
         public static bool Intercept(int damage, Vector2 dir, bool hug)
         {
             if (_replaying) return true;
-            PlayerState.gameStates gs;
-            try { gs = PlayerState.gameState; }
-            catch { return true; }
+            var gs = PlayerState.gameState;
             if (!MenuState(gs)) return true;
 
             // Several hits while the screen closes: keep the heaviest (native i-frames would eat the rest anyway).
@@ -78,16 +76,14 @@ namespace SyncRADation.Players
                 _pending = false;
                 return;
             }
-            PlayerState.gameStates gs;
-            try { gs = PlayerState.gameState; }
-            catch { return; }
+            var gs = PlayerState.gameState;
             if (gs != PlayerState.gameStates.play)
             {
                 if (!_forced && Time.unscaledTime - _at > CloseTimeout && MenuState(gs))
                 {
                     _forced = true;
                     PlaytestLog.Event("Damage", "screen " + gs + " did not close — forcing play");
-                    try { DroppedItemManager.RestorePlay(); } catch (System.Exception e) { Guard.Swallow(e); }
+                    DroppedItemManager.RestorePlay();
                 }
                 return;
             }
@@ -116,36 +112,27 @@ namespace SyncRADation.Players
                         var inv = Object.FindObjectOfType<InventoryBase>();
                         if (inv != null)
                         {
-                            try { if (inv.intMenuOn) inv.ToggleInteractMenu(); } catch (System.Exception e) { Guard.Swallow(e); }
+                            if (inv.intMenuOn) inv.ToggleInteractMenu();
                             if (PlayerState.gameState == PlayerState.gameStates.inventory) inv.ToggleInventory();
                         }
                         break;
                     case PlayerState.gameStates.book:
                         foreach (var bs in Object.FindObjectsOfType<BookScreen>())
                         {
-                            if (bs == null) continue;
-                            bool open = false;
-                            try { open = bs.open; } catch (System.Exception e) { Guard.Swallow(e); }
-                            if (open) bs.StartCoroutine(bs.Close());
+                            if (bs != null && bs.open) bs.StartCoroutine(bs.Close());
                         }
                         break;
                     case PlayerState.gameStates.eventScreen:
                         foreach (var es in Object.FindObjectsOfType<EventScreenInteraction>())
                         {
-                            if (es == null) continue;
-                            bool on = false;
-                            try { on = es.Eventing && !es.returning; } catch (System.Exception e) { Guard.Swallow(e); }
-                            if (on) es.exitEvent();
+                            if (es != null && es.Eventing && !es.returning) es.exitEvent();
                         }
                         break;
                 }
                 // The photo viewer can sit on top of any state.
                 foreach (var em in Object.FindObjectsOfType<EideticModule>())
                 {
-                    if (em == null) continue;
-                    bool viewer = false;
-                    try { viewer = em.viewerMode; } catch (System.Exception e) { Guard.Swallow(e); }
-                    if (viewer) em.DisableViewer(true);
+                    if (em != null && em.viewerMode) em.DisableViewer(true);
                 }
             }
             catch (System.Exception e)

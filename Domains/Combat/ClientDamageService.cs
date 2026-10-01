@@ -67,34 +67,26 @@ namespace SyncRADation.Networking
                 _colliders.Clear();
                 _noClosestPoint.Clear();
             }
-            Hurtbox[] found = null;
-            try { found = Object.FindObjectsOfType<Hurtbox>(true); }
-            catch (System.Exception ex) { WarnOnce("hurtbox scan", ex); }
-            if (found != null)
+            _nextRefresh = now + SafetyRefreshInterval;
+            try
             {
+                var found = Object.FindObjectsOfType<Hurtbox>(true);
                 for (int i = 0; i < found.Length; i++)
                 {
                     var h = found[i];
-                    if (h == null) continue;
-                    var e = new Hb { H = h };
-                    try
+                    // Player melee/stomp boxes (canDamageEnemies) are the local Elster's weapons.
+                    if (h == null || h.canDamageEnemies || h.damage <= 0) continue;
+                    var e = new Hb
                     {
-                        // Player melee/stomp boxes (canDamageEnemies) are the local Elster's weapons.
-                        if (h.canDamageEnemies) continue;
-                        e.Damage = h.damage;
-                        if (e.Damage <= 0) continue;
-                        e.Go = h.gameObject;
-                        if (e.Go == null) continue;
-                        e.Hid = h.GetInstanceID();
-                        e.Pulse = h.pulseTime > 0.25f ? h.pulseTime : 0.5f;
-                    }
-                    catch { continue; }
-
-                    Collider col;
-                    if (!_colliders.TryGetValue(e.Hid, out col) || col == null)
+                        H = h,
+                        Go = h.gameObject,
+                        Damage = h.damage,
+                        Hid = h.GetInstanceID(),
+                        Pulse = h.pulseTime > 0.25f ? h.pulseTime : 0.5f
+                    };
+                    if (!_colliders.TryGetValue(e.Hid, out Collider col) || col == null)
                     {
-                        try { col = e.Go.GetComponent<Collider>(); }
-                        catch (System.Exception ex) { WarnOnce("hurtbox collider", ex); col = null; }
+                        col = e.Go.GetComponent<Collider>();
                         _colliders[e.Hid] = col;
                         if (col != null && !SupportsClosestPoint(col))
                             _noClosestPoint.Add(e.Hid);
@@ -105,7 +97,7 @@ namespace SyncRADation.Networking
                     _hurtboxes.Add(e);
                 }
             }
-            _nextRefresh = now + SafetyRefreshInterval;
+            catch (System.Exception ex) { WarnOnce("hurtbox scan", ex); }
         }
 
         static bool SupportsClosestPoint(Collider col)
@@ -174,14 +166,10 @@ namespace SyncRADation.Networking
             {
                 int pid = ids[i];
                 if (!PeerSameScene(net, pid)) continue;
-                if (PartyVitals.IsDown(pid)) continue; // downed peers are not targets (0.5.57)
+                if (PartyVitals.IsDown(pid)) continue; // downed peers are not targets
                 var proxy = pm.GetProxy(pid);
                 if (proxy == null || proxy.GameObject == null || proxy.LastDead) continue;
-                try
-                {
-                    _targets.Add(new Target { Pid = pid, Pos = proxy.GameObject.transform.position });
-                }
-                catch (System.Exception ex) { WarnOnce("proxy position", ex); }
+                _targets.Add(new Target { Pid = pid, Pos = proxy.GameObject.transform.position });
             }
             return _targets.Count > 0;
         }
@@ -218,16 +206,12 @@ namespace SyncRADation.Networking
             for (int i = 0; i < all.Count; i++)
             {
                 var hb = all[i];
-                Bounds b;
-                try
-                {
-                    if (hb.H == null || hb.Go == null || hb.Col == null) continue;
-                    if (!hb.H.enabled || !hb.Go.activeInHierarchy || !hb.Col.enabled) continue;
-                    // Once per hurtbox, not once per target.
-                    b = hb.Col.bounds;
-                    b.Expand(0.4f);
-                }
-                catch { continue; }
+                // Destroyed since the scan (projectile, despawn): Unity's null check, no interop call.
+                if (hb.H == null || hb.Go == null || hb.Col == null) continue;
+                if (!hb.H.enabled || !hb.Go.activeInHierarchy || !hb.Col.enabled) continue;
+                // Once per hurtbox, not once per target.
+                Bounds b = hb.Col.bounds;
+                b.Expand(0.4f);
 
                 for (int t = 0; t < _targets.Count; t++)
                 {
@@ -261,29 +245,25 @@ namespace SyncRADation.Networking
 
         static bool Overlaps(Collider col, Bounds b, bool noClosest, int hid, Vector3 feet)
         {
+            // Proxy root sits at the feet; also test roughly chest height so torso-level volumes connect.
+            // SIGNALIS walks the XY plane: up is -Z.
+            var mid = feet + new Vector3(0f, 0f, -0.9f);
+            if (!b.Contains(mid) && !b.Contains(feet)) return false;
+            if (noClosest) return true;
             try
             {
-                // Proxy root sits at the feet; also test roughly chest height so torso-level volumes connect.
-                // SIGNALIS walks the XY plane: up is -Z.
-                var mid = feet + new Vector3(0f, 0f, -0.9f);
-                if (!b.Contains(mid) && !b.Contains(feet)) return false;
-                if (noClosest) return true;
-                try
-                {
-                    var cp = col.ClosestPoint(mid);
-                    if ((cp - mid).sqrMagnitude <= 0.6f * 0.6f) return true;
-                    var cf = col.ClosestPoint(feet);
-                    return (cf - feet).sqrMagnitude <= 0.6f * 0.6f;
-                }
-                catch (System.Exception ex)
-                {
-                    // Unexpected collider type: fall back to its bounds from now on.
-                    WarnOnce("ClosestPoint", ex);
-                    _noClosestPoint.Add(hid);
-                    return true;
-                }
+                var cp = col.ClosestPoint(mid);
+                if ((cp - mid).sqrMagnitude <= 0.6f * 0.6f) return true;
+                var cf = col.ClosestPoint(feet);
+                return (cf - feet).sqrMagnitude <= 0.6f * 0.6f;
             }
-            catch { return false; }
+            catch (System.Exception ex)
+            {
+                // Unexpected collider type: fall back to its bounds from now on.
+                WarnOnce("ClosestPoint", ex);
+                _noClosestPoint.Add(hid);
+                return true;
+            }
         }
 
         // --- Weapon-less enemy melee (EnemyController.Hit direct branch) ---------------------------
@@ -327,21 +307,14 @@ namespace SyncRADation.Networking
             var net = LanNetworkManager.Instance;
             if (net == null || net.Role != NetworkRole.Host || !net.IsConnected) return;
             if (e == null || net.GetPlayerCount() <= 1) return; // lone host: nothing but native Hit
+            // Runs in the EnemyController.Hit prefix: a failure here must never stop the native swing.
             try
             {
-                if (e.WeaponHurtbox != null) return;
-                if (e.state == EnemyController.enemystate.dead) return;
-                if (e.staggerType != EnemyController.hurtState.none) return;
-            }
-            catch { return; }
+                if (e.WeaponHurtbox != null || e.state == EnemyController.enemystate.dead
+                    || e.staggerType != EnemyController.hurtState.none) return;
+                if (!CollectTargets(net)) return;
 
-            if (!CollectTargets(net)) return;
-
-            float range = 2.5f;
-            float angle = 0f;
-            float dmg = 20f;
-            try
-            {
+                float range = 2.5f, angle = 0f, dmg = 20f;
                 var preset = e.Preset;
                 if (preset != null)
                 {
@@ -349,42 +322,33 @@ namespace SyncRADation.Networking
                     angle = preset.attackAngle;
                     dmg = preset.damage;
                 }
-            }
-            catch (System.Exception ex) { WarnOnce("enemy preset", ex); }
+                // Native Hit: whiffs when attackAngle <= angle, so an attackAngle of 0 never hits the player.
+                if (angle <= 0f) return;
 
-            Transform et;
-            try { et = e.transform; } catch { return; }
-            if (et == null) return;
-            var ep = et.position;
-            var fwd = et.forward;
-
-            // Native Hit: whiffs when attackAngle <= angle, so an attackAngle of 0 never hits the player.
-            if (angle <= 0f) return;
-
-            ulong id;
-            WorldRegistry.TryGetEnemyId(e, out id);
-            // Enemies without a registered WorldId must not share one swing-time slot.
-            long baseKey = id != 0 ? unchecked((long)id) : -(long)e.GetInstanceID();
-            float now = Time.time;
-            for (int i = 0; i < _targets.Count; i++)
-            {
-                var tg = _targets[i];
-                var d3 = tg.Pos - ep;
-                // Native distance is Vector2.Distance(transform.position, playerPos.position) on (x, y).
-                float dist = Mathf.Sqrt(d3.x * d3.x + d3.y * d3.y);
-                if (dist > range + RangeSlack) continue;
-                // Native angle is Vector3.Angle(forward, toPlayer) in 3D.
-                if (dist > 0.1f && fwd.sqrMagnitude > 0.0001f)
+                var et = e.transform;
+                var ep = et.position;
+                var fwd = et.forward;
+                WorldRegistry.TryGetEnemyId(e, out ulong id);
+                // Enemies without a registered WorldId must not share one swing-time slot.
+                long baseKey = id != 0 ? unchecked((long)id) : -(long)e.GetInstanceID();
+                float now = Time.time;
+                for (int i = 0; i < _targets.Count; i++)
                 {
-                    if (Vector3.Angle(fwd, d3) >= angle + AngleSlack) continue;
+                    var tg = _targets[i];
+                    var d3 = tg.Pos - ep;
+                    // Native distance is Vector2.Distance(transform.position, playerPos.position) on (x, y).
+                    float dist = Mathf.Sqrt(d3.x * d3.x + d3.y * d3.y);
+                    if (dist > range + RangeSlack) continue;
+                    // Native angle is Vector3.Angle(forward, toPlayer) in 3D.
+                    if (dist > 0.1f && fwd.sqrMagnitude > 0.0001f && Vector3.Angle(fwd, d3) >= angle + AngleSlack) continue;
+                    long key = unchecked(baseKey * 256L + tg.Pid);
+                    if (_swingTime.TryGetValue(key, out float last) && now - last < MinSwingGap) continue;
+                    _swingTime[key] = now;
+                    net.SendEnemyDamage(tg.Pid, id, dmg, true);
+                    PlaytestLog.Verbose("Damage", "swing " + et.name + " dmg=" + dmg.ToString("F0") + " -> p" + tg.Pid);
                 }
-                long key = unchecked(baseKey * 256L + tg.Pid);
-                float last;
-                if (_swingTime.TryGetValue(key, out last) && now - last < MinSwingGap) continue;
-                _swingTime[key] = now;
-                net.SendEnemyDamage(tg.Pid, id, dmg, true);
-                PlaytestLog.Verbose("Damage", "swing " + et.name + " dmg=" + dmg.ToString("F0") + " -> p" + tg.Pid);
             }
+            catch (System.Exception ex) { WarnOnce("enemy hit", ex); }
         }
     }
 }
