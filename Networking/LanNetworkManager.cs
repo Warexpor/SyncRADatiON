@@ -79,24 +79,6 @@ namespace SyncRADation.Networking
         public GameObject GetLocalPlayer() => _localPlayer;
         public void SetLocalPlayer(GameObject go) { _localPlayer = go; }
 
-        // Subscriber lists of the Connected/Disconnected events: registered once by domains, persistent by design.
-        // persistent: boot-time event subscribers
-        private static Action _connected;
-        // persistent: boot-time event subscribers
-        private static Action _disconnected;
-
-        public static event Action Connected
-        {
-            add { _connected = (Action)Delegate.Combine(_connected, value); }
-            remove { _connected = (Action)Delegate.Remove(_connected, value); }
-        }
-
-        public static event Action Disconnected
-        {
-            add { _disconnected = (Action)Delegate.Combine(_disconnected, value); }
-            remove { _disconnected = (Action)Delegate.Remove(_disconnected, value); }
-        }
-
         public LanNetworkManager()
         {
             Instance = this;
@@ -356,13 +338,6 @@ namespace SyncRADation.Networking
             {
                 _net.Stop();
                 _net = null;
-            }
-
-            if (_role != NetworkRole.Offline)
-            {
-                var d = _disconnected;
-                if (d != null)
-                    d();
             }
 
             _role = NetworkRole.Offline;
@@ -877,10 +852,6 @@ namespace SyncRADation.Networking
                 ModRuntime.Log?.Msg("[Network] Handshake OK, player " + senderId + " ready (" + GetPlayerCount() + " players)");
                 WorldRegistry.RebuildIfStale();
                 SceneHandlers.BroadcastSceneHello();
-
-                var hostConnected = _connected;
-                if (hostConnected != null) hostConnected();
-
                 BroadcastPlayerRoster();
                 SessionHandlers.SendFullWorldSnapshot(senderId);
                 PartySaveService.SendJoinToken(this, senderId);
@@ -916,10 +887,6 @@ namespace SyncRADation.Networking
             ModRuntime.Log?.Msg("[Network] Handshake OK, local playerId=" + _localPlayerId);
             WorldRegistry.RebuildIfStale();
             SceneHandlers.BroadcastSceneHello();
-
-            var connected = _connected;
-            if (connected != null) connected();
-
             _enemySync.PuppetAllNow();
         }
 

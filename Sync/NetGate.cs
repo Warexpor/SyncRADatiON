@@ -83,7 +83,7 @@ namespace SyncRADation.Sync
         }
 
         // ---- Raw transport role (no handshake requirement). Use inside packet handlers / teardown paths where the
-        // role matters but IsConnected may already be false (StopNetwork's Disconnected callbacks), and for UI.
+        // role matters but IsConnected may already be false (StopNetwork clears the handshake before the role), and for UI.
 
         /// <summary>Transport running in any role: hosting, connecting or connected (Role != Offline).</summary>
         public static bool Active

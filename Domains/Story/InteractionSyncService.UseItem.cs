@@ -114,13 +114,13 @@ namespace SyncRADation.Networking
 
         private static void ConsumeKey(AnItem key)
         {
-            // Ring drop + EnsureInBag mirror strip on all peers via CraftRevokeSentinel fan-out.
+            // Ring drop + bag copy strip on all peers via CraftRevokeSentinel fan-out.
             try { PartyKeyRing.RevokeConsumed(key._item); } catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         /// <summary>
         /// Host-local UseItem unlock (Dialoguer onMessageEvent / dialogueOver) never sends an InteractionRequest, only
-        /// clients do: run the same ConsumesKey ring revoke ApplyUseItem would, so every peer's EnsureInBag mirror drops.
+        /// clients do: run the same ConsumesKey ring revoke ApplyUseItem would, so every peer's bag copy drops.
         /// Idempotent with ApplyUseItem / CraftRevokeSentinel.
         /// </summary>
         public static void HostRevokeIfConsumed(UseItemInteraction u)
@@ -208,7 +208,7 @@ namespace SyncRADation.Networking
         /// ConnectedDoors.ConsumesKey: native Unlock() (DoorNative.ApplyConnectedDoors) only copies the flag + key onto
         /// the AutoTraverseDoor InteractiveLockSingle siblings, it never RemoveItem. The UseItem is often a CD descendant
         /// while those sit on the A/B siblings, so GetComponentInParent/Children from the UseItem never sees them (the
-        /// same EnsureInBag bag-mirror softlock as InteractiveLock.ConsumesKey). The key enum must match, so default
+        /// same ring / bag copy softlock as InteractiveLock.ConsumesKey). The key enum must match, so default
         /// ConsumesKey=true templates with a null key do not false-revoke.
         /// </summary>
         static bool ConnectedDoorsConsume(UseItemInteraction u, AnItem key)

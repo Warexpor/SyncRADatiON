@@ -115,7 +115,7 @@ namespace SyncRADation.Networking
             if (count < 1) count = 1;
             var item = InventoryManager.getItem((Items.itemlist)enumVal);
             if (item == null) return;
-            // Bag entries can be a different AnItem instance than the catalog one (ring-seeded copies).
+            // Bag entries can be a different AnItem instance than the catalog one: remove the one the bag holds.
             InventoryManager.RemoveItem(PartyKeyRing.FindInBag(item) ?? item, count);
         }
     }

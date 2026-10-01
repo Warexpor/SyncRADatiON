@@ -221,12 +221,12 @@ namespace SyncRADation.Players
 
                 foreach (var entry in itemsToDrop)
                 {
-                    // Party ring is SoT for unique Key/Object. Bag copies are EnsureInBag /
-                    // grant mirrors. Floor-dropping them DetachDroppedKey-clears the ring
+                    // Party ring is SoT for unique Key/Object. Bag copies are claim / storage
+                    // grants. Floor-dropping them DetachDroppedKey-clears the ring
                     // for every peer while box / WorldId claim may still hold the real unique
                     // → ghost floor + UseItem softlock. Never floor uniques on death: Note
                     // onto the ring if the bag somehow held one the ring missed (race), then
-                    // strip the bag mirror only. G-drop still transfers ownership.
+                    // strip the bag copy only. G-drop still transfers ownership.
                     if (PartyKeyRing.IsKeyOrObject(entry.enumVal))
                     {
                         if (!PartyKeyRing.Has(entry.enumVal))

@@ -51,8 +51,8 @@ namespace SyncRADation.Networking
             }
             else if (unique && have >= 1)
             {
-                // Unique Key/Object already boxed (often via PartyKeyRing.EnsureInBag
-                // re-seeding a bag copy). Absorb sender bag; do not stack the box.
+                // Unique Key/Object already boxed (another peer put it first, or a put race).
+                // Absorb sender bag; do not stack the box.
                 PlaytestLog.Event("StorageBox", "put absorb unique have=" + have
                     + " item=" + msg.Int0 + " from=" + msg.SenderPlayerId);
                 sync?.FlushDiffNow();

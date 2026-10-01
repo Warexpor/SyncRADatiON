@@ -28,8 +28,8 @@ namespace SyncRADation.Patches
         public static void Postfix(bool __state)
         {
             if (!__state) return; // native Load returned immediately: nothing was loaded
+            if (!NetGate.WorldOwner) return;
             var net = LanNetworkManager.Instance;
-            if (NetGate.ClientRole) return;
             try
             {
                 bool wipe = HostReload.OnLoadFinished();
@@ -64,8 +64,8 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix()
         {
+            if (!NetGate.WorldOwner) return;
             var net = LanNetworkManager.Instance;
-            if (NetGate.ClientRole) return;
             try
             {
                 HostReload.NoteSlotBound();

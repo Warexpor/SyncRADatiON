@@ -60,8 +60,8 @@ namespace SyncRADation.Networking
         }
 
         /// <summary>
-        /// Key/Object must stay count 1 in the shared box. A put-race or EnsureInBag
-        /// re-seed can inflate the dict; clamp before LWW blob so peers never see stacks.
+        /// Key/Object must stay count 1 in the shared box. A put-race (two peers boxing the same unique) can
+        /// inflate the dict; clamp before LWW blob so peers never see stacks.
         /// </summary>
         public void ClampUniqueKeyStacks()
         {

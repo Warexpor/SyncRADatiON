@@ -84,8 +84,8 @@ namespace SyncRADation.Networking
             var net = LanNetworkManager.Instance;
             if (msg.ItemEnums == null) return;
 
-            // Craft/consume revoke: strip ring + EnsureInBag bag mirrors on every peer.
-            // Snapshot Broadcast alone leaves peer bag ghosts (InLocalBag still true).
+            // Craft/consume revoke: strip the ring entry and any physical bag copy on every peer.
+            // A snapshot Broadcast alone would leave a peer's bag copy behind (InLocalBag still true).
             if (msg.ItemEnums.Length > 0 && msg.ItemEnums[0] == CraftRevokeSentinel)
             {
                 for (int i = 1; i < msg.ItemEnums.Length; i++)
@@ -99,7 +99,7 @@ namespace SyncRADation.Networking
                     + (NetGate.HostRole ? " host" : " peer"));
                 if (NetGate.Host)
                 {
-                    // Fan-out sentinel so non-crafter clients strip mirrors too.
+                    // Fan-out sentinel so non-crafter clients strip their bag copies too.
                     try { net.InventoryHandlers.SendPartyKeyRing(msg.ItemEnums); } catch (System.Exception e) { Guard.Swallow(e); }
                     Broadcast();
                 }
@@ -162,7 +162,7 @@ namespace SyncRADation.Networking
 
         /// <summary>
         /// After a successful <c>CombineRecipes.combine</c>, drop Key/Object ingredients
-        /// from the party ring and strip EnsureInBag bag mirrors. Host fans out
+        /// from the party ring and strip bag copies. Host fans out
         /// CraftRevokeSentinel then Broadcasts; client sends sentinel so host fans out.
         /// </summary>
         public static void ConsumeCraftIngredients(AnItem itemA, AnItem itemB)
@@ -184,8 +184,8 @@ namespace SyncRADation.Networking
         }
 
         /// <summary>
-        /// Ring + bag mirror drop for a consumed unique (UseItem ConsumesKey). Host fans
-        /// out CraftRevokeSentinel so peers who EnsureInBag-mirrored the key also strip.
+        /// Ring + bag copy drop for a consumed unique (UseItem ConsumesKey). Host fans
+        /// out CraftRevokeSentinel so peers holding a bag copy of the key also strip it.
         /// </summary>
         public static void RevokeConsumed(Items.itemlist item)
         {
@@ -213,7 +213,7 @@ namespace SyncRADation.Networking
         }
 
         /// <summary>
-        /// Drop EnsureInBag / grant mirrors of a unique from the local bag when the
+        /// Drop physical bag copies (claim / storage grants) of a unique from the local bag when the
         /// party ring revokes it (craft combine, UseItem consume, G-drop DetachDroppedKey).
         /// Mirrors ConsumeDropped on the dropper; remotes strip via this helper.
         /// </summary>
@@ -252,8 +252,7 @@ namespace SyncRADation.Networking
         public static ushort[] Export() => Snapshot();
 
         /// <summary>
-        /// Party wipe / load: replace the ring with a saved snapshot (host) and forget bag
-        /// mirror bookkeeping. Caller broadcasts.
+        /// Party wipe / load: replace the ring with a saved snapshot (host). Caller broadcasts.
         /// </summary>
         public static void Import(ushort[] enums)
         {

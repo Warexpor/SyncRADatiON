@@ -603,7 +603,7 @@ namespace SyncRADation.Networking
             return list.ToArray();
         }
 
-        /// <summary>Empty the local bag (keys too; the ring re-mirrors them) and refill from entries.</summary>
+        /// <summary>Empty the local bag (keys too; party keys stay usable through the ring masquerade) and refill from entries.</summary>
         public static void RestoreBag(BagEntry[] entries)
         {
             if (entries == null) return;

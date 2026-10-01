@@ -39,7 +39,7 @@ namespace SyncRADation.Patches
                 AirlockCinematic.NoteLocalUnlock(u);
             if (!_sent.Add(id)) return;
             // Host unlocks via native Dialoguer (no InteractionRequest). Revoke ConsumesKey
-            // ring + EnsureInBag mirrors the same as ApplyUseItem (0.5.17).
+            // ring + bag copies the same as ApplyUseItem (0.5.17).
             if (NetGate.Host)
             {
                 try { InteractionSyncService.HostRevokeIfConsumed(u); } catch (System.Exception e) { Guard.Swallow(e); }

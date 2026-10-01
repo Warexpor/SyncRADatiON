@@ -391,7 +391,7 @@ namespace SyncRADation.Networking
                 var an = InventoryManager.getItem(t.Item);
                 if (an != null)
                 {
-                    // Bag entries may be a different AnItem instance than the catalog one (ring-seeded copies).
+                    // Bag entries may be a different AnItem instance than the catalog one: remove the one the bag holds.
                     if (take > 0) InventoryManager.RemoveItem(PartyKeyRing.FindInBag(an) ?? an, take);
                     if (magGain > 0)
                     {

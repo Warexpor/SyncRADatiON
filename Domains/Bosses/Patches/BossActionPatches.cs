@@ -84,7 +84,7 @@ namespace SyncRADation.Patches
             /// <summary>
             /// Native Stabbed removes SpearItem from the HOST bag only (first MoveNext, Ghidra END_Boss.c). The
             /// spear usually lives on the party ring / a client bag, so a local host press must also retire it
-            /// there (ring drop + bag-mirror strip + fan-out). Client-requested stabs do the same in
+            /// there (ring drop + bag copy strip + fan-out). Client-requested stabs do the same in
             /// BossSyncService.ApplyHitOnHost, outside the apply gate.
             /// </summary>
             [HarmonyPostfix]
