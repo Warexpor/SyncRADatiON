@@ -11,6 +11,12 @@ namespace SyncRADation.Sync
         // Reverse map enemy -> WorldId (local GetInstanceID key, never sent). Hit-time lookup must not
         // recompute WorldId from the hierarchy: sibling order shifts when spawns/dupes are added.
         private static readonly Dictionary<int, ulong> EnemyIds = new Dictionary<int, ulong>();
+        // First WorldId computed for an enemy instance in this scene, kept across rebuilds. Enemy hierarchy paths
+        // drift after load (room managers reparent / siblings go away), and a rebuild on the host alone would then
+        // give 9 of 13 enemies ids the client never computed. Both peers pin the id their first scan produced.
+        private static readonly Dictionary<int, ulong> StickyEnemyIds = new Dictionary<int, ulong>();
+        private static readonly HashSet<int> _driftLogged = new HashSet<int>();
+        private static string _stickyScene = "";
         private static readonly Dictionary<ulong, Doorway_Double> DoubleDoors = new Dictionary<ulong, Doorway_Double>();
         private static readonly Dictionary<ulong, ConnectedDoors> ConnectedDoorMap = new Dictionary<ulong, ConnectedDoors>();
         private static readonly Dictionary<ulong, EventSlidingDoor> SlidingDoors = new Dictionary<ulong, EventSlidingDoor>();
@@ -178,6 +184,12 @@ namespace SyncRADation.Sync
             _sceneName = SceneManager.GetActiveScene().name ?? "";
             _lastRebuildScene = _sceneName;
             _lastRebuildAt = Time.realtimeSinceStartup;
+            if (_stickyScene != _sceneName)
+            {
+                StickyEnemyIds.Clear();
+                _driftLogged.Clear();
+                _stickyScene = _sceneName;
+            }
 
             try
             {
@@ -189,7 +201,7 @@ namespace SyncRADation.Sync
                         var e = enemies[i];
                         if (e == null || e.gameObject == null) continue;
                         if (SyncRADation.Cheats.EntitySpawner.IsTemplateObject(e.gameObject)) continue;
-                        ulong id = WorldId.FromGameObject(e.gameObject);
+                        ulong id = StickyEnemyId(e);
                         if (id == 0) continue;
                         EnemyController before;
                         Enemies.TryGetValue(id, out before);
@@ -258,12 +270,50 @@ namespace SyncRADation.Sync
 
         }
 
+        /// <summary>
+        /// The enemy's pinned id: the first hierarchy id computed for this instance in this scene. A later path change
+        /// (reparent, sibling removed) is logged once and ignored, so host and client keep talking about the same enemy.
+        /// SR_Spawn_* names are host-authored and already path-independent.
+        /// </summary>
+        static ulong StickyEnemyId(EnemyController e)
+        {
+            int inst;
+            try { inst = e.GetInstanceID(); } catch (System.Exception ex) { Guard.Swallow(ex); return WorldId.FromGameObject(e.gameObject); }
+            ulong fresh = WorldId.FromGameObject(e.gameObject);
+            ulong sticky;
+            if (!StickyEnemyIds.TryGetValue(inst, out sticky))
+            {
+                if (fresh != 0) StickyEnemyIds[inst] = fresh;
+                return fresh;
+            }
+            if (fresh != sticky && _driftLogged.Add(inst))
+            {
+                string path = "?";
+                try { path = WorldId.GetHierarchyPath(e.transform); } catch (System.Exception ex) { Guard.Swallow(ex); }
+                PlaytestLog.Event("World", "enemy id drift '" + path + "' now " + fresh.ToString("X16")
+                    + " — keeping " + sticky.ToString("X16"));
+            }
+            return sticky;
+        }
+
+        /// <summary>Pinned id of a live enemy instance (0 when it was never registered in this scene).</summary>
+        public static ulong PinnedEnemyId(EnemyController e)
+        {
+            if (e == null) return 0;
+            ulong id;
+            try { return StickyEnemyIds.TryGetValue(e.GetInstanceID(), out id) ? id : 0; }
+            catch (System.Exception ex) { Guard.Swallow(ex); return 0; }
+        }
+
         public static void Clear()
         {
             Generation++;
             WorldLookup.Invalidate();
             Enemies.Clear();
             EnemyIds.Clear();
+            StickyEnemyIds.Clear();
+            _driftLogged.Clear();
+            _stickyScene = "";
             DoubleDoors.Clear();
             ConnectedDoorMap.Clear();
             SlidingDoors.Clear();

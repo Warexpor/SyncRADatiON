@@ -1,6 +1,6 @@
 # SyncRADation — SIGNALIS Multiplayer Mod
 
-**Status:** v0.5.61 — protocol **v16**. Host-authoritative world/story + native presentation/FMOD. Dual-instance playtest required. Decompile: `~/Archive/Windows-Desktop/Dev/SIGNALIS DECOMPILED` (`~/Omarchy_Backup/Desktop/Dev/...` is gone on this machine).
+**Status:** v0.5.62 — protocol **v16**. Host-authoritative world/story + native presentation/FMOD. Dual-instance playtest required. Decompile: `~/Archive/Windows-Desktop/Dev/SIGNALIS DECOMPILED` (`~/Omarchy_Backup/Desktop/Dev/...` is gone on this machine).
 
 ## Product
 
@@ -17,7 +17,7 @@ LAN multiplayer MelonLoader mod for SIGNALIS (Unity IL2CPP / Unhollower-style Ma
 
 Walk up to a dropped prop for the native TAKE prompt (yes/no inspect, ammo count). There is no extra pickup key.
 
-## What is synced (0.5.61)
+## What is synced (0.5.62)
 
 | Area | Authority | Notes |
 |------|-----------|--------|
@@ -179,6 +179,8 @@ secondsignalis
 | `scripts/package.sh` | Release build (no deploy) then `dist/SyncRADation-<ver>.zip`: `Mods/SyncRADation.dll`, `Mods/LiteNetLib.dll`, `INSTALL.md`, `LICENSE`, `CHANGELOG.md`, `LiteNetLib.LICENSE.txt`. `dist/` is gitignored |
 
 **Reproducible dll (MVID):** `NetSchema.Hash` mixes in the module's MVID, so the handshake rejects a stale/modified dll of the same version. The csproj builds `Deterministic` with `PathMap=$(MSBuildProjectDirectory)=/src` and `EnableSourceLink=false` (SourceLink would embed the checkout path + commit hash in the PDB id, hence the MVID), so the MVID depends on the source and references only, not on the checkout directory: the same commit built in two directories (or two worktrees) gives a byte-identical dll and two separately built installs are not rejected. Check with `md5sum` of the two dlls. A different dotnet SDK / reference set can still change it; give both players the same dll when in doubt.
+
+**Unattended dual-box run (this machine):** `--sync-scene <Scene>` loads that chapter the F7 way 4 s after MainMenu (host or offline only; a client follows the host). Host: `steam -applaunch 1262350 --sync-host --sync-scene DET_Detention`; ~60–75 s later client: `secondsignalis --sync-connect 127.0.0.1 7777`. Read both `Latest.log` with `grep -a` (non-UTF8 bytes). Healthy join: `Handshake OK`, `[Puzzle] C client live`, identical `[WorldRegistry] … checksum=` on both, no `WorldId divergence`, no `[Guard]`. Stop the games with `pgrep -f '[S]IGNALIS\.exe' | xargs -r kill` (a bare `pkill -f SIGNALIS.exe` also matches your own shell).
 
 `LiteNetLib.dll` is **not** merged into the mod DLL; it is a separate reference (`Private=true`, from `lib/`) that ships next to it in `Mods/`.
 

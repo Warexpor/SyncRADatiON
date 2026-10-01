@@ -50,6 +50,7 @@ Authority + reverse-check: repo root `AGENTS.md`. Protocol **16** wire in `Netwo
 | Client quit-to-menu / host→MainMenu ends the session | `Networking/LanNetworkManager.SessionEnd` (`EndSession`) | Uses `RejectPeer` / `RequestStop` / `_stopReason` |
 | Shared-RVA (folded) patch firing for a foreign `this` | `Sync/Il2CppRealType` (`Is<T>`) + `docs/RVA_FOLDING.md` | Guard first statement; `RvaFoldingTests` pins the list |
 | `[Hitch] phase=` / stall lines (per-phase ms, frame stall breakdown) | `Sync/HitchTrace` (`Begin`/`End`/`FrameBegin`) + `Sync/HarmonyPhaseTiming` | Phase markers in `ModRuntime.Update`/`LateUpdate`; `HarmonyPhaseTiming.Install` wraps every patched Update/LateUpdate/FixedUpdate |
+| Scene scan cost / `[World] scan` / enemy `id drift` / `WorldId divergence` | `Sync/WorldScan` (one bucketed scene walk) + `Sync/WorldLookup` + `Sync/WorldRegistry` (`StickyEnemyId`) | Enemy ids pinned per instance per scene; `Invalidate<T>` forces a direct rescan |
 | Dialogue.CallDialogue (host-authored dialogue gate, unique RVA) | `Story/Patches/StoryPatches` (`DialogueCallDialoguePatch`) + `Story/DialoguerGate` | Not folded; `rva_fold_scan.py --check` |
 | Story wire helpers (dirty-key commit entries, caps) | `Networking/Messages/StoryWire` | `StoryWireTests` |
 | Handshake / roster | `Networking/LanNetworkManager` + `Dispatch/` | Peer map |

@@ -126,6 +126,13 @@ namespace SyncRADation.Cheats
             return list;
         }
 
+        /// <summary>Chapter load by scene name (same path as the F7 click); used by the <c>--sync-scene</c> boot argument.</summary>
+        public static void LoadChapterByName(string scene)
+        {
+            if (string.IsNullOrEmpty(scene)) return;
+            LoadChapter(new LocationEntry(scene, scene));
+        }
+
         private static void LoadChapter(LocationEntry loc)
         {
             if (NetGate.Client)

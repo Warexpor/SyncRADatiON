@@ -15,10 +15,16 @@ namespace SyncRADation.Sync
         static readonly Dictionary<Type, Dictionary<ulong, Component>> _idByType
             = new Dictionary<Type, Dictionary<ulong, Component>>();
 
+        // Types whose cache was dropped mid-scene (runtime-instantiated components): the next All<T> walks the
+        // scene for that one type instead of re-reading the shared WorldScan buckets, which predate the spawn.
+        static readonly HashSet<Type> _directRescan = new HashSet<Type>();
+
         public static void Invalidate()
         {
             _allByType.Clear();
             _idByType.Clear();
+            _directRescan.Clear();
+            WorldScan.Invalidate();
             _sceneName = "";
         }
 
@@ -28,6 +34,7 @@ namespace SyncRADation.Sync
             Type t = typeof(T);
             _allByType.Remove(t);
             _idByType.Remove(t);
+            _directRescan.Add(t);
         }
 
         static void EnsureScene()
@@ -38,6 +45,8 @@ namespace SyncRADation.Sync
             if (name == _sceneName) return;
             _allByType.Clear();
             _idByType.Clear();
+            _directRescan.Clear();
+            WorldScan.Invalidate();
             _sceneName = name;
         }
 
@@ -49,11 +58,12 @@ namespace SyncRADation.Sync
             if (_allByType.TryGetValue(t, out cached))
                 return (T[])cached;
 
-            T[] found = ScanAll<T>();
+            T[] found = (!_directRescan.Contains(t) && WorldScan.Supports<T>()) ? WorldScan.All<T>() : ScanAll<T>();
             _allByType[t] = found ?? Array.Empty<T>();
             return (T[])_allByType[t];
         }
 
+        /// <summary>Direct per-type scene walk (non-MonoBehaviour types and post-spawn rescans).</summary>
         static T[] ScanAll<T>() where T : UnityEngine.Object
         {
             try { return UnityEngine.Object.FindObjectsOfType<T>(true); }

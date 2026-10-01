@@ -4,7 +4,7 @@ namespace SyncRADation
     public static class PluginInfo
     {
         public const string Name = "SyncRADation";
-        public const string Version = "0.5.61";
+        public const string Version = "0.5.62";
         public const string Author = "Warexpor";
         public const string Description = "LAN multiplayer mod for SIGNALIS — host-authoritative world/story, native client UX";
         /// <summary>Protocol v16: v15 + StoryCommit.Authoritative (full commit after a host SaveManager.Load / NewGame replaces the client's SProgress); the handshake tail read is guarded.

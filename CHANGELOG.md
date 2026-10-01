@@ -1,3 +1,20 @@
+## 0.5.62 — 2026-10-01
+
+Protocol **v16** (no wire change). First in-level dual-instance run (host + client in `DET_Detention`, driven by the new `--sync-scene`) found a real WorldId bug and a scan cost; both fixed and re-verified in the same run setup. **Gameplay is still untested by a human.**
+
+### Fixed
+- **Enemy WorldId drift after load** — 9 of 13 DET_Detention enemies changed hierarchy path between the host's first scan and a later rebuild (`Room/Enemy Manager/EULR[0]` → `Room/Enemy Manager/Enemy 1 EULR[0]`), so a host rebuild on client join gave them ids the client never computed: `WorldId divergence … enemies 13/13!`, client `[Enemy] map misses=639` against 284 hits, those enemies frozen for the client. `WorldRegistry` now pins the first id computed for each enemy instance in a scene (`StickyEnemyId`); later drift is logged once (`[World] enemy id drift '<path>' now X — keeping Y`) and ignored. Re-run: identical checksum on both peers, no divergence, no misses.
+
+### Added
+- **`Sync/WorldScan.cs`** — one `FindObjectsOfType<MonoBehaviour>(true)` per scene bucketed by Il2Cpp class (native `il2cpp_class_is_subclass_of` match) instead of one full scene walk per synced type (~85 per load across puzzles, doors, enemies, pickups, emitters). `DET_Detention` (8.4k behaviours, 411 classes): ~17–30 ms once. `WorldLookup.Invalidate<T>()` still forces a direct per-type rescan for runtime-spawned components. Logs `[World] scan objects=N classes=M T ms`.
+- **`--sync-scene <Scene>`** boot argument — host/offline loads that chapter 4 s after MainMenu via the F7 path (`LocationTeleporter.LoadChapterByName`), so a dual-box join into a real level runs unattended. See AGENTS.md "Unattended dual-box run".
+
+### Open risks
+- Pinned enemy ids assume both peers' first scan sees the same paths (true when both load the scene fresh; observed in DET_Detention). A late joiner whose first scan happens after the host's drift would still diverge for those enemies — `[Scene] WorldId divergence` + `SceneDiff` will say so.
+- Join spike: host `pollEvents` ~310 ms while building the full world dump for the joiner (one frame).
+
+Protocol **16**. Product **0.5.62** (not 1.0).
+
 ## 0.5.61 — 2026-10-01
 
 Protocol **v16**. Second-pass review of the 0.5.59 / 0.5.60 fix code: 45 findings fixed across net/session, puzzles/doors/audio, pickups/combat/bosses and story/scene. The first real boot smoke test passed: handshake, join dump and WorldId checksum all OK, patch audit 192 ok / 0 missing, zero `[Guard]` lines. The ~1 s/frame menu stall seen in that run was an environment artifact (compositor / present, not reproducible), so no code change for it; stall diagnostics were added so a recurrence is attributable. **Still not playtested beyond boot and handshake**: compile- and unit-tested only (Release 0 errors / 0 warnings, 511 tests).

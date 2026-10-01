@@ -10,6 +10,9 @@ namespace SyncRADation
     public class SyncRADationMod : MelonMod
     {
         private bool _autoActionDone;
+        // --sync-scene <chapter>: once MainMenu is up, load that chapter the F7 way (host-side playtest driver).
+        private string _autoScene;
+        private float _autoSceneAt = -1f;
 
         public override void OnInitializeMelon()
         {
@@ -25,6 +28,16 @@ namespace SyncRADation
             {
                 _autoActionDone = true;
                 ProcessCommandLine();
+            }
+
+            if (_autoSceneAt >= 0f && UnityEngine.Time.realtimeSinceStartup >= _autoSceneAt)
+            {
+                _autoSceneAt = -1f;
+                string scene = _autoScene;
+                _autoScene = null;
+                LoggerInstance.Msg("[Auto] Loading chapter " + scene);
+                try { Cheats.LocationTeleporter.LoadChapterByName(scene); }
+                catch (System.Exception ex) { LoggerInstance.Error("[Auto] --sync-scene failed: " + ex.Message); }
             }
 
             if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F2))
@@ -60,6 +73,15 @@ namespace SyncRADation
         private void ProcessCommandLine()
         {
             var args = System.Environment.GetCommandLineArgs();
+            // Parsed first: the host/connect branches below return as soon as they match.
+            for (int i = 0; i + 1 < args.Length; i++)
+            {
+                if (args[i] == "--sync-scene")
+                {
+                    _autoScene = args[i + 1];
+                    LoggerInstance.Msg("[Auto] Will load chapter " + _autoScene + " after MainMenu");
+                }
+            }
             for (int i = 0; i < args.Length; i++)
             {
                 if (args[i] == "--sync-host")
@@ -114,6 +136,9 @@ namespace SyncRADation
             if (Cheats.EntitySpawner.OnBankSceneLoaded(sceneName))
                 return;
             ModRuntime.OnSceneChanged();
+            // Give the menu a few seconds to settle before the auto chapter load (a client never loads on its own).
+            if (_autoScene != null && sceneName == "MainMenu" && !Sync.NetGate.Client)
+                _autoSceneAt = UnityEngine.Time.realtimeSinceStartup + 4f;
         }
 
         public override void OnApplicationQuit()
