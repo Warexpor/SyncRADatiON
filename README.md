@@ -78,6 +78,8 @@ To pick up something another player dropped, walk up to it and use the normal TA
 
 **Death:** a dead player is **downed**, not game over. They revive next to the nearest living teammate after `DownedRespawnDelay` seconds (default 20). The party only loses when **everyone is down at once**: the host then reloads its last save and clients get their bag back from the last save snapshot. Friendly fire is off by default.
 
+**No pause in co-op:** while anyone else is connected, the pause menu, inventory, item views, books and dialogue no longer stop the game. Enemies keep moving and can still hurt you, so find a safe spot before you open the inventory.
+
 A solo game (no session running) behaves like vanilla SIGNALIS.
 
 ## Known limitations

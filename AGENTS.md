@@ -36,6 +36,7 @@ Walk up to a dropped prop for the native TAKE prompt (yes/no inspect, ammo count
 | Death | Asymmetric | Client downed (ammo/docs floor bag; **all Key/Object Note onto party ring, never floor** — bag-only race closed); native `HurtElster` HP; host death `SaveManager.Load` for both |
 | Bosses (END / Chimera / Mynah / Kolibri / Adler) | Host | `END_Boss.Elster` / `BOS_Adler.Elster`; Kolibri dead/intensity; **join dump ForceFull**; client skips apply while transient + refreshes empty boss cache; Kolibri/Adler Update **Prefix+Postfix** Hold; Falke `Arenas`/shields/corrupt/`SetBodySpearStates` from snap stage/corrupt; END/Chimera/Mynah HaltBossController (StopAllCoroutines) |
 | Friendly fire | Opt-in | Default OFF |
+| Pause | None in co-op | `NoPausePatch` drops `Time.timeScale = 0` writes (PauseMenu, InventoryBase, ItemPickup view, Dialogue, BookScreen, …) while `NetGate.Party`; slow-mo values pass. Solo / lone host = vanilla |
 | Inventories | Independent | 6-slot bags stay personal; box + key ring are shared |
 
 ## Architecture (0.5.19 Domains)
