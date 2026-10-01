@@ -1,8 +1,9 @@
 // Event-screen click trace (keypads, cryo codepad, any zoom-in puzzle). Native EventScreen3DCam only
 // triggers the interaction under its cursor when gameState == eventScreen, zoom >= 1 and Use (or Attack on
 // controller 1) was pressed (Ghidra EventScreen3DCam.c Update). One line per click with each of those
-// inputs, so "clicks do nothing" names the failing condition. Always on while connected; at most one line
-// per 0.15 s.
+// inputs, so "clicks do nothing" names the failing condition. Diagnostics pref only, while connected; at most one
+// line per 0.15 s.
+using SyncRADation.Config;
 using SyncRADation.Networking;
 using UnityEngine;
 
@@ -21,6 +22,7 @@ namespace SyncRADation.Sync
 
         public static void Tick()
         {
+            if (!ModConfig.DiagnosticsOn) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
             bool inScreen;

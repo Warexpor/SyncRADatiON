@@ -2,6 +2,7 @@
 // by name via reflection still exist? A game update (or an Il2Cpp-unhollower naming quirk) that renames
 // something otherwise fails silently: the patch class is skipped / the lookup returns null and the feature
 // is just dead. Output: ONE "[Harmony] audit: N ok, M missing, T ms" line plus one line per missing item.
+// Runs only with the Diagnostics pref; otherwise one "[Harmony] audit off" line (PatchAllSafe still logs every skipped class).
 // Never throws. Cost is measured and logged (T): resolution only, nothing is invoked except [HarmonyTargetMethod]
 // providers, but it reads custom attributes of every patch method, so it is not "a couple of ms".
 // The name-keyed Shader.Find check runs later (RunLate, first scene load): the shader table is not ready at boot.
@@ -56,6 +57,14 @@ namespace SyncRADation
 
         public static void Run(Type[] types)
         {
+            // The full audit reads the custom attributes of every patch method (tens of ms at boot): Diagnostics only.
+            // Always on regardless: PatchAllSafe's "[Harmony] patched N classes, skipped M" + one line per skipped class.
+            if (!Config.ModConfig.DiagnosticsOn)
+            {
+                ModRuntime.SetPatchAuditOff();
+                ModRuntime.Log?.Msg("[Harmony] audit off (Diagnostics=false)");
+                return;
+            }
             var clock = System.Diagnostics.Stopwatch.StartNew();
             int ok = 0;
             var missing = new List<string>();
@@ -297,6 +306,7 @@ namespace SyncRADation
         /// </summary>
         public static void RunLate()
         {
+            if (!Config.ModConfig.DiagnosticsOn) return; // part of the full audit
             bool found = false;
             try
             {

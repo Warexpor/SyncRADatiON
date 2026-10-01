@@ -40,6 +40,14 @@ namespace SyncRADation
             _patchAuditMissing.Clear();
         }
 
+        /// <summary>Diagnostics off: the full audit did not run (F2 says so instead of a stale "not run").</summary>
+        internal static void SetPatchAuditOff()
+        {
+            PatchAuditOk = true;
+            PatchAuditSummary = "Harmony audit: off (Diagnostics pref)";
+            _patchAuditMissing.Clear();
+        }
+
         /// <summary>A late (first scene load) audit item went missing: show it in F2 like a boot one.</summary>
         internal static void AddPatchAuditLate(string item)
         {
@@ -91,7 +99,7 @@ namespace SyncRADation
                 Log.Msg("  Game build " + GameBuild.Label + " (handshake rejects a different build)");
                 Log.Msg("  F2 menu | F3 quick connect | G/DROP drop | native TAKE pickup");
                 Log.Msg("  FriendlyFire=" + (ModConfig.FriendlyFire?.Value == true)
-                    + " VerboseLogging=" + VerboseLogging);
+                    + " VerboseLogging=" + VerboseLogging + " Diagnostics=" + ModConfig.DiagnosticsOn);
                 Log.Msg("  Host MelonLoader log:");
                 Log.Msg("    ~/.local/share/Steam/steamapps/common/SIGNALIS/MelonLoader/Latest.log");
                 Log.Msg("  Client MelonLoader log:");
@@ -100,6 +108,8 @@ namespace SyncRADation
                 Log.Msg("  grep always-on: [Story] [Interact] [KeyRing] [StorageBox] [Scene] [Damage]");
                 Log.Msg("    [Door] [Puzzle] [Pickup] [Harmony] [Hitch] [Spawn] [Enemy] [Proxy] [Weapon]");
                 Log.Msg("  VerboseLogging also: [FMOD] Play/Stop, [Proxy]/[DRV] clone/FX, puzzle diffs");
+                Log.Msg("  Diagnostics also: [Room] [Proxy] vis/jump, [Enemy] client/wake, [Move] [Bag] [EventCam],");
+                Log.Msg("    [Hitch] phase=/stall, full [Harmony] audit");
                 Log.Msg("  Hitch tags (spike-only): frame | send gap | recv | puzzle | enemy | boss");
                 Log.Msg("    | pickup | weaponClone | 5s sendHz/recvHz/maxSend/maxRecv/maxDt/cost");
                 Log.Msg("=============================================");

@@ -2,8 +2,9 @@
 // gates: gameState, suspendInput*, hurt/stun, animating/useAnim/grappled, cutscene/eventScreen, overrideInput,
 // MoveOverrideActive, the controller's own enabled/playing/traversing, the rigidbody, timeScale, foto mode, tuner.
 // When the local player holds a direction for 1 s and does not move, one [Move] BLOCKED line dumps every gate plus
-// the 3D colliders around the player; [Move] free when walking works again. Always on while connected, at most one
-// BLOCKED line per 4 s.
+// the 3D colliders around the player; [Move] free when walking works again. Diagnostics pref only, while connected; at
+// most one BLOCKED line per 4 s.
+using SyncRADation.Config;
 using SyncRADation.Networking;
 using UnityEngine;
 
@@ -30,6 +31,7 @@ namespace SyncRADation.Sync
 
         public static void Tick()
         {
+            if (!ModConfig.DiagnosticsOn) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) { Reset(); return; }
             GameObject player = null;

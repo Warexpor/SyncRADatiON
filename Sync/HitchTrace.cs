@@ -1,6 +1,8 @@
-// Hitch cadence: send/recv gaps, frame dt, interp mode.
-// Always records; only prints when a threshold trips (no healthy 5s spam).
+// Hitch cadence: send/recv gaps, frame dt, interp mode, per-tick Cost spikes and the 5 s anomaly summary are always on
+// (cheap; prints only when a threshold trips, no healthy 5s spam). Per-phase timing ("phase=") and the frame stall
+// breakdown ("stall dt=") need the Diagnostics pref: Begin() returns 0 and every phase / stall hook returns at once when off.
 using System.Diagnostics;
+using SyncRADation.Config;
 using UnityEngine;
 
 namespace SyncRADation.Sync
@@ -81,13 +83,15 @@ namespace SyncRADation.Sync
 
         // ---------------------------------------------------------------- phase cost + stall breakdown
 
-        public static long Begin() => Stopwatch.GetTimestamp();
+        /// <summary>Phase start stamp; 0 (and End is a no-op) unless the Diagnostics pref is on.</summary>
+        public static long Begin() => ModConfig.DiagnosticsOn ? Stopwatch.GetTimestamp() : 0L;
 
         static float Ms(long ticks) => ticks * 1000f / Stopwatch.Frequency;
 
         /// <summary>Close a timed phase opened with Begin(); prints only when it exceeded PhaseWarnMs.</summary>
         public static void End(string phase, long t0)
         {
+            if (t0 == 0L) return;
             float ms = Ms(Stopwatch.GetTimestamp() - t0);
             if (ms < PhaseWarnMs) return;
             float now = Time.unscaledTime;
@@ -99,7 +103,7 @@ namespace SyncRADation.Sync
         /// <summary>End() for a patched game method: the name is only built when the threshold trips.</summary>
         public static void EndMethod(System.Reflection.MethodBase m, long t0)
         {
-            if (Ms(Stopwatch.GetTimestamp() - t0) < PhaseWarnMs) return;
+            if (t0 == 0L || Ms(Stopwatch.GetTimestamp() - t0) < PhaseWarnMs) return;
             End("harmony:" + (m?.DeclaringType?.Name ?? "?") + "." + (m?.Name ?? "?"), t0);
         }
 
@@ -111,6 +115,9 @@ namespace SyncRADation.Sync
         /// </summary>
         public static void FrameBegin(bool report)
         {
+            // GC counts back the always-on Cost spike lines; the stall breakdown is Diagnostics only.
+            SampleGc(report);
+            if (!ModConfig.DiagnosticsOn) return;
             long now = Stopwatch.GetTimestamp();
             float dt = 0f;
             try { dt = Time.unscaledDeltaTime; } catch (System.Exception e) { Guard.Swallow(e); }
@@ -124,7 +131,6 @@ namespace SyncRADation.Sync
             _prevGuiMs = _guiMs;
             _guiMs = 0f;
             _tUpdBegin = now;
-            SampleGc(report);
         }
 
         /// <summary>Frame-start GC counts: a Cost spike reports the collections since then (two calls per frame, not per Cost).</summary>
@@ -151,18 +157,21 @@ namespace SyncRADation.Sync
 
         public static void FrameEnd()
         {
+            if (!ModConfig.DiagnosticsOn) return;
             _tUpdEnd = Stopwatch.GetTimestamp();
             _prevUpdMs = Ms(_tUpdEnd - _tUpdBegin);
         }
 
         public static void LateBegin()
         {
+            if (!ModConfig.DiagnosticsOn) return;
             _tLateBegin = Stopwatch.GetTimestamp();
             if (_tUpdEnd != 0) _prevScriptMs = Ms(_tLateBegin - _tUpdEnd);
         }
 
         public static void LateEnd()
         {
+            if (!ModConfig.DiagnosticsOn) return;
             _tLateEnd = Stopwatch.GetTimestamp();
             _prevLateMs = Ms(_tLateEnd - _tLateBegin);
         }
@@ -170,6 +179,7 @@ namespace SyncRADation.Sync
         /// <summary>OnGUI runs several times per frame (layout, repaint, input events): accumulate.</summary>
         public static void GuiEnd(long t0)
         {
+            if (t0 == 0L) return;
             _guiMs += Ms(Stopwatch.GetTimestamp() - t0);
         }
 
