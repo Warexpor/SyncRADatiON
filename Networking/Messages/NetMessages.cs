@@ -1570,7 +1570,6 @@ namespace SyncRADation.Networking
         public float EndMemoryTime;
         public int EndDoors;
         public StoryFlagEntry[] Flags;
-        public byte ActiveGameState;
         public long ActiveWorldId;
         public byte ActiveStoryCmd;
         /// <summary>Full commit after a host SaveManager.Load / NewGame: the table replaces the client's SProgress (absent keys are removed).</summary>
@@ -1595,7 +1594,6 @@ namespace SyncRADation.Networking
             w.Put(n);
             for (int i = 0; i < n; i++)
                 Flags[i].Serialize(w);
-            w.Put(ActiveGameState);
             w.Put(ActiveWorldId);
             w.Put(ActiveStoryCmd);
             w.Put(Authoritative);
@@ -1625,7 +1623,6 @@ namespace SyncRADation.Networking
                 for (int i = 0; i < n; i++)
                     msg.Flags[i] = StoryFlagEntry.Deserialize(r);
             }
-            msg.ActiveGameState = r.GetByte();
             msg.ActiveWorldId = r.GetLong();
             msg.ActiveStoryCmd = r.GetByte();
             msg.Authoritative = r.GetBool();

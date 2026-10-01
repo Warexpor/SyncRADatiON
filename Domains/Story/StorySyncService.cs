@@ -218,7 +218,6 @@ namespace SyncRADation.Networking
             };
             try
             {
-                msg.ActiveGameState = (byte)PlayerState.gameState;
                 msg.EndCircle = END_Manager.Circle;
                 msg.EndDeath = END_Manager.Death;
                 msg.EndGraves = END_Manager.Graves;
@@ -234,7 +233,7 @@ namespace SyncRADation.Networking
             net.StoryHandlers.SendStoryCommit(msg);
             if (full)
                 PlaytestLog.Event("Story", "commit full flags=" + flags.Length + " xml=" + xml.Length
-                    + " cmd=" + (replay ? _lastCmd.ToString() : "-") + " gs=" + msg.ActiveGameState
+                    + " cmd=" + (replay ? _lastCmd.ToString() : "-")
                     + (authoritative ? " authoritative" : ""));
         }
 

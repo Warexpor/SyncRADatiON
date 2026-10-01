@@ -20,4 +20,5 @@ Current: `Bootstrap/PluginInfo.cs` `ProtocolVersion`. Port default `7777`, conne
   - `PlayerRoster` gains a trailing `HostFlags` byte: the host's sync toggles, authoritative for clients while connected (1 puzzles, 2 world pickups, 4 vitals, 8 friendly fire, 16 client cheats).
   - `EnemyDamage` in native mode carries the client's measured HP loss in `Damage` (the host lowers `Hitbox.HP` by it before native `TakeDamage`).
   - `WorldPickupEntry.Count` (units left on an untriggered prop, also in the join dump) and `WorldPickupClaimMessage.Remaining` (> 0: a partial take's leftover, host releases the claim).
+  - `StoryCommit` drops the never-read `ActiveGameState` byte.
   - Puzzle field meanings: `EXC_Elevator` `Float0` is the stopped `pos.z` (0 while riding).
