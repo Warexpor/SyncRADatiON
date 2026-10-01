@@ -225,7 +225,7 @@ namespace SyncRADation.Networking
                     if (wasInside && now < next) continue;
 
                     _inside[key] = now + hb.Pulse;
-                    net.SendEnemyDamage(tg.Pid, 0, hb.Damage, true);
+                    net.EnemyHandlers.SendEnemyDamage(tg.Pid, 0, hb.Damage, true);
                     PlaytestLog.Verbose("Damage", "hurtbox " + hb.Go.name + " dmg=" + hb.Damage + " -> p" + tg.Pid);
                 }
             }
@@ -344,7 +344,7 @@ namespace SyncRADation.Networking
                     long key = unchecked(baseKey * 256L + tg.Pid);
                     if (_swingTime.TryGetValue(key, out float last) && now - last < MinSwingGap) continue;
                     _swingTime[key] = now;
-                    net.SendEnemyDamage(tg.Pid, id, dmg, true);
+                    net.EnemyHandlers.SendEnemyDamage(tg.Pid, id, dmg, true);
                     PlaytestLog.Verbose("Damage", "swing " + et.name + " dmg=" + dmg.ToString("F0") + " -> p" + tg.Pid);
                 }
             }

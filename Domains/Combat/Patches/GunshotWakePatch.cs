@@ -26,7 +26,7 @@ namespace SyncRADation.Patches
             if (NetGate.Host)
                 InteractionSyncService.HandleRequest(msg);
             else
-                LanNetworkManager.Instance.SendInteractionRequest(
+                LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(
                     0, InteractionKind.Gunshot, 0, 0, pos.x, pos.y, pos.z, "");
         }
     }

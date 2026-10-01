@@ -77,7 +77,7 @@ namespace SyncRADation.Networking
                     return true;
                 }
                 if (!StartedHere(c) && _stamps.TryRequest(id, Now))
-                    LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.CutsceneStart);
+                    LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(id, InteractionKind.CutsceneStart);
                 return false;
             }
             catch (System.Exception e) { Guard.Swallow(e); }
@@ -129,7 +129,7 @@ namespace SyncRADation.Networking
                     LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.CutsceneSkip, id, 0, StoryWire.HostCounted);
                 // Wreck / hole split: the host has no such cutscene; the skip stays local like the start did.
                 else if (!AirlockCinematic.ClientSplitFromHost())
-                    LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.CutsceneSkip);
+                    LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(id, InteractionKind.CutsceneSkip);
                 return running;
             }
             catch (System.Exception e) { Guard.Swallow(e); }
@@ -150,7 +150,7 @@ namespace SyncRADation.Networking
                 }
                 // Wreck / hole split: the host has no such cut, a request would leave this cutscene stuck.
                 if (AirlockCinematic.ClientSplitFromHost()) return true;
-                LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.CutsceneProceed);
+                LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(id, InteractionKind.CutsceneProceed);
                 return false;
             }
             catch (System.Exception e) { Guard.Swallow(e); }

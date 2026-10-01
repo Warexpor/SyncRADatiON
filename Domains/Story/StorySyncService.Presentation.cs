@@ -26,7 +26,7 @@ namespace SyncRADation.Networking
             if (!net.HasReadyPeers) return;
             PlaytestLog.Event("Story", "send " + cmd + " id=" + worldId.ToString("X16") + " i=" + int0
                 + (string.IsNullOrEmpty(text) ? "" : " '" + text + "'"));
-            net.SendStoryPresentation(new StoryPresentationMessage
+            net.StoryHandlers.SendStoryPresentation(new StoryPresentationMessage
             {
                 WorldId = unchecked((long)worldId),
                 Cmd = cmd,

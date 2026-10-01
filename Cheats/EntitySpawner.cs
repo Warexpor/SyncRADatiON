@@ -106,7 +106,7 @@ namespace SyncRADation.Cheats
                     SetStatus("Host does not allow client cheats", true);
                     return;
                 }
-                LanNetworkManager.Instance?.SendEnemySpawnRequest(typeKey, pos, rotY);
+                LanNetworkManager.Instance?.EnemyHandlers.SendEnemySpawnRequest(typeKey, pos, rotY);
                 SetStatus("Requested host spawn: " + typeKey);
                 PlaytestLog.Event("Spawn", "request " + typeKey);
                 return;
@@ -225,7 +225,7 @@ namespace SyncRADation.Cheats
             SetStatus("Spawned " + typeKey);
 
             if (broadcast && NetGate.Live && NetGate.Host)
-                net?.BroadcastEnemySpawn(new EnemySpawnMessage
+                net?.EnemyHandlers.BroadcastEnemySpawn(new EnemySpawnMessage
                 {
                     Seq = seq,
                     TypeKey = typeKey,
@@ -306,7 +306,7 @@ namespace SyncRADation.Cheats
             if (broadcast && NetGate.Live && NetGate.Host)
             {
                 var p = ec.transform.position;
-                net?.BroadcastEnemySpawn(new EnemySpawnMessage
+                net?.EnemyHandlers.BroadcastEnemySpawn(new EnemySpawnMessage
                 {
                     Seq = seq,
                     TypeKey = typeKey,
@@ -329,7 +329,7 @@ namespace SyncRADation.Cheats
                 string type;
                 if (!TryParseSpawnName(e.gameObject.name, out seq, out type)) continue;
                 var p = e.transform.position;
-                net.BroadcastEnemySpawn(new EnemySpawnMessage
+                net.EnemyHandlers.BroadcastEnemySpawn(new EnemySpawnMessage
                 {
                     Seq = seq,
                     TypeKey = type,

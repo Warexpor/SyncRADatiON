@@ -15,7 +15,7 @@ namespace SyncRADation.Patches
             if (__instance == null) return true;
             if (NetGate.Host) return true;
             if (AirlockCinematic.ClientSplitFromHost()) return true; // the host has no such object (wreck / hole split)
-            LanNetworkManager.Instance.SendInteractionRequest(
+            LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(
                 WorldId.FromGameObject(__instance.gameObject), InteractionKind.MultiCondition, 0);
             return false;
         }
@@ -42,7 +42,7 @@ namespace SyncRADation.Patches
             if (__instance == null) return true;
             if (NetGate.Host) return true;
             if (AirlockCinematic.ClientSplitFromHost()) return true; // the host has no such object (wreck / hole split)
-            LanNetworkManager.Instance.SendInteractionRequest(
+            LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(
                 WorldId.FromGameObject(__instance.gameObject), InteractionKind.MultiCondition, 1);
             return false;
         }

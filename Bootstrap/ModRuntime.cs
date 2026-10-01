@@ -13,8 +13,6 @@ namespace SyncRADation
     {
         // persistent: process logger
         public static MelonLogger.Instance Log;
-        /// <summary>Forward kept for domain call sites; new code uses LanNetworkManager.Instance (the one accessor).</summary>
-        public static LanNetworkManager Network => LanNetworkManager.Instance;
         public static bool VerboseLogging => ModConfig.VerboseLogging?.Value == true;
 
         // persistent: boot-once flag (the network manager lives for the process)
@@ -167,7 +165,7 @@ namespace SyncRADation
             try { BagTrace.Tick(); } catch (System.Exception e) { Guard.Swallow(e); }
             try { MoveTrace.Tick(); } catch (System.Exception e) { Guard.Swallow(e); }
             try { MenuHit.Tick(); } catch (System.Exception e) { Guard.Swallow(e); }
-            try { DroppedItemManager.TickDeferred(); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { DroppedItemRegistry.TickDeferred(); } catch (System.Exception e) { Guard.Swallow(e); }
             HitchTrace.End("dropTick", tp);
             tp = HitchTrace.Begin();
 

@@ -86,7 +86,7 @@ namespace SyncRADation.Patches
                 if (_lastRequest.TryGetValue(id, out last) && Time.unscaledTime - last < 0.25f)
                     return false;
                 _lastRequest[id] = Time.unscaledTime;
-                LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.EventZone);
+                LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(id, InteractionKind.EventZone);
             }
             catch (System.Exception e) { Guard.Swallow(e); }
             return false;

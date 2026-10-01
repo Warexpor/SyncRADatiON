@@ -82,7 +82,7 @@ namespace SyncRADation.Networking
                 int[] remote = net.GetRemotePlayerIds();
                 BuildSnapshots(net, pm, remote);
                 if (_snapList.Count > 0)
-                    net.SendEnemyState(_snapList);
+                    net.EnemyHandlers.SendEnemyState(_snapList);
                 if (!dump)
                     RetargetAltAi(net, pm, remote);
             }

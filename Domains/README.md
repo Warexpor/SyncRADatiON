@@ -34,7 +34,7 @@ Authority: `docs/SYNC.md`; reverse-check rule: repo root `AGENTS.md`. Wire in `N
 | Airlock / PEN_Titles / wreck↔hole | `Scene/AirlockCinematic` + `Scene/Patches/` | Never SceneFollow wreck↔hole |
 | Scene follow / F7 chapter | `Scene/SceneFollowService` + `Scene/Patches/SceneLoadPatches` | Host load |
 | World authored pickup claim | `Pickups/WorldPickupSyncService` (one `Take` record per in-flight take) + `WorldPickupNetHandlers` + `Pickups/Patches/ItemPickupPatches` | Host claim/grant; partial take releases the claim with the remainder (`Count` / `Remaining`) |
-| Player-dropped prop (G / TAKE) | `Pickups/DroppedItem*` (Registry, Spawner, NetHandlers) + `Pickups/Patches/DroppedTakePatches` | Peer spawn + host claim; `DroppedItemManager` is a forward kept for a few outside callers |
+| Player-dropped prop (G / TAKE) | `Pickups/DroppedItem*` (Registry, Spawner, NetHandlers) + `Pickups/Patches/DroppedTakePatches` | Peer spawn + host claim |
 | Party key ring names / hasItem / getCount (masquerade) | `Inventory/PartyKeyRing` + `Inventory/Patches/PartyKeyRingPatches` | Key/Object only; off inside `SaveManager.Save` and `ItemPickup.release`; never a physical bag copy |
 | Client enemy actions (stomp Kill/KillSilent, Knockback, GetPushed, Burndown, WakeUp) | `Enemies/Patches/EnemyActionPatches` + `Enemies/EnemyNetHandlers` | `EnemyAction` (63); host sim applies |
 | Enemies / alert bits | `Enemies/` (+ `Patches/EnemySpawnerPatches`) | WorldId; wake sleeping chunks; **client never EnemySpawner.FixedUpdate**; host adopts `_Child` → `SR_Spawn_*` + `EnemySpawn` |
@@ -71,7 +71,11 @@ Authority: `docs/SYNC.md`; reverse-check rule: repo root `AGENTS.md`. Wire in `N
 2. **SyncService** — scan/tick/apply world state (often WorldId-keyed).
 3. **Patches** — Harmony emit/block; apply usually goes through SyncService/NetHandlers.
 
-**Dropped items:** Registry (lookup/lifecycle) + Spawner (clone/floor) + NetHandlers (drop/claim wire). Call them directly; `DroppedItemManager` only forwards for the few callers that still use it.
+**Dropped items:** Registry (lookup/lifecycle) + Spawner (clone/floor) + NetHandlers (drop/claim wire), called directly. `DroppedItemManager` keeps one forward (`IsDroppedGo`) for Puzzles/Codepad only.
+
+**Role checks:** domain code asks `Sync/NetGate` (`Host`/`Client`/`Party`/`Live` need the handshake; `HostRole`/`ClientRole`/`Active`/`WorldOwner` are the raw transport role for packet handlers and teardown). Only `LanNetworkManager` reads `_role` itself.
+
+**Net façade:** call the owning handler (`net.DoorHandlers.SendDoorState(...)`, `net.InteractionHandlers...`). `LanNetworkManager.PublicApi.cs` keeps only `SendPuzzleState` / `RequestWorldSnapshot` for PuzzleSyncService.
 
 **Puzzles:** `PuzzleSyncService` = coordinator (scan, tick, held, `_mutateWorld`, host relay), driven by the `PuzzleSpecs` table. Domain SyncServices own family TryRead/Apply/snap; patches emit through `EnvEmit.Edge`.
 

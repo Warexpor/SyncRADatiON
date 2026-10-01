@@ -187,7 +187,7 @@ namespace SyncRADation.Networking
         static void SendFollow(string sceneName)
         {
             var net = LanNetworkManager.Instance;
-            if (net != null && net.IsConnected) net.SendSceneFollow(sceneName, false);
+            if (net != null && net.IsConnected) net.SceneHandlers.SendSceneFollow(sceneName, false);
         }
 
         // ------------------------------------------------------------------ client: request
@@ -199,7 +199,7 @@ namespace SyncRADation.Networking
             if (IsTransient(sceneName) || AlreadyRequested(sceneName) || AlreadyGoingTo(sceneName)) return;
             if (!string.Equals(_requested, sceneName, System.StringComparison.Ordinal)) _retries = 0;
             NoteRequested(sceneName);
-            net.SendSceneFollow(sceneName, true);
+            net.SceneHandlers.SendSceneFollow(sceneName, true);
         }
 
         /// <summary>Client tick: re-ask when a blocked / queued request never produced a load.</summary>
@@ -227,7 +227,7 @@ namespace SyncRADation.Networking
             _retries++;
             NoteRequested(scene);
             PlaytestLog.Event("Scene", "re-request '" + scene + "' (attempt " + (_retries + 1) + ")");
-            net.SendSceneFollow(scene, true);
+            net.SceneHandlers.SendSceneFollow(scene, true);
         }
 
         // ------------------------------------------------------------------ host: a peer's request
@@ -283,7 +283,7 @@ namespace SyncRADation.Networking
             }
             // A peer's request drags the host out of whatever it was doing: same sticky-state teardown as a follower's
             // Apply (open inventory / menu / dialogue / cutscene state would survive the load).
-            try { DroppedItemManager.RestorePlayForLoad(); }
+            try { DroppedItemRegistry.RestorePlayForLoad(); }
             catch (System.Exception ex) { PlaytestLog.Warn("Scene", "RestorePlayForLoad: " + ex.Message); }
             try
             {
@@ -347,7 +347,7 @@ namespace SyncRADation.Networking
                 _queued = null;
                 // Tell everyone (the requester included) which scene the host is actually in.
                 string here = ActiveScene();
-                if (!IsTransient(here)) net.SendSceneFollow(here, false);
+                if (!IsTransient(here)) net.SceneHandlers.SendSceneFollow(here, false);
                 return;
             }
             if (HostBusyReason(_queued, ActiveScene()) != null) return;
@@ -374,7 +374,7 @@ namespace SyncRADation.Networking
             PlaytestLog.Event("Scene", "follow load '" + sceneName + "' (was '" + cur + "')");
             // An open inventory / menu / dialogue, or a cutscene whose coroutine dies with the unloaded scene, would leave
             // gameState / PlayerState.cutscene / dialogue sticky on the follower: restore play first, like a disconnect.
-            try { DroppedItemManager.RestorePlayForLoad(); }
+            try { DroppedItemRegistry.RestorePlayForLoad(); }
             catch (System.Exception ex) { PlaytestLog.Warn("Scene", "RestorePlayForLoad: " + ex.Message); }
             NetGate.BeginApply();
             try

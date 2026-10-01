@@ -890,7 +890,7 @@ namespace SyncRADation.Networking
                 }
 
                 if (_tickList.Count == 0) return;
-                net.SendWorldPickupState(_tickList, full);
+                net.WorldPickupHandlers.SendWorldPickupState(_tickList, full);
                 HideClaimed(null);
             }
             finally
@@ -904,7 +904,7 @@ namespace SyncRADation.Networking
         {
             var net = LanNetworkManager.Instance;
             if (net == null) return;
-            net.SendWorldPickupState(new[]
+            net.WorldPickupHandlers.SendWorldPickupState(new[]
             {
                 new WorldPickupEntry { WorldId = unchecked((long)id), Triggered = triggered, Active = !triggered, Count = count }
             }, false);

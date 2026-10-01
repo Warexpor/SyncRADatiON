@@ -28,7 +28,7 @@ namespace SyncRADation.Patches
         public static void Postfix(bool __state)
         {
             if (!__state) return; // native Load returned immediately: nothing was loaded
-            var net = ModRuntime.Network;
+            var net = LanNetworkManager.Instance;
             if (NetGate.ClientRole) return;
             try
             {
@@ -64,7 +64,7 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix()
         {
-            var net = ModRuntime.Network;
+            var net = LanNetworkManager.Instance;
             if (NetGate.ClientRole) return;
             try
             {

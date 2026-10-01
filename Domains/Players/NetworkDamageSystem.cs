@@ -59,7 +59,7 @@ namespace SyncRADation.Players
         {
             get
             {
-                var net = ModRuntime.Network;
+                var net = LanNetworkManager.Instance;
                 return net != null && net.IsConnected && net.GetPlayerCount() >= 2;
             }
         }
@@ -117,7 +117,7 @@ namespace SyncRADation.Players
         private static void Die()
         {
             if (_isDead) return;
-            var net = ModRuntime.Network;
+            var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected || !PartyLive) return;
 
             _isDead = true;
@@ -132,7 +132,7 @@ namespace SyncRADation.Players
             _dropAt = _downAt + DropGrace;
 
             PlayDeathSound();
-            net.SendDeathPolicy(DeathKind.ClientDowned);
+            net.CombatHandlers.SendDeathPolicy(DeathKind.ClientDowned);
             net.AvatarHandlers.SendLocalVital();
             PlaytestLog.Event("Damage", (NetGate.HostRole ? "host" : "client")
                 + " downed — respawn in " + ModConfig.DownedRespawnSeconds.ToString("F0") + "s");
@@ -200,7 +200,7 @@ namespace SyncRADation.Players
             var player = PlayerState.player;
             var dict = InventoryManager.elsterItems;
             if (player == null || dict == null) return;
-            Vector3 pos = DroppedItemManager.FloorDropPos(player.transform);
+            Vector3 pos = DroppedItemRegistry.FloorDropPos(player.transform);
 
             try
             {
@@ -240,14 +240,14 @@ namespace SyncRADation.Players
                         continue;
                     }
 
-                    ushort idx = net.AllocateItemIndex();
+                    ushort idx = net.DroppedItemHandlers.AllocateItemIndex();
                     int key = (net.LocalPlayerId << 16) | idx;
                     Vector3 dropPos = pos + new Vector3(
                         Random.Range(-0.35f, 0.35f),
                         Random.Range(-0.08f, 0.08f),
                         0f);
-                    DroppedItemManager.SpawnLocalItem(entry.enumVal, entry.count, key, dropPos);
-                    net.SendDropItem(new DropItemSpawnMessage
+                    DroppedItemSpawner.SpawnLocalItem(entry.enumVal, entry.count, key, dropPos);
+                    net.DroppedItemHandlers.SendDropItem(new DropItemSpawnMessage
                     {
                         SenderID = (byte)net.LocalPlayerId,
                         LocalIndex = idx,
@@ -270,7 +270,7 @@ namespace SyncRADation.Players
 
         public static void HandleDeathPolicy(DeathPolicyMessage msg)
         {
-            var net = ModRuntime.Network;
+            var net = LanNetworkManager.Instance;
             if (net == null || msg.SenderPlayerId == net.LocalPlayerId) return;
 
             // Wipes travel as PartyLife(Wipe); DeathKind.HostWipeReload is never sent (its wire id stays reserved).
@@ -281,7 +281,7 @@ namespace SyncRADation.Players
         /// <summary>Every peer: host announced a revive.</summary>
         public static void ApplyRevive(PartyLifeMessage msg)
         {
-            var net = ModRuntime.Network;
+            var net = LanNetworkManager.Instance;
             if (net == null) return;
 
             if (msg.PlayerId != net.LocalPlayerId)
@@ -318,7 +318,7 @@ namespace SyncRADation.Players
             PlaytestLog.Event("Damage", "respawned hp=" + PlayerState.hp
                 + (teleport ? " at teammate (" + msg.PosX.ToString("F1") + "," + msg.PosZ.ToString("F1") + ")"
                     : (msg.HasPos ? " in place (teammate scene '" + msg.Scene + "' != here)" : " in place")));
-            ModRuntime.Network?.AvatarHandlers.SendLocalVital();
+            LanNetworkManager.Instance?.AvatarHandlers.SendLocalVital();
         }
 
         private static bool SceneMatches(string scene)
@@ -330,7 +330,7 @@ namespace SyncRADation.Players
         /// <summary>Client: host wiped the party. No own-slot load: bag from the save snapshot, follow the host reload.</summary>
         public static void ApplyWipeAsClient(PartyLifeMessage msg)
         {
-            var net = ModRuntime.Network;
+            var net = LanNetworkManager.Instance;
             if (net == null) return;
             PlaytestLog.Event("Damage", "party wipe — host reloads '" + msg.Scene + "'");
             // The host reverted to a save, this peer never loads a slot: story progress is replaced by the host's next full dump.
@@ -383,7 +383,7 @@ namespace SyncRADation.Players
                 return;
             }
             SceneFollowService.NoteGoingTo(scene);
-            Step("wipe restore play", DroppedItemManager.RestorePlayForLoad);
+            Step("wipe restore play", DroppedItemRegistry.RestorePlayForLoad);
             NetGate.BeginApply();
             try { AsyncLoader.LoadLevel(scene); }
             catch (System.Exception ex) { LogOnce("wipe reload", ex); }
@@ -394,7 +394,7 @@ namespace SyncRADation.Players
         /// <summary>Clear floor drops + claim state on this peer before the save reload.</summary>
         private static void WipeWorldLocal(LanNetworkManager net)
         {
-            Step("wipe drops", DroppedItemManager.ClearAll);
+            Step("wipe drops", DroppedItemRegistry.ClearAll);
             Step("wipe drop claims", SyncRADation.Patches.ItemPickupPatches.ResetDropClaims);
             Step("wipe pickup claims", net.PickupSync.Reset);
         }
@@ -647,7 +647,7 @@ namespace SyncRADation.Players
         /// <summary>Called every frame from ModRuntime.OnUpdate (name kept from the old respawn timer).</summary>
         public static void TickRespawn()
         {
-            var net = ModRuntime.Network;
+            var net = LanNetworkManager.Instance;
             if (net == null) return;
 
             HostReload.Tick();

@@ -100,7 +100,7 @@ namespace SyncRADation.Networking
                 if (NetGate.Host)
                 {
                     // Fan-out sentinel so non-crafter clients strip mirrors too.
-                    try { net.SendPartyKeyRing(msg.ItemEnums); } catch (System.Exception e) { Guard.Swallow(e); }
+                    try { net.InventoryHandlers.SendPartyKeyRing(msg.ItemEnums); } catch (System.Exception e) { Guard.Swallow(e); }
                     Broadcast();
                 }
                 return;
@@ -138,7 +138,7 @@ namespace SyncRADation.Networking
         {
             var net = LanNetworkManager.Instance;
             if (!NetGate.Host) return;
-            net.SendPartyKeyRing(Snapshot());
+            net.InventoryHandlers.SendPartyKeyRing(Snapshot());
         }
 
         public static void OfferToHost(AnItem item)
@@ -155,7 +155,7 @@ namespace SyncRADation.Networking
             try
             {
                 if (!IsKeyOrObject(item)) return;
-                net.SendPartyKeyRing(new[] { (ushort)item._item });
+                net.InventoryHandlers.SendPartyKeyRing(new[] { (ushort)item._item });
             }
             catch (System.Exception e) { Guard.Swallow(e); }
         }
@@ -206,7 +206,7 @@ namespace SyncRADation.Networking
             arr[0] = CraftRevokeSentinel;
             for (int i = 0; i < revoke.Count; i++)
                 arr[i + 1] = revoke[i];
-            try { net.SendPartyKeyRing(arr); }
+            try { net.InventoryHandlers.SendPartyKeyRing(arr); }
             catch (System.Exception e) { Guard.Swallow(e); }
             if (NetGate.HostRole)
                 Broadcast();

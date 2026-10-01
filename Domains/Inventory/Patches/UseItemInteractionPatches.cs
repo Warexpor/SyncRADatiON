@@ -54,7 +54,7 @@ namespace SyncRADation.Patches
             }
             if (!NetGate.Client) return;
             PlaytestLog.Event("Interact", "request UseItem (unlocked) id=" + id.ToString("X16"));
-            LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.UseItem);
+            LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(id, InteractionKind.UseItem);
         }
 
         [HarmonyPrefix]
@@ -117,7 +117,7 @@ namespace SyncRADation.Patches
             if (NetGate.IsApplying || !NetGate.Live) return true;
             if (__instance == null) return true;
             if (NetGate.Host) return true;
-            LanNetworkManager.Instance.SendInteractionRequest(
+            LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(
                 WorldId.FromGameObject(__instance.gameObject), InteractionKind.UseItemMulti);
             return false;
         }

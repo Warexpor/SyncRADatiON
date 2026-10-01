@@ -48,7 +48,7 @@ namespace SyncRADation.Patches
                 }
                 SceneFollowService.NoteGoingTo(scene);
                 PlaytestLog.Event("Scene", "host load '" + scene + "'");
-                LanNetworkManager.Instance.SendSceneFollow(scene, false);
+                LanNetworkManager.Instance.SceneHandlers.SendSceneFollow(scene, false);
                 return true;
             }
 

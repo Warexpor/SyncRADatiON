@@ -476,7 +476,7 @@ namespace SyncRADation.Networking
             if (NetGate.IsApplying && NetGate.ApplySender >= 1)
                 net.FmodHandlers.SendFmodEmitterExcept(outMsg, NetGate.ApplySender);
             else
-                net.SendFmodEmitter(outMsg);
+                net.FmodHandlers.SendFmodEmitter(outMsg);
         }
 
         /// <summary>
@@ -619,7 +619,7 @@ namespace SyncRADation.Networking
                 if (!playing) continue;
                 // Recorded even inside the unicast dump: it only lets the later Stop go out (to everyone).
                 info.Sent(true);
-                net.SendFmodEmitter(new FmodEmitterMessage
+                net.FmodHandlers.SendFmodEmitter(new FmodEmitterMessage
                 {
                     WorldId = unchecked((long)info.Key.Id),
                     Play = true,
@@ -654,7 +654,7 @@ namespace SyncRADation.Networking
             if (NetGate.IsApplying && NetGate.ApplySender >= 1)
                 net.FmodHandlers.SendFmodEmitterExcept(msg, NetGate.ApplySender);
             else
-                net.SendFmodEmitter(msg);
+                net.FmodHandlers.SendFmodEmitter(msg);
         }
 
         /// <summary>Resolve FMOD event path from Guid via StudioSystem.lookupPath.</summary>

@@ -196,7 +196,7 @@ namespace SyncRADation.Networking
                 if (single == null) return false;
                 consumes = single.ConsumesKey && key != null;
                 var master = single.master;
-                bool allow = master == null || DoorNative.AllowUnlock(master);
+                bool allow = master == null || DoorNative.HasUnlocker(master);
                 if (master != null && allow) master.locked = false;
                 if (single.door != null && allow) single.door.locked = false;
             }

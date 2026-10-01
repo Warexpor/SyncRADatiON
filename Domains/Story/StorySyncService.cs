@@ -231,7 +231,7 @@ namespace SyncRADation.Networking
                 msg.EndDoors = END_Manager.doors;
             }
             catch (System.Exception e) { Guard.Swallow(e); }
-            net.SendStoryCommit(msg);
+            net.StoryHandlers.SendStoryCommit(msg);
             if (full)
                 PlaytestLog.Event("Story", "commit full flags=" + flags.Length + " xml=" + xml.Length
                     + " cmd=" + (replay ? _lastCmd.ToString() : "-") + " gs=" + msg.ActiveGameState
@@ -422,20 +422,20 @@ namespace SyncRADation.Networking
             switch (e.Kind)
             {
                 case 0:
-                    net.SendInteractionRequest(0, InteractionKind.InspectFlag, 0, e.BoolVal ? 1 : 0, 0f, 0f, 0f, e.Key);
+                    net.InteractionHandlers.SendInteractionRequest(0, InteractionKind.InspectFlag, 0, e.BoolVal ? 1 : 0, 0f, 0f, 0f, e.Key);
                     break;
                 case 1:
-                    net.SendInteractionRequest(0, InteractionKind.InspectFlag, 1, e.IntVal, 0f, 0f, 0f, e.Key);
+                    net.InteractionHandlers.SendInteractionRequest(0, InteractionKind.InspectFlag, 1, e.IntVal, 0f, 0f, 0f, e.Key);
                     break;
                 case 2:
-                    net.SendInteractionRequest(0, InteractionKind.InspectFlag, 2, 0, e.FloatVal, 0f, 0f, e.Key);
+                    net.InteractionHandlers.SendInteractionRequest(0, InteractionKind.InspectFlag, 2, 0, e.FloatVal, 0f, 0f, e.Key);
                     break;
                 case 3:
-                    net.SendInteractionRequest(0, InteractionKind.InspectFlag, 3, 0, 0f, 0f, 0f,
+                    net.InteractionHandlers.SendInteractionRequest(0, InteractionKind.InspectFlag, 3, 0, 0f, 0f, 0f,
                         e.Key + "\n" + (e.StringVal ?? ""));
                     break;
                 case 4:
-                    net.SendInteractionRequest(0, InteractionKind.InspectFlag, 4, 0, e.FloatVal, e.VecY, e.VecZ, e.Key);
+                    net.InteractionHandlers.SendInteractionRequest(0, InteractionKind.InspectFlag, 4, 0, e.FloatVal, e.VecY, e.VecZ, e.Key);
                     break;
             }
         }

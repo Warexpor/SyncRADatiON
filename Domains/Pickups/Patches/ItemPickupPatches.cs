@@ -197,7 +197,7 @@ namespace SyncRADation.Patches
             }
 
             PlaytestLog.Event("Pickup", "claim " + __instance.gameObject.name + " id=" + id.ToString("X16"));
-            net.SendWorldPickupClaim(id, _pendingItem, CountOf(__instance));
+            net.WorldPickupHandlers.SendWorldPickupClaim(id, _pendingItem, CountOf(__instance));
             return false;
         }
 
@@ -262,7 +262,7 @@ namespace SyncRADation.Patches
                 + " id=" + id.ToString("X16"));
             int count = CountOf(__instance);
             sync.ExpectNativeAdd(id, __instance, _pendingItem, count, awaitVerdict: true);
-            net.SendWorldPickupClaim(id, _pendingItem, count);
+            net.WorldPickupHandlers.SendWorldPickupClaim(id, _pendingItem, count);
         }
 
         /// <summary>The yes/no of a world pickup was answered (dialoguerCallback): claim on "yes", give back on "no".</summary>
@@ -323,7 +323,7 @@ namespace SyncRADation.Patches
             }
             PlaytestLog.Event("Pickup", "claim confirm id=" + id.ToString("X16") + " item=" + item);
             sync.ExpectNativeAdd(id, p, item, takeCount, awaitVerdict: true);
-            net.SendWorldPickupClaim(id, item, takeCount);
+            net.WorldPickupHandlers.SendWorldPickupClaim(id, item, takeCount);
         }
     }
 

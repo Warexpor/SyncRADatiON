@@ -69,7 +69,7 @@ namespace SyncRADation.Patches
 
             AnItem item = null;
             try { item = __instance.intItem; } catch (System.Exception e) { Guard.Swallow(e); }
-            net.TryDropItem(item);
+            net.DroppedItemHandlers.TryDropItem(item);
             return false;
         }
 

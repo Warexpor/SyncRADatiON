@@ -45,7 +45,7 @@ namespace SyncRADation.Players
 
         private static bool IsLocal(int playerId)
         {
-            var net = ModRuntime.Network;
+            var net = LanNetworkManager.Instance;
             return net != null && playerId == net.LocalPlayerId;
         }
 

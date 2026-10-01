@@ -34,7 +34,7 @@ namespace SyncRADation.Networking
                 long earlyAck = msg.WorldId;
                 if (msg.Kind == InteractionKind.DroppedPickup && earlyAck == 0 && msg.Int0 != 0)
                     earlyAck = msg.Int0;
-                net.SendInteractionAck(msg.SenderPlayerId, earlyAck, msg.Kind, false, reason);
+                net.InteractionHandlers.SendInteractionAck(msg.SenderPlayerId, earlyAck, msg.Kind, false, reason);
                 return;
             }
 
@@ -82,7 +82,7 @@ namespace SyncRADation.Networking
                         ok = CutsceneSync.HostApplyProceed(id, net, msg.SenderPlayerId);
                         break;
                     case InteractionKind.DroppedPickup:
-                        ok = net.TryClaimDropped(msg.Int0, msg.SenderPlayerId, out reason);
+                        ok = net.DroppedItemHandlers.TryClaimDropped(msg.Int0, msg.SenderPlayerId, out reason);
                         break;
                     case InteractionKind.InspectFlag:
                         ok = ApplyInspectFlag(msg);
@@ -108,7 +108,7 @@ namespace SyncRADation.Networking
             long ackId = msg.WorldId;
             if (msg.Kind == InteractionKind.DroppedPickup && ackId == 0 && msg.Int0 != 0)
                 ackId = msg.Int0;
-            net.SendInteractionAck(msg.SenderPlayerId, ackId, msg.Kind, ok, reason);
+            net.InteractionHandlers.SendInteractionAck(msg.SenderPlayerId, ackId, msg.Kind, ok, reason);
         }
 
         private static bool ApplyEventZone(ulong id, int senderId)

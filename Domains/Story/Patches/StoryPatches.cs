@@ -261,7 +261,7 @@ namespace SyncRADation.Patches
                 story.MarkDirty();
                 return;
             }
-            LanNetworkManager.Instance.SendInteractionRequest(
+            LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(
                 0, InteractionKind.InspectFlag, 100 + (int)StoryCmd.EndGraves);
         }
     }
@@ -287,7 +287,7 @@ namespace SyncRADation.Patches
                 return true;
             }
             if (!NetGate.Party) return true;
-            net.SendInteractionRequest(0, InteractionKind.InspectFlag, 100 + (int)StoryCmd.DetermineEnding);
+            net.InteractionHandlers.SendInteractionRequest(0, InteractionKind.InspectFlag, 100 + (int)StoryCmd.DetermineEnding);
             return false;
         }
 
@@ -318,7 +318,7 @@ namespace SyncRADation.Patches
                 net.StorySync.BroadcastPresentation(StoryCmd.GoToPenny, 0, 0, "");
                 return true;
             }
-            net.SendInteractionRequest(0, InteractionKind.InspectFlag, 100 + (int)StoryCmd.GoToPenny);
+            net.InteractionHandlers.SendInteractionRequest(0, InteractionKind.InspectFlag, 100 + (int)StoryCmd.GoToPenny);
             return false;
         }
     }

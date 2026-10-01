@@ -83,7 +83,7 @@ namespace SyncRADation.Players
                 {
                     _forced = true;
                     PlaytestLog.Event("Damage", "screen " + gs + " did not close — forcing play");
-                    DroppedItemManager.RestorePlay();
+                    DroppedItemRegistry.RestorePlay();
                 }
                 return;
             }

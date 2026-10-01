@@ -207,7 +207,7 @@ namespace SyncRADation.Networking
         internal static bool TrySend(bool put, AnItem item, int enumVal, int n)
         {
             if (!TryBegin(put, item, enumVal, ref n)) return false;
-            LanNetworkManager.Instance.SendInteractionRequest(unchecked((ulong)_txn),
+            LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(unchecked((ulong)_txn),
                 put ? InteractionKind.StoragePut : InteractionKind.StorageTake, enumVal, n);
             return true;
         }
@@ -362,7 +362,7 @@ namespace SyncRADation.Networking
             if (!NetGate.Client) return;
             PlaytestLog.Event("StorageBox", "return overflow item=" + enumVal + " x" + n);
             // Own transaction id: its ack must not complete whatever transaction is in flight now.
-            net.SendInteractionRequest(unchecked((ulong)NextTxn()), InteractionKind.StoragePut, enumVal, n, text: "return");
+            net.InteractionHandlers.SendInteractionRequest(unchecked((ulong)NextTxn()), InteractionKind.StoragePut, enumVal, n, text: "return");
         }
     }
 }

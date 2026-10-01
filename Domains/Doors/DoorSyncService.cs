@@ -191,7 +191,7 @@ namespace SyncRADation.Networking
                 Forwards = forwards,
                 Moving = moving
             };
-            net.SendDoorState(msg);
+            net.DoorHandlers.SendDoorState(msg);
         }
 
         public static void NotifyDoubleDoor(Doorway_Double d, bool open)
@@ -486,7 +486,7 @@ namespace SyncRADation.Networking
                 }
                 else
                     RejectOpen(net, d, ref msg);
-                net.SendDoorState(msg);
+                net.DoorHandlers.SendDoorState(msg);
             }
             _pendingScratch.Clear();
         }

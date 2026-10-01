@@ -308,7 +308,7 @@ namespace SyncRADation.Networking
             catch { return false; }
         }
 
-        /// <summary>Forward kept for Puzzles / Story call sites.</summary>
+        /// <summary>Forward kept for Puzzles call sites (PuzzleDoorFlagsSyncService); new code calls HasUnlocker.</summary>
         public static bool AllowUnlock(ConnectedDoors cd) => HasUnlocker(cd);
 
         public static bool TraversePlateActive(InteractiveLockSingle x)

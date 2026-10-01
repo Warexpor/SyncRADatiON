@@ -56,7 +56,7 @@ namespace SyncRADation.Networking
                 _lastSig = sig;
             }
             PlaytestLog.Event("StorageBox", "send items=" + items.Length + (net.UnicastActive ? " (unicast)" : ""));
-            net.SendStorageBoxBlob(items);
+            net.InventoryHandlers.SendStorageBoxBlob(items);
         }
 
         /// <summary>

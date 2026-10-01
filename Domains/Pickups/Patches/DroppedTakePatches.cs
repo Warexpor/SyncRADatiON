@@ -143,7 +143,7 @@ namespace SyncRADation.Patches
             var net = LanNetworkManager.Instance;
             if (net == null) return;
             PlaytestLog.Event("Drop", "overflow " + itemEnum + " x" + n + " -> floor");
-            try { net.DropOverflow(itemEnum, n); }
+            try { net.DroppedItemHandlers.DropOverflow(itemEnum, n); }
             catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] overflow: " + ex.Message); }
         }
 
@@ -200,7 +200,7 @@ namespace SyncRADation.Patches
                     // The take already granted locally (skipLocalGrant). A refused claim gives the items back
                     // and leaves the floor item where it is.
                     string reason;
-                    if (!net.TryClaimDropped(key, net.LocalPlayerId, out reason, skipLocalGrant: true))
+                    if (!net.DroppedItemHandlers.TryClaimDropped(key, net.LocalPlayerId, out reason, skipLocalGrant: true))
                     {
                         PlaytestLog.Event("Drop", "host claim refused key=" + key + " " + reason + " — undo x" + added);
                         RemoveAdded(item, added);
@@ -214,7 +214,7 @@ namespace SyncRADation.Patches
                 {
                     // WorldId carries drop key so the ack matches this claim (Int0 is also key).
                     _awaitingDrops[key] = new AwaitingDrop { Item = item, Count = added, Spill = spill };
-                    net.SendInteractionRequest(unchecked((ulong)(uint)key), InteractionKind.DroppedPickup, key);
+                    net.InteractionHandlers.SendInteractionRequest(unchecked((ulong)(uint)key), InteractionKind.DroppedPickup, key);
                 }
             }
             else

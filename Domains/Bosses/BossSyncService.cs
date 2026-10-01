@@ -155,7 +155,7 @@ namespace SyncRADation.Networking
                     catch (Exception e) { Guard.Swallow("BossSync.SnapshotMED", e); }
                 }
                 if (_tickList.Count > 0)
-                    net.SendBossState(_tickList);
+                    net.BossHandlers.SendBossState(_tickList);
             }
             finally
             {
@@ -341,7 +341,7 @@ namespace SyncRADation.Networking
             {
                 var item = b.SpearItem;
                 if (item == null) return;
-                net.SendInteractionAck(senderId, wid, InteractionKind.UseItem, true,
+                net.InteractionHandlers.SendInteractionAck(senderId, wid, InteractionKind.UseItem, true,
                     "consume:" + (int)item._item + ":1");
                 PlaytestLog.Event("Boss", "spear race lost p" + senderId + " -> consume ack");
             }

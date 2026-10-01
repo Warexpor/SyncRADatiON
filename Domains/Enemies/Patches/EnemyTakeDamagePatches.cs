@@ -78,7 +78,7 @@ namespace SyncRADation.Patches
             if (KolibriAdlerAuthPatches.InClientKolibriUpdate)
                 return false;
 
-            net.SendNativeEnemyHit(id, damage, fire, crit, hurt, noSneak);
+            net.EnemyHandlers.SendNativeEnemyHit(id, damage, fire, crit, hurt, noSneak);
             return false;
         }
     }

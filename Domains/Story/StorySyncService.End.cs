@@ -183,7 +183,7 @@ namespace SyncRADation.Networking
             CaptureEndBase(cur, healed);
             if (!any) return;
             PlaytestLog.Event("Story", "send END delta " + sb);
-            net.SendInteractionRequest(0, InteractionKind.InspectFlag, 100 + (int)StoryCmd.EndDelta, 0, 0f, 0f, 0f, sb.ToString());
+            net.InteractionHandlers.SendInteractionRequest(0, InteractionKind.InspectFlag, 100 + (int)StoryCmd.EndDelta, 0, 0f, 0f, 0f, sb.ToString());
         }
 
         /// <summary>Host: add one client's END_Manager contribution to the single shared tally.</summary>
@@ -361,7 +361,7 @@ namespace SyncRADation.Networking
                 return;
             }
             PlaytestLog.Event("Story", "forward party cheat '" + cheat + "'");
-            net.SendInteractionRequest(0, InteractionKind.InspectFlag, 100 + (int)StoryCmd.PartyCheat, 0, 0f, 0f, 0f, cheat);
+            net.InteractionHandlers.SendInteractionRequest(0, InteractionKind.InspectFlag, 100 + (int)StoryCmd.PartyCheat, 0, 0f, 0f, 0f, cheat);
         }
 
         /// <summary>Host: a client ran a scripted cheat; run it here too and relay to the others.</summary>
