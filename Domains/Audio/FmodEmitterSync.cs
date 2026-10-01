@@ -1,4 +1,6 @@
-// World StudioEventEmitter Play/Stop by WorldId. Skip Elster + radio UI.
+// World StudioEventEmitter Play/Stop by WorldId, plus the host relay of world one-shots.
+// Local-only sounds never leave the peer: Elster, radio UI, doors (DoorNative plays those distance-gated),
+// Music/Cutscenes/Ambience/UI beds, cinematics.
 using System;
 using System.Collections.Generic;
 using FMODUnity;
@@ -23,56 +25,84 @@ namespace SyncRADation.Networking
             public override int GetHashCode() => unchecked((int)(Id ^ (Id >> 32)) * 31 + Comp);
         }
 
+        /// <summary>Static relay decision for an emitter (the dynamic Cinematic test is repeated per Play).</summary>
+        enum Route : byte { Unknown, Send, Skip }
+
+        /// <summary>
+        /// Everything known about one emitter key in the current scene. The wire state lives as long as the scene;
+        /// the local binding (emitter + static checks) is dropped whenever WorldRegistry rebuilds, because WorldId
+        /// includes the sibling index and a rebuild is where ids are settled again.
+        /// </summary>
+        sealed class EmitterInfo
+        {
+            public readonly EmitKey Key;
+            public EmitterInfo(EmitKey key) { Key = key; }
+
+            // Local binding.
+            public StudioEventEmitter Emitter;
+            public Route HostRoute;      // IsLocalOnlyStatic / door / bed
+            public Route ClientRoute;    // HostRoute + enemy/boss emitters (host-authored, never client-sent)
+            public bool? UnderDoor;      // a Doorway_Double / EventSlidingDoor above the emitter
+            public float MissUntil;      // wire key with no local emitter: no rescan for it before this
+
+            // Wire state.
+            public bool Known;           // a Play/Stop for this key went out / was relayed
+            public bool Playing;         // ...and the last one was a Play
+            public int PlayFrame = -1;   // same-frame duplicate Play guard (prefix/postfix re-entry), not a time window
+            public float HostPlayAt = -999f, HostStopAt = -999f;
+
+            public bool WasPlaying => Known && Playing;
+
+            public void Sent(bool play)
+            {
+                Known = true;
+                Playing = play;
+            }
+
+            public void Unbind()
+            {
+                Emitter = null;
+                HostRoute = Route.Unknown;
+                ClientRoute = Route.Unknown;
+                UnderDoor = null;
+                MissUntil = 0f;
+            }
+        }
+
         struct Bucket
         {
             public float Tokens;
             public float At;
         }
 
-        static readonly Dictionary<EmitKey, bool> _sentPlaying = new Dictionary<EmitKey, bool>();
-        // Same-frame duplicate guard (Time.frameCount), not a wall-clock window: a one-shot emitter replayed on
-        // consecutive frames still goes out.
-        static readonly Dictionary<EmitKey, int> _lastPlayFrame = new Dictionary<EmitKey, int>();
-        static readonly HashSet<EmitKey> _skipIds = new HashSet<EmitKey>();
-        // Client: keys that already passed the (hierarchy-walking) local-only check. Only the cheap dynamic
-        // Cinematic test is repeated per Play. Cleared in Reset and when WorldRegistry rebuilds.
-        static readonly HashSet<EmitKey> _okKeys = new HashSet<EmitKey>();
-        // Host: same idea for the host's own relay check (IsLocalOnly / door / bed); a separate set because the
-        // client check is stricter (enemy/boss emitters are host-authored and never client-sent).
-        static readonly HashSet<EmitKey> _hostOkKeys = new HashSet<EmitKey>();
-        // Sliding-door open/close SFX paths of this registry generation (IsSlidingDoorSfxPath read two IL2CPP
-        // strings per sliding door on every Play / one-shot).
+        // ------------------------------------------------------------------ per-scene table (one invalidation point: Sync)
+
+        static readonly Dictionary<EmitKey, EmitterInfo> _byKey = new Dictionary<EmitKey, EmitterInfo>(256);
+        // Local Unity instance id -> record (never sent): WorldId + GetComponents run once per emitter.
+        static readonly Dictionary<int, EmitterInfo> _byInst = new Dictionary<int, EmitterInfo>(256);
+        static int _generation = -1;
+        static string _scene;
+        // Peers can name keys this scene never had: bound the table instead of growing it per request.
+        const int MaxRecords = 8192;
+
+        // Sliding-door open/close SFX paths (two IL2CPP strings per door: read once per generation, not per Play).
         static readonly Dictionary<string, EventSlidingDoor> _slidingSfx = new Dictionary<string, EventSlidingDoor>();
-        static int _slidingSfxGeneration = -1;
+        static bool _slidingSfxReady;
         // Client: the local player's room and its floor-plan rectangle (XY of the room's mesh renderers), for the
         // room gate on relayed one-shots that only carry a position.
         static Room _boundsRoom;
         static Rect _roomRect;
         static bool _roomRectOk;
-        static int _boundsGeneration = -1;
-        // Host: when a Stop for a key last went out, so a client Play that crossed it on the wire does not restart the loop.
-        static readonly Dictionary<EmitKey, float> _lastHostStopAt = new Dictionary<EmitKey, float>();
-        static readonly Dictionary<EmitKey, StudioEventEmitter> _byId = new Dictionary<EmitKey, StudioEventEmitter>();
-        // Host: when a Play for a key last went out, so a client request for the same sound is not doubled.
-        static readonly Dictionary<EmitKey, float> _lastHostPlayAt = new Dictionary<EmitKey, float>();
 
-        // Local-only caches (Unity instance id is never sent): WorldId hashing and GetComponents are not free.
-        static readonly Dictionary<int, ulong> _idCache = new Dictionary<int, ulong>();
-        static readonly Dictionary<int, byte> _compCache = new Dictionary<int, byte>();
-
-        // Misses are remembered so a Play/Stop for an emitter that is not in this scene
-        // (or a cold cache) does not FindObjectsOfType the whole scene on every message.
-        static readonly Dictionary<EmitKey, float> _missUntil = new Dictionary<EmitKey, float>();
+        // A key with no local emitter must not FindObjectsOfType the scene on every message: a burst of unknown keys
+        // shares one rescan, and the full rescan runs at most once per window.
         static float _lastRebuildAt = -999f;
         const float RebuildMinInterval = 1f;
         const float MissTtl = 3f;
-        // The full FindObjectsOfType rescan (Invalidate) is the expensive part: at most once per window. A persistent
-        // unknown id (client-only emitter, runtime clone) must not turn every request into a scene scan.
         static float _lastInvalidateAt = -999f;
         const float InvalidateMinInterval = 5f;
-        // WorldRegistry.Generation the id caches were built under (WorldId includes the sibling index, which drifts
-        // when objects are added or destroyed; a registry rebuild is the point where the ids are recomputed).
-        static int _idGeneration = -1;
+
+        // ------------------------------------------------------------------ session state
 
         // Client-originated world sound (client -> host -> everyone but the sender).
         static float _sceneStartAt;
@@ -84,7 +114,7 @@ namespace SyncRADation.Networking
         const float HostRatePerSec = 60f, HostBurst = 40f;
         const float HostDupWindow = 0.35f;
         // >0 while the host plays a client's request locally: the Play postfix must not re-broadcast it
-        // (the handler relays it to everyone except the sender itself).
+        // (HandleRequest relays it to everyone except the sender itself).
         static int _suppressEmit;
 
         static bool TakeToken(ref Bucket b, float rate, float burst, float now)
@@ -97,42 +127,89 @@ namespace SyncRADation.Networking
             return true;
         }
 
-        static void CheckGeneration()
+        /// <summary>
+        /// The one invalidation point. A registry rebuild drops every local binding (keeps the wire state); a new scene
+        /// drops the whole table.
+        /// </summary>
+        static void Sync()
         {
             int g = WorldRegistry.Generation;
-            if (g == _idGeneration) return;
-            _idGeneration = g;
-            _idCache.Clear();
-            _compCache.Clear();
-            _byId.Clear();
-            _missUntil.Clear();
-            _skipIds.Clear();
-            _okKeys.Clear();
-            _hostOkKeys.Clear();
-            // The scene registry was rebuilt (everything was invalidated): the next miss may scan right away.
+            if (g == _generation) return;
+            _generation = g;
+            string scene = WorldRegistry.SceneName ?? "";
+            if (scene != _scene)
+            {
+                _scene = scene;
+                _byKey.Clear();
+            }
+            else
+            {
+                foreach (var kvp in _byKey) kvp.Value.Unbind();
+            }
+            _byInst.Clear();
+            _slidingSfx.Clear();
+            _slidingSfxReady = false;
+            _boundsRoom = null;
+            _roomRectOk = false;
             _lastRebuildAt = -999f;
             _lastInvalidateAt = -999f;
         }
 
-        static ulong IdOf(StudioEventEmitter e)
+        public static void Reset()
         {
-            CheckGeneration();
-            int iid = e.GetInstanceID();
-            ulong id;
-            if (_idCache.TryGetValue(iid, out id)) return id;
-            id = WorldId.FromGameObject(e.gameObject);
-            if (_idCache.Count > 4096) _idCache.Clear();
-            _idCache[iid] = id;
-            return id;
+            _byKey.Clear();
+            _byInst.Clear();
+            _slidingSfx.Clear();
+            _slidingSfxReady = false;
+            _boundsRoom = null;
+            _roomRectOk = false;
+            _generation = -1;
+            _scene = null;
+            _lastRebuildAt = -999f;
+            _lastInvalidateAt = -999f;
+            _hostBuckets.Clear();
+            _clientBucket = default(Bucket);
+            _suppressEmit = 0;
+            _sceneStartAt = Time.unscaledTime;
         }
 
-        static byte CompIndex(StudioEventEmitter e)
+        /// <summary>Peer-named keys past the cap: start the scene table over (wire state included).</summary>
+        static void TrimIfHuge()
         {
-            CheckGeneration();
+            if (_byKey.Count < MaxRecords && _byInst.Count < MaxRecords) return;
+            PlaytestLog.Warn("FMOD", "emitter table over " + MaxRecords + " keys=" + _byKey.Count + " inst=" + _byInst.Count + ": cleared");
+            _byKey.Clear();
+            _byInst.Clear();
+        }
+
+        static EmitterInfo Record(EmitKey key)
+        {
+            EmitterInfo info;
+            if (!_byKey.TryGetValue(key, out info))
+            {
+                info = new EmitterInfo(key);
+                _byKey[key] = info;
+            }
+            return info;
+        }
+
+        /// <summary>Record of a live emitter (null when it has no WorldId). Binds the emitter when its key had none.</summary>
+        static EmitterInfo InfoOf(StudioEventEmitter e)
+        {
+            Sync();
             int iid = e.GetInstanceID();
-            byte idx;
-            if (_compCache.TryGetValue(iid, out idx)) return idx;
-            idx = 0;
+            EmitterInfo info;
+            if (_byInst.TryGetValue(iid, out info)) return info;
+            ulong id = WorldId.FromGameObject(e.gameObject);
+            if (id == 0) return null;
+            info = Record(new EmitKey(id, CompIndexOf(e)));
+            if (info.Emitter == null) info.Emitter = e;
+            _byInst[iid] = info;
+            return info;
+        }
+
+        static byte CompIndexOf(StudioEventEmitter e)
+        {
             try
             {
                 var all = e.GetComponents<StudioEventEmitter>();
@@ -140,68 +217,133 @@ namespace SyncRADation.Networking
                 {
                     for (int i = 0; i < all.Length && i < 255; i++)
                     {
-                        if (all[i] == e) { idx = (byte)i; break; }
+                        if (all[i] == e) return (byte)i;
                     }
                 }
             }
             catch (Exception ex) { Guard.Swallow(ex); }
-            if (_compCache.Count > 4096) _compCache.Clear();
-            _compCache[iid] = idx;
-            return idx;
+            return 0;
         }
 
-        static StudioEventEmitter FindCached(EmitKey key)
+        /// <summary>Local emitter for a key from the wire (rescans the scene on a real miss, throttled).</summary>
+        static StudioEventEmitter Resolve(EmitterInfo info)
         {
-            CheckGeneration();
-            StudioEventEmitter e;
-            if (_byId.TryGetValue(key, out e) && e != null)
-                return e;
+            if (info.Emitter != null) return info.Emitter;
             float now = Time.unscaledTime;
-            float until;
-            if (_missUntil.TryGetValue(key, out until) && now < until)
-                return null;
-            // Throttled: a burst of unknown ids shares one rebuild.
-            if (now - _lastRebuildAt < RebuildMinInterval)
-                return null;
-            // Rescanning without a fresh scan cannot find anything new: remember the miss and wait for the window.
+            if (now < info.MissUntil) return null;
+            if (now - _lastRebuildAt < RebuildMinInterval) return null;
+            // Rescanning without a fresh scene scan cannot find anything new: remember the miss and wait for the window.
             if (now - _lastInvalidateAt < InvalidateMinInterval)
             {
-                if (_missUntil.Count > 2048) _missUntil.Clear();
-                _missUntil[key] = now + MissTtl;
+                info.MissUntil = now + MissTtl;
                 return null;
             }
-            // The cached scan predates emitters instantiated since the scene loaded: rescan on a real miss.
-            _lastInvalidateAt = now;
-            WorldLookup.Invalidate<StudioEventEmitter>();
-            RebuildCache();
-            if (_byId.TryGetValue(key, out e) && e != null)
-                return e;
-            _missUntil[key] = now + MissTtl;
+            // The cached scan predates emitters instantiated since the scene loaded.
+            Rescan();
+            if (info.Emitter != null) return info.Emitter;
+            info.MissUntil = now + MissTtl;
             return null;
         }
 
-        static void RebuildCache()
+        /// <summary>Fresh StudioEventEmitter scan; every record is re-bound (first emitter per key wins). Misses are kept.</summary>
+        static void Rescan()
         {
-            // _missUntil is kept: clearing it let every persistent unknown id force a rescan once per window.
-            // The sibling-index based ids and the component index may have moved: recompute them.
-            _byId.Clear();
-            _idCache.Clear();
-            _compCache.Clear();
-            _lastRebuildAt = Time.unscaledTime;
+            float now = Time.unscaledTime;
+            _lastRebuildAt = now;
+            _lastInvalidateAt = now;
+            WorldLookup.Invalidate<StudioEventEmitter>();
+            _byInst.Clear();
+            foreach (var kvp in _byKey) kvp.Value.Emitter = null;
             var all = WorldLookup.All<StudioEventEmitter>();
             if (all == null) return;
             for (int i = 0; i < all.Length; i++)
             {
                 var e = all[i];
-                if (e == null) continue;
-                ulong id = IdOf(e);
-                if (id == 0) continue;
-                var key = new EmitKey(id, CompIndex(e));
-                if (_byId.ContainsKey(key)) continue;
-                _byId[key] = e;
+                if (e != null) InfoOf(e);
             }
         }
 
+        // ------------------------------------------------------------------ relay checks
+
+        static string PathOf(StudioEventEmitter e)
+        {
+            try { return e.Event ?? ""; }
+            catch (Exception ex) { Guard.Swallow(ex); return ""; }
+        }
+
+        static bool Cinematic(StudioEventEmitter e)
+        {
+            try { return LocalInspect.Cinematic(e.gameObject); }
+            catch (Exception ex) { Guard.Swallow(ex); return false; }
+        }
+
+        static bool HostSkips(EmitterInfo info, StudioEventEmitter e)
+        {
+            if (info.HostRoute == Route.Unknown)
+            {
+                string path = PathOf(e);
+                bool skip = IsLocalOnlyStatic(e.transform) || IsDoorSfxPath(path) || DoorAbove(info, e) || IsSceneBed(path);
+                info.HostRoute = skip ? Route.Skip : Route.Send;
+            }
+            return info.HostRoute == Route.Skip;
+        }
+
+        static bool ClientSkips(EmitterInfo info, StudioEventEmitter e)
+        {
+            if (info.ClientRoute == Route.Unknown)
+                info.ClientRoute = HostSkips(info, e) || UnderHostDrivenActor(e) ? Route.Skip : Route.Send;
+            return info.ClientRoute == Route.Skip;
+        }
+
+        /// <summary>Enemy / boss sounds are host-authored (snapshots + native host logic): a client copy would double them.</summary>
+        static bool UnderHostDrivenActor(StudioEventEmitter emitter)
+        {
+            try
+            {
+                if (emitter.GetComponentInParent<EnemyController>() != null) return true;
+                if (emitter.GetComponentInParent<END_Boss>() != null) return true;
+                if (emitter.GetComponentInParent<BOS_Adler>() != null) return true;
+                if (emitter.GetComponentInParent<LAB_ChimeraBoss>() != null) return true;
+                if (emitter.GetComponentInParent<MED_MynahBoss>() != null) return true;
+            }
+            catch (Exception ex) { Guard.Swallow(ex); }
+            return false;
+        }
+
+        static bool DoorAbove(EmitterInfo info, StudioEventEmitter e)
+        {
+            if (info == null) return DoorInHierarchy(e.transform);
+            if (!info.UnderDoor.HasValue) info.UnderDoor = DoorInHierarchy(e.transform);
+            return info.UnderDoor.Value;
+        }
+
+        static bool DoorInHierarchy(Transform t)
+        {
+            int hops = 0;
+            while (t != null && hops++ < 16)
+            {
+                try
+                {
+                    if (t.GetComponent<Doorway_Double>() != null) return true;
+                    if (t.GetComponent<EventSlidingDoor>() != null) return true;
+                }
+                catch (Exception e) { Guard.Swallow(e); }
+                t = t.parent;
+            }
+            return false;
+        }
+
+        /// <summary>Door emitter (door SFX path or under a door): never world-relayed, DoorNative distance-gates it.</summary>
+        public static bool IsDoorEmitter(StudioEventEmitter emitter)
+        {
+            if (emitter == null) return false;
+            if (IsDoorSfxPath(PathOf(emitter))) return true;
+            return DoorAbove(InfoOf(emitter), emitter);
+        }
+
+        // ------------------------------------------------------------------ emitters
+
+        /// <summary>Client: a host Play/Stop (Kind 0) or world one-shot (Kind 1).</summary>
         public static void Handle(FmodEmitterMessage msg)
         {
             var net = LanNetworkManager.Instance;
@@ -231,42 +373,36 @@ namespace SyncRADation.Networking
 
                 ulong id = unchecked((ulong)msg.WorldId);
                 if (id == 0) return;
-                var e = FindCached(new EmitKey(id, msg.Comp));
+                TrimIfHuge();
+                Sync();
+                var info = Record(new EmitKey(id, msg.Comp));
+                var e = Resolve(info);
                 if (e == null)
                 {
                     PlaytestLog.Miss("FMOD", "StudioEventEmitter", id);
                     return;
                 }
-                if (IsDoorEmitter(e)) return;
-                string path = "";
-                try { path = e.Event; } catch (System.Exception ex) { Guard.Swallow(ex); }
-                if (IsDoorSfxPath(path)) return;
-                if (IsSceneBed(path)) return;
+                string path = PathOf(e);
+                if (IsDoorSfxPath(path) || DoorAbove(info, e) || IsSceneBed(path)) return;
                 if (ModRuntime.VerboseLogging)
                     PlaytestLog.Verbose("FMOD", (msg.Play ? "Play" : "Stop")
-                        + (string.IsNullOrEmpty(path) ? "" : " " + path)
+                        + (path.Length == 0 ? "" : " " + path)
                         + " id=" + id.ToString("X16") + "/" + msg.Comp);
-                // DoorNative already distance-gates; non-door emitter Play() can still
-                // leak far one-shots / 2D-ish events — skip far Play, always allow Stop.
+                // DoorNative already distance-gates; a non-door emitter Play() can still leak far one-shots /
+                // 2D-ish events: skip far Play, always allow Stop.
                 if (msg.Play)
                 {
-                    try
+                    if (!NearHere(e))
                     {
-                        float vol;
-                        if (e.transform != null
-                            && !WorldSfx.TryVolume(e.transform.position, out vol))
-                        {
-                            if (ModRuntime.VerboseLogging)
-                                PlaytestLog.Verbose("FMOD", "skip far Play id=" + id.ToString("X16"));
-                            return;
-                        }
+                        if (ModRuntime.VerboseLogging)
+                            PlaytestLog.Verbose("FMOD", "skip far Play id=" + id.ToString("X16"));
+                        return;
                     }
-                    catch (System.Exception ex) { Guard.Swallow(ex); }
                     e.Play();
                 }
                 else e.Stop();
             }
-            catch (System.Exception ex)
+            catch (Exception ex)
             {
                 ModRuntime.Log?.Warning("[FMOD] apply: " + ex.Message);
             }
@@ -274,6 +410,16 @@ namespace SyncRADation.Networking
             {
                 NetGate.EndApply();
             }
+        }
+
+        static bool NearHere(StudioEventEmitter e)
+        {
+            try
+            {
+                float vol;
+                return e.transform == null || WorldSfx.TryVolume(e.transform.position, out vol);
+            }
+            catch (Exception ex) { Guard.Swallow(ex); return true; }
         }
 
         /// <summary>StudioEventEmitter.Play/Stop postfix: host fans out, a client forwards its own world sounds to the host.</summary>
@@ -292,65 +438,38 @@ namespace SyncRADation.Networking
             if (_suppressEmit > 0) return; // HandleRequest relays it (except the sender)
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
-            ulong id = IdOf(emitter);
-            if (id == 0) return;
-            var key = new EmitKey(id, CompIndex(emitter));
-            bool was;
-            bool known = _sentPlaying.TryGetValue(key, out was);
+            var info = InfoOf(emitter);
+            if (info == null) return;
             // Repeat Stop is redundant. Repeat Play is not: one-shot emitters must replay on clients.
-            if (!play && !(known && was)) return;
+            if (!play && !info.WasPlaying) return;
             if (play)
             {
-                int last;
-                // Same-frame duplicate Play (prefix/postfix re-entry) only.
                 int frame = Time.frameCount;
-                if (_lastPlayFrame.TryGetValue(key, out last) && last == frame) return;
-                _lastPlayFrame[key] = frame;
-                // Local/door/bed emitters stay local: skip the hierarchy walk on repeat Play.
-                if (known && was && _skipIds.Contains(key)) return;
+                if (info.PlayFrame == frame) return;
+                info.PlayFrame = frame;
             }
-            string path = "";
-            if (_hostOkKeys.Contains(key))
+            // Cinematic is the one dynamic part of the check (airlock / event camera starts).
+            if (HostSkips(info, emitter) || Cinematic(emitter))
             {
-                // Static checks passed before; Cinematic is the one dynamic part (airlock / event camera starts).
-                bool cinematic = false;
-                try { cinematic = LocalInspect.Cinematic(emitter.gameObject); } catch (System.Exception e) { Guard.Swallow(e); }
-                if (cinematic)
-                {
-                    _sentPlaying[key] = play;
-                    return;
-                }
-                if (ModRuntime.VerboseLogging)
-                {
-                    try { path = emitter.Event; } catch (System.Exception e) { Guard.Swallow(e); }
-                }
+                info.Sent(play);
+                return;
             }
-            else
-            {
-                try { path = emitter.Event; } catch (System.Exception e) { Guard.Swallow(e); }
-                if (IsLocalOnly(emitter.transform) || IsDoorEmitter(emitter) || IsSceneBed(path))
-                {
-                    _skipIds.Add(key);
-                    _sentPlaying[key] = play;
-                    return;
-                }
-                if (_hostOkKeys.Count > 4096) _hostOkKeys.Clear();
-                _hostOkKeys.Add(key);
-            }
-            _skipIds.Remove(key);
-            _sentPlaying[key] = play;
-            if (play) _lastHostPlayAt[key] = Time.unscaledTime;
-            else _lastHostStopAt[key] = Time.unscaledTime;
+            info.Sent(play);
+            if (play) info.HostPlayAt = Time.unscaledTime;
+            else info.HostStopAt = Time.unscaledTime;
             if (ModRuntime.VerboseLogging)
+            {
+                string path = PathOf(emitter);
                 PlaytestLog.Verbose("FMOD", (play ? "Play" : "Stop")
-                    + (string.IsNullOrEmpty(path) ? "" : " " + path)
-                    + " id=" + id.ToString("X16") + "/" + key.Comp);
+                    + (path.Length == 0 ? "" : " " + path)
+                    + " id=" + info.Key.Id.ToString("X16") + "/" + info.Key.Comp);
+            }
             var outMsg = new FmodEmitterMessage
             {
-                WorldId = unchecked((long)id),
+                WorldId = unchecked((long)info.Key.Id),
                 Play = play,
                 Kind = 0,
-                Comp = key.Comp
+                Comp = info.Key.Comp
             };
             // A sound produced by applying a client's packet (its puzzle solve's onSolved) already played natively
             // on that client: relay to everyone else only, or it hears it twice.
@@ -363,8 +482,8 @@ namespace SyncRADation.Networking
         /// <summary>
         /// Client: a world emitter started/stopped by something the client did locally (switch, prop, machine) and
         /// that the host did not author. Sent to the host, which plays it and relays it to the other clients.
-        /// Same skip rules as the host path (Elster, radio UI, door, Music/Cutscenes/Ambience beds) plus: nothing
-        /// near enemies/bosses (host-authored), nothing while loading/settling, nothing far from the player.
+        /// Same skip rules as the host path plus: nothing under enemies/bosses (host-authored), nothing while
+        /// loading/settling, nothing far from the player.
         /// </summary>
         static void ClientEmit(StudioEventEmitter emitter, bool play)
         {
@@ -372,13 +491,10 @@ namespace SyncRADation.Networking
             if (net == null || !net.IsConnected || !net.HandshakeComplete) return;
             if (net.SceneMismatch || SceneFollowService.LocalIsTransient()) return;
             if (Time.unscaledTime - _sceneStartAt < ClientSettleSeconds) return;
-            ulong id = IdOf(emitter);
-            if (id == 0) return;
-            var key = new EmitKey(id, CompIndex(emitter));
-            bool was;
-            bool known = _sentPlaying.TryGetValue(key, out was);
-            if (!play && !(known && was)) return; // Stop only for something this client started
-            if (_skipIds.Contains(key)) return;
+            var info = InfoOf(emitter);
+            if (info == null) return;
+            if (!play && !info.WasPlaying) return; // Stop only for something this client started
+            if (info.ClientRoute == Route.Skip) return;
             if (play)
             {
                 var player = PlayerState.player;
@@ -390,66 +506,26 @@ namespace SyncRADation.Networking
                         return;
                 }
                 catch (Exception ex) { Guard.Swallow(ex); return; }
-                int last;
                 int frame = Time.frameCount;
-                if (_lastPlayFrame.TryGetValue(key, out last) && last == frame) return;
-                _lastPlayFrame[key] = frame;
+                if (info.PlayFrame == frame) return;
+                info.PlayFrame = frame;
             }
-            string path = "";
-            if (_okKeys.Contains(key))
-            {
-                // Static checks passed before; Cinematic is the one dynamic part (airlock / event camera starts).
-                try { if (LocalInspect.Cinematic(emitter.gameObject)) return; }
-                catch (Exception e) { Guard.Swallow(e); }
-                if (ModRuntime.VerboseLogging)
-                {
-                    try { path = emitter.Event; } catch (Exception e) { Guard.Swallow(e); }
-                }
-            }
-            else
-            {
-                try { path = emitter.Event; } catch (Exception e) { Guard.Swallow(e); }
-                if (IsClientLocalOnly(emitter, path))
-                {
-                    _skipIds.Add(key);
-                    return;
-                }
-                if (_okKeys.Count > 4096) _okKeys.Clear();
-                _okKeys.Add(key);
-            }
+            if (ClientSkips(info, emitter) || Cinematic(emitter)) return;
             if (!TakeToken(ref _clientBucket, ClientRatePerSec, ClientBurst, Time.unscaledTime)) return;
-            _sentPlaying[key] = play;
+            info.Sent(play);
             if (ModRuntime.VerboseLogging)
+            {
+                string path = PathOf(emitter);
                 PlaytestLog.Verbose("FMOD", "client " + (play ? "Play" : "Stop")
-                    + (string.IsNullOrEmpty(path) ? "" : " " + path)
-                    + " id=" + id.ToString("X16") + "/" + key.Comp);
+                    + (path.Length == 0 ? "" : " " + path)
+                    + " id=" + info.Key.Id.ToString("X16") + "/" + info.Key.Comp);
+            }
             net.FmodHandlers.SendFmodEmitterRequest(new FmodEmitterRequestMessage
             {
-                WorldId = unchecked((long)id),
+                WorldId = unchecked((long)info.Key.Id),
                 Play = play,
-                Comp = key.Comp
+                Comp = info.Key.Comp
             });
-        }
-
-        static bool IsClientLocalOnly(StudioEventEmitter emitter, string path)
-        {
-            if (IsLocalOnly(emitter.transform) || IsDoorEmitter(emitter) || IsSceneBed(path)) return true;
-            return UnderHostDrivenActor(emitter);
-        }
-
-        /// <summary>Enemy / boss sounds are host-authored (snapshots + native host logic): a client copy would double them.</summary>
-        static bool UnderHostDrivenActor(StudioEventEmitter emitter)
-        {
-            try
-            {
-                if (emitter.GetComponentInParent<EnemyController>() != null) return true;
-                if (emitter.GetComponentInParent<END_Boss>() != null) return true;
-                if (emitter.GetComponentInParent<BOS_Adler>() != null) return true;
-                if (emitter.GetComponentInParent<LAB_ChimeraBoss>() != null) return true;
-                if (emitter.GetComponentInParent<MED_MynahBoss>() != null) return true;
-            }
-            catch (Exception ex) { Guard.Swallow(ex); }
-            return false;
         }
 
         /// <summary>
@@ -470,45 +546,32 @@ namespace SyncRADation.Networking
             _hostBuckets[senderId] = b;
             if (!ok) return;
 
-            var key = new EmitKey(id, req.Comp);
-            bool was;
-            bool known = _sentPlaying.TryGetValue(key, out was);
-            if (!req.Play && !(known && was)) return;
+            TrimIfHuge();
+            Sync();
+            var info = Record(new EmitKey(id, req.Comp));
+            if (!req.Play && !info.WasPlaying) return;
             if (req.Play)
             {
-                float at;
-                if (_lastHostPlayAt.TryGetValue(key, out at) && now - at < HostDupWindow) return; // host just authored it
+                if (now - info.HostPlayAt < HostDupWindow) return; // host just authored it
                 // A client Play that crossed the host's Stop on the wire must not restart the loop for everyone.
-                if (_lastHostStopAt.TryGetValue(key, out at) && now - at < HostDupWindow) return;
+                if (now - info.HostStopAt < HostDupWindow) return;
                 int frame = Time.frameCount;
-                int last;
-                if (_lastPlayFrame.TryGetValue(key, out last) && last == frame) return;
-                _lastPlayFrame[key] = frame;
+                if (info.PlayFrame == frame) return;
+                info.PlayFrame = frame;
             }
 
-            var e = FindCached(key);
+            var e = Resolve(info);
             if (e != null)
             {
-                string path = "";
-                try { path = e.Event; } catch (Exception ex) { Guard.Swallow(ex); }
-                if (IsClientLocalOnly(e, path)) return;
+                if (ClientSkips(info, e) || Cinematic(e)) return;
+                // Already audible on the host (loops / machine hum the host runs itself): do not restart it, but
+                // the other clients have not heard it yet, so the relay below still goes out.
                 bool playing = false;
                 if (req.Play)
                 {
                     try { playing = e.IsPlaying(); } catch (Exception ex) { Guard.Swallow(ex); }
-                    // Already audible on the host (loops / machine hum the host runs itself): do not restart it, but
-                    // the other clients have not heard it yet, so the relay below still goes out.
                 }
-                bool near = true;
-                if (req.Play)
-                {
-                    try
-                    {
-                        float vol;
-                        near = e.transform == null || WorldSfx.TryVolume(e.transform.position, out vol);
-                    }
-                    catch (Exception ex) { Guard.Swallow(ex); }
-                }
+                bool near = !req.Play || NearHere(e);
                 if (near && !playing)
                 {
                     _suppressEmit++;
@@ -527,8 +590,8 @@ namespace SyncRADation.Networking
                 }
             }
 
-            _sentPlaying[key] = req.Play;
-            if (req.Play) _lastHostPlayAt[key] = now;
+            info.Sent(req.Play);
+            if (req.Play) info.HostPlayAt = now;
             net.FmodHandlers.SendFmodEmitterExcept(new FmodEmitterMessage
             {
                 WorldId = req.WorldId,
@@ -538,9 +601,38 @@ namespace SyncRADation.Networking
             }, senderId);
         }
 
-        public static void HostOneShot(string path, Vector3 pos)
+        /// <summary>Host join/resync dump: every relayable emitter that is playing right now.</summary>
+        public static void DumpPlaying()
         {
-            if (string.IsNullOrEmpty(path) || !NetGate.Host) return;
+            var net = LanNetworkManager.Instance;
+            if (net == null || net.Role != NetworkRole.Host || !net.IsConnected) return;
+            Sync();
+            Rescan();
+            foreach (var kvp in _byKey)
+            {
+                var info = kvp.Value;
+                var e = info.Emitter;
+                if (e == null) continue;
+                if (HostSkips(info, e) || Cinematic(e)) continue;
+                bool playing = false;
+                try { playing = e.IsPlaying(); } catch (Exception ex) { Guard.Swallow(ex); }
+                if (!playing) continue;
+                // Recorded even inside the unicast dump: it only lets the later Stop go out (to everyone).
+                info.Sent(true);
+                net.SendFmodEmitter(new FmodEmitterMessage
+                {
+                    WorldId = unchecked((long)info.Key.Id),
+                    Play = true,
+                    Kind = 0,
+                    Comp = info.Key.Comp
+                });
+            }
+        }
+
+        // ------------------------------------------------------------------ one-shots
+
+        static void HostOneShot(string path, Vector3 pos)
+        {
             if (IsLocalOneShot(path)) return;
             if (IsSceneBed(path)) return;
             if (IsDoorSfxPath(path)) return;
@@ -575,25 +667,12 @@ namespace SyncRADation.Networking
                     && !string.IsNullOrEmpty(path))
                     return path;
             }
-            catch (System.Exception e) { Guard.Swallow(e); }
+            catch (Exception e) { Guard.Swallow(e); }
             try { return guid.ToString(); }
             catch { return ""; }
         }
 
-        public static string PathFromGuid(System.Guid guid)
-        {
-            try
-            {
-                var ig = new Il2CppSystem.Guid(guid.ToByteArray());
-                return PathFromGuid(ig);
-            }
-            catch
-            {
-                return guid.ToString("N");
-            }
-        }
-
-        /// <summary>Shared host relay for world one-shots (string / Guid / Attached).</summary>
+        /// <summary>Host relay for world one-shots (string / Guid / attached / fmod helper).</summary>
         public static void TryHostWorldOneShot(string path, Vector3 position)
         {
             if (!NetGate.Host || !NetGate.Party) return; // a lone host has nobody to tell
@@ -609,6 +688,8 @@ namespace SyncRADation.Networking
                 return;
             HostOneShot(path, position);
         }
+
+        // ------------------------------------------------------------------ local playback gates
 
         /// <summary>
         /// Local playback gate for a sound a remote action triggers here: a source inside a Room plays only when
@@ -632,15 +713,18 @@ namespace SyncRADation.Networking
                 float vol;
                 return WorldSfx.TryVolume(go.transform.position, out vol);
             }
-            catch (System.Exception e) { Guard.Swallow(e); return true; }
+            catch (Exception e) { Guard.Swallow(e); return true; }
         }
+
+        const float RoomRectSlack = 1f;
+        const float RoomNearAlways = 8f;
 
         /// <summary>
         /// Client gate for a relayed one-shot (position only, no emitter): inside the local player's room when that
         /// room's floor plan is known, else the door distance. The plan is the XY union of the room's active mesh
         /// renderers (its chunk geometry), measured once per room and registry generation.
         /// </summary>
-        public static bool AudibleAt(Vector3 pos)
+        static bool AudibleAt(Vector3 pos)
         {
             try
             {
@@ -654,10 +738,9 @@ namespace SyncRADation.Networking
                 var here = PlayerState.currentRoom;
                 if (here != null)
                 {
-                    int g = WorldRegistry.Generation;
-                    if (g != _boundsGeneration || _boundsRoom == null || _boundsRoom != here)
+                    Sync();
+                    if (_boundsRoom == null || _boundsRoom != here)
                     {
-                        _boundsGeneration = g;
                         _boundsRoom = here;
                         _roomRectOk = TryRoomRect(here, out _roomRect);
                     }
@@ -667,11 +750,8 @@ namespace SyncRADation.Networking
                 float vol;
                 return WorldSfx.TryVolume(pos, out vol);
             }
-            catch (System.Exception e) { Guard.Swallow(e); return true; }
+            catch (Exception e) { Guard.Swallow(e); return true; }
         }
-
-        const float RoomRectSlack = 1f;
-        const float RoomNearAlways = 8f;
 
         static bool TryRoomRect(Room room, out Rect rect)
         {
@@ -686,7 +766,7 @@ namespace SyncRADation.Networking
                 if (tiles != null && !tiles.transform.IsChildOf(room.transform))
                     AddRenderers(tiles, ref any, ref minX, ref minY, ref maxX, ref maxY);
             }
-            catch (System.Exception e) { Guard.Swallow(e); return false; }
+            catch (Exception e) { Guard.Swallow(e); return false; }
             if (!any) return false;
             rect = Rect.MinMaxRect(minX - RoomRectSlack, minY - RoomRectSlack, maxX + RoomRectSlack, maxY + RoomRectSlack);
             return true;
@@ -716,6 +796,8 @@ namespace SyncRADation.Networking
             }
         }
 
+        // ------------------------------------------------------------------ path / hierarchy classification
+
         public static bool ShouldBlockDoorOneShot(string path)
         {
             return NetGate.IsApplying && IsDoorSfxPath(path);
@@ -732,7 +814,7 @@ namespace SyncRADation.Networking
             return false;
         }
 
-        public static bool IsLocalOneShot(string path)
+        static bool IsLocalOneShot(string path)
         {
             if (string.IsNullOrEmpty(path)) return true;
             if (path.StartsWith("event:/Elster/")) return true;
@@ -740,21 +822,17 @@ namespace SyncRADation.Networking
             return false;
         }
 
-        public static bool IsLocalOnly(Transform t)
+        /// <summary>The static part of "this emitter belongs to this peer only" (Cinematic is checked per Play).</summary>
+        static bool IsLocalOnlyStatic(Transform t)
         {
             if (t == null) return true;
-            try
-            {
-                if (LocalInspect.Cinematic(t.gameObject)) return true;
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var player = PlayerState.player;
                 if (player != null && (t == player.transform || t.IsChildOf(player.transform)))
                     return true;
             }
-            catch (System.Exception e) { Guard.Swallow(e); }
+            catch (Exception e) { Guard.Swallow(e); }
             try
             {
                 var rms = WorldLookup.All<RadioManager>();
@@ -769,7 +847,7 @@ namespace SyncRADation.Networking
                     }
                 }
             }
-            catch (System.Exception e) { Guard.Swallow(e); }
+            catch (Exception e) { Guard.Swallow(e); }
             Transform p = t;
             int hops = 0;
             while (p != null && hops++ < 16)
@@ -786,7 +864,7 @@ namespace SyncRADation.Networking
                     // Tarot klick: native Update plays it on every peer from the synced darkmode edge.
                     if (p.GetComponent<ROT_Tarot>() != null) return true;
                 }
-                catch (System.Exception e) { Guard.Swallow(e); }
+                catch (Exception e) { Guard.Swallow(e); }
                 p = p.parent;
             }
             try
@@ -805,7 +883,7 @@ namespace SyncRADation.Networking
                     }
                 }
             }
-            catch (System.Exception e) { Guard.Swallow(e); }
+            catch (Exception e) { Guard.Swallow(e); }
             return false;
         }
 
@@ -815,87 +893,7 @@ namespace SyncRADation.Networking
             catch { return false; }
         }
 
-        public static void Reset()
-        {
-            _sentPlaying.Clear();
-            _lastPlayFrame.Clear();
-            _lastHostPlayAt.Clear();
-            _lastHostStopAt.Clear();
-            _skipIds.Clear();
-            _okKeys.Clear();
-            _hostOkKeys.Clear();
-            _slidingSfx.Clear();
-            _slidingSfxGeneration = -1;
-            _boundsRoom = null;
-            _roomRectOk = false;
-            _boundsGeneration = -1;
-            _byId.Clear();
-            _missUntil.Clear();
-            _idCache.Clear();
-            _compCache.Clear();
-            _hostBuckets.Clear();
-            _clientBucket = default(Bucket);
-            _suppressEmit = 0;
-            _lastRebuildAt = -999f;
-            _lastInvalidateAt = -999f;
-            _idGeneration = -1;
-            _sceneStartAt = Time.unscaledTime;
-        }
-
-        public static void DumpPlaying()
-        {
-            var net = LanNetworkManager.Instance;
-            if (net == null || net.Role != NetworkRole.Host || !net.IsConnected) return;
-            _lastInvalidateAt = Time.unscaledTime;
-            WorldLookup.Invalidate<StudioEventEmitter>();
-            RebuildCache();
-            foreach (var kvp in _byId)
-            {
-                var e = kvp.Value;
-                if (e == null || kvp.Key.Id == 0) continue;
-                if (IsLocalOnly(e.transform) || IsDoorEmitter(e)) continue;
-                string path = "";
-                try { path = e.Event; } catch (System.Exception ex) { Guard.Swallow(ex); }
-                if (IsSceneBed(path)) continue;
-                bool playing = false;
-                try { playing = e.IsPlaying(); } catch (System.Exception ex) { Guard.Swallow(ex); }
-                if (!playing) continue;
-                _sentPlaying[kvp.Key] = true;
-                net.SendFmodEmitter(new FmodEmitterMessage
-                {
-                    WorldId = unchecked((long)kvp.Key.Id),
-                    Play = true,
-                    Kind = 0,
-                    Comp = kvp.Key.Comp
-                });
-            }
-        }
-
-        public static bool IsDoorEmitter(StudioEventEmitter emitter)
-        {
-            if (emitter == null) return false;
-            try
-            {
-                string path = emitter.Event;
-                if (IsDoorSfxPath(path)) return true;
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            Transform t = emitter.transform;
-            int hops = 0;
-            while (t != null && hops++ < 16)
-            {
-                try
-                {
-                    if (t.GetComponent<Doorway_Double>() != null) return true;
-                    if (t.GetComponent<EventSlidingDoor>() != null) return true;
-                }
-                catch (System.Exception e) { Guard.Swallow(e); }
-                t = t.parent;
-            }
-            return false;
-        }
-
-        /// <summary>Door open/close one-shots — never world-relay; DoorNative distance-gates them.</summary>
+        /// <summary>Door open/close one-shots: never world-relayed, DoorNative distance-gates them.</summary>
         public static bool IsDoorSfxPath(string path)
         {
             if (string.IsNullOrEmpty(path)) return false;
@@ -903,21 +901,12 @@ namespace SyncRADation.Networking
             return IsSlidingDoorSfxPath(path);
         }
 
-        public static bool IsSlidingDoorSfxPath(string path)
+        static bool IsSlidingDoorSfxPath(string path)
         {
-            EventSlidingDoor sd;
-            return TryGetSlidingDoorForSfx(path, out sd);
-        }
-
-        public static bool TryGetSlidingDoorForSfx(string path, out EventSlidingDoor door)
-        {
-            door = null;
-            if (string.IsNullOrEmpty(path)) return false;
-            int g = WorldRegistry.Generation;
-            if (g != _slidingSfxGeneration)
+            Sync();
+            if (!_slidingSfxReady)
             {
-                _slidingSfxGeneration = g;
-                _slidingSfx.Clear();
+                _slidingSfxReady = true;
                 try
                 {
                     foreach (var kvp in WorldRegistry.AllSlidingDoors())
@@ -925,17 +914,15 @@ namespace SyncRADation.Networking
                         var sd = kvp.Value;
                         if (sd == null) continue;
                         string open = sd.openSFX, close = sd.closeSFX;
-                        // First registered door wins, as the old registry walk did.
+                        // First registered door wins.
                         if (!string.IsNullOrEmpty(open) && !_slidingSfx.ContainsKey(open)) _slidingSfx[open] = sd;
                         if (!string.IsNullOrEmpty(close) && !_slidingSfx.ContainsKey(close)) _slidingSfx[close] = sd;
                     }
                 }
-                catch (System.Exception e) { Guard.Swallow(e); }
+                catch (Exception e) { Guard.Swallow(e); }
             }
-            if (!_slidingSfx.TryGetValue(path, out door)) return false;
-            if (door != null) return true;
-            door = null; // destroyed since the rebuild
-            return false;
+            EventSlidingDoor door;
+            return _slidingSfx.TryGetValue(path, out door) && door != null; // null: destroyed since the rebuild
         }
     }
 }

@@ -1,4 +1,4 @@
-// Relay world FMOD emitters; skip local Elster and radio UI.
+// World FMOD hooks: StudioEventEmitter Play/Stop relay and the world one-shot entry points (one shared handler).
 using FMODUnity;
 using HarmonyLib;
 using SyncRADation.Networking;
@@ -10,14 +10,14 @@ namespace SyncRADation.Patches
     [HarmonyPatch(typeof(StudioEventEmitter), nameof(StudioEventEmitter.Play))]
     public static class StudioEmitterPlayPatch
     {
-        // Remote door apply calls native openDoors/closeDoors which Play() the
-        // door emitters ungated. Skip those; DoorNative.PlayWorld distance-gates.
         [HarmonyPrefix]
         public static bool Prefix(StudioEventEmitter __instance)
         {
             // Client copy of the Kolibri feedback hurt: the host plays and relays the real one.
             if (KolibriAdlerAuthPatches.SuppressClientEmitter(__instance))
                 return false;
+            // Remote door apply runs native open/close, which Play() the door emitters ungated; DoorNative plays
+            // the distance-gated copy instead.
             if (NetGate.IsApplying && FmodEmitterSync.IsDoorEmitter(__instance))
                 return false;
             // A remote action applied here (puzzle onSolved, interaction) must not sound in another room: the
@@ -47,65 +47,51 @@ namespace SyncRADation.Patches
         }
     }
 
-    [HarmonyPatch(typeof(RuntimeManager), nameof(RuntimeManager.PlayOneShot), new[] { typeof(string), typeof(Vector3) })]
-    public static class PlayOneShotWorldPatch
+    /// <summary>
+    /// Shared body of every world one-shot hook. Prefix: drop door one-shots during a remote apply (DoorNative plays
+    /// the gated copy), then the per-entry-point gate. Postfix (Harmony runs it after a skipping prefix too): the
+    /// host relay, which applies its own skip rules.
+    /// </summary>
+    static class WorldOneShot
     {
-        [HarmonyPrefix]
-        public static bool Prefix(string path, Vector3 position)
+        internal enum Gate
+        {
+            /// <summary>At a position: a replayed puzzle press plays 3D at its panel unless this player views it.</summary>
+            Positional,
+            /// <summary>Attached to an object: a remote action applied here plays only in this player's room.</summary>
+            Attached,
+            /// <summary>No position (fmod helper): door rule only.</summary>
+            Global
+        }
+
+        internal static bool Before(string path, Gate gate, GameObject attached)
         {
             if (FmodEmitterSync.ShouldBlockDoorOneShot(path))
                 return false;
-            // A peer's puzzle press replayed here: 3D at the panel unless this player is looking at it.
-            return PuzzleFx.RemoteOneShot(path);
+            switch (gate)
+            {
+                case Gate.Positional: return PuzzleFx.RemoteOneShot(path);
+                case Gate.Attached: return !NetGate.IsApplying || FmodEmitterSync.AudibleHere(attached);
+                default: return true;
+            }
         }
 
-        [HarmonyPostfix]
-        public static void Postfix(string path, Vector3 position)
+        internal static void After(string path, Vector3 position)
         {
             FmodEmitterSync.TryHostWorldOneShot(path, position);
         }
-    }
 
-    [HarmonyPatch(typeof(RuntimeManager), nameof(RuntimeManager.PlayOneShot), new[] { typeof(Il2CppSystem.Guid), typeof(Vector3) })]
-    public static class PlayOneShotGuidWorldPatch
-    {
-        [HarmonyPrefix]
-        public static bool Prefix(Il2CppSystem.Guid guid, Vector3 position)
+        /// <summary>
+        /// Guid entry points: the lookupPath round trip only when something will read the path (a remote apply, a
+        /// replayed puzzle press, or a host with peers to relay to).
+        /// </summary>
+        internal static string PathOf(Il2CppSystem.Guid guid)
         {
-            string path = FmodEmitterSync.PathFromGuid(guid);
-            if (FmodEmitterSync.ShouldBlockDoorOneShot(path))
-                return false;
-            return PuzzleFx.RemoteOneShot(path);
+            if (!NetGate.IsApplying && !PuzzleFx.Active && !(NetGate.Host && NetGate.Party)) return null;
+            return FmodEmitterSync.PathFromGuid(guid);
         }
 
-        [HarmonyPostfix]
-        public static void Postfix(Il2CppSystem.Guid guid, Vector3 position)
-        {
-            FmodEmitterSync.TryHostWorldOneShot(FmodEmitterSync.PathFromGuid(guid), position);
-        }
-    }
-
-    [HarmonyPatch(typeof(RuntimeManager), nameof(RuntimeManager.PlayOneShotAttached), new[] { typeof(string), typeof(GameObject) })]
-    public static class PlayOneShotAttachedStringPatch
-    {
-        [HarmonyPrefix]
-        public static bool Prefix(string path, GameObject gameObject)
-        {
-            if (FmodEmitterSync.ShouldBlockDoorOneShot(path))
-                return false;
-            if (NetGate.IsApplying && !FmodEmitterSync.AudibleHere(gameObject))
-                return false;
-            return true;
-        }
-
-        [HarmonyPostfix]
-        public static void Postfix(string path, GameObject gameObject)
-        {
-            Vector3 pos = AttachedPos(gameObject);
-            FmodEmitterSync.TryHostWorldOneShot(path, pos);
-        }
-
-        static Vector3 AttachedPos(GameObject go)
+        internal static Vector3 PositionOf(GameObject go)
         {
             try
             {
@@ -114,57 +100,78 @@ namespace SyncRADation.Patches
             catch (System.Exception e) { Guard.Swallow(e); }
             return Vector3.zero;
         }
+
+        internal static Vector3 PlayerPosition()
+        {
+            try
+            {
+                var player = PlayerState.player;
+                if (player != null) return player.transform.position;
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            return Vector3.zero;
+        }
+    }
+
+    [HarmonyPatch(typeof(RuntimeManager), nameof(RuntimeManager.PlayOneShot), new[] { typeof(string), typeof(Vector3) })]
+    public static class PlayOneShotWorldPatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(string path) => WorldOneShot.Before(path, WorldOneShot.Gate.Positional, null);
+
+        [HarmonyPostfix]
+        public static void Postfix(string path, Vector3 position) => WorldOneShot.After(path, position);
+    }
+
+    [HarmonyPatch(typeof(RuntimeManager), nameof(RuntimeManager.PlayOneShot), new[] { typeof(Il2CppSystem.Guid), typeof(Vector3) })]
+    public static class PlayOneShotGuidWorldPatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(Il2CppSystem.Guid guid, out string __state)
+        {
+            __state = WorldOneShot.PathOf(guid);
+            return WorldOneShot.Before(__state, WorldOneShot.Gate.Positional, null);
+        }
+
+        [HarmonyPostfix]
+        public static void Postfix(Il2CppSystem.Guid guid, Vector3 position, string __state)
+            => WorldOneShot.After(__state ?? WorldOneShot.PathOf(guid), position);
+    }
+
+    [HarmonyPatch(typeof(RuntimeManager), nameof(RuntimeManager.PlayOneShotAttached), new[] { typeof(string), typeof(GameObject) })]
+    public static class PlayOneShotAttachedStringPatch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(string path, GameObject gameObject)
+            => WorldOneShot.Before(path, WorldOneShot.Gate.Attached, gameObject);
+
+        [HarmonyPostfix]
+        public static void Postfix(string path, GameObject gameObject)
+            => WorldOneShot.After(path, WorldOneShot.PositionOf(gameObject));
     }
 
     [HarmonyPatch(typeof(RuntimeManager), nameof(RuntimeManager.PlayOneShotAttached), new[] { typeof(Il2CppSystem.Guid), typeof(GameObject) })]
     public static class PlayOneShotAttachedGuidPatch
     {
         [HarmonyPrefix]
-        public static bool Prefix(Il2CppSystem.Guid guid, GameObject gameObject)
+        public static bool Prefix(Il2CppSystem.Guid guid, GameObject gameObject, out string __state)
         {
-            string path = FmodEmitterSync.PathFromGuid(guid);
-            if (FmodEmitterSync.ShouldBlockDoorOneShot(path))
-                return false;
-            if (NetGate.IsApplying && !FmodEmitterSync.AudibleHere(gameObject))
-                return false;
-            return true;
+            __state = WorldOneShot.PathOf(guid);
+            return WorldOneShot.Before(__state, WorldOneShot.Gate.Attached, gameObject);
         }
 
         [HarmonyPostfix]
-        public static void Postfix(Il2CppSystem.Guid guid, GameObject gameObject)
-        {
-            Vector3 pos = Vector3.zero;
-            try
-            {
-                if (gameObject != null) pos = gameObject.transform.position;
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            FmodEmitterSync.TryHostWorldOneShot(FmodEmitterSync.PathFromGuid(guid), pos);
-        }
+        public static void Postfix(Il2CppSystem.Guid guid, GameObject gameObject, string __state)
+            => WorldOneShot.After(__state ?? WorldOneShot.PathOf(guid), WorldOneShot.PositionOf(gameObject));
     }
 
     [HarmonyPatch(typeof(fmod), nameof(fmod.PlayOneShot), new[] { typeof(string) })]
     public static class FmodPlayOneShotPatch
     {
         [HarmonyPrefix]
-        public static bool Prefix(string _event)
-        {
-            if (FmodEmitterSync.ShouldBlockDoorOneShot(_event))
-                return false;
-            return true;
-        }
+        public static bool Prefix(string _event) => WorldOneShot.Before(_event, WorldOneShot.Gate.Global, null);
 
         [HarmonyPostfix]
-        public static void Postfix(string _event)
-        {
-            Vector3 pos = Vector3.zero;
-            try
-            {
-                var player = PlayerState.player;
-                if (player != null) pos = player.transform.position;
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            FmodEmitterSync.TryHostWorldOneShot(_event, pos);
-        }
+        public static void Postfix(string _event) => WorldOneShot.After(_event, WorldOneShot.PlayerPosition());
     }
 }
