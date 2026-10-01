@@ -96,8 +96,8 @@ namespace SyncRADation.Networking
                     StripBagMirrors(item);
                 }
                 PlaytestLog.Event("KeyRing", "craft-revoke count=" + _keys.Count
-                    + (net != null && net.Role == NetworkRole.Host ? " host" : " peer"));
-                if (net != null && net.Role == NetworkRole.Host && net.IsConnected)
+                    + (NetGate.HostRole ? " host" : " peer"));
+                if (NetGate.Host)
                 {
                     // Fan-out sentinel so non-crafter clients strip mirrors too.
                     try { net.SendPartyKeyRing(msg.ItemEnums); } catch (System.Exception e) { Guard.Swallow(e); }
@@ -106,7 +106,7 @@ namespace SyncRADation.Networking
                 return;
             }
 
-            if (net != null && net.Role == NetworkRole.Host)
+            if (NetGate.HostRole)
             {
                 bool added = false;
                 for (int i = 0; i < msg.ItemEnums.Length; i++)
@@ -137,7 +137,7 @@ namespace SyncRADation.Networking
         public static void Broadcast()
         {
             var net = LanNetworkManager.Instance;
-            if (net == null || net.Role != NetworkRole.Host || !net.IsConnected) return;
+            if (!NetGate.Host) return;
             net.SendPartyKeyRing(Snapshot());
         }
 
@@ -146,7 +146,7 @@ namespace SyncRADation.Networking
             Note(item);
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
-            if (net.Role == NetworkRole.Host)
+            if (NetGate.HostRole)
             {
                 Broadcast();
                 return;
@@ -208,7 +208,7 @@ namespace SyncRADation.Networking
                 arr[i + 1] = revoke[i];
             try { net.SendPartyKeyRing(arr); }
             catch (System.Exception e) { Guard.Swallow(e); }
-            if (net.Role == NetworkRole.Host)
+            if (NetGate.HostRole)
                 Broadcast();
         }
 

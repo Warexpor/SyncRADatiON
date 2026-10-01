@@ -29,7 +29,7 @@ namespace SyncRADation.Patches
         {
             if (!__state) return; // native Load returned immediately: nothing was loaded
             var net = ModRuntime.Network;
-            if (net != null && net.Role == NetworkRole.Client) return;
+            if (NetGate.ClientRole) return;
             try
             {
                 bool wipe = HostReload.OnLoadFinished();
@@ -65,7 +65,7 @@ namespace SyncRADation.Patches
         public static void Postfix()
         {
             var net = ModRuntime.Network;
-            if (net != null && net.Role == NetworkRole.Client) return;
+            if (NetGate.ClientRole) return;
             try
             {
                 HostReload.NoteSlotBound();

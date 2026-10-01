@@ -120,12 +120,12 @@ namespace SyncRADation.Networking
         internal void HandleAvatarOneShot(AvatarOneShotMessage msg, int peerId)
         {
             // Host: identity is the LiteNetLib peer map (same rule as PlayerState).
-            if (_net.Role == NetworkRole.Host && peerId >= 0)
+            if (NetGate.HostRole && peerId >= 0)
                 msg.SenderPlayerId = peerId;
             int senderId = msg.SenderPlayerId;
             if (senderId == _net.LocalPlayerId) return;
 
-            if (_net.Role == NetworkRole.Host)
+            if (NetGate.HostRole)
             {
                 _relayWriter.Reset();
                 _relayWriter.Put((byte)NetMessageType.AvatarOneShot);
@@ -263,7 +263,7 @@ namespace SyncRADation.Networking
         internal void HandlePlayerVital(PlayerVitalMessage msg, int senderId)
         {
             // Host always relays (even when no local proxy yet, any scene): party vitals are scene-independent.
-            if (_net.Role == NetworkRole.Host)
+            if (NetGate.HostRole)
             {
                 _relayWriter.Reset();
                 _relayWriter.Put((byte)NetMessageType.PlayerVital);
@@ -282,13 +282,13 @@ namespace SyncRADation.Networking
         {
             // Host: identity is the LiteNetLib peer map, not the wire field.
             // Client: all packets come from peer 0 (host); keep the stamped SenderPlayerId.
-            if (_net.Role == NetworkRole.Host && peerId >= 0)
+            if (NetGate.HostRole && peerId >= 0)
                 state.SenderPlayerId = peerId;
             int senderId = state.SenderPlayerId;
             if (senderId == _net.LocalPlayerId) return;
 
             // Relay first: nothing about the host's own state (loading, no player, other scene) may stop it.
-            if (_net.Role == NetworkRole.Host)
+            if (NetGate.HostRole)
             {
                 _relayWriter.Reset();
                 _relayWriter.Put((byte)NetMessageType.PlayerState);
@@ -326,12 +326,12 @@ namespace SyncRADation.Networking
 
         internal void HandleBonePose(BonePoseMessage msg, int peerId)
         {
-            if (_net.Role == NetworkRole.Host && peerId >= 0)
+            if (NetGate.HostRole && peerId >= 0)
                 msg.SenderPlayerId = peerId;
             int senderId = msg.SenderPlayerId;
             if (senderId == _net.LocalPlayerId) return;
 
-            if (_net.Role == NetworkRole.Host)
+            if (NetGate.HostRole)
             {
                 _relayWriter.Reset();
                 _relayWriter.Put((byte)NetMessageType.BonePose);

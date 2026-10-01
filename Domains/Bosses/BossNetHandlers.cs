@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using LiteNetLib;
 using LiteNetLib.Utils;
+using SyncRADation.Sync;
 
 namespace SyncRADation.Networking
 {
@@ -61,7 +62,7 @@ namespace SyncRADation.Networking
         /// <summary>Client → host: boss hitbox damage / Falke stab / spear take.</summary>
         internal void SendBossHitToHost(long worldId, BossHitKind kind, int amount)
         {
-            if (_net.Role != NetworkRole.Client) return;
+            if (!NetGate.ClientRole) return;
             var msg = new BossHitMessage
             {
                 SenderPlayerId = _net.LocalPlayerId,
@@ -79,7 +80,7 @@ namespace SyncRADation.Networking
         /// <summary>Host → every client: boss presentation event (spear taken, Chimera rifle shot).</summary>
         internal void BroadcastBossEvent(long worldId, BossHitKind kind, int amount)
         {
-            if (_net.Role != NetworkRole.Host || !_net.IsConnected) return;
+            if (!NetGate.Host) return;
             var msg = new BossHitMessage
             {
                 SenderPlayerId = _net.LocalPlayerId,
@@ -95,7 +96,7 @@ namespace SyncRADation.Networking
 
         internal void HandleBossHit(BossHitMessage msg, int senderId)
         {
-            if (_net.Role == NetworkRole.Host)
+            if (NetGate.HostRole)
                 _net.BossSync.ApplyHitOnHost(msg, senderId);
             else
                 _net.BossSync.ApplyBossEventOnClient(msg);

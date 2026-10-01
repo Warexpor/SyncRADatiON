@@ -50,7 +50,7 @@ namespace SyncRADation.Patches
                 return true;
 
             // Host applies real damage locally (this is the authoritative sim).
-            if (net.Role == NetworkRole.Host)
+            if (NetGate.HostRole)
                 return true;
 
             // Personal scene (wreck/hole, airlock): this client's enemies are not host puppets, so

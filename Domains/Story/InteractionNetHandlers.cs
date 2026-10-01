@@ -33,7 +33,7 @@ namespace SyncRADation.Networking
             };
             if (kind != InteractionKind.Gunshot)
                 PlaytestLog.Event("Interact", "request " + kind + " id=" + worldId.ToString("X16"));
-            if (_net.Role == NetworkRole.Host)
+            if (NetGate.HostRole)
             {
                 InteractionSyncService.HandleRequest(msg);
                 return;
@@ -65,7 +65,7 @@ namespace SyncRADation.Networking
 
         internal void HandleInteractionRequest(InteractionRequestMessage msg)
         {
-            if (_net.Role == NetworkRole.Host)
+            if (NetGate.HostRole)
                 InteractionSyncService.HandleRequest(msg);
         }
 

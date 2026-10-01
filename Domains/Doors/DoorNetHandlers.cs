@@ -1,5 +1,6 @@
 using LiteNetLib;
 using LiteNetLib.Utils;
+using SyncRADation.Sync;
 
 namespace SyncRADation.Networking
 {
@@ -30,10 +31,10 @@ namespace SyncRADation.Networking
             bool relay = true;
             if (canApply)
                 relay = DoorSyncService.HandleMessage(ref doorMsg);
-            else if (_net.Role != NetworkRole.Host)
+            else if (!NetGate.HostRole)
                 DoorSyncService.HoldMessage(doorMsg); // host state is truth: never adopt an unverified client lock flag
 
-            if (_net.Role == NetworkRole.Host && relay)
+            if (NetGate.HostRole && relay)
             {
                 var w = new NetDataWriter();
                 w.Put((byte)NetMessageType.DoorState);

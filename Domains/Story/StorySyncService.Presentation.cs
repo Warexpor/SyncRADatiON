@@ -84,7 +84,7 @@ namespace SyncRADation.Networking
         public void ApplyPresentation(StoryPresentationMessage msg)
         {
             var net = LanNetworkManager.Instance;
-            if (net == null || net.Role == NetworkRole.Host) return;
+            if (net == null || NetGate.HostRole) return;
             // Same guard as ApplyCommit: never start dialogue / cutscenes / cheats into a loading or foreign scene.
             if (SceneFollowService.LocalIsTransient())
             {

@@ -126,7 +126,7 @@ namespace SyncRADation.Networking
             _net.BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
             ModRuntime.Log?.Msg("[Scene] Hello sent scene='" + msg.SceneName + "' room='" + msg.RoomName + "'");
             // Our registry is fresh after a load: compare it with the host checksum we already hold (hello just went out).
-            if (_net.Role == NetworkRole.Client) EvaluateClient(true);
+            if (NetGate.ClientRole) EvaluateClient(true);
         }
 
         internal void SendSceneFollow(string sceneName, bool isRequest)
@@ -156,7 +156,7 @@ namespace SyncRADation.Networking
         internal void HandleSceneFollow(SceneFollowMessage msg)
         {
             SceneFollowService.HandleMessage(msg);
-            if (_net.Role == NetworkRole.Client && !msg.IsRequest && msg.Stats != null && msg.Stats.Length > 0)
+            if (NetGate.ClientRole && !msg.IsRequest && msg.Stats != null && msg.Stats.Length > 0)
             {
                 NoteHostStats(msg.SceneName, msg.Stats);
                 EvaluateClient(false);
@@ -176,11 +176,11 @@ namespace SyncRADation.Networking
                 _net.SetHostSceneName(msg.SceneName ?? "");
 
             // WorldId divergence: host compares a client's checksum, a client remembers the host's and self-checks.
-            if (_net.Role == NetworkRole.Host)
+            if (NetGate.HostRole)
             {
                 if (msg.SenderPlayerId >= 1) CheckPeerChecksum(msg);
             }
-            else if (_net.Role == NetworkRole.Client && msg.SenderPlayerId == 0 && msg.Stats != null && msg.Stats.Length > 0)
+            else if (NetGate.ClientRole && msg.SenderPlayerId == 0 && msg.Stats != null && msg.Stats.Length > 0)
             {
                 NoteHostStats(msg.SceneName, msg.Stats);
                 EvaluateClient(false);
@@ -197,7 +197,7 @@ namespace SyncRADation.Networking
                 && !string.Equals(compareTo, localScene, StringComparison.Ordinal);
             _net.SetSceneMismatch(mismatch);
 
-            if (_net.Role == NetworkRole.Client && !hostTransient && !string.IsNullOrEmpty(compareTo)
+            if (NetGate.ClientRole && !hostTransient && !string.IsNullOrEmpty(compareTo)
                 && (mismatch || localTransient))
             {
                 if (mismatch && AirlockCinematic.ShouldIgnoreHostFollow(compareTo))
@@ -328,7 +328,7 @@ namespace SyncRADation.Networking
         /// </summary>
         private void EvaluateClient(bool helloJustSent)
         {
-            if (_net.Role != NetworkRole.Client || !_net.HandshakeComplete) return;
+            if (!NetGate.ClientRole || !_net.HandshakeComplete) return;
             string scene = SceneManager.GetActiveScene().name ?? "";
             if (scene.Length == 0 || SceneFollowService.IsTransient(scene)) return;
             if (_hostCounts == null || _hostSums == null || !string.Equals(_hostStatsScene, scene, StringComparison.Ordinal)) return;
@@ -369,7 +369,7 @@ namespace SyncRADation.Networking
 
         internal void HandleSceneDiff(SceneDiffMessage msg)
         {
-            if (_net.Role != NetworkRole.Client) return;
+            if (!NetGate.ClientRole) return;
             string scene = SceneManager.GetActiveScene().name ?? "";
             if (!string.Equals(msg.SceneName, scene, StringComparison.Ordinal))
             {
@@ -468,11 +468,11 @@ namespace SyncRADation.Networking
             string scene = SceneManager.GetActiveScene().name ?? "";
             int ids = 0;
             int who = -1;
-            if (_net.Role == NetworkRole.Client)
+            if (NetGate.ClientRole)
             {
                 if (_clientDiffScene == scene) ids = _clientDiffIds;
             }
-            else if (_net.Role == NetworkRole.Host)
+            else if (NetGate.HostRole)
             {
                 foreach (var kvp in _peerDivergence)
                 {

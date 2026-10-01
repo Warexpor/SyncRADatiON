@@ -150,7 +150,7 @@ namespace SyncRADation.Networking
 
             // A script can flip Doorway_Double.locked without going through openDoors/closeDoors (boss arena seal):
             // keep the held unlock honest, and let the host tell everyone about a relock.
-            bool host = net.Role == NetworkRole.Host;
+            bool host = NetGate.HostRole;
             foreach (var kvp in WorldRegistry.AllDoubleDoors())
             {
                 var d = kvp.Value;
@@ -304,8 +304,7 @@ namespace SyncRADation.Networking
         {
             ulong id = unchecked((ulong)msg.WorldId);
             // Host: only a client message reaches here, and a client can never drop a held unlock.
-            var net = LanNetworkManager.Instance;
-            if (net != null && net.Role == NetworkRole.Host && msg.Locked) return;
+            if (NetGate.HostRole && msg.Locked) return;
             switch (msg.Type)
             {
                 case DoorType.DoorwayDouble: NoteLockEdge(HeldDoubleUnlock, id, msg.Locked); break;
@@ -383,7 +382,7 @@ namespace SyncRADation.Networking
             }
 
             var net = LanNetworkManager.Instance;
-            bool isHost = net != null && net.Role == NetworkRole.Host;
+            bool isHost = NetGate.HostRole;
             bool hostLocked = false;
             try { hostLocked = d.locked; } catch (System.Exception ex) { Guard.Swallow("Door.ReadLocked", ex); }
             if (isHost && !msg.Open)
@@ -504,7 +503,7 @@ namespace SyncRADation.Networking
             var net = LanNetworkManager.Instance;
             // The host echoes a client's own change back to it (DoorNetHandlers): already applied natively here,
             // and re-running Unlock + ReleaseTraverse mid-traverse would re-arm the door's interactions.
-            if (net != null && net.Role == NetworkRole.Client && msg.SenderPlayerId == net.LocalPlayerId)
+            if (NetGate.ClientRole && msg.SenderPlayerId == net.LocalPlayerId)
             {
                 bool cur = msg.Locked;
                 try { cur = cd.locked; } catch (System.Exception ex) { Guard.Swallow("Door.CdReadEcho", ex); }
@@ -514,7 +513,7 @@ namespace SyncRADation.Networking
                     return true;
                 }
             }
-            if (net != null && net.Role == NetworkRole.Host && msg.Locked)
+            if (NetGate.HostRole && msg.Locked)
             {
                 bool hostLocked = true;
                 try { hostLocked = cd.locked; } catch (System.Exception ex) { Guard.Swallow("Door.CdReadHost", ex); }

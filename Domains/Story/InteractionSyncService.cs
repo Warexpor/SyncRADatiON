@@ -11,7 +11,7 @@ namespace SyncRADation.Networking
         public static void HandleRequest(InteractionRequestMessage msg)
         {
             var net = LanNetworkManager.Instance;
-            if (net == null || net.Role != NetworkRole.Host) return;
+            if (net == null || !NetGate.HostRole) return;
 
             ulong id = unchecked((ulong)msg.WorldId);
             bool ok = false;

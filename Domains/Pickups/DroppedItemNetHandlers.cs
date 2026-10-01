@@ -76,7 +76,7 @@ namespace SyncRADation.Networking
         /// </summary>
         internal void RehomeDropsOf(int playerId)
         {
-            if (_net.Role != NetworkRole.Host || playerId < 1) return;
+            if (!NetGate.HostRole || playerId < 1) return;
             var old = new List<int>(4);
             foreach (var d in DroppedItemRegistry.All())
             {
@@ -423,7 +423,7 @@ namespace SyncRADation.Networking
             if (!PartyKeyRing.IsKeyOrObject(item)) return;
             PartyKeyRing.Remove(item);
             PartyKeyRing.StripBagMirrors(item);
-            if (_net.Role == NetworkRole.Host)
+            if (NetGate.HostRole)
                 PartyKeyRing.Broadcast();
         }
 

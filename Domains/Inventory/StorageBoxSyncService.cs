@@ -24,7 +24,7 @@ namespace SyncRADation.Networking
 
         public void TickHost(LanNetworkManager net)
         {
-            if (net == null || net.Role != NetworkRole.Host || !net.IsConnected) return;
+            if (net == null || !NetGate.Host) return;
             _timer += UnityEngine.Mathf.Min(UnityEngine.Time.unscaledDeltaTime, 0.1f);
             if (_timer < 0.5f && !_needSend) return;
             _timer = 0f;
@@ -39,7 +39,7 @@ namespace SyncRADation.Networking
         public void FlushDiffNow()
         {
             var net = LanNetworkManager.Instance;
-            if (net == null || net.Role != NetworkRole.Host || !net.IsConnected) return;
+            if (!NetGate.Host) return;
             RequestSend();
             SendNow(net);
         }
@@ -65,8 +65,7 @@ namespace SyncRADation.Networking
         /// </summary>
         public void ClampUniqueKeyStacks()
         {
-            var net = LanNetworkManager.Instance;
-            if (net == null || net.Role != NetworkRole.Host) return;
+            if (!NetGate.HostRole) return;
             var box = ItemBag.Box(_boxScratch);
             for (int i = 0; i < box.Count; i++)
             {
@@ -93,8 +92,7 @@ namespace SyncRADation.Networking
 
         public void Apply(StorageBoxBlobMessage msg)
         {
-            var net = LanNetworkManager.Instance;
-            if (net != null && net.Role == NetworkRole.Host) return;
+            if (NetGate.HostRole) return;
             if (msg.Items == null) return;
 
             var pending = new List<KeyValuePair<AnItem, int>>();

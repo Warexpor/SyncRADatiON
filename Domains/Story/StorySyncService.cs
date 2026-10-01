@@ -138,7 +138,7 @@ namespace SyncRADation.Networking
 
         public void TickHost(LanNetworkManager net)
         {
-            if (net == null || net.Role != NetworkRole.Host || !net.IsConnected) return;
+            if (net == null || !NetGate.Host) return;
             // END_Manager statics are written directly by NPC_Tracker / InteractiveLockSingle / PlayerState.
             int sig = EndSignature();
             if (sig != _endSig)
@@ -161,7 +161,7 @@ namespace SyncRADation.Networking
         public void FlushDiffNow()
         {
             var net = LanNetworkManager.Instance;
-            if (net == null || net.Role != NetworkRole.Host || !net.IsConnected || !_needSend) return;
+            if (!NetGate.Host || !_needSend) return;
             _timer = 0f;
             Send(net, _fullDump);
         }
@@ -247,8 +247,7 @@ namespace SyncRADation.Networking
         /// </summary>
         public void OnPartyWipe()
         {
-            var net = LanNetworkManager.Instance;
-            if (net == null || net.Role != NetworkRole.Client) return;
+            if (!NetGate.ClientRole) return;
             _authoritativeUntil = Time.unscaledTime + AuthoritativeWindow;
             _hasPendingCommit = false;
             _endBaseValid = false;
@@ -284,7 +283,7 @@ namespace SyncRADation.Networking
         public void ApplyCommit(StoryCommitMessage msg)
         {
             var net = LanNetworkManager.Instance;
-            if (net == null || net.Role == NetworkRole.Host) return;
+            if (net == null || NetGate.HostRole) return;
             bool loading = SceneFollowService.LocalIsTransient();
             if (loading || net.SceneMismatch)
             {
@@ -365,7 +364,7 @@ namespace SyncRADation.Networking
 
         public void TickClient(LanNetworkManager net)
         {
-            if (net == null || net.Role != NetworkRole.Client || !net.IsConnected) return;
+            if (net == null || !NetGate.Client) return;
             // A blocked / queued scene request that never arrived is re-asked (LanNetworkManager ticks only the host side).
             SceneFollowService.TickClient();
             if (SceneFollowService.LocalIsTransient()) return;

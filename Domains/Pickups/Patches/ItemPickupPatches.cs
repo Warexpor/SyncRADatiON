@@ -173,7 +173,7 @@ namespace SyncRADation.Patches
                 // Host: let native pickUp show _nospaceDialogue (no reservation).
                 // Client: block native (would dual-grant) and skip claim wire.
                 PlaytestLog.Event("Pickup", "deny bag full " + __instance.gameObject.name + " item=" + _pendingItem);
-                if (net.Role != NetworkRole.Host)
+                if (!NetGate.HostRole)
                 {
                     UntriggerVeto(__instance);
                     return false;
@@ -182,7 +182,7 @@ namespace SyncRADation.Patches
                 return true;
             }
 
-            if (net.Role == NetworkRole.Host)
+            if (NetGate.HostRole)
             {
                 // Reserve only: the claim is published in the Postfix once native pickUp really took it.
                 if (!sync.TryClaimOnHost(id, net.LocalPlayerId, out _, out _, hideNow: false, hintItem: _pendingItem))
@@ -231,12 +231,12 @@ namespace SyncRADation.Patches
             bool inspect = IsInspect(__instance);
             // Inspect pickups claim only on the yes answer (NoteTaken), host included: a claim here
             // would hide the prop for everyone while the host's yes/no is still open.
-            if (inspect && __instance != null && (!inBag || net.Role == NetworkRole.Host)) return;
+            if (inspect && __instance != null && (!inBag || NetGate.HostRole)) return;
 
             bool triggered = false;
             try { triggered = __instance != null && __instance.triggered; } catch (System.Exception e) { Guard.Swallow(e); }
 
-            if (net.Role == NetworkRole.Host)
+            if (NetGate.HostRole)
             {
                 // Native refused (nospace / cancel) after Prefix reserved — free the WorldId.
                 if (!triggered && !inBag)
@@ -289,13 +289,13 @@ namespace SyncRADation.Patches
             {
                 PlaytestLog.Verbose("Pickup", "declined id=" + id.ToString("X16"));
                 // Host pre-claimed in Prefix/Postfix before the answer: a "no" gives the prop back.
-                if (net.Role == NetworkRole.Host)
+                if (NetGate.HostRole)
                     sync.ReleaseAndBroadcast(id, net.LocalPlayerId);
                 return;
             }
             int takeCount = CountOf(p);
 
-            if (net.Role == NetworkRole.Host)
+            if (NetGate.HostRole)
             {
                 if (!sync.HostClaim(id, net.LocalPlayerId, item, 0, hostNative: true))
                 {

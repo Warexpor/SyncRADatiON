@@ -207,7 +207,7 @@ namespace SyncRADation.Networking
         {
             if (string.IsNullOrEmpty(_requested)) return;
             var net = LanNetworkManager.Instance;
-            if (net == null || net.Role != NetworkRole.Client || !net.IsConnected) return;
+            if (!NetGate.Client) return;
             if (Time.unscaledTime - _requestedAt < RetryAfter) return;
             string scene = _requested;
             string here = ActiveScene();
@@ -336,7 +336,7 @@ namespace SyncRADation.Networking
         {
             if (string.IsNullOrEmpty(_queued)) return;
             var net = LanNetworkManager.Instance;
-            if (net == null || net.Role != NetworkRole.Host || !net.IsConnected || !net.HasReadyPeers)
+            if (!NetGate.Host || !NetGate.Party)
             {
                 _queued = null; // offline, or the requester is gone
                 return;
@@ -418,10 +418,10 @@ namespace SyncRADation.Networking
             if (net == null) return;
             if (msg.IsRequest)
             {
-                if (net.Role == NetworkRole.Host) TryApplyRequest(msg.SceneName);
+                if (NetGate.HostRole) TryApplyRequest(msg.SceneName);
                 return;
             }
-            if (net.Role == NetworkRole.Host) return;
+            if (NetGate.HostRole) return;
             if (AirlockCinematic.ShouldIgnoreHostFollow(msg.SceneName))
             {
                 PlaytestLog.Event("Scene", "ignore follow '" + msg.SceneName + "' (airlock split)");

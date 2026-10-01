@@ -134,7 +134,7 @@ namespace SyncRADation.Players
             PlayDeathSound();
             net.SendDeathPolicy(DeathKind.ClientDowned);
             net.AvatarHandlers.SendLocalVital();
-            PlaytestLog.Event("Damage", (net.Role == NetworkRole.Host ? "host" : "client")
+            PlaytestLog.Event("Damage", (NetGate.HostRole ? "host" : "client")
                 + " downed — respawn in " + ModConfig.DownedRespawnSeconds.ToString("F0") + "s");
         }
 
@@ -260,7 +260,7 @@ namespace SyncRADation.Players
                     InventoryManager.RemoveItem(entry.item, entry.count);
                     PartyKeyRing.Remove(entry.enumVal);
                 }
-                if (net.Role == NetworkRole.Host)
+                if (NetGate.HostRole)
                     PartyKeyRing.Broadcast();
             }
             catch (System.Exception ex) { LogOnce("death drop", ex); }
@@ -410,7 +410,7 @@ namespace SyncRADation.Players
 
         private static void TickHostParty(LanNetworkManager net)
         {
-            if (net.Role != NetworkRole.Host) return;
+            if (!NetGate.HostRole) return;
             _hostTick += Time.unscaledDeltaTime;
             if (_hostTick < HostTickInterval) return;
             _hostTick = 0f;

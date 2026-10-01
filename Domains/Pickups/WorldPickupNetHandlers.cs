@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using LiteNetLib;
 using LiteNetLib.Utils;
+using SyncRADation.Sync;
 
 namespace SyncRADation.Networking
 {
@@ -96,14 +97,14 @@ namespace SyncRADation.Networking
 
         internal void HandleWorldPickupState(WorldPickupStateMessage pickMsg)
         {
-            if (_net.Role == NetworkRole.Host)
+            if (NetGate.HostRole)
                 return;
             _net.PickupSync.ApplyHide(pickMsg);
         }
 
         internal void HandleWorldPickupClaim(WorldPickupClaimMessage claim)
         {
-            if (_net.Role != NetworkRole.Host)
+            if (!NetGate.HostRole)
                 return;
             ulong id = unchecked((ulong)claim.WorldId);
 

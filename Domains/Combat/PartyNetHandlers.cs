@@ -17,7 +17,7 @@ namespace SyncRADation.Networking
 
         internal void SendPartyLife(PartyLifeMessage msg)
         {
-            if (_net.Role != NetworkRole.Host) return;
+            if (!NetGate.HostRole) return;
             var w = new NetDataWriter();
             w.Put((byte)NetMessageType.PartyLife);
             msg.Serialize(w);
@@ -27,7 +27,7 @@ namespace SyncRADation.Networking
         internal void HandlePartyLife(PartyLifeMessage msg, int senderId)
         {
             // Only the host authors revive / wipe.
-            if (_net.Role == NetworkRole.Host) return;
+            if (NetGate.HostRole) return;
             if (senderId != 0) return;
             if (msg.Kind == PartyLifeKind.Revive)
                 NetworkDamageSystem.ApplyRevive(msg);
@@ -38,7 +38,7 @@ namespace SyncRADation.Networking
         /// <summary>Host → clients. targetPlayerId &gt;= 0 unicasts (join handshake).</summary>
         internal void SendPartySave(PartySaveToken token, byte flags, int targetPlayerId = -1)
         {
-            if (_net.Role != NetworkRole.Host) return;
+            if (!NetGate.HostRole) return;
             var msg = new PartySaveMessage
             {
                 Slot = token.Slot,
@@ -57,14 +57,14 @@ namespace SyncRADation.Networking
 
         internal void HandlePartySave(PartySaveMessage msg, int senderId)
         {
-            if (_net.Role != NetworkRole.Client) return;
+            if (!NetGate.ClientRole) return;
             if (senderId != 0) return;
             PartySaveService.OnHostAnnounced(msg);
         }
 
         internal void SendPartyRoom(string room)
         {
-            if (_net.Role == NetworkRole.Offline) return;
+            if (!NetGate.Active) return;
             var msg = new PartyRoomMessage { PlayerId = _net.LocalPlayerId, Room = room ?? "" };
             var w = new NetDataWriter();
             w.Put((byte)NetMessageType.PartyRoom);
@@ -76,7 +76,7 @@ namespace SyncRADation.Networking
         /// (its own, PlayerId 0, or a relayed client's).</summary>
         internal void HandlePartyRoom(PartyRoomMessage msg, int senderId)
         {
-            if (_net.Role == NetworkRole.Host)
+            if (NetGate.HostRole)
             {
                 if (senderId < 1) return;
                 PartyVitals.NoteRoom(senderId, msg.Room);

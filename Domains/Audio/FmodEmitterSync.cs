@@ -347,7 +347,7 @@ namespace SyncRADation.Networking
         public static void Handle(FmodEmitterMessage msg)
         {
             var net = LanNetworkManager.Instance;
-            if (net != null && net.Role == NetworkRole.Host) return;
+            if (NetGate.HostRole) return;
             if (net != null && net.SceneMismatch) return;
             if (SceneFollowService.LocalIsTransient()) return;
 
@@ -605,7 +605,7 @@ namespace SyncRADation.Networking
         public static void DumpPlaying()
         {
             var net = LanNetworkManager.Instance;
-            if (net == null || net.Role != NetworkRole.Host || !net.IsConnected) return;
+            if (!NetGate.Host) return;
             Sync();
             Rescan();
             foreach (var kvp in _byKey)

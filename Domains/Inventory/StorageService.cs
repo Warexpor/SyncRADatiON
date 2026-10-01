@@ -359,7 +359,7 @@ namespace SyncRADation.Networking
         {
             if (n <= 0) return;
             var net = LanNetworkManager.Instance;
-            if (net == null || !net.IsConnected || net.Role == NetworkRole.Host) return;
+            if (!NetGate.Client) return;
             PlaytestLog.Event("StorageBox", "return overflow item=" + enumVal + " x" + n);
             // Own transaction id: its ack must not complete whatever transaction is in flight now.
             net.SendInteractionRequest(unchecked((ulong)NextTxn()), InteractionKind.StoragePut, enumVal, n, text: "return");

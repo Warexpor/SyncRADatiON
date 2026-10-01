@@ -1,5 +1,6 @@
 using LiteNetLib;
 using LiteNetLib.Utils;
+using SyncRADation.Sync;
 
 namespace SyncRADation.Networking
 {
@@ -46,7 +47,7 @@ namespace SyncRADation.Networking
 
         internal void HandleFmodEmitterRequest(FmodEmitterRequestMessage msg, int senderId)
         {
-            if (_net.Role != NetworkRole.Host || senderId < 1) return;
+            if (!NetGate.HostRole || senderId < 1) return;
             FmodEmitterSync.HandleRequest(msg, senderId);
         }
     }

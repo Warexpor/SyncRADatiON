@@ -354,7 +354,7 @@ namespace SyncRADation.Networking
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected || !net.HasReadyPeers) return;
             if (CheatRecently(cheat)) return;
-            if (net.Role == NetworkRole.Host)
+            if (NetGate.HostRole)
             {
                 PlaytestLog.Event("Story", "relay party cheat '" + cheat + "' origin=host");
                 BroadcastPresentation(StoryCmd.PartyCheat, 0, net.LocalPlayerId, cheat);
@@ -369,7 +369,7 @@ namespace SyncRADation.Networking
         {
             if (!IsPartyCheat(cheat)) return;
             var net = LanNetworkManager.Instance;
-            if (net == null || net.Role != NetworkRole.Host) return;
+            if (net == null || !NetGate.HostRole) return;
             if (CheatRecently(cheat)) return;
             RunCheat(cheat);
             PlaytestLog.Event("Story", "relay party cheat '" + cheat + "' origin=" + senderId);

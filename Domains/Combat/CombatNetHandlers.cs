@@ -2,6 +2,7 @@ using LiteNetLib;
 using LiteNetLib.Utils;
 using SyncRADation.Config;
 using SyncRADation.Players;
+using SyncRADation.Sync;
 using UnityEngine;
 
 namespace SyncRADation.Networking
@@ -47,7 +48,7 @@ namespace SyncRADation.Networking
             writer.Put((byte)NetMessageType.FriendlyFire);
             msg.Serialize(writer);
 
-            if (_net.Role == NetworkRole.Host)
+            if (NetGate.HostRole)
             {
                 if (_net.TryGetPeer(targetPlayerId, out var peer)
                     && peer.ConnectionState == ConnectionState.Connected)
@@ -68,7 +69,7 @@ namespace SyncRADation.Networking
             msg.Damage = ClampFriendlyDamage(msg.Damage);
             if (msg.Damage <= 0f) return;
             if (PartyVitals.IsDown(msg.TargetPlayerId)) return; // downed players cannot be shot
-            if (_net.Role == NetworkRole.Host && msg.TargetPlayerId != _net.LocalPlayerId)
+            if (NetGate.HostRole && msg.TargetPlayerId != _net.LocalPlayerId)
             {
                 var w = new NetDataWriter();
                 w.Put((byte)NetMessageType.FriendlyFire);

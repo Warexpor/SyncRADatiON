@@ -192,10 +192,10 @@ namespace SyncRADation.Patches
             var net = LanNetworkManager.Instance;
             ModRuntime.Log?.Msg("[Drop] claim key=" + key + " " + item + " added=" + added + " spill=" + spill
                 + " by=" + (net != null ? net.LocalPlayerId.ToString() : "?")
-                + " host=" + (net != null && net.Role == NetworkRole.Host));
+                + " host=" + NetGate.HostRole);
             if (net != null && net.IsConnected)
             {
-                if (net.Role == NetworkRole.Host)
+                if (NetGate.HostRole)
                 {
                     // The take already granted locally (skipLocalGrant). A refused claim gives the items back
                     // and leaves the floor item where it is.

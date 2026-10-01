@@ -51,13 +51,12 @@ namespace SyncRADation.Networking
 
         public void TickHost(LanNetworkManager net)
         {
-            if (net.Role == NetworkRole.Client)
+            if (NetGate.ClientRole)
             {
                 TickClientInterp();
                 return;
             }
-            if (net.Role != NetworkRole.Host) return;
-            if (!net.IsConnected) return;
+            if (!NetGate.Host) return;
 
             // Join/resync dump (unicast to the joiner): one snapshot now. The broadcast clock and a pending forced
             // send stay untouched, so everybody else still gets theirs on schedule.
@@ -568,7 +567,7 @@ namespace SyncRADation.Networking
         public void OnEnemyStateReceived(EnemyStateMessage msg)
         {
             var net = LanNetworkManager.Instance;
-            if (net != null && net.Role == NetworkRole.Host) return;
+            if (NetGate.HostRole) return;
             if (msg.Enemies == null) return;
             // Still loading / in another scene (menu, follow load, personal wreck/hole scene): none of the host's
             // enemies exist here. Drop the stream instead of resolving every id to a miss; the next snapshot after

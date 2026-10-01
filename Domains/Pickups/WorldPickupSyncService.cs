@@ -348,7 +348,7 @@ namespace SyncRADation.Networking
                 return;
             }
             PlaytestLog.Event("Pickup", "partial " + t.Item + " x" + remainder + " stays on prop id=" + id.ToString("X16"));
-            if (net.Role == NetworkRole.Host)
+            if (NetGate.HostRole)
                 HostReleaseRemainder(id, net.LocalPlayerId, remainder);
             else
                 net.WorldPickupHandlers.SendWorldPickupClaim(id, t.Item, t.Count, remaining: remainder);
@@ -527,8 +527,7 @@ namespace SyncRADation.Networking
 
         static bool IsLocalHost(int playerId)
         {
-            var n = LanNetworkManager.Instance;
-            return n != null && n.Role == NetworkRole.Host && playerId == n.LocalPlayerId;
+            return NetGate.HostRole && playerId == LanNetworkManager.Instance.LocalPlayerId;
         }
 
         static bool Alive(ItemPickup p)
@@ -809,7 +808,7 @@ namespace SyncRADation.Networking
         {
             // Runs for every role (LanNetworkManager.Update): client deny reverts / release waits live here too.
             TickTakes();
-            if (net == null || net.Role != NetworkRole.Host || !net.IsConnected) return;
+            if (net == null || !NetGate.Host) return;
             if (Config.ModConfig.SyncWorldPickups?.Value != true) return;
 
             // Send cadence is wall-clock: slow-mo / timeScale must not stretch the pickup state stream.
@@ -826,7 +825,7 @@ namespace SyncRADation.Networking
         public void FlushDiffNow()
         {
             var net = LanNetworkManager.Instance;
-            if (net == null || net.Role != NetworkRole.Host || !net.IsConnected || net.UnicastActive) return;
+            if (!NetGate.Host || net.UnicastActive) return;
             if (Config.ModConfig.SyncWorldPickups?.Value != true) return;
             bool full = _needFull;
             _needFull = false;

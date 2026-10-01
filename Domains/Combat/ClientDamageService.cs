@@ -184,7 +184,7 @@ namespace SyncRADation.Networking
         /// </summary>
         public static void TickHurtboxes(LanNetworkManager net)
         {
-            if (net == null || net.Role != NetworkRole.Host || !net.IsConnected) return;
+            if (net == null || !NetGate.Host) return;
             // Solo / lone host: no remote peers, so nothing to hurt — no scans, no list refresh.
             if (net.GetPlayerCount() <= 1)
             {
@@ -305,7 +305,7 @@ namespace SyncRADation.Networking
         public static void OnEnemyHit(EnemyController e)
         {
             var net = LanNetworkManager.Instance;
-            if (net == null || net.Role != NetworkRole.Host || !net.IsConnected) return;
+            if (!NetGate.Host) return;
             if (e == null || net.GetPlayerCount() <= 1) return; // lone host: nothing but native Hit
             // Runs in the EnemyController.Hit prefix: a failure here must never stop the native swing.
             try

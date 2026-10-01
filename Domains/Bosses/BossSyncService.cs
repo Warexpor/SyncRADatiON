@@ -110,13 +110,12 @@ namespace SyncRADation.Networking
 
         public void TickHost(LanNetworkManager net)
         {
-            if (net.Role == NetworkRole.Client)
+            if (NetGate.ClientRole)
             {
                 TickClient(net);
                 return;
             }
-            if (net.Role != NetworkRole.Host) return;
-            if (!net.IsConnected) return;
+            if (!NetGate.Host) return;
 
             // Join/resync dump (unicast to the joiner): one snapshot now; the broadcast clock and a pending forced
             // send stay untouched so everybody else still gets theirs.
@@ -380,7 +379,7 @@ namespace SyncRADation.Networking
         public void ApplyBossEventOnClient(BossHitMessage msg)
         {
             var net = LanNetworkManager.Instance;
-            if (net == null || net.Role == NetworkRole.Host || net.SceneMismatch) return;
+            if (net == null || NetGate.HostRole || net.SceneMismatch) return;
             if (SceneFollowService.LocalIsTransient()) return;
             BossType type;
             var comp = FindLocalBoss(msg.WorldId, out type);
@@ -412,7 +411,7 @@ namespace SyncRADation.Networking
         public void OnBossStateReceived(BossStateMessage msg)
         {
             var net = LanNetworkManager.Instance;
-            if (net != null && net.Role == NetworkRole.Host) return;
+            if (NetGate.HostRole) return;
             if (msg.Bosses == null) return;
             // Join dump / SceneFollow mid-load: applying now would cache an empty boss set and stick
             // _clientDisabled, so later scene bosses would keep local AI and miss phase snaps.
