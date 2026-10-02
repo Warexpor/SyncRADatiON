@@ -42,7 +42,7 @@ namespace SyncRADation.ItemSystem
                 int key = (int)SyncRADation.Networking.WorldPickupSyncService.ResolveItem(p, bindCatalog: false);
                 ItemPickup have;
                 if (Stashed.TryGetValue(key, out have) && have != null) return;
-                if (VisualTooBig(p)) return;
+                if (!IsWorldPickup(p) || VisualTooBig(p)) return;
                 if (_stashRoot == null)
                 {
                     _stashRoot = new GameObject(DroppedItemRegistry.NamePrefix + "Stash");
@@ -107,7 +107,7 @@ namespace SyncRADation.ItemSystem
                 var p = all[i];
                 if (p == null || DroppedItemRegistry.IsDropped(p)) continue;
                 try { if (p.slave) continue; } catch (System.Exception e) { Guard.Swallow(e); }
-                if (VisualTooBig(p)) continue;
+                if (!IsWorldPickup(p) || VisualTooBig(p)) continue;
                 bool inScene = false;
                 bool live = false;
                 bool spent = false;
@@ -127,6 +127,18 @@ namespace SyncRADation.ItemSystem
             if (found != null)
                 ByItem[key] = found;
             return found;
+        }
+
+        /// <summary>
+        /// A floor pickup (AssetRipper PEN_Wreck Rooms/.../ItemPickup_BrokenKey: Interaction, ItemPickup, UniqueId,
+        /// ItemPickupName, BoxCollider2D trigger, Prompt child), not an event-screen one (Events/PEN_PC/TapePickup:
+        /// 3D BoxCollider, no name marker, scaled for the close-up camera). A clone of the latter floated, came out
+        /// huge and never showed the interact prompt.
+        /// </summary>
+        static bool IsWorldPickup(ItemPickup p)
+        {
+            try { return p.GetComponent<BoxCollider2D>() != null && p.GetComponent<Collider>() == null; }
+            catch { return false; }
         }
 
         static bool VisualTooBig(ItemPickup p)
