@@ -23,5 +23,29 @@ namespace SyncRADation.Players
             float inv = 1f / mag;
             return new Quaternion(x * inv, y * inv, z * inv, w * inv);
         }
+
+        /// <summary>
+        /// Remote root height (z; SIGNALIS up is -Z, so the floor is the largest z). Elster cannot jump, yet the
+        /// sender's root z wobbles a few tenths (door spawn points sit above the floor, the 3D rigidbody settles),
+        /// and a 30 Hz sample of that wobble plays back as hops. Feet stay on the lowest height of the buffered
+        /// timeline unless the whole buffer travels by more than <paramref name="travel"/> (elevator, stairs, a
+        /// ledge): then the sampled height is followed as is.
+        /// </summary>
+        public static float FloorZ(SnapshotRing<float> heights, float sampledZ, float travel)
+        {
+            int n = heights.Count;
+            if (n < 2) return sampledZ;
+            float oldest = heights.At(0);
+            float newest = heights.At(n - 1);
+            float trend = newest - oldest;
+            if (trend > travel || trend < -travel) return sampledZ;
+            float floor = oldest;
+            for (int i = 1; i < n; i++)
+            {
+                float z = heights.At(i);
+                if (z > floor) floor = z;
+            }
+            return floor;
+        }
     }
 }

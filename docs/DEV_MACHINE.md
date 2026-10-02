@@ -31,7 +31,7 @@ Read with `grep -a` (non-UTF8 bytes). Connected lines are prefixed `H ` (host) /
 
 **Scene scan line:** `[World] scan objects=N classes=M Xms warm gos=G cached=C Yms` — the WorldId scene cache (`Sync/WorldId`) is warmed at load (every scripted GameObject's id pinned before gameplay can destroy a sibling); `[Hitch] worldScan+warm` when it costs a spike.
 
-**Flicker trace** (`Sync/FlickerTrace.cs`, Diagnostics, change-only, budgeted; proxy visibility sampled at 5 Hz): `[Room] chunk ON|OFF … by=game|mod flips=N`, `[Room] enter`, `[Proxy] vis pN …` / `[Proxy] jump pN d=…`, client `[Enemy] client <id> active=…` / `client snap-jump` / `client unknown <id>`, host `[Enemy] wake ok|REFUSED`. A `flapping:` line means that tag toggled more than 25 times in 5 s.
+**Flicker trace** (`Sync/FlickerTrace.cs`, Diagnostics, change-only, budgeted; proxy visibility sampled at 5 Hz): `[Room] chunk ON|OFF … by=game|mod flips=N`, `[Room] enter`, `[Proxy] vis pN …` / `[Proxy] jump pN d=…`, `[Proxy] bob pN rootZ=a..b drawnZ=a..b hipsH=a..b` (1 s window where the received root z, the drawn root z or the proxy hips height swung: rootZ wobble = sender root, drawnZ = what the floor lock let through, hipsH = pose) and the sender's own `[Move] self bob rootZ=… hipsH=…`, client `[Enemy] client <id> active=…` / `client snap-jump` / `client unknown <id>`, host `[Enemy] wake ok|REFUSED`. A `flapping:` line means that tag toggled more than 25 times in 5 s.
 
 **Proxy init:** `[DRV] pose model=… bones=… hips=…` (always on) — the proxy has no Animator; its pose is the sender's synced bone rotations + humanoid hips.
 

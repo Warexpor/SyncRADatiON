@@ -1,4 +1,5 @@
 // Local Elster -> PlayerState pose fields + edge cues, read once per 30 Hz send with no per-send allocation.
+using SyncRADation.Config;
 using SyncRADation.Networking;
 using SyncRADation.Sync;
 using UnityEngine;
@@ -60,6 +61,8 @@ namespace SyncRADation.Players
                 msg.HipsY = hp.y;
                 msg.HipsZ = hp.z;
                 msg.Flags |= PoseFlags.HasHips;
+                if (ModConfig.DiagnosticsOn)
+                    FlickerTrace.SelfBob(player.transform.position.z, player.transform.position.z - _hips.position.z);
             }
 
             AvatarCue cues = AvatarCue.None;

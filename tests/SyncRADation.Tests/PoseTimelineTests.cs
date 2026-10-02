@@ -136,5 +136,39 @@ namespace SyncRADation.Tests
             Quaternion m = PoseMath.Nlerp(a, b, 0.5f);
             Assert.Equal(1f, Math.Abs(m.w), 5);
         }
+
+        private static SnapshotRing<float> Heights(params float[] zs)
+        {
+            var r = new SnapshotRing<float>(8);
+            for (int i = 0; i < zs.Length; i++)
+                r.Push(i * 0.033f) = zs[i];
+            return r;
+        }
+
+        [Fact]
+        public void FloorZ_keeps_the_feet_on_the_lowest_height_through_a_wobble()
+        {
+            // Up is -Z: the floor is the largest z, a wobble lifts the root toward -0.2 and back.
+            var h = Heights(0f, -0.2f, 0f, -0.1f, 0f, -0.2f, -0.05f, 0f);
+            Assert.Equal(0f, PoseMath.FloorZ(h, -0.2f, 0.3f), 5);
+            Assert.Equal(0f, PoseMath.FloorZ(h, -0.1f, 0.3f), 5);
+        }
+
+        [Fact]
+        public void FloorZ_follows_real_travel_across_the_buffer()
+        {
+            // Elevator / stairs going up: the whole buffer moves, so the sampled height is used as is.
+            var up = Heights(0f, -0.1f, -0.2f, -0.3f, -0.4f, -0.5f, -0.6f, -0.7f);
+            Assert.Equal(-0.45f, PoseMath.FloorZ(up, -0.45f, 0.3f), 5);
+            var down = Heights(0f, 0.1f, 0.2f, 0.3f, 0.4f, 0.5f);
+            Assert.Equal(0.25f, PoseMath.FloorZ(down, 0.25f, 0.3f), 5);
+        }
+
+        [Fact]
+        public void FloorZ_with_fewer_than_two_heights_is_the_sample()
+        {
+            Assert.Equal(-0.2f, PoseMath.FloorZ(Heights(), -0.2f, 0.3f), 5);
+            Assert.Equal(-0.2f, PoseMath.FloorZ(Heights(0f), -0.2f, 0.3f), 5);
+        }
     }
 }

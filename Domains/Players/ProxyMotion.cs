@@ -20,13 +20,24 @@ namespace SyncRADation.Players
         private const int Capacity = 8;
         private const float TeleportDistance = 15f;
         private const float ExtrapolateMax = 0.12f;
+        /// <summary>Height change across the whole buffer (~0.25 s) that is real travel, not wobble (PoseMath.FloorZ).</summary>
+        private const float HeightTravel = 0.3f;
+        /// <summary>Exponential rate the rendered height follows its target at (1/s).</summary>
+        private const float HeightRate = 20f;
 
         private readonly Transform _root;
         private readonly SnapshotRing<Snap> _snaps = new SnapshotRing<Snap>(Capacity);
+        // Same stamps as _snaps: the heights alone, for PoseMath.FloorZ.
+        private readonly SnapshotRing<float> _heights = new SnapshotRing<float>(Capacity);
         private readonly SnapClock _clock = new SnapClock(PluginInfo.SendInterval);
+        private float _z;
+        private bool _hasZ;
 
         /// <summary>Last sampling branch ("hold" / "extrap" / "lerp") for FlickerTrace.</summary>
         public string Mode { get; private set; } = "hold";
+
+        /// <summary>Root z sampled from the sender's timeline before the floor lock (FlickerTrace bob line).</summary>
+        public float RawZ { get; private set; }
 
         public ProxyMotion(Transform root)
         {
@@ -43,9 +54,29 @@ namespace SyncRADation.Players
             {
                 _root.SetPositionAndRotation(position, YawOnPlane(facingWorld, _root.up));
                 _snaps.Clear();
+                _heights.Clear();
                 _clock.Reset();
+                _hasZ = false;
             }
-            _snaps.Push(_clock.Stamp(Time.unscaledTime)) = new Snap { Pos = position, Vel = velocity, Facing = facingWorld };
+            float stamp = _clock.Stamp(Time.unscaledTime);
+            _snaps.Push(stamp) = new Snap { Pos = position, Vel = velocity, Facing = facingWorld };
+            _heights.Push(stamp) = position.z;
+        }
+
+        /// <summary>Rendered root z: the buffered floor height (PoseMath.FloorZ), eased so a target change never steps.</summary>
+        private float Height(float sampledZ)
+        {
+            float target = PoseMath.FloorZ(_heights, sampledZ, HeightTravel);
+            if (!_hasZ)
+            {
+                _z = target;
+                _hasZ = true;
+            }
+            else
+            {
+                _z += (target - _z) * (1f - Mathf.Exp(-HeightRate * Time.unscaledDeltaTime));
+            }
+            return _z;
         }
 
         /// <summary>
@@ -90,6 +121,8 @@ namespace SyncRADation.Players
                 }
             }
             HitchTrace.Interp(Mode);
+            RawZ = pos.z;
+            pos.z = Height(pos.z);
             _root.SetPositionAndRotation(pos, YawOnPlane(facing, _root.up));
         }
 

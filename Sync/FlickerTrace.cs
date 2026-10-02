@@ -42,6 +42,79 @@ namespace SyncRADation.Sync
         }
         static readonly Dictionary<int, ProxyVis> _proxy = new Dictionary<int, ProxyVis>();
 
+        // ---- Vertical bob ("jumping model"): peak-to-peak heights over 1 s windows ----
+        const float BobWindow = 1f;
+        /// <summary>Root height swing worth a line (Elster is ~1.8 tall and cannot jump).</summary>
+        const float BobRoot = 0.08f;
+        /// <summary>Hips-above-root swing worth a line (a run cycle bobs less than this).</summary>
+        const float BobHips = 0.15f;
+
+        sealed class Bob
+        {
+            public float Start = -1f;
+            public float RawMin, RawMax, DrawnMin, DrawnMax, HipsMin, HipsMax;
+
+            /// <summary>Adds one sample; at the end of a window returns its summary when anything swung, else null.</summary>
+            public string Add(float now, float raw, float drawn, float hips)
+            {
+                if (Start < 0f || now - Start > BobWindow * 3f)
+                {
+                    Begin(now, raw, drawn, hips);
+                    return null;
+                }
+                RawMin = Mathf.Min(RawMin, raw); RawMax = Mathf.Max(RawMax, raw);
+                DrawnMin = Mathf.Min(DrawnMin, drawn); DrawnMax = Mathf.Max(DrawnMax, drawn);
+                HipsMin = Mathf.Min(HipsMin, hips); HipsMax = Mathf.Max(HipsMax, hips);
+                if (now - Start < BobWindow) return null;
+                float r = RawMax - RawMin, d = DrawnMax - DrawnMin, h = HipsMax - HipsMin;
+                string line = null;
+                if (r > BobRoot || d > BobRoot || h > BobHips)
+                    line = "rootZ=" + RawMin.ToString("F2") + ".." + RawMax.ToString("F2")
+                        + " drawnZ=" + DrawnMin.ToString("F2") + ".." + DrawnMax.ToString("F2")
+                        + " hipsH=" + HipsMin.ToString("F2") + ".." + HipsMax.ToString("F2");
+                Begin(now, raw, drawn, hips);
+                return line;
+            }
+
+            void Begin(float now, float raw, float drawn, float hips)
+            {
+                Start = now;
+                RawMin = RawMax = raw;
+                DrawnMin = DrawnMax = drawn;
+                HipsMin = HipsMax = hips;
+            }
+        }
+        static readonly Dictionary<int, Bob> _proxyBob = new Dictionary<int, Bob>();
+        // persistent: the local player's own window, restarted by its gap check (Bob.Add)
+        static readonly Bob _selfBob = new Bob();
+
+        /// <summary>
+        /// Receiver, per frame: the sender's root z as received (raw), the proxy root z as drawn, and the proxy hips
+        /// height above its root (world up is -Z). Tells a wobbling sender root from a pose (hips) bob.
+        /// </summary>
+        public static void ProxyBob(int pid, float rawZ, float drawnZ, float hipsH, string mode)
+        {
+            if (!ModConfig.DiagnosticsOn) return;
+            Bob b;
+            if (!_proxyBob.TryGetValue(pid, out b))
+            {
+                b = new Bob();
+                _proxyBob[pid] = b;
+            }
+            string line = b.Add(Time.unscaledTime, rawZ, drawnZ, hipsH);
+            if (line != null)
+                Emit("Proxy", "bob p" + pid + " " + line + " mode=" + mode);
+        }
+
+        /// <summary>Sender, per pose send: the same numbers for the local Elster (raw = drawn = her root z).</summary>
+        public static void SelfBob(float rootZ, float hipsH)
+        {
+            if (!ModConfig.DiagnosticsOn) return;
+            string line = _selfBob.Add(Time.unscaledTime, rootZ, rootZ, hipsH);
+            if (line != null)
+                Emit("Move", "self bob " + line);
+        }
+
         static readonly Dictionary<ulong, int> _enemyState = new Dictionary<ulong, int>();
         static readonly HashSet<ulong> _missSeen = new HashSet<ulong>();
         static readonly HashSet<int> _wakeLogged = new HashSet<int>();
@@ -51,6 +124,7 @@ namespace SyncRADation.Sync
             _chunkOn.Clear();
             _chunkFlips.Clear();
             _proxy.Clear();
+            _proxyBob.Clear();
             _enemyState.Clear();
             _missSeen.Clear();
             _wakeLogged.Clear();
@@ -177,7 +251,11 @@ namespace SyncRADation.Sync
                 + " at=" + Fmt(pos) + " peerRoom=" + PeerRoom(pid) + " here=" + Here());
         }
 
-        public static void ProxyGone(int pid) => _proxy.Remove(pid);
+        public static void ProxyGone(int pid)
+        {
+            _proxy.Remove(pid);
+            _proxyBob.Remove(pid);
+        }
 
         static string PeerRoom(int pid)
         {

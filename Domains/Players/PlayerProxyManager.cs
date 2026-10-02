@@ -1,5 +1,6 @@
 // Remote-player proxy registry: lifecycle, stale cleanup, per-frame tick, collider -> player lookup.
 using System.Collections.Generic;
+using SyncRADation.Config;
 using SyncRADation.Networking;
 using SyncRADation.Sync;
 using UnityEngine;
@@ -153,6 +154,11 @@ namespace SyncRADation.Players
                 {
                     proxy.LateTick(now - PluginInfo.PoseInterpDelay);
                     FlickerTrace.Proxy(pid, proxy.GameObject, proxy.Motion.Mode);
+                    if (ModConfig.DiagnosticsOn)
+                    {
+                        var root = proxy.GameObject.transform;
+                        FlickerTrace.ProxyBob(pid, proxy.Motion.RawZ, root.position.z, proxy.Pose.HipsHeight(root), proxy.Motion.Mode);
+                    }
                 }
                 catch (System.Exception e) { Guard.Swallow("Proxy.LateTick", e); }
             }

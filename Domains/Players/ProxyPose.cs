@@ -62,6 +62,9 @@ namespace SyncRADation.Players
         /// <summary>Muzzle / laser fallback direction: the model faces along the proxy root.</summary>
         public Vector3 AimDirection => _model.forward;
 
+        /// <summary>Hips height above <paramref name="root"/> (world up is -Z); 0 without hips. FlickerTrace bob line.</summary>
+        public float HipsHeight(Transform root) => _hips != null ? root.position.z - _hips.position.z : 0f;
+
         /// <summary>Per received PlayerState: hips for the next snapshot, then the inline bones when present.</summary>
         public void OnState(float[] eulers, bool hasHips, Vector3 hips)
         {
