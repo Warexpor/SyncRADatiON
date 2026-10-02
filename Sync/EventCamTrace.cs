@@ -68,7 +68,9 @@ namespace SyncRADation.Sync
                 + " unlocked=" + EventScreen3DCam.unlockedCursor
                 + " mouse=(" + mp.x.ToString("F0") + "," + mp.y.ToString("F0") + ")"
                 + " screen=" + Screen.width + "x" + Screen.height + " scale=" + ScalingManager.scale
-                + " lock=" + Cursor.lockState + " focus=" + Application.isFocused;
+                + " lock=" + Cursor.lockState + " focus=" + Application.isFocused
+                // Inspect lines (Dialogue) refuse while cutscene is set (Ghidra Dialogue.c).
+                + " cutscene=" + PlayerState.cutscene;
             if (cam == null)
             {
                 PlaytestLog.Event("EventCam", s + " cam=none");
