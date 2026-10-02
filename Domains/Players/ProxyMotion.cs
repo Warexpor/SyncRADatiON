@@ -32,6 +32,7 @@ namespace SyncRADation.Players
         private readonly SnapClock _clock = new SnapClock(PluginInfo.SendInterval);
         private float _z;
         private bool _hasZ;
+        private bool _exactHeight;
 
         /// <summary>Last sampling branch ("hold" / "extrap" / "lerp") for FlickerTrace.</summary>
         public string Mode { get; private set; } = "hold";
@@ -44,8 +45,10 @@ namespace SyncRADation.Players
             _root = root;
         }
 
-        public void OnState(Vector3 position, Vector3 velocity, Quaternion facingWorld)
+        /// <param name="exactHeight">Ladder, crawl or cutscene (the hole jump): scripted height, never floor-locked.</param>
+        public void OnState(Vector3 position, Vector3 velocity, Quaternion facingWorld, bool exactHeight)
         {
+            _exactHeight = exactHeight;
             if (velocity.sqrMagnitude > PluginInfo.MaxProxySpeed * PluginInfo.MaxProxySpeed)
                 velocity = Vector3.zero;
             // First pose or a room-to-room door: place the body there instead of gliding across the map.
@@ -66,7 +69,7 @@ namespace SyncRADation.Players
         /// <summary>Rendered root z: the buffered floor height (PoseMath.FloorZ), eased so a target change never steps.</summary>
         private float Height(float sampledZ)
         {
-            float target = PoseMath.FloorZ(_heights, sampledZ, HeightTravel);
+            float target = _exactHeight ? sampledZ : PoseMath.FloorZ(_heights, sampledZ, HeightTravel);
             if (!_hasZ)
             {
                 _z = target;

@@ -55,7 +55,7 @@ namespace SyncRADation.Players
             }
 
             Motion.OnState(new Vector3(state.PosX, state.PosY, state.PosZ), new Vector3(state.VelX, state.VelY, 0f),
-                state.GetFacingWorld());
+                state.GetFacingWorld(), (state.Flags & (PoseFlags.Climbing | PoseFlags.Scripted)) != 0);
             Pose.OnState(state.BoneRotations, (state.Flags & PoseFlags.HasHips) != 0,
                 new Vector3(state.HipsX, state.HipsY, state.HipsZ));
             _aiming = (state.Flags & PoseFlags.Aiming) != 0;

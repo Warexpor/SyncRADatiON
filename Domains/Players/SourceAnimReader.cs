@@ -74,6 +74,8 @@ namespace SyncRADation.Players
                     msg.Flags |= PoseFlags.Running;
                 if (PlayerState.gameState == PlayerState.gameStates.traversing || CrawlActive())
                     msg.Flags |= PoseFlags.Climbing;
+                if (PlayerState.gameState == PlayerState.gameStates.cutscene)
+                    msg.Flags |= PoseFlags.Scripted;
 
                 msg.Weapon = WeaponUtils.EquippedWeaponType();
                 if (msg.Weapon != _lastWeapon)

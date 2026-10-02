@@ -329,6 +329,8 @@ namespace SyncRADation.Networking
         WearHat = 1 << 5,
         /// <summary>HipsX/Y/Z carry the sender's humanoid hips localPosition.</summary>
         HasHips = 1 << 6,
+        /// <summary>PlayerState.gameState is cutscene: scripted motion (the hole jump), so the proxy height is not floor-locked.</summary>
+        Scripted = 1 << 7,
     }
 
     /// <summary>Edge events sent reliably (AvatarOneShot), never on the lossy sequenced pose.</summary>
