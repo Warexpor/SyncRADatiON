@@ -146,6 +146,7 @@ namespace SyncRADation.ItemSystem
                 if (m3 != null) SettleCatalogModel(m3.gameObject, go.transform);
             }
             RestOnFloor(go);
+            AlignPrompt(go);
             try { FinishInteractable(go); }
             catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] finish: " + ex.Message); }
             // No take collider = nobody can pick it up here: the bare fallback pickup always gets one.
@@ -330,6 +331,41 @@ namespace SyncRADation.ItemSystem
             {
                 try { slot.gameObject.SetActive(false); } catch (System.Exception e) { Guard.Swallow(e); }
             }
+            // The template's own look is rarely a child named "Model" (ItemPickup_BrokenKey: KeycardModel): left on,
+            // the borrowed prop (a stun prod) floated at its table height beside the dropped item. Only the catalog
+            // model renders.
+            HideAllBut(go, vis.transform);
+        }
+
+        static void HideAllBut(GameObject go, Transform keep)
+        {
+            Renderer[] rs = null;
+            try { rs = go.GetComponentsInChildren<Renderer>(true); } catch (System.Exception e) { Guard.Swallow(e); }
+            if (rs == null) return;
+            for (int i = 0; i < rs.Length; i++)
+            {
+                var r = rs[i];
+                if (r == null) continue;
+                try { if (!r.transform.IsChildOf(keep)) r.enabled = false; }
+                catch (System.Exception e) { Guard.Swallow(e); }
+            }
+        }
+
+        /// <summary>
+        /// The interact prompt anchors on the pickup's "Prompt" child (AssetRipper ItemPickup_BrokenKey), placed for
+        /// the template's prop: after the visual is laid on the floor, put it over the visual.
+        /// </summary>
+        static void AlignPrompt(GameObject go)
+        {
+            if (go == null) return;
+            try
+            {
+                var prompt = go.transform.Find("Prompt");
+                Bounds b;
+                if (prompt == null || !VisibleBounds(go, out b)) return;
+                prompt.position = new Vector3(b.center.x, b.center.y, b.min.z);
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         /// <summary>
@@ -452,7 +488,12 @@ namespace SyncRADation.ItemSystem
             if (_restNextFrame.Count == 0) return;
             for (int i = 0; i < _restNextFrame.Count; i++)
             {
-                try { RestOnFloor(_restNextFrame[i]); } catch (System.Exception e) { Guard.Swallow(e); }
+                try
+                {
+                    RestOnFloor(_restNextFrame[i]);
+                    AlignPrompt(_restNextFrame[i]);
+                }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
             _restNextFrame.Clear();
         }
@@ -547,6 +588,7 @@ namespace SyncRADation.ItemSystem
             var m3 = go.transform.Find("Model3D");
             if (m3 != null) SettleCatalogModel(m3.gameObject, go.transform);
             RestOnFloor(go);
+            AlignPrompt(go);
             try { FinishInteractable(go); }
             catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] finish: " + ex.Message); }
             try { Physics2D.SyncTransforms(); } catch (System.Exception e) { Guard.Swallow(e); }
