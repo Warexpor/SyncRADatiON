@@ -10,14 +10,24 @@ namespace SyncRADation.Networking
         internal static PuzzleStateEntry ReadInteractive(InteractiveLock x, long wid)
             => Mk(PuzzleType.InteractiveLock, wid, x.locked, false, false, 0, 0, 0, 0, 0);
 
-        /// <summary>Bool1 = traverse plate (or a flavor seal's permanent plate).</summary>
-        internal static PuzzleStateEntry ReadInteractiveSingle(InteractiveLockSingle x, long wid)
+        /// <summary>
+        /// Bool0 = the master ConnectedDoors' lock, Bool1 = traverse plate (or a seal's permanent plate). Native
+        /// Update copies master.locked onto door.locked every frame and forces it locked without a master (Ghidra
+        /// InteractiveLockSingle.c), so door.locked is only a mirror, stale in a sleeping room (the serialized 1):
+        /// read from it, the peers disagreed and the lock ping-ponged. No master (its ConnectedDoors never woke,
+        /// e.g. PEN_Wreck DemoOnly) = always locked natively, nothing to sync.
+        /// </summary>
+        internal static bool TryReadInteractiveSingle(InteractiveLockSingle x, long wid, out PuzzleStateEntry e)
         {
-            bool locked = x.door != null && x.door.locked;
+            e = default;
+            var m = x.master;
+            if (m == null) return false;
+            bool locked = m.locked;
             bool plate = DoorNative.TraversePlateActive(x);
-            if (!plate && x.key == null && (x.door == null || !x.door.open))
-                plate = DoorNative.IsFlavorSeal(x.gameObject) || (x.door != null && DoorNative.IsFlavorSeal(x.door.gameObject));
-            return Mk(PuzzleType.InteractiveLockSingle, wid, locked, plate, false, 0, 0, 0, 0, 0);
+            if (!plate && (x.door == null || !x.door.open))
+                plate = DoorNative.IsSealedSingle(x) || (x.door != null && DoorNative.IsFlavorSeal(x.door.gameObject));
+            e = Mk(PuzzleType.InteractiveLockSingle, wid, locked, plate, false, 0, 0, 0, 0, 0);
+            return true;
         }
 
         // Keypads: native blocked (the 0.3 s button-push lockout) is per player and not on the wire: syncing it
@@ -91,15 +101,17 @@ namespace SyncRADation.Networking
             });
         }
 
-        /// <summary>Flags + plate always snap (incl. the dump).</summary>
+        /// <summary>Flags + plate always snap (incl. the dump). The lock lands on the master, which native Update mirrors.</summary>
         internal static void ApplyInteractiveSingle(InteractiveLockSingle x, PuzzleStateEntry e)
         {
             if (x == null) return;
-            if (DoorNative.IsFlavorSeal(x.gameObject) || (x.door != null && DoorNative.IsFlavorSeal(x.door.gameObject)))
+            var m = x.master;
+            if (m == null || DoorNative.IsSealedSingle(x) || (x.door != null && DoorNative.IsFlavorSeal(x.door.gameObject)))
             {
                 if (x.door != null) x.door.locked = true;
                 return;
             }
+            DoorNative.ApplyConnectedDoors(m, e.Bool0);
             if (e.Bool0)
             {
                 if (x.door != null) x.door.locked = true;

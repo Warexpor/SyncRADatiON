@@ -181,12 +181,57 @@ namespace SyncRADation.Networking
                     for (int i = 0; i < singles.Length; i++)
                     {
                         var s = singles[i];
-                        if (s != null && s.key == null) return true;
+                        if (s != null && IsSealedSingle(s)) return true;
                     }
                 }
             }
             catch (System.Exception e) { Guard.Swallow(e); }
             return false;
+        }
+
+        /// <summary>
+        /// A single whose door can never open: no master (its ConnectedDoors never woke, so native Update forces it
+        /// locked) or a locked master nothing can unlock. "No key" alone is not a seal: a plain unlocked connection
+        /// (LOV East Corridor -> Aula) has none, and sealing it made the host reject every open (door flapping).
+        /// </summary>
+        public static bool IsSealedSingle(InteractiveLockSingle s)
+        {
+            if (s == null) return false;
+            try
+            {
+                var m = s.master;
+                return m == null || (m.locked && !HasUnlocker(m));
+            }
+            catch (System.Exception e) { Guard.Swallow(e); return false; }
+        }
+
+        /// <summary>The InteractiveLockSingle driving this door's lock flag (native Update writes door.locked), or null.</summary>
+        static InteractiveLockSingle GoverningSingle(Doorway_Double d)
+        {
+            var singles = WorldLookup.All<InteractiveLockSingle>();
+            if (singles == null) return null;
+            for (int i = 0; i < singles.Length; i++)
+            {
+                var s = singles[i];
+                if (s != null && s.door == d) return s;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// The door's real lock: a governing single's master when wired (door.locked is only its per-frame mirror,
+        /// stale while the room sleeps), the door's own flag otherwise.
+        /// </summary>
+        public static bool EffectiveLocked(Doorway_Double d)
+        {
+            if (d == null) return true;
+            try
+            {
+                var s = GoverningSingle(d);
+                if (s != null) return s.master == null || s.master.locked;
+                return d.locked;
+            }
+            catch (System.Exception e) { Guard.Swallow(e); return true; }
         }
 
         public static void ApplyDoorLockControl(DoorLockControl dlc, bool locked)
@@ -246,6 +291,13 @@ namespace SyncRADation.Networking
             if (!Alive(cd)) return;
             try
             {
+                // Awake never ran (inactive, e.g. PEN_Wreck DemoOnly): Unlock / UpdateProperties would wire its
+                // singles here only, and the peers then disagreed on that door forever. Keep the flag, wire nothing.
+                if (!Wired(cd))
+                {
+                    cd.locked = locked;
+                    return;
+                }
                 if (!locked)
                 {
                     if (!HasUnlocker(cd))
@@ -269,6 +321,24 @@ namespace SyncRADation.Networking
             {
                 ModRuntime.Log?.Warning("[DoorNative] ConnectedDoors lock: " + ex.Message);
             }
+        }
+
+        /// <summary>ConnectedDoors.Awake ran: it makes its A/B singles' master point back at it (Ghidra ConnectedDoors.c).</summary>
+        static bool Wired(ConnectedDoors cd)
+        {
+            try
+            {
+                if (cd.gameObject.activeInHierarchy) return true;
+                return SingleMaster(cd.A) == cd || SingleMaster(cd.B) == cd;
+            }
+            catch { return false; }
+        }
+
+        static ConnectedDoors SingleMaster(AutoTraverseDoor atd)
+        {
+            if (atd == null) return null;
+            var s = atd.GetComponent<InteractiveLockSingle>();
+            return s != null ? s.master : null;
         }
 
         static bool Alive(Component c)
@@ -300,11 +370,14 @@ namespace SyncRADation.Networking
             catch (System.Exception e) { Guard.Swallow(e); }
         }
 
-        /// <summary>A ConnectedDoors the game can unlock (external unlocker, key, or key hint). Others stay locked.</summary>
+        /// <summary>
+        /// A ConnectedDoors the game can unlock (external unlocker, key, key hint, or a backtrack door that opens
+        /// from its far side). Others stay locked.
+        /// </summary>
         public static bool HasUnlocker(ConnectedDoors cd)
         {
             if (cd == null) return false;
-            try { return cd.externalUnlocker || cd.key != null || cd.GiveKeyHint; }
+            try { return cd.externalUnlocker || cd.key != null || cd.GiveKeyHint || cd.BacktrackDoor; }
             catch { return false; }
         }
 
@@ -331,8 +404,8 @@ namespace SyncRADation.Networking
             if (x == null) return;
             try
             {
-                // Key-less singles and flavor-sealed doors are never unplated.
-                if (!on && (x.key == null || (x.door != null && IsFlavorSeal(x.door.gameObject)))) return;
+                // Sealed singles and flavor-sealed doors are never unplated.
+                if (!on && (IsSealedSingle(x) || (x.door != null && IsFlavorSeal(x.door.gameObject)))) return;
                 if (x.master != null)
                 {
                     SetTraversePlate(x.master.A, on);

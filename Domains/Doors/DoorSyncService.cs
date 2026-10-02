@@ -383,8 +383,8 @@ namespace SyncRADation.Networking
 
             var net = LanNetworkManager.Instance;
             bool isHost = NetGate.HostRole;
-            bool hostLocked = false;
-            try { hostLocked = d.locked; } catch (System.Exception ex) { Guard.Swallow("Door.ReadLocked", ex); }
+            // A single's master, not d.locked: that is only its mirror, stale while the host's room sleeps.
+            bool hostLocked = DoorNative.EffectiveLocked(d);
             if (isHost && !msg.Open)
                 _pendingOpens.Remove(id); // a later close/relock supersedes a deferred open
             if (isHost && hostLocked)
@@ -467,8 +467,7 @@ namespace SyncRADation.Networking
                     _pendingOpens.Remove(id);
                     continue;
                 }
-                bool locked = true;
-                try { locked = d.locked; } catch (System.Exception ex) { Guard.Swallow("Door.PendingRead", ex); }
+                bool locked = DoorNative.EffectiveLocked(d);
                 bool solved = !locked || HostLockSolved(d);
                 if (!solved && now < p.DueAt) continue;
                 _pendingOpens.Remove(id);
