@@ -140,6 +140,15 @@ namespace SyncRADation.ItemSystem
             RestOnFloor(go);
             try { FinishInteractable(go); }
             catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] finish: " + ex.Message); }
+            // No take collider = nobody can pick it up here: the bare fallback pickup always gets one.
+            bool takeable = false;
+            try { takeable = go.GetComponent<BoxCollider2D>() != null; } catch (System.Exception e) { Guard.Swallow(e); }
+            if (!takeable)
+            {
+                ModRuntime.Log?.Warning("[Drop] clone of " + src.name + " has no take collider, using the fallback for " + item);
+                try { Object.Destroy(go); } catch (System.Exception e) { Guard.Swallow(e); }
+                return null;
+            }
             try { Physics2D.SyncTransforms(); } catch (System.Exception e) { Guard.Swallow(e); }
             return go;
         }
@@ -171,15 +180,40 @@ namespace SyncRADation.ItemSystem
                     p._itemEnum = catalog._item;
                 }
                 SetTakeInteraction(go, p);
-                var col = go.GetComponent<BoxCollider2D>();
-                if (col == null) col = go.AddComponent<BoxCollider2D>();
-                col.enabled = true;
-                col.isTrigger = false;
-                if (col.size.x < 4f || col.size.y < 4f)
-                    col.size = new Vector2(6.4f, 6.4f);
+                var col = EnsureBoxCollider(go);
+                if (col != null)
+                {
+                    col.enabled = true;
+                    col.isTrigger = false;
+                    if (col.size.x < 4f || col.size.y < 4f)
+                        col.size = new Vector2(6.4f, 6.4f);
+                }
             }
             catch (System.Exception e) { Guard.Swallow(e); }
             SetLayer(go, InteractablesLayer());
+        }
+
+        /// <summary>
+        /// The floor item's take collider. Unity refuses a 2D collider next to 3D physics on one GameObject
+        /// (AddComponent returns null), which a non-matching fallback template can carry: those go first.
+        /// </summary>
+        static BoxCollider2D EnsureBoxCollider(GameObject go)
+        {
+            var col = go.GetComponent<BoxCollider2D>();
+            if (col != null) return col;
+            col = go.AddComponent<BoxCollider2D>();
+            if (col != null) return col;
+            try
+            {
+                var c3 = go.GetComponents<Collider>();
+                if (c3 != null)
+                    for (int i = 0; i < c3.Length; i++)
+                        if (c3[i] != null) Object.DestroyImmediate(c3[i]);
+                var rb = go.GetComponent<Rigidbody>();
+                if (rb != null) Object.DestroyImmediate(rb);
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            return go.AddComponent<BoxCollider2D>();
         }
 
         static int InteractablesLayer()
@@ -393,7 +427,7 @@ namespace SyncRADation.ItemSystem
                 var all = go.GetComponents<BoxCollider2D>();
                 if (all == null || all.Length == 0)
                 {
-                    var created = go.AddComponent<BoxCollider2D>();
+                    var created = EnsureBoxCollider(go);
                     if (created == null) return;
                     created.offset = Vector2.zero;
                     created.size = new Vector2(6.4f, 6.4f);

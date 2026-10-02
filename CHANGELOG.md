@@ -20,6 +20,7 @@ Protocol **v18** (`PlayerState` rebuilt for an Animator-less proxy, `PlayerRoste
   - **Chimera / Mynah fight could run a second local copy on a client** (`startFightSequence` unpatched): blocked on clients. **Kolibri** feedback hit no longer double-staggers / double-hurts.
   - Downed players are no longer chased; a client copy of a spawned enemy no longer plays the host's wake shake/rumble.
 - **Items**
+  - **Dropping an item you had picked up (e.g. the broken keycard) made a floor item only the other players could take**: the game destroys the taken prop, so the drop was cloned from an unrelated pickup with no usable collider. The prop is now copied just before the game destroys it, and a clone without a take collider falls back to a plain pickup.
   - **A peer leaving brought back every item it picked up in that scene** (duplication) — the "orphan release" could not have a real orphan; removed.
   - **Picking up a world item could shift other items' ids on that machine** (they then duplicated or hid for one player): object ids are now pinned at scene load (`Sync/WorldId` cache), so a native `Destroy` never shifts another object's id. Same fix for door / boss messages that silently missed.
   - **Taking a dropped stack of a type you already carried gave nothing** and the drop vanished for everyone; now the bag takes what fits and the rest spills back.

@@ -8,14 +8,55 @@ namespace SyncRADation.ItemSystem
     internal static class DroppedItemTemplateCache
     {
         static readonly Dictionary<int, ItemPickup> ByItem = new Dictionary<int, ItemPickup>(64);
+        // Inactive copies of props native release destroyed (one per item per scene), under one inactive root.
+        static readonly Dictionary<int, ItemPickup> Stashed = new Dictionary<int, ItemPickup>(16);
+        static GameObject _stashRoot;
         static ItemPickup[] _scenePickups;
         static bool _scenePickupsReady;
 
         public static void Invalidate()
         {
             ByItem.Clear();
+            Stashed.Clear();
+            if (_stashRoot != null)
+            {
+                try { Object.Destroy(_stashRoot); } catch (System.Exception e) { Guard.Swallow(e); }
+            }
+            _stashRoot = null;
             _scenePickups = null;
             _scenePickupsReady = false;
+        }
+
+        /// <summary>
+        /// Native release destroys a taken prop (dontDestroyOnPickup false, Ghidra ItemPickup.c release). When the
+        /// taker was its only copy in the scene, their later drop of that item cloned an unrelated pickup (no
+        /// usable collider: nobody but the peers who still had the prop could take it). Keep an inactive copy,
+        /// made just before release; the root's SR_Drop_ name keeps it out of every world-pickup scan.
+        /// </summary>
+        public static void Stash(ItemPickup p)
+        {
+            if (p == null) return;
+            try
+            {
+                if (p.dontDestroyOnPickup || p.slave || DroppedItemRegistry.IsDropped(p)) return;
+                int key = (int)SyncRADation.Networking.WorldPickupSyncService.ResolveItem(p, bindCatalog: false);
+                ItemPickup have;
+                if (Stashed.TryGetValue(key, out have) && have != null) return;
+                if (VisualTooBig(p)) return;
+                if (_stashRoot == null)
+                {
+                    _stashRoot = new GameObject(DroppedItemRegistry.NamePrefix + "Stash");
+                    _stashRoot.SetActive(false);
+                }
+                var go = Object.Instantiate(p.gameObject, _stashRoot.transform, false);
+                if (go == null) return;
+                // Never woke (inactive root), so its guid was never registered: drop it before a clone copies it.
+                var uid = go.GetComponent<UniqueId>();
+                if (uid != null) Object.DestroyImmediate(uid);
+                var copy = go.GetComponent<ItemPickup>();
+                if (copy != null) Stashed[key] = copy;
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public static ItemPickup[] ScenePickups()
@@ -31,6 +72,12 @@ namespace SyncRADation.ItemSystem
         {
             int key = (int)item;
             ItemPickup cached;
+            // Before ByItem: that may hold a different item's fallback cached while this one had no live prop.
+            if (Stashed.TryGetValue(key, out cached))
+            {
+                if (cached != null) return cached;
+                Stashed.Remove(key);
+            }
             if (ByItem.TryGetValue(key, out cached) && cached != null)
             {
                 try

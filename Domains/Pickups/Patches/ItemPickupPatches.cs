@@ -347,7 +347,13 @@ namespace SyncRADation.Patches
         {
             try
             {
-                if (__instance == null || !DroppedItemRegistry.IsDropped(__instance)) return true;
+                if (__instance == null) return true;
+                if (!DroppedItemRegistry.IsDropped(__instance))
+                {
+                    // Release may destroy the prop: keep a template so this player's later drop of it clones right.
+                    DroppedItemTemplateCache.Stash(__instance);
+                    return true;
+                }
                 // "no": native release skips the add and just restores play state.
                 if (!ItemPickupPatches.AnsweredYes())
                 {
