@@ -369,7 +369,9 @@ namespace SyncRADation.ItemSystem
             {
                 PlayerState.cutscene = false;
                 PlayerState.paused = false;
-                PlayerState.gameState = p.prevState;
+                // A cutscene that began during the pickup keeps its state (see ItemPickupReleasePatch).
+                if (PlayerState.gameState != PlayerState.gameStates.cutscene)
+                    PlayerState.gameState = p.prevState;
                 BlackSleekGuiSubs.itemView = false;
             }
             catch (System.Exception e) { Guard.Swallow(e); }

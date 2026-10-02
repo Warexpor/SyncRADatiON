@@ -41,6 +41,13 @@ namespace SyncRADation.Networking
         const int MaxRetries = 2;
         static int _retries;
 
+        // Client: a host follow that arrived while this player was watching a cutscene. Cutscenes are per player, so a
+        // scene-ending one (PEN_CodeRoomEnd -> LOV) is not cut short: the follow runs when it ends (or when its own load
+        // fires), capped in case the cutscene never ends.
+        static string _heldFollow;
+        static float _heldAt;
+        const float HoldForCutsceneMax = 180f;
+
         // Scope: loads are swallowed (even inside IsApplying). Used while a follow tears down a dialogue whose end
         // callbacks could otherwise start a load of their own on the follower.
         static int _suppressLoads;
@@ -58,6 +65,8 @@ namespace SyncRADation.Networking
             _requestedAt = 0f;
             _queued = null;
             _queuedAt = 0f;
+            _heldFollow = null;
+            _heldAt = 0f;
             _retries = 0;
             _suppressLoads = 0;
         }
@@ -202,9 +211,38 @@ namespace SyncRADation.Networking
             net.SceneHandlers.SendSceneFollow(sceneName, true);
         }
 
-        /// <summary>Client tick: re-ask when a blocked / queued request never produced a load.</summary>
+        /// <summary>This player is watching a cutscene (native gameState cutscene): a level change waits for it.</summary>
+        public static bool InLocalCutscene()
+        {
+            try { return PlayerState.player != null && PlayerState.gameState == PlayerState.gameStates.cutscene; }
+            catch (System.Exception e) { Guard.Swallow(e); return false; }
+        }
+
+        /// <summary>
+        /// Client: this player's own cutscene ended in a load of the scene a held follow points at (the host is there
+        /// already): run the follow now instead of asking the host. False when nothing is held for that scene.
+        /// </summary>
+        public static bool TryReleaseHeldFollow(string sceneName)
+        {
+            if (string.IsNullOrEmpty(_heldFollow) || !string.Equals(_heldFollow, sceneName, System.StringComparison.Ordinal))
+                return false;
+            _heldFollow = null;
+            PlaytestLog.Event("Scene", "cutscene over, follow '" + sceneName + "'");
+            Apply(sceneName);
+            return true;
+        }
+
+        /// <summary>Client tick: run a held follow once the cutscene is over; re-ask when a blocked / queued request never produced a load.</summary>
         public static void TickClient()
         {
+            if (!string.IsNullOrEmpty(_heldFollow)
+                && (!InLocalCutscene() || Time.unscaledTime - _heldAt > HoldForCutsceneMax))
+            {
+                string held = _heldFollow;
+                _heldFollow = null;
+                PlaytestLog.Event("Scene", "cutscene over, follow '" + held + "'");
+                Apply(held);
+            }
             if (string.IsNullOrEmpty(_requested)) return;
             var net = LanNetworkManager.Instance;
             if (!NetGate.Client) return;
@@ -319,6 +357,9 @@ namespace SyncRADation.Networking
                 && Time.unscaledTime - _pendingAt < InflightWindow)
                 return "host load in flight to '" + _pending + "'";
             if (HostDead(here)) return "host dead";
+            // Cutscenes are per player: a client's request (its scene-ending cutscene finished first) waits for the
+            // host's own copy; that usually ends in the same load.
+            if (InLocalCutscene()) return "host in a cutscene";
             return null;
         }
 
@@ -425,6 +466,17 @@ namespace SyncRADation.Networking
             if (AirlockCinematic.ShouldIgnoreHostFollow(msg.SceneName))
             {
                 PlaytestLog.Event("Scene", "ignore follow '" + msg.SceneName + "' (airlock split)");
+                return;
+            }
+            // Not for the scene this player asked for itself (its own cutscene already ended in that load and is
+            // waiting on the host; gameState stays cutscene until it leaves).
+            if (InLocalCutscene() && !IsMainMenu(msg.SceneName)
+                && !string.Equals(ActiveScene(), msg.SceneName, System.StringComparison.Ordinal)
+                && !string.Equals(_requested, msg.SceneName, System.StringComparison.Ordinal))
+            {
+                if (string.IsNullOrEmpty(_heldFollow)) _heldAt = Time.unscaledTime;
+                _heldFollow = msg.SceneName;
+                PlaytestLog.Event("Scene", "hold follow '" + msg.SceneName + "' until this cutscene ends");
                 return;
             }
             Apply(msg.SceneName);

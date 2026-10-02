@@ -73,6 +73,7 @@ To pick up something another player dropped, walk up to it and use the normal TA
 - Your 6-slot inventory, ammo and health items.
 - Books, notes, photos and other pure reading or inspect screens.
 - Dialogue lines: each player reads, skips and answers their own.
+- Cutscenes start together, but each player skips their own; a level change after a cutscene waits until both players are done.
 - Walking through room-to-room doors and climbing ladders (each player does their own).
 - Airlock and wreck/hole entry in Penrose: each player loads the next area when they finish it.
 - Cutscenes and event zones in a room you are not in do not play for you.

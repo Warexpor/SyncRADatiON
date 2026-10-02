@@ -99,13 +99,12 @@ namespace SyncRADation.Networking
                 return;
             }
 
-            // Replayed author-scope events (EventZone / MultiCondition / cutscene skip / proceed) can run END_Manager
+            // Replayed author-scope events (EventZone / MultiCondition) can run END_Manager
             // writes on every in-room peer, while the host already counted them natively (or exactly one requester
             // should). The presentation Text says who counts (StoryWire); a peer that does not re-baselines its END
             // delta afterwards so the replay is never sent to the host as a contribution.
             bool endSkip = false;
-            if (msg.Cmd == StoryCmd.EventZoneFire || msg.Cmd == StoryCmd.MultiConditionFire
-                || msg.Cmd == StoryCmd.CutsceneSkip || msg.Cmd == StoryCmd.CutsceneProceed)
+            if (msg.Cmd == StoryCmd.EventZoneFire || msg.Cmd == StoryCmd.MultiConditionFire)
             {
                 endSkip = !StoryWire.CountsEndHere(msg.Text, net.LocalPlayerId);
                 if (endSkip) FlushEndDelta(net);
@@ -122,12 +121,6 @@ namespace SyncRADation.Networking
                 {
                     case StoryCmd.CutsceneStart:
                         CutsceneSync.ApplyStart(id, msg.Text == "replay");
-                        break;
-                    case StoryCmd.CutsceneSkip:
-                        CutsceneSync.ApplySkip(id);
-                        break;
-                    case StoryCmd.CutsceneProceed:
-                        CutsceneSync.ApplyProceed(id);
                         break;
                     case StoryCmd.EventZoneFire:
                         ApplyEventZoneFire(id);

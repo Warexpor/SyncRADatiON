@@ -7,9 +7,10 @@
 //     Peers in another room do not start it (the PuzzleState CutsceneCompleted poll settles `completed` later).
 //   Late-join replay: the host's full commit names the cutscene it is running (StorySyncService.Send), and the joiner
 //     applies it as a CutsceneStart presentation through the same gates.
-//   Skip: the first skip of a cutscene goes party-wide once; only an in-room peer that started it runs the native skip
-//     (its UnityEvents count END effects once: StoryWire HostCounted / PlayerCounted).
-//   Proceed: CutsceneCut.Proceed is host-authored like a start; each cut proceeds once, no window.
+//   Skip / Proceed: per player. Every peer watches its own copy and skips / proceeds it alone, like solo; nothing goes
+//     on the wire. A client's skip / proceed events run in the author scope, so flags only it wrote reach the host
+//     (the host may still be watching). A scene-ending cutscene's load waits for the peer still watching
+//     (SceneFollowService: a follow is held while this peer is in a cutscene; the host holds a client's request).
 // Wreck / hole split (AirlockCinematic.ClientSplitFromHost): the host has none of the client's cutscenes, they run
 // locally like solo. PEN_Titles airlock cinematics (LocalInspect.AirlockCinematic) stay local on every path.
 using SyncRADation.Patches;
@@ -41,13 +42,6 @@ namespace SyncRADation.Networking
 
         /// <summary>Host: the cutscene with this id is running here (late-join replay target).</summary>
         internal static bool RunningHere(ulong id) => StartedHere(WorldLookup.Find<CutsceneManager>(id));
-
-        /// <summary>A skip only runs natively on a peer that is in the room and started (or just accepted a start of) the cutscene.</summary>
-        static bool SkipApplicable(CutsceneManager c, ulong id)
-        {
-            return LocalInspect.InLocalRoom(c.gameObject)
-                && (StartedHere(c) || _stamps.StartedWithin(id, Now, CutsceneStamps.SkipWindow));
-        }
 
         // ------------------------------------------------------------------ local calls (Harmony prefixes)
 
@@ -112,47 +106,44 @@ namespace SyncRADation.Networking
         }
 
         /// <summary>
-        /// Native Skip on a peer in a live party, outside an apply scope (skip hold, pause menu). Returns whether the
-        /// native skip runs: only for a cutscene running here. The first skip goes to the party (host broadcast /
-        /// client request); a repeat inside the skip window does not.
+        /// Native Skip on a peer in a live party, outside an apply scope (skip hold, pause menu). Per player: only this
+        /// peer's running copy skips. Returns whether the native skip runs here (a client runs it itself, in the author
+        /// scope, and returns false).
         /// </summary>
         internal static bool LocalSkip(CutsceneManager c)
         {
             try
             {
                 if (LocalInspect.AirlockCinematic(c.gameObject)) return true;
-                // Already over here (a stray skipper firing late): nothing to skip, nothing to tell the party.
-                if (c.completed) return false;
-                ulong id = WorldId.FromGameObject(c.gameObject);
-                bool running = StartedHere(c);
-                if (!_stamps.TrySkip(id, Now)) return running;
-                // Host skipped natively in its own cutscene: it counted any END effects of the skip events.
-                if (NetGate.Host)
-                    LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.CutsceneSkip, id, 0, StoryWire.HostCounted);
-                // Wreck / hole split: the host has no such cutscene; the skip stays local like the start did.
-                else if (!AirlockCinematic.ClientSplitFromHost())
-                    LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(id, InteractionKind.CutsceneSkip);
-                return running;
+                // Already over here, or never started (a stray skipper firing late): nothing to skip.
+                if (c.completed || !StartedHere(c)) return false;
+                // Blocks a re-start of this cutscene on this peer (CutsceneStamps skip window).
+                _stamps.TrySkip(WorldId.FromGameObject(c.gameObject), Now);
+                if (!NetGate.Client) return true;
+                SkipInAuthorScope(c);
+                return false;
             }
             catch (System.Exception e) { Guard.Swallow(e); }
             return true;
         }
 
-        /// <summary>CutsceneCut.Proceed on a peer in a live party, outside an apply scope. Returns whether native runs.</summary>
+        /// <summary>
+        /// CutsceneCut.Proceed on a peer in a live party, outside an apply scope. Per player: the host proceeds natively,
+        /// a client proceeds here in the author scope (returns false: already done).
+        /// </summary>
         internal static bool LocalProceed(CutsceneCut cut)
         {
             try
             {
-                if (LocalInspect.AirlockCinematic(cut.gameObject)) return true;
-                ulong id = WorldId.FromGameObject(cut.gameObject);
-                if (NetGate.Host)
+                if (LocalInspect.AirlockCinematic(cut.gameObject) || !NetGate.Client) return true;
+                StorySyncService.BeginAuthorScope();
+                NetGate.BeginApply();
+                try { cut.Proceed(); }
+                finally
                 {
-                    LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.CutsceneProceed, id, 0, StoryWire.HostCounted);
-                    return true;
+                    NetGate.EndApply();
+                    StorySyncService.EndAuthorScope();
                 }
-                // Wreck / hole split: the host has no such cut, a request would leave this cutscene stuck.
-                if (AirlockCinematic.ClientSplitFromHost()) return true;
-                LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(id, InteractionKind.CutsceneProceed);
                 return false;
             }
             catch (System.Exception e) { Guard.Swallow(e); }
@@ -188,48 +179,6 @@ namespace SyncRADation.Networking
             return true;
         }
 
-        /// <summary>Host: a client skipped. The first skip is broadcast; the host skips natively only where the skip applies.</summary>
-        internal static bool HostApplySkip(ulong id, LanNetworkManager net, int senderId)
-        {
-            var c = InteractionSyncService.FindAlive<CutsceneManager>(id, "Interact");
-            if (c != null && LocalInspect.AirlockCinematic(c.gameObject)) return true;
-            if (c != null && c.completed)
-            {
-                PlaytestLog.Event("Interact", "CutsceneSkip of a finished cutscene id=" + Hex(id));
-                return true;
-            }
-            if (!_stamps.TrySkip(id, Now))
-            {
-                PlaytestLog.Event("Interact", "CutsceneSkip already done id=" + Hex(id));
-                return true;
-            }
-            bool hostRuns = c != null && SkipApplicable(c, id);
-            net.StorySync.BroadcastPresentation(StoryCmd.CutsceneSkip, id, 0,
-                hostRuns ? StoryWire.HostCounted : StoryWire.PlayerCounted(senderId));
-            if (hostRuns) SkipInAuthorScope(c);
-            else PlaytestLog.Event("Interact", "CutsceneSkip other-room / never-started id=" + Hex(id));
-            return true;
-        }
-
-        /// <summary>Host: a client's cut proceeded. The host proceeds natively when it is in the room.</summary>
-        internal static bool HostApplyProceed(ulong id, LanNetworkManager net, int senderId)
-        {
-            var cut = InteractionSyncService.FindAlive<CutsceneCut>(id, "Interact");
-            if (cut == null) return false;
-            bool hostRan = LocalInspect.InLocalRoom(cut.gameObject);
-            if (hostRan)
-            {
-                NetGate.BeginApply();
-                try { cut.Proceed(); }
-                finally { NetGate.EndApply(); }
-            }
-            else
-                PlaytestLog.Event("Interact", "CutsceneProceed other-room id=" + Hex(id));
-            net.StorySync.BroadcastPresentation(StoryCmd.CutsceneProceed, id, 0,
-                hostRan ? StoryWire.HostCounted : StoryWire.PlayerCounted(senderId));
-            return true;
-        }
-
         // ------------------------------------------------------------------ observers: presentations (inside the apply scope)
 
         /// <summary>Host's CutsceneStart (live or late-join replay): start it here once, in the room, unless it runs already.</summary>
@@ -261,45 +210,21 @@ namespace SyncRADation.Networking
             c.StartCutscene();
         }
 
-        /// <summary>Host's CutsceneSkip: once per skip window; the native skip runs only where the skip applies.</summary>
-        internal static void ApplySkip(ulong id)
-        {
-            var c = InteractionSyncService.FindAlive<CutsceneManager>(id, "Story");
-            if (c == null) return;
-            if (LocalInspect.AirlockCinematic(c.gameObject))
-            {
-                PlaytestLog.Event("Story", "skip local cinematic CutsceneSkip");
-                return;
-            }
-            if (!_stamps.TrySkip(id, Now))
-            {
-                PlaytestLog.Event("Story", "CutsceneSkip already done id=" + Hex(id));
-                return;
-            }
-            if (!SkipApplicable(c, id))
-            {
-                PlaytestLog.Event("Story", "skip other-room / never-started CutsceneSkip id=" + Hex(id));
-                return;
-            }
-            SkipInAuthorScope(c);
-        }
-
-        /// <summary>Host's CutsceneProceed: in-room peers proceed the same cut.</summary>
-        internal static void ApplyProceed(ulong id)
-        {
-            var cut = InteractionSyncService.FindAlive<CutsceneCut>(id, "Story");
-            if (cut == null || !LocalInspect.InLocalRoom(cut.gameObject)) return;
-            StorySyncService.BeginAuthorScope();
-            try { cut.Proceed(); }
-            finally { StorySyncService.EndAuthorScope(); }
-        }
-
-        // Skip events may write flags the host never ran (host in another room): a client authors them on the host.
+        // Client skip: its events may write flags the host never ran (the host is still watching, or in another room):
+        // authored on the host. Their END_Manager writes are the host's to count (it plays the same cutscene): the
+        // client's own pending delta goes first, then it re-baselines, so the skip is never added to the tally twice.
         static void SkipInAuthorScope(CutsceneManager c)
         {
+            var net = LanNetworkManager.Instance;
+            var story = net != null ? net.StorySync : null;
+            story?.FlushEndDelta(net);
             StorySyncService.BeginAuthorScope();
             try { NativeSkip(c); }
-            finally { StorySyncService.EndAuthorScope(); }
+            finally
+            {
+                StorySyncService.EndAuthorScope();
+                story?.RebaseEnd();
+            }
         }
 
         /// <summary>

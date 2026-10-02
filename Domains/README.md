@@ -27,7 +27,7 @@ Authority: `docs/SYNC.md`; reverse-check rule: repo root `AGENTS.md`. Wire in `N
 | Storage **box items** (put/take, blob) | `Inventory/StorageService` (host put/take, `StorageTxn`, acks) + `Inventory/StorageBoxSyncService` (blob) + `Inventory/Patches/StorageBoxPatches` | Shared box; bag/box walks in `Inventory/ItemBag` |
 | UseItem world unlock / airlock card | `Puzzles/UseItem/` + `Inventory/Patches/UseItem*` | Party ring + PerPlayerUse |
 | EventZone fire (in-room) | `Story/Patches/EventZonePatches` + `Puzzles/EventZone/` | Other-room must not Invoke |
-| Cutscene start / skip / proceed | `Story/CutsceneSync` + `Story/CutsceneStamps` (4 s start, 30 s skip windows) + `Story/Patches/CutscenePatches` | Host presentation; wreck/hole split runs locally |
+| Cutscene start / skip / proceed | `Story/CutsceneSync` + `Story/CutsceneStamps` (4 s start, 30 s local skip windows) + `Story/Patches/CutscenePatches` | Start: host presentation; skip / proceed per player; scene-ending cutscene loads wait (`Scene/SceneFollowService` hold / queue); wreck/hole split runs locally |
 | Story flags / commits (SProgress) / ending | `Story/StorySyncService` (+ `.End`, `.Presentation`) + `Story/ProgressSlot` + `Story/StorySlotPlan` | Incremental / full / authoritative; per-player keys stay local |
 | MultiCondition / UseItem story side / gunshot | `Story/InteractionSyncService` (+ `.UseItem`) + `Story/Patches/MultiConditionPatches` | |
 | Dialoguer (local only) | `Story/Patches/StoryPatches` (`DialoguerGate`) | Every dialogue line is local flavor; gates only bind key-ring names |

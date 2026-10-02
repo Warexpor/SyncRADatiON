@@ -5,8 +5,8 @@
 //   StartWindow (4 s)  - a start inside it is the same trigger arriving again (N players walking in, host native start
 //                        + a client request, relay echo, join replay). A client's own request occupies the window too,
 //                        so it asks once, yet the host's CutsceneStart that answers it is still accepted.
-//   SkipWindow (30 s)  - a skip inside it is the same skip arriving again (N players pressing, host echo of the
-//                        requester's skip), and every start path stays blocked for it: CutsceneManager.Skip sets
+//   SkipWindow (30 s)  - this peer's own skip (skips are per player, never sent): every start path stays blocked
+//                        for it, since CutsceneManager.Skip sets
 //                        completed, but OnEnable reloads completed from SProgress (CutsceneManager.c), so a room
 //                        chunk waking up right after a skip would otherwise let a trigger start the cutscene again.
 // A cutscene that is running on this peer (CutsceneSync.StartedHere) is always a duplicate start, whatever the stamps
@@ -41,13 +41,6 @@ namespace SyncRADation.Networking
         {
             Rec r;
             return id != 0 && _recs.TryGetValue(id, out r) && Within(r.HasSkip, r.SkipAt, now, SkipWindow);
-        }
-
-        /// <summary>This peer accepted a start (not just a request) inside <paramref name="window"/>.</summary>
-        public bool StartedWithin(ulong id, float now, float window)
-        {
-            Rec r;
-            return id != 0 && _recs.TryGetValue(id, out r) && !r.Requested && Within(r.HasStart, r.StartAt, now, window);
         }
 
         /// <summary>

@@ -48,17 +48,6 @@ namespace SyncRADation.Tests
         }
 
         [Fact]
-        public void A_pending_request_is_not_an_accepted_start()
-        {
-            var s = new CutsceneStamps();
-            s.TryRequest(Id, 0f);
-            Assert.False(s.StartedWithin(Id, 1f, Skip));
-            s.TryStart(Id, 1f);
-            Assert.True(s.StartedWithin(Id, 1f + Skip - 0.01f, Skip));
-            Assert.False(s.StartedWithin(Id, 1f + Skip, Skip));
-        }
-
-        [Fact]
         public void Skip_dedupes_inside_its_window_and_blocks_every_start_path()
         {
             var s = new CutsceneStamps();
@@ -84,7 +73,6 @@ namespace SyncRADation.Tests
             Assert.True(s.TrySkip(0, 0f));
             Assert.True(s.TrySkip(0, 0f));
             Assert.False(s.Skipped(0, 0f));
-            Assert.False(s.StartedWithin(0, 0f, Skip));
         }
 
         [Fact]

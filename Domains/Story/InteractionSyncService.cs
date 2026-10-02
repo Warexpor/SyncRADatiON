@@ -64,9 +64,6 @@ namespace SyncRADation.Networking
                     case InteractionKind.CutsceneStart:
                         ok = CutsceneSync.HostApplyStart(id, net);
                         break;
-                    case InteractionKind.CutsceneSkip:
-                        ok = CutsceneSync.HostApplySkip(id, net, msg.SenderPlayerId);
-                        break;
                     case InteractionKind.StoragePut:
                     case InteractionKind.StorageTake:
                         ok = StorageService.HostApply(msg, out reason);
@@ -77,9 +74,6 @@ namespace SyncRADation.Networking
                         break;
                     case InteractionKind.MultiCondition:
                         ok = ApplyMultiCondition(id, msg.Int0);
-                        break;
-                    case InteractionKind.CutsceneProceed:
-                        ok = CutsceneSync.HostApplyProceed(id, net, msg.SenderPlayerId);
                         break;
                     case InteractionKind.DroppedPickup:
                         ok = net.DroppedItemHandlers.TryClaimDropped(msg.Int0, msg.SenderPlayerId, out reason);

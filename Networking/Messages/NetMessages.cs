@@ -70,7 +70,7 @@ namespace SyncRADation.Networking
         CutsceneStart = 5,
         EventScreenStart = 6,
         EventScreenExit = 7,
-        CutsceneSkip = 8,
+        CutsceneSkip = 8, // wire value only since 0.5.65: skips are per player
         DialogueContinue = 9,
         DialogueEnd = 10,
         StoragePut = 11,
@@ -79,7 +79,7 @@ namespace SyncRADation.Networking
         MultiCondition = 14,
         SceneFollowRequest = 15,
         UseItemMulti = 16,
-        CutsceneProceed = 17,
+        CutsceneProceed = 17, // wire value only since 0.5.65: proceeds are per player
         BookOpen = 18,
         BookMemory = 19,
         DroppedPickup = 20,
@@ -93,8 +93,8 @@ namespace SyncRADation.Networking
         DialogueContinue = 2,
         DialogueEnd = 3,
         CutsceneStart = 4,
-        CutsceneSkip = 5,
-        CutsceneProceed = 6,
+        CutsceneSkip = 5, // wire value only since 0.5.65 (per-player skips)
+        CutsceneProceed = 6, // wire value only since 0.5.65 (per-player proceeds)
         EventScreenStart = 7,
         EventScreenExit = 8,
         OpenBookMemory = 9,

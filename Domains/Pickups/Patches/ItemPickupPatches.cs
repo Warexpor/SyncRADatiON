@@ -342,9 +342,19 @@ namespace SyncRADation.Patches
     [HarmonyPatch(typeof(ItemPickup), "release")]
     public static class ItemPickupReleasePatch
     {
+        /// <summary>
+        /// gameState when release began. pickUp parks gameState at 6 and release puts prevState back (Ghidra
+        /// ItemPickup.c). A cutscene that started in between (the party key ring makes hasItem true before release:
+        /// PEN_CodeRoomEnd fires on the King in Yellow book) set it to cutscene, and release reverted that to the event
+        /// screen: no skip bar, and Esc opened the pause menu instead of holding to skip.
+        /// </summary>
+        // persistent: one release call's prefix -> postfix handoff
+        static PlayerState.gameStates _stateAtRelease;
+
         [HarmonyPrefix]
         public static bool Prefix(ItemPickup __instance)
         {
+            try { _stateAtRelease = PlayerState.gameState; } catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 if (__instance == null) return true;
@@ -375,6 +385,13 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(ItemPickup __instance)
         {
+            try
+            {
+                if (_stateAtRelease == PlayerState.gameStates.cutscene
+                    && PlayerState.gameState != PlayerState.gameStates.cutscene)
+                    PlayerState.gameState = PlayerState.gameStates.cutscene;
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var net = LanNetworkManager.Instance;

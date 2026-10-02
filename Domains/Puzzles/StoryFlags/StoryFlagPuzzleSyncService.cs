@@ -63,7 +63,9 @@ namespace SyncRADation.Networking
 
         internal static void ApplyCutscene(CutsceneManager x, PuzzleStateEntry e)
         {
-            if (x != null && e.Bool0)
+            // Per-player cutscenes: the host finishing (or skipping) its copy first must not mark this peer's copy, still
+            // playing, completed (its skip would then be refused); its own coroutine sets completed at the end.
+            if (x != null && e.Bool0 && !CutsceneSync.StartedHere(x))
                 x.completed = true;
         }
 

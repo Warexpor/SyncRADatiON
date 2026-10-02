@@ -52,6 +52,9 @@ namespace SyncRADation.Patches
                 return true;
             }
 
+            // This player's scene-ending cutscene finished after the host's: the host is already there.
+            if (SceneFollowService.TryReleaseHeldFollow(scene)) return false;
+
             // CreditsEnd re-issues its load every frame after the fade: one log line per scene per 5 s.
             float now = Time.unscaledTime;
             if (!string.Equals(_lastBlockedScene, scene, System.StringComparison.Ordinal) || now - _lastBlockedLog > 5f)
