@@ -332,6 +332,7 @@ namespace SyncRADation.ItemSystem
             if (!_worldItems.TryGetValue(netID, out drop)) return;
             if (drop.Go != null)
             {
+                FinishPendingRelease(drop.Go);
                 try
                 {
                     drop.Go.SetActive(false);
@@ -340,6 +341,38 @@ namespace SyncRADation.ItemSystem
                 catch (System.Exception e) { Guard.Swallow(e); }
             }
             _worldItems.Remove(netID);
+        }
+
+        /// <summary>
+        /// A confirmed take despawns its floor item right away, which kills the Invoke("release", 0.1) the yes/no
+        /// callback scheduled (Ghidra ItemPickup.c dialoguerCallback). Release is what clears the cutscene flag
+        /// pickUp set: left on, every later inspect line refused to open (Dialogue.c) and event-screen locks such
+        /// as the PEN_Wreck airlock card reader ignored the player. Run its state part before the object goes.
+        /// </summary>
+        static void FinishPendingRelease(GameObject go)
+        {
+            ItemPickup p = null;
+            try { p = go.GetComponent<ItemPickup>(); } catch (System.Exception e) { Guard.Swallow(e); }
+            if (p == null) return;
+            bool pending = false;
+            try { pending = p.IsInvoking("release"); } catch (System.Exception e) { Guard.Swallow(e); }
+            if (!pending) return;
+            try { p.CancelInvoke("release"); } catch (System.Exception e) { Guard.Swallow(e); }
+            ReleaseHead(p);
+            PlaytestLog.Verbose("Drop", "despawn ran the pending release state of " + go.name);
+        }
+
+        /// <summary>The play-state part of native ItemPickup.release (its first lines), for takes that skip it.</summary>
+        public static void ReleaseHead(ItemPickup p)
+        {
+            try
+            {
+                PlayerState.cutscene = false;
+                PlayerState.paused = false;
+                PlayerState.gameState = p.prevState;
+                BlackSleekGuiSubs.itemView = false;
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public static void ClearVisuals()
