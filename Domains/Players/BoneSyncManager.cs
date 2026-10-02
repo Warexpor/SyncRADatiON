@@ -113,6 +113,64 @@ namespace SyncRADation.Players
             return _readBuf;
         }
 
+        /// <summary>
+        /// Another Elster rig on the same avatar (the PEN_Hole crawl rig `elster_metarig_IK`): per bone-list index, the
+        /// transform at the same name path under its armature top, or null. Name paths, not tree-walk indices: the
+        /// player rig also carries props (flashlight flare, blood FX, VisibleEquip) the crawl rig has not.
+        /// </summary>
+        public Transform[] MapByPath(Transform otherRig)
+        {
+            int count = _bones.Count;
+            if (count == 0 || otherRig == null) return null;
+            Transform myTop = _bones[0];
+            Transform otherTop = FindNamed(otherRig, myTop.name, myTop.parent != null ? myTop.parent.name : null);
+            if (otherTop == null) return null;
+            var map = new Transform[count];
+            map[0] = otherTop;
+            for (int i = 1; i < count; i++)
+            {
+                var b = _bones[i];
+                if (b == null) continue;
+                string path = b.name;
+                for (var t = b.parent; t != null && t != myTop; t = t.parent)
+                    path = t.name + "/" + path;
+                map[i] = otherTop.Find(path);
+            }
+            return map;
+        }
+
+        static Transform FindNamed(Transform root, string name, string parentName)
+        {
+            var all = root.GetComponentsInChildren<Transform>(true);
+            for (int i = 0; i < all.Length; i++)
+            {
+                var t = all[i];
+                if (t != null && t.name == name && (parentName == null || (t.parent != null && t.parent.name == parentName)))
+                    return t;
+            }
+            return null;
+        }
+
+        /// <summary>ReadRotations with each bone read from <paramref name="alt"/>[i] where mapped (own bone otherwise).</summary>
+        public float[] ReadRotations(Transform[] alt)
+        {
+            if (alt == null) return ReadRotations();
+            int count = _bones.Count;
+            if (count == 0) return null;
+            if (_readBuf == null || _readBuf.Length != count * 3)
+                _readBuf = new float[count * 3];
+            for (int i = 0; i < count; i++)
+            {
+                var b = i < alt.Length && alt[i] != null ? alt[i] : _bones[i];
+                if (b == null) continue;
+                Vector3 e = b.localEulerAngles;
+                _readBuf[i * 3] = e.x;
+                _readBuf[i * 3 + 1] = e.y;
+                _readBuf[i * 3 + 2] = e.z;
+            }
+            return _readBuf;
+        }
+
         /// <summary>Euler snapshot to local rotations, once per snapshot (not once per rendered frame).</summary>
         public static void EulersToRotations(float[] eulers, Quaternion[] dst)
         {

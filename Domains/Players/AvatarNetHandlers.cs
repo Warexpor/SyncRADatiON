@@ -81,7 +81,8 @@ namespace SyncRADation.Networking
 
         internal PlayerStateMessage BuildPlayerStateMessage(GameObject player)
         {
-            var pos = player.transform.position;
+            // The crawl rig's root while it stands in for the hidden Elster (SourceAnimReader.CrawlRig).
+            var pos = SourceAnimReader.RootPosition(player);
             float now = Time.unscaledTime;
             float dt = _lastSentTime > 0f ? Mathf.Max(0.016f, now - _lastSentTime) : PluginInfo.SendInterval;
             _lastSentTime = now;

@@ -38,6 +38,10 @@ namespace SyncRADation.Players
         private static bool _magRefilled;
         private static float _crawlCheckAt;
         private static bool _crawlActive;
+        private static GameObject _crawlGo;
+        private static GameObject _crawlBound;
+        private static Transform[] _crawlMap;
+        private static Transform _crawlHips;
 
         /// <summary>
         /// Shot serial: +1 for every pose tick that saw the equipped weapon's magAmmo drop (a live round). Local
@@ -50,19 +54,24 @@ namespace SyncRADation.Players
         public static AvatarCue Read(GameObject player, ref PlayerStateMessage msg)
         {
             if (_player != player) Bind(player);
-            if (_model != null) msg.SetFacingWorld(_model.rotation);
-            // Bone indices match because the proxy is a clone of this same model.
-            msg.BoneRotations = _bones.ReadRotations();
+            var crawl = CrawlRig(player);
+            if (crawl != null)
+                msg.SetFacingWorld(crawl.rotation);
+            else if (_model != null)
+                msg.SetFacingWorld(_model.rotation);
+            // Bone indices match because the proxy is a clone of this same model (the crawl rig maps by name path).
+            msg.BoneRotations = crawl != null ? _bones.ReadRotations(_crawlMap) : _bones.ReadRotations();
             // The one positional channel the Animator writes; rotations alone would leave the proxy hips at bind height.
-            if (_hips != null)
+            var hips = crawl != null ? _crawlHips : _hips;
+            if (hips != null)
             {
-                var hp = _hips.localPosition;
+                var hp = hips.localPosition;
                 msg.HipsX = hp.x;
                 msg.HipsY = hp.y;
                 msg.HipsZ = hp.z;
                 msg.Flags |= PoseFlags.HasHips;
-                if (ModConfig.DiagnosticsOn)
-                    FlickerTrace.SelfBob(player.transform.position.z, player.transform.position.z - _hips.position.z);
+                if (ModConfig.DiagnosticsOn && crawl == null)
+                    FlickerTrace.SelfBob(player.transform.position.z, player.transform.position.z - hips.position.z);
             }
 
             AvatarCue cues = AvatarCue.None;
@@ -141,6 +150,41 @@ namespace SyncRADation.Players
             return _model != null ? _model.rotation : player.transform.rotation;
         }
 
+        /// <summary>The sent root position: the crawl rig's while it stands in for the hidden Elster.</summary>
+        public static Vector3 RootPosition(GameObject player)
+        {
+            if (_player != player) Bind(player);
+            var crawl = CrawlRig(player);
+            return crawl != null ? crawl.position : player.transform.position;
+        }
+
+        /// <summary>
+        /// PEN_CodeRoom (PEN_Hole) / DET_Oven crawls hide PlayerState.player and animate a separate rig in its place
+        /// (Ghidra PEN_CodeRoom.c &lt;Cutscene&gt;: crawlPlayer.position = player.position, player.SetActive(false),
+        /// crawlPlayer.SetActive(true); clip Elster_CIN_Crawl_Root on the same humanoid avatar). Reading the hidden
+        /// Elster left the proxy standing in front of the hole: while the rig is up, it is the pose source.
+        /// </summary>
+        static Transform CrawlRig(GameObject player)
+        {
+            bool hidden;
+            try { hidden = !player.activeInHierarchy; } catch { return null; }
+            if (!hidden || !CrawlActive() || _crawlGo == null) return null;
+            if (_crawlGo != _crawlBound)
+            {
+                _crawlBound = _crawlGo;
+                _crawlMap = _bones.MapByPath(_crawlGo.transform);
+                _crawlHips = null;
+                var anim = _crawlGo.GetComponentInChildren<Animator>(true);
+                if (anim != null && anim.isHuman) _crawlHips = anim.GetBoneTransform(HumanBodyBones.Hips);
+                int mapped = 0;
+                if (_crawlMap != null)
+                    for (int i = 0; i < _crawlMap.Length; i++) if (_crawlMap[i] != null) mapped++;
+                PlaytestLog.Event("DRV", "crawl rig " + _crawlGo.name + " mapped " + mapped + "/" + _bones.BoneCount
+                    + " hips=" + (_crawlHips != null ? _crawlHips.name : "NULL"));
+            }
+            return _crawlGo.transform;
+        }
+
         public static void Reset()
         {
             _player = null;
@@ -160,6 +204,10 @@ namespace SyncRADation.Players
             _magRefilled = false;
             _crawlCheckAt = 0f;
             _crawlActive = false;
+            _crawlGo = null;
+            _crawlBound = null;
+            _crawlMap = null;
+            _crawlHips = null;
         }
 
         private static void Bind(GameObject player)
@@ -211,17 +259,20 @@ namespace SyncRADation.Players
                 return _crawlActive;
             _crawlCheckAt = Time.unscaledTime;
             _crawlActive = false;
+            _crawlGo = null;
             var rooms = WorldLookup.All<PEN_CodeRoom>();
             for (int i = 0; rooms != null && i < rooms.Length && !_crawlActive; i++)
             {
                 var r = rooms[i];
                 _crawlActive = r != null && r.crawlPlayer != null && r.crawlPlayer.activeInHierarchy;
+                if (_crawlActive) _crawlGo = r.crawlPlayer;
             }
             var ovens = WorldLookup.All<DET_Oven>();
             for (int i = 0; ovens != null && i < ovens.Length && !_crawlActive; i++)
             {
                 var o = ovens[i];
                 _crawlActive = o != null && o.crawlPlayer != null && o.crawlPlayer.activeInHierarchy;
+                if (_crawlActive) _crawlGo = o.crawlPlayer;
             }
             return _crawlActive;
         }
