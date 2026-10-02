@@ -125,13 +125,15 @@ namespace SyncRADation.Networking
                             nearest = Nearest(pos, NearestEnemyRange, net, pm, remote, out nearestId);
                     }
 
+                    SetChase(e, pos, nearest, nearestId, net, pm);
                     var snap = ReadSnapshot(e, et, pos, id);
                     if (nearest != null)
                     {
-                        // Target only. AimTarget / IkTarget are the enemy's own helpers that native Update drags
-                        // toward playerPos (IkTarget.localPosition y = ikHeight 8, Ghidra EnemyController.c): pointed
-                        // at a player root they lifted and teleported that player for as long as the enemy aimed.
-                        e.playerPos = nearest;
+                        // Never e.playerPos / AimTarget / IkTarget = a player root: native Update overwrites
+                        // playerPos.position with PlayerState.player every frame and drags the aim / IK helpers
+                        // (IkTarget.localPosition y = ikHeight 8, Ghidra EnemyController.c), so it teleported the
+                        // proxy onto the host and lifted whoever was aimed at. The chase target rides
+                        // EnemyTargetPatch instead (PlayerState.player swapped around that enemy's Update).
                         snap.TargetPlayerId = (sbyte)Mathf.Clamp(nearestId, -1, 127);
                     }
                     _snapList.Add(snap);
@@ -185,6 +187,63 @@ namespace SyncRADation.Networking
         const float NearestAltAiRange = 40f;
 
         /// <summary>Nearest live target (local Elster unless dead, non-downed remote proxies) within range, with its player id.</summary>
+        // ------------------------------------------------------------------ host chase target (EnemyTargetPatch)
+
+        private struct Chase
+        {
+            public GameObject Go;
+            public int Pid;
+        }
+        // Host: enemy (local instance id, never sent) -> the remote player its native AI chases; absent = the host.
+        static readonly Dictionary<int, Chase> _chase = new Dictionary<int, Chase>();
+        /// <summary>A new target must be this much closer (squared 0.9) than the current one: no flip-flop between two near players.</summary>
+        const float ChaseSwitchSq = 0.81f;
+
+        /// <summary>The remote player's root this enemy's native AI chases, or null for the host itself.</summary>
+        internal static GameObject ChaseTargetOf(EnemyController e)
+        {
+            if (_chase.Count == 0 || e == null) return null;
+            Chase c;
+            return _chase.TryGetValue(e.GetInstanceID(), out c) ? c.Go : null;
+        }
+
+        /// <summary>Gunshot wake: chase the shooter (the host's own transform clears the entry).</summary>
+        internal static void ChaseNow(EnemyController e, Transform target)
+        {
+            var net = LanNetworkManager.Instance;
+            if (e == null || net == null) return;
+            int key = e.GetInstanceID();
+            int pid = target != null && net.ProxyManager != null ? net.ProxyManager.GetPlayerIdByGameObject(target.gameObject) : -1;
+            if (pid < 0) _chase.Remove(key);
+            else _chase[key] = new Chase { Go = target.gameObject, Pid = pid };
+        }
+
+        static void SetChase(EnemyController e, Vector3 pos, Transform nearest, int nearestId, LanNetworkManager net,
+            PlayerProxyManager pm)
+        {
+            int key = e.GetInstanceID();
+            if (nearest == null)
+            {
+                _chase.Remove(key);
+                return;
+            }
+            // Keep the current target unless the new one is clearly closer and the current one is still a target.
+            Chase cur;
+            bool hasCur = _chase.TryGetValue(key, out cur) && cur.Go != null;
+            GameObject curGo = hasCur ? cur.Go : net.GetLocalPlayer();
+            bool curValid = hasCur
+                ? pm != null && pm.GetProxy(cur.Pid) is var cp && cp != null && cp.GameObject == cur.Go && !PartyVitals.IsProxyDown(cur.Pid, cp)
+                : curGo != null && !NetworkDamageSystem.IsDead;
+            if (curValid && curGo != nearest.gameObject)
+            {
+                float dc = (curGo.transform.position - pos).sqrMagnitude;
+                float dn = (nearest.position - pos).sqrMagnitude;
+                if (dn > dc * ChaseSwitchSq) return;
+            }
+            if (nearestId == net.LocalPlayerId) _chase.Remove(key);
+            else _chase[key] = new Chase { Go = nearest.gameObject, Pid = nearestId };
+        }
+
         static Transform Nearest(Vector3 fromPos, float range, LanNetworkManager net, PlayerProxyManager pm, int[] remote,
             out int playerId)
         {
@@ -920,6 +979,7 @@ namespace SyncRADation.Networking
             _mapMisses = 0;
             _sendTimer = 0f;
             _snapList.Clear();
+            _chase.Clear();
             ClearHostCache();
         }
 

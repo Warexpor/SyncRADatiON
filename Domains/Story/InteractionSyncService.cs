@@ -152,7 +152,9 @@ namespace SyncRADation.Networking
                         shooter = FindShooterTransform(pos, net);
                         shooterKnown = true;
                     }
-                    if (shooter != null) e.playerPos = shooter;
+                    // Chase the shooter through EnemyTargetPatch (never playerPos = a player root: native Update
+                    // writes the host position into it every frame).
+                    if (shooter != null) EnemySyncService.ChaseNow(e, shooter);
                     e.WakeUpfromGunShot();
                 }
                 catch (System.Exception ex) { Guard.Swallow(ex); }

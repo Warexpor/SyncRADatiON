@@ -12,6 +12,8 @@ namespace SyncRADation.Patches
         public static void Postfix()
         {
             if (NetGate.IsApplying || !NetGate.Live) return;
+            // A native WakeUp inside a swapped enemy Update (EnemyTargetPatch): no player fired, nothing to wake.
+            if (EnemyTargetPatch.Swapped) return;
             var player = PlayerState.player;
             if (player == null) return;
             var pos = player.transform.position;
