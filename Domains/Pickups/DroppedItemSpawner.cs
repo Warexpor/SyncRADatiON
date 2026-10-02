@@ -87,6 +87,13 @@ namespace SyncRADation.ItemSystem
                     cy = Mathf.Max(col.size.y, b.y);
                 }
                 var at = go.transform.position;
+                // Visible model vs root: z span (up is -Z, the floor is the root z) and its XY offset from the prompt.
+                string vis = "none";
+                Bounds vb;
+                if (VisibleBounds(go, out vb))
+                    vis = "z=" + vb.min.z.ToString("F1") + ".." + vb.max.z.ToString("F1")
+                        + " size=" + Mathf.Max(vb.size.x, Mathf.Max(vb.size.y, vb.size.z)).ToString("F1")
+                        + " off=" + Vector2.Distance(new Vector2(vb.center.x, vb.center.y), new Vector2(at.x, at.y)).ToString("F1");
                 ModRuntime.Log?.Msg("[Drop] spawn " + go.name + " " + item
                     + " pos=" + at.x.ToString("F1") + "," + at.y.ToString("F1") + "," + at.z.ToString("F1")
                     + " parent=" + (parent != null ? parent.name : "null")
@@ -94,7 +101,8 @@ namespace SyncRADation.ItemSystem
                     + " rends=" + rends
                     + " layer=" + go.layer
                     + " trigger=" + trig
-                    + " col=" + cx.ToString("F1") + "x" + cy.ToString("F1"));
+                    + " col=" + cx.ToString("F1") + "x" + cy.ToString("F1")
+                    + " vis " + vis);
             }
             catch (System.Exception e) { Guard.Swallow(e); }
         }
@@ -135,7 +143,7 @@ namespace SyncRADation.ItemSystem
             if (!same)
             {
                 var m3 = go.transform.Find("Model3D");
-                if (m3 != null) FitMeshToNative(m3.gameObject);
+                if (m3 != null) SettleCatalogModel(m3.gameObject, go.transform);
             }
             RestOnFloor(go);
             try { FinishInteractable(go); }
@@ -324,6 +332,35 @@ namespace SyncRADation.ItemSystem
             }
         }
 
+        /// <summary>
+        /// An item with no floor pickup in the scene shows its catalog Image3D, posed for the inventory camera (any
+        /// axis up, pivot anywhere): it stood upright and floated (stun prod) or sank into the floor (tape), with
+        /// the outline away from the prompt. Lay it on its thinnest axis, size it like the floor items around, and
+        /// centre it over the root (collider + prompt); RestOnFloor then puts its lowest point on the floor.
+        /// </summary>
+        static void SettleCatalogModel(GameObject vis, Transform root)
+        {
+            if (vis == null || root == null) return;
+            try
+            {
+                Bounds b;
+                if (VisibleBounds(vis, out b))
+                {
+                    var s = b.size;
+                    // Up is -Z: turn the thinnest world axis onto Z.
+                    if (s.x < s.z && s.x <= s.y) vis.transform.rotation = Quaternion.AngleAxis(90f, Vector3.up) * vis.transform.rotation;
+                    else if (s.y < s.z && s.y < s.x) vis.transform.rotation = Quaternion.AngleAxis(90f, Vector3.right) * vis.transform.rotation;
+                }
+                FitMeshToNative(vis);
+                if (VisibleBounds(vis, out b))
+                {
+                    Vector3 d = root.position - b.center;
+                    vis.transform.position += new Vector3(d.x, d.y, 0f);
+                }
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+        }
+
         static void FitMeshToNative(GameObject vis)
         {
             if (vis == null) return;
@@ -370,7 +407,8 @@ namespace SyncRADation.ItemSystem
             catch (System.Exception e) { Guard.Swallow(e); }
             Bounds b;
             if (!VisibleBounds(vis != null ? vis.gameObject : go, out b)) return;
-            if (Mathf.Max(b.size.x, Mathf.Max(b.size.y, b.size.z)) > 4f) return;
+            // Elster is ~8 units tall: anything bigger is not a floor item (templates are floor pickups only).
+            if (Mathf.Max(b.size.x, Mathf.Max(b.size.y, b.size.z)) > 8f) return;
             float dz = go.transform.position.z - b.max.z;
             if (Mathf.Abs(dz) <= 0.01f) return;
             dz = Mathf.Clamp(dz, -2.5f, 2.5f);
@@ -507,7 +545,7 @@ namespace SyncRADation.ItemSystem
             PlaceInWorld(go, pos);
             try { go.SetActive(true); } catch (System.Exception e) { Guard.Swallow(e); }
             var m3 = go.transform.Find("Model3D");
-            if (m3 != null) FitMeshToNative(m3.gameObject);
+            if (m3 != null) SettleCatalogModel(m3.gameObject, go.transform);
             RestOnFloor(go);
             try { FinishInteractable(go); }
             catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] finish: " + ex.Message); }

@@ -35,6 +35,7 @@ Authority: `docs/SYNC.md`; reverse-check rule: repo root `AGENTS.md`. Wire in `N
 | Scene follow / F7 chapter | `Scene/SceneFollowService` + `Scene/Patches/SceneLoadPatches` | Host load |
 | World authored pickup claim | `Pickups/WorldPickupSyncService` (one `Take` record per in-flight take) + `WorldPickupNetHandlers` + `Pickups/Patches/ItemPickupPatches` | Host claim/grant; partial take releases the claim with the remainder (`Count` / `Remaining`) |
 | Player-dropped prop (G / TAKE) | `Pickups/DroppedItem*` (Registry, Spawner, NetHandlers) + `Pickups/Patches/DroppedTakePatches` | Peer spawn + host claim |
+| Bag / ring wrong after PEN_Hole → Sierpinski | `Inventory/ChapterWipe` | Mirrors the native PEN_CodeRoomEnd bag clear on every peer, empties the ring |
 | Party key ring names / hasItem / getCount (masquerade) | `Inventory/PartyKeyRing` + `Inventory/Patches/PartyKeyRingPatches` | Key/Object only; off inside `SaveManager.Save` and `ItemPickup.release`; never a physical bag copy |
 | Client enemy actions (stomp Kill/KillSilent, Knockback, GetPushed, Burndown, WakeUp) | `Enemies/Patches/EnemyActionPatches` + `Enemies/EnemyNetHandlers` | `EnemyAction` (63); host sim applies |
 | Enemies / alert bits | `Enemies/` (+ `Patches/EnemySpawnerPatches`) | WorldId; wake sleeping chunks; **client never EnemySpawner.FixedUpdate**; host adopts `_Child` → `SR_Spawn_*` + `EnemySpawn` |
