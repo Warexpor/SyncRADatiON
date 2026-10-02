@@ -361,6 +361,7 @@ namespace SyncRADation.Patches
                     return true;
                 }
                 ItemPickupPatches.TakeDropped(__instance);
+                ReleasePlayState(__instance);
                 return false;
             }
             catch (System.Exception ex)
@@ -368,6 +369,23 @@ namespace SyncRADation.Patches
                 ModRuntime.Log?.Warning("[Drop] release: " + ex.Message);
                 return true;
             }
+        }
+
+        /// <summary>
+        /// What native release does first (Ghidra ItemPickup.c release), skipped with it: pickUp set
+        /// PlayerState.cutscene, and left on it blocked every later inspect line (Dialogue refuses while
+        /// cutscene, Ghidra Dialogue.c) until a scene load.
+        /// </summary>
+        static void ReleasePlayState(ItemPickup p)
+        {
+            try
+            {
+                PlayerState.cutscene = false;
+                PlayerState.paused = false;
+                PlayerState.gameState = p.prevState;
+                BlackSleekGuiSubs.itemView = false;
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         [HarmonyPostfix]

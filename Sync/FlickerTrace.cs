@@ -44,15 +44,19 @@ namespace SyncRADation.Sync
 
         // ---- Vertical bob ("jumping model"): peak-to-peak heights over 1 s windows ----
         const float BobWindow = 1f;
-        /// <summary>Root height swing worth a line (Elster is ~1.8 tall and cannot jump).</summary>
-        const float BobRoot = 0.08f;
-        /// <summary>Hips-above-root swing worth a line (a run cycle bobs less than this).</summary>
-        const float BobHips = 0.15f;
+        // Elster is ~8 units tall (hips ~4.5 above the root); a walk cycle swings the hips ~0.7 smoothly.
+        /// <summary>Root height swing worth a line (she cannot jump).</summary>
+        const float BobRoot = 0.4f;
+        /// <summary>One-sample hips height step worth a line (a pop, not the smooth walk swing).</summary>
+        const float BobHipsStep = 0.35f;
+        /// <summary>Root swing beyond this is a door / teleport, not a bob.</summary>
+        const float BobTeleport = 5f;
 
         sealed class Bob
         {
             public float Start = -1f;
             public float RawMin, RawMax, DrawnMin, DrawnMax, HipsMin, HipsMax;
+            public float LastHips, HipsStep;
 
             /// <summary>Adds one sample; at the end of a window returns its summary when anything swung, else null.</summary>
             public string Add(float now, float raw, float drawn, float hips)
@@ -65,13 +69,17 @@ namespace SyncRADation.Sync
                 RawMin = Mathf.Min(RawMin, raw); RawMax = Mathf.Max(RawMax, raw);
                 DrawnMin = Mathf.Min(DrawnMin, drawn); DrawnMax = Mathf.Max(DrawnMax, drawn);
                 HipsMin = Mathf.Min(HipsMin, hips); HipsMax = Mathf.Max(HipsMax, hips);
+                HipsStep = Mathf.Max(HipsStep, Mathf.Abs(hips - LastHips));
+                LastHips = hips;
                 if (now - Start < BobWindow) return null;
-                float r = RawMax - RawMin, d = DrawnMax - DrawnMin, h = HipsMax - HipsMin;
+                float r = RawMax - RawMin, d = DrawnMax - DrawnMin;
                 string line = null;
-                if (r > BobRoot || d > BobRoot || h > BobHips)
+                bool teleport = r > BobTeleport || d > BobTeleport;
+                if (!teleport && (r > BobRoot || d > BobRoot || HipsStep > BobHipsStep))
                     line = "rootZ=" + RawMin.ToString("F2") + ".." + RawMax.ToString("F2")
                         + " drawnZ=" + DrawnMin.ToString("F2") + ".." + DrawnMax.ToString("F2")
-                        + " hipsH=" + HipsMin.ToString("F2") + ".." + HipsMax.ToString("F2");
+                        + " hipsH=" + HipsMin.ToString("F2") + ".." + HipsMax.ToString("F2")
+                        + " hipsStep=" + HipsStep.ToString("F2");
                 Begin(now, raw, drawn, hips);
                 return line;
             }
@@ -82,6 +90,8 @@ namespace SyncRADation.Sync
                 RawMin = RawMax = raw;
                 DrawnMin = DrawnMax = drawn;
                 HipsMin = HipsMax = hips;
+                LastHips = hips;
+                HipsStep = 0f;
             }
         }
         static readonly Dictionary<int, Bob> _proxyBob = new Dictionary<int, Bob>();
