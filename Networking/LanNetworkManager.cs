@@ -601,16 +601,19 @@ namespace SyncRADation.Networking
         /// </summary>
         internal void BroadcastState(NetDataWriter writer)
         {
+            // The snapshots describe the host's scene: a peer in another one (the airlock split) has none of
+            // those objects and only logged misses for every one of them.
             if (_unicastPlayerId >= 0)
             {
                 NetPeer target;
-                if (_readyPeers.Contains(_unicastPlayerId) && _peers.TryGetValue(_unicastPlayerId, out target))
+                if (_readyPeers.Contains(_unicastPlayerId) && PeerInHostScene(_unicastPlayerId)
+                    && _peers.TryGetValue(_unicastPlayerId, out target))
                     SendPeer(target, writer, DeliveryMethod.Sequenced, NetChannels.State);
                 return;
             }
             foreach (var kvp in _peers)
             {
-                if (!_readyPeers.Contains(kvp.Key)) continue;
+                if (!_readyPeers.Contains(kvp.Key) || !PeerInHostScene(kvp.Key)) continue;
                 SendPeer(kvp.Value, writer, DeliveryMethod.Sequenced, NetChannels.State);
             }
         }

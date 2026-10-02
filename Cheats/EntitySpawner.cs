@@ -199,11 +199,11 @@ namespace SyncRADation.Cheats
             try
             {
                 if (PlayerState.player != null)
-                {
                     ec.playerPos = PlayerState.player.transform;
-                    ec.AimTarget = PlayerState.player.transform;
-                    ec.IkTarget = PlayerState.player.transform;
-                }
+                // AimTarget / IkTarget are helpers native Update moves (never a player root, see EnemySyncService).
+                // A clone keeps its prefab's; one without gets its own child so Update has something to move.
+                if (ec.AimTarget == null) ec.AimTarget = HelperChild(ec.transform, "SR_AimTarget");
+                if (ec.IkTarget == null) ec.IkTarget = HelperChild(ec.transform, "SR_IkTarget");
             }
             catch (System.Exception e) { Guard.Swallow(e); }
 
@@ -540,6 +540,13 @@ namespace SyncRADation.Cheats
         {
             _statusMessage = (isError ? "ERROR: " : "") + msg;
             _statusTimer = Time.realtimeSinceStartup + 4f;
+        }
+
+        private static Transform HelperChild(Transform parent, string name)
+        {
+            var go = new GameObject(name);
+            go.transform.SetParent(parent, false);
+            return go.transform;
         }
     }
 }

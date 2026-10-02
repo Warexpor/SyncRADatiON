@@ -112,6 +112,10 @@ namespace SyncRADation.Networking
             if (!_net.HasTransport || !_net.HandshakeComplete) return;
             string scene = SceneManager.GetActiveScene().name ?? "";
             _net.NoteLocalSceneForHello(scene);
+            // A client's own load (the airlock split) changes the comparison too: refreshed only on the host's
+            // hello, the flag stayed false and every SceneMismatch guard let the other scene's streams through.
+            if (NetGate.ClientRole && !string.IsNullOrEmpty(_net.HostSceneName))
+                _net.SetSceneMismatch(ScenesDiffer(_net.HostSceneName, scene));
 
             var msg = new SceneHelloMessage
             {
@@ -127,6 +131,14 @@ namespace SyncRADation.Networking
             ModRuntime.Log?.Msg("[Scene] Hello sent scene='" + msg.SceneName + "' room='" + msg.RoomName + "'");
             // Our registry is fresh after a load: compare it with the host checksum we already hold (hello just went out).
             if (NetGate.ClientRole) EvaluateClient(true);
+        }
+
+        /// <summary>Host and local scene are both real (non-transient, non-empty) and differ.</summary>
+        static bool ScenesDiffer(string hostScene, string localScene)
+        {
+            return !SceneFollowService.IsTransient(hostScene) && !SceneFollowService.IsTransient(localScene)
+                && !string.IsNullOrEmpty(hostScene) && !string.IsNullOrEmpty(localScene)
+                && !string.Equals(hostScene, localScene, StringComparison.Ordinal);
         }
 
         internal void SendSceneFollow(string sceneName, bool isRequest)
@@ -191,10 +203,7 @@ namespace SyncRADation.Networking
             string compareTo = !string.IsNullOrEmpty(_net.HostSceneName) ? _net.HostSceneName : msg.SceneName;
             bool hostTransient = SceneFollowService.IsTransient(compareTo);
             bool localTransient = SceneFollowService.IsTransient(localScene);
-            bool mismatch = !hostTransient && !localTransient
-                && !string.IsNullOrEmpty(compareTo)
-                && !string.IsNullOrEmpty(localScene)
-                && !string.Equals(compareTo, localScene, StringComparison.Ordinal);
+            bool mismatch = ScenesDiffer(compareTo, localScene);
             _net.SetSceneMismatch(mismatch);
 
             if (NetGate.ClientRole && !hostTransient && !string.IsNullOrEmpty(compareTo)

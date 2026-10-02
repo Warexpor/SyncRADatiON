@@ -121,6 +121,8 @@ namespace SyncRADation.Networking
             try
             {
                 if (LocalInspect.AirlockCinematic(c.gameObject)) return true;
+                // Already over here (a stray skipper firing late): nothing to skip, nothing to tell the party.
+                if (c.completed) return false;
                 ulong id = WorldId.FromGameObject(c.gameObject);
                 bool running = StartedHere(c);
                 if (!_stamps.TrySkip(id, Now)) return running;
@@ -191,6 +193,11 @@ namespace SyncRADation.Networking
         {
             var c = InteractionSyncService.FindAlive<CutsceneManager>(id, "Interact");
             if (c != null && LocalInspect.AirlockCinematic(c.gameObject)) return true;
+            if (c != null && c.completed)
+            {
+                PlaytestLog.Event("Interact", "CutsceneSkip of a finished cutscene id=" + Hex(id));
+                return true;
+            }
             if (!_stamps.TrySkip(id, Now))
             {
                 PlaytestLog.Event("Interact", "CutsceneSkip already done id=" + Hex(id));
@@ -326,7 +333,13 @@ namespace SyncRADation.Networking
             catch (System.Exception e) { Guard.Swallow(e); }
             finally
             {
-                if (settled) CutsceneSkippingUI.skippableCutscene = false;
+                if (settled)
+                {
+                    CutsceneSkippingUI.skippableCutscene = false;
+                    // Native Skip never ends the skipper's continousCheck (only its own hold or OnDisable sets
+                    // done): left polling, a later Cancel hold fired skipEvent on this finished cutscene.
+                    try { if (c.skipper != null) c.skipper.done = true; } catch (System.Exception e) { Guard.Swallow(e); }
+                }
             }
         }
     }

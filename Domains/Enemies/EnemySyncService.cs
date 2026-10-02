@@ -125,9 +125,10 @@ namespace SyncRADation.Networking
                     var snap = ReadSnapshot(e, et, pos, id);
                     if (nearest != null)
                     {
+                        // Target only. AimTarget / IkTarget are the enemy's own helpers that native Update drags
+                        // toward playerPos (IkTarget.localPosition y = ikHeight 8, Ghidra EnemyController.c): pointed
+                        // at a player root they lifted and teleported that player for as long as the enemy aimed.
                         e.playerPos = nearest;
-                        e.AimTarget = nearest;
-                        e.IkTarget = nearest;
                         snap.TargetPlayerId = (sbyte)Mathf.Clamp(nearestId, -1, 127);
                     }
                     _snapList.Add(snap);
