@@ -26,6 +26,9 @@ namespace SyncRADation.Networking
             public int Hp;
             public bool HasAnim;
             public float AnimTime;
+            // Which state bools this enemy's controller has (bit 0 Dead, 1 Critical, 2 Fire, 3 Pursuit; -1 unread):
+            // SetBool on a missing parameter warns every call.
+            public int AnimParams = -1;
             public int ShownHp = int.MinValue, ShownMaxHp;  // what debugHP.text was last set to
         }
         private readonly Dictionary<ulong, Puppet> _puppets = new Dictionary<ulong, Puppet>();
@@ -628,7 +631,7 @@ namespace SyncRADation.Networking
                     enemy.state = state;
                     enemy.staggerType = stagger;
                     if (enemy.hitbox != null) enemy.hitbox.HP = snap.HP;
-                    ApplyHurtboxActive(enemy, dead, stagger);
+                    ApplyHurtboxActive(enemy, state, dead, stagger);
                     return;
                 }
 
@@ -638,7 +641,7 @@ namespace SyncRADation.Networking
 
                 enemy.state = state;
                 enemy.staggerType = stagger;
-                ApplyHurtboxActive(enemy, dead, stagger);
+                ApplyHurtboxActive(enemy, state, dead, stagger);
                 ApplyStompPrompt(enemy, dead, stagger);
                 if (enemy.hitbox != null) enemy.hitbox.HP = snap.HP;
                 if (p.ShownHp != snap.HP || p.ShownMaxHp != snap.MaxHP)
@@ -688,6 +691,33 @@ namespace SyncRADation.Networking
             p.HasPose = true;
         }
 
+        // Controller parameters (AssetRipper monster_eule_controller and the other enemy controllers).
+        static readonly int AnimDead = Animator.StringToHash("Dead");
+        static readonly int AnimCritical = Animator.StringToHash("Critical");
+        static readonly int AnimFire = Animator.StringToHash("Fire");
+        static readonly int AnimPursuit = Animator.StringToHash("Pursuit");
+
+        static int ReadAnimParams(Animator anim)
+        {
+            int mask = 0;
+            try
+            {
+                var ps = anim.parameters;
+                for (int i = 0; ps != null && i < ps.Length; i++)
+                {
+                    var ap = ps[i];
+                    if (ap == null || ap.type != AnimatorControllerParameterType.Bool) continue;
+                    int h = ap.nameHash;
+                    if (h == AnimDead) mask |= 1;
+                    else if (h == AnimCritical) mask |= 2;
+                    else if (h == AnimFire) mask |= 4;
+                    else if (h == AnimPursuit) mask |= 8;
+                }
+            }
+            catch (Exception e) { Guard.Swallow(e); }
+            return mask;
+        }
+
         static void ApplyAnim(Puppet p, EnemyController enemy, EnemySnapshotNet snap)
         {
             var anim = enemy.animator;
@@ -695,6 +725,18 @@ namespace SyncRADation.Networking
             // Re-Play only when the host moved to a different state (comparing normalizedTime restarted short
             // one-shot clips every snapshot). normalizedTime only grows within a state, so a sharp drop with the
             // same hash is the host restarting that clip (a repeated attack): replay it too.
+            // The host's controller sets these bools every frame (Ghidra EnemyController.c Update); left false on a
+            // halted puppet, the controller's own transitions walked a dead / downed enemy into Get Up and idle
+            // between snapshots, and each snapshot forced it back: the corpse flexed and danced.
+            var es = (EnemyController.enemystate)snap.State;
+            var hs = (EnemyController.hurtState)snap.HurtState;
+            bool dead = !snap.Alive || es == EnemyController.enemystate.dead;
+            if (p.AnimParams < 0) p.AnimParams = ReadAnimParams(anim);
+            if ((p.AnimParams & 1) != 0) anim.SetBool(AnimDead, dead);
+            if ((p.AnimParams & 2) != 0) anim.SetBool(AnimCritical, !dead && hs == EnemyController.hurtState.critical);
+            if ((p.AnimParams & 4) != 0) anim.SetBool(AnimFire, !dead && hs == EnemyController.hurtState.fire);
+            if ((p.AnimParams & 8) != 0)
+                anim.SetBool(AnimPursuit, !dead && (es == EnemyController.enemystate.pursuit || es == EnemyController.enemystate.attack));
             var stateInfo = anim.GetCurrentAnimatorStateInfo(0);
             bool restarted = p.HasAnim && snap.AnimTime < p.AnimTime - 0.5f;
             p.HasAnim = true;
@@ -704,19 +746,35 @@ namespace SyncRADation.Networking
         }
 
         /// <summary>
-        /// Mirror EnemyController.UpdateDataBlock's hitbox GO toggles (a puppet's AI is off, so it never runs):
-        /// hurtbox inactive when dead; downedHitbox only for critical/fire while alive. Never KillSilent.
+        /// Mirror EnemyController.UpdateDataBlock's hitbox GO toggles (a puppet's AI is off, so it never runs, Ghidra
+        /// EnemyController.c): the contact hurtbox is off when dead and while downed unless Preset.hurtboxWhileDowned
+        /// (every EULR preset: false), so a client stepping up to stomp was hurt by the puppet's own live box; the
+        /// weapon boxes close outside an attack once hurt or worse (an interrupted swing left the baton box live);
+        /// downedHitbox only for critical/fire while alive. Never KillSilent.
         /// </summary>
-        static void ApplyHurtboxActive(EnemyController enemy, bool dead, EnemyController.hurtState stagger)
+        static void ApplyHurtboxActive(EnemyController enemy, EnemyController.enemystate state, bool dead,
+            EnemyController.hurtState stagger)
         {
+            bool downed = !dead
+                && (stagger == EnemyController.hurtState.critical
+                    || stagger == EnemyController.hurtState.fire);
             if (enemy.hurtbox != null)
-                enemy.hurtbox.SetActive(!dead);
-            if (enemy.downedHitbox != null)
             {
-                bool downed = !dead
-                    && (stagger == EnemyController.hurtState.critical
-                        || stagger == EnemyController.hurtState.fire);
+                bool whileDowned = false;
+                try { whileDowned = enemy.Preset != null && enemy.Preset.hurtboxWhileDowned; }
+                catch (Exception e) { Guard.Swallow(e); }
+                enemy.hurtbox.SetActive(!dead && (!downed || whileDowned));
+            }
+            if (enemy.downedHitbox != null)
                 enemy.downedHitbox.SetActive(downed);
+            if (dead || (state != EnemyController.enemystate.attack && stagger >= EnemyController.hurtState.hurt))
+            {
+                try
+                {
+                    if (enemy.WeaponHurtbox != null) enemy.WeaponHurtbox.gameObject.SetActive(false);
+                    if (enemy.WeaponHurtboxAlt != null) enemy.WeaponHurtboxAlt.gameObject.SetActive(false);
+                }
+                catch (Exception e) { Guard.Swallow(e); }
             }
         }
 
