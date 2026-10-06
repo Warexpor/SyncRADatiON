@@ -338,7 +338,11 @@ namespace SyncRADation.Players
 
             var token = new PartySaveToken { Slot = msg.SaveSlot, Counter = msg.SaveCounter, Stamp = msg.SaveStamp };
             WipeWorldLocal(net);
-            FollowWipeReload(msg.Scene);
+            bool loadPending = FollowWipeReload(msg.Scene);
+            // A save reload: load like the host (SaveManager.loading) and start at its save point, without this
+            // peer's own slot ever being read (WipePlacement / LoadingManagerWipePatch).
+            if (msg.SaveSlot > 0 && !string.IsNullOrEmpty(msg.Room))
+                WipePlacement.Arm(msg.Scene, msg.Room, loadPending);
 
             string source = "none";
             // SaveSlot -1 = the host started a new game: nothing carries over, the bag is emptied like the host's.
@@ -367,10 +371,13 @@ namespace SyncRADation.Players
         /// is already in the reload scene would ignore it (Apply: same scene), so it reloads itself: the world it has
         /// is the pre-wipe one. SceneFollowService.AlreadyGoingTo covers the follow having arrived first.
         /// </summary>
-        private static void FollowWipeReload(string scene)
+        /// <returns>true while a load of the reload scene is still to arrive (its LoadingManager.Start has not run).</returns>
+        private static bool FollowWipeReload(string scene)
         {
-            if (string.IsNullOrEmpty(scene) || SceneFollowService.IsTransient(scene)) return;
-            if (SceneFollowService.LocalIsTransient() || SceneFollowService.AlreadyGoingTo(scene)) return;
+            if (string.IsNullOrEmpty(scene) || SceneFollowService.IsTransient(scene)) return false;
+            if (SceneFollowService.LocalIsTransient()) return true;
+            // The host's follow already brought this peer: in the scene and out of the loading screen means loaded.
+            if (SceneFollowService.AlreadyGoingTo(scene)) return !SceneMatches(scene);
             if (!SceneMatches(scene))
             {
                 // The wipe is authoritative. The host's SceneFollow normally already dragged us here, but it is not
@@ -380,7 +387,7 @@ namespace SyncRADation.Players
                 // voids the airlock split (everyone is reloaded from one save / new game).
                 PlaytestLog.Event("Damage", "wipe: scene mismatch, following directly '" + scene + "'");
                 SceneFollowService.Apply(scene);
-                return;
+                return true;
             }
             SceneFollowService.NoteGoingTo(scene);
             Step("wipe restore play", DroppedItemRegistry.RestorePlayForLoad);
@@ -389,6 +396,7 @@ namespace SyncRADation.Players
             catch (System.Exception ex) { LogOnce("wipe reload", ex); }
             finally { NetGate.EndApply(); }
             PlaytestLog.Event("Damage", "wipe: same-scene reload '" + scene + "'");
+            return true;
         }
 
         /// <summary>Clear floor drops + claim state on this peer before the save reload.</summary>
@@ -553,7 +561,8 @@ namespace SyncRADation.Players
             {
                 Kind = PartyLifeKind.Wipe,
                 PlayerId = -1,
-                Room = "",
+                // Save reload: the save room, so every client starts at the host's save point (WipePlacement).
+                Room = plan.Room ?? "",
                 Scene = plan.Scene,
                 SaveSlot = token.Slot,
                 SaveCounter = token.Counter,

@@ -7,9 +7,12 @@
 //     Peers in another room do not start it (the PuzzleState CutsceneCompleted poll settles `completed` later).
 //   Late-join replay: the host's full commit names the cutscene it is running (StorySyncService.Send), and the joiner
 //     applies it as a CutsceneStart presentation through the same gates.
+//   Level intros (onStart) start from CutsceneManager.Start, never StartCutscene: every peer, joiners included, runs
+//     its own when it loads the scene, so they are not broadcast.
 //   Skip / Proceed: per player. Every peer watches its own copy and skips / proceeds it alone, like solo; nothing goes
-//     on the wire. A client's skip / proceed events run in the author scope, so flags only it wrote reach the host
-//     (the host may still be watching). A scene-ending cutscene's load waits for the peer still watching
+//     on the wire. A client's skip events run in the author scope, so flags only it wrote reach the host (the host may
+//     still be watching). CutsceneCut.Proceed only sets `proceed` (the cut's events run later in the Cutscene
+//     coroutine), so it needs no hook. A scene-ending cutscene's load waits for the peer still watching
 //     (SceneFollowService: a follow is held while this peer is in a cutscene; the host holds a client's request).
 // Wreck / hole split (AirlockCinematic.ClientSplitFromHost): the host has none of the client's cutscenes, they run
 // locally like solo. PEN_Titles airlock cinematics (LocalInspect.AirlockCinematic) stay local on every path.
@@ -38,6 +41,40 @@ namespace SyncRADation.Networking
             try { return c.cutscene != null && !c.completed; }
             catch (System.Exception ex) { StorySyncService.WarnOnce("Cutscene StartedHere", ex); }
             return false;
+        }
+
+        /// <summary>
+        /// Host: a completed cutscene's "cut &lt;UniqueId.id&gt;" key, which native code writes only in CutsceneManager.Save
+        /// (save room). OnEnable re-reads it, so without it a manager that re-enables (room chunk wake) forgot it had
+        /// played and could start again; with it the story commit carries it and every peer's OnEnable runs onGameLoad.
+        /// </summary>
+        internal static void PersistCompleted(CutsceneManager c)
+        {
+            try
+            {
+                var uid = c.GetComponent<UniqueId>();
+                if (uid == null || string.IsNullOrEmpty(uid.id)) return;
+                string key = "cut " + uid.id;
+                if (!SProgress.GetBool(key, false)) SProgress.SetBool(key, true);
+            }
+            catch (System.Exception ex) { StorySyncService.WarnOnce("Cutscene PersistCompleted", ex); }
+        }
+
+        /// <summary>
+        /// CutsceneManager.OnDisable postfix: deactivating the object stops its coroutines, but native code never clears
+        /// `cutscene` (StartCutscene / Start only assign it), so StartedHere would call a dead cutscene live (pause would
+        /// Skip it again and re-fire its end events; the late-join commit would name it). A disabled component on an
+        /// active object keeps its coroutines running and stays live.
+        /// </summary>
+        internal static void OnDisabled(CutsceneManager c)
+        {
+            try
+            {
+                if (c == null || c.gameObject.activeInHierarchy) return;
+                c.cutscene = null;
+                c.enforcer = null;
+            }
+            catch (System.Exception ex) { StorySyncService.WarnOnce("Cutscene OnDisabled", ex); }
         }
 
         /// <summary>Host: the cutscene with this id is running here (late-join replay target).</summary>
@@ -127,29 +164,6 @@ namespace SyncRADation.Networking
             return true;
         }
 
-        /// <summary>
-        /// CutsceneCut.Proceed on a peer in a live party, outside an apply scope. Per player: the host proceeds natively,
-        /// a client proceeds here in the author scope (returns false: already done).
-        /// </summary>
-        internal static bool LocalProceed(CutsceneCut cut)
-        {
-            try
-            {
-                if (LocalInspect.AirlockCinematic(cut.gameObject) || !NetGate.Client) return true;
-                StorySyncService.BeginAuthorScope();
-                NetGate.BeginApply();
-                try { cut.Proceed(); }
-                finally
-                {
-                    NetGate.EndApply();
-                    StorySyncService.EndAuthorScope();
-                }
-                return false;
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            return true;
-        }
-
         // ------------------------------------------------------------------ host: client requests
 
         /// <summary>Host: a client's trigger asked for this cutscene. N requesters (or the host's own start) start it once.</summary>
@@ -157,6 +171,13 @@ namespace SyncRADation.Networking
         {
             var c = InteractionSyncService.FindAlive<CutsceneManager>(id, "Interact");
             if (c == null || LocalInspect.AirlockCinematic(c.gameObject)) return true;
+            if (c.completed)
+            {
+                // Already played here: the requester's copy forgot (re-enabled before the "cut" key reached it);
+                // the CutsceneCompleted poll settles it, no start goes out.
+                PlaytestLog.Event("Interact", "CutsceneStart completed id=" + Hex(id));
+                return true;
+            }
             if (StartedHere(c) || !_stamps.TryStart(id, Now))
             {
                 PlaytestLog.Event("Interact", "CutsceneStart dup id=" + Hex(id));

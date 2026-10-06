@@ -27,7 +27,7 @@ namespace SyncRADation.Tests
         // (or a guard dropped) changes this set: update docs/RVA_FOLDING.md + FoldedRva.txt together with it.
         private static readonly string[] ExpectedGuarded =
         {
-            "CutsceneCut$$Proceed", "Interaction$$reset", "Interaction$$setInRange", "ROT_MeatBlocker$$pickup", "ROT_Tarot$$flip",
+            "Interaction$$reset", "Interaction$$setInRange", "ROT_MeatBlocker$$pickup", "ROT_Tarot$$flip",
         };
 
         private static readonly string[] ExpectedRemoved = { "MultiKeyLock$$Update" };

@@ -351,6 +351,32 @@ namespace SyncRADation.Networking
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
         }
 
+        /// <summary>
+        /// Before a peer's PuzzleStatus.solved is written here: native DoorLockEventInteraction.Update starts its
+        /// &lt;solved&gt; coroutine on the first frame it sees puzzle.solved with done false (gameState = 4, wait
+        /// solvedTime, exitEvent, onSolved), and only exitEvent puts gameState back. The solver's poll can carry
+        /// solved one frame before its own Update latched done, so the DoorLockEvent entry is not in that packet;
+        /// a peer with no lock screen open (exitEvent skipped) was frozen in the cutscene state. Apply the solved
+        /// DoorLockEvent first (done latched, same durable / in-room edge as its own entry).
+        /// </summary>
+        internal static void LatchDoorLockEvents(PuzzleStatus status)
+        {
+            if (status == null) return;
+            try
+            {
+                var all = WorldLookup.All<DoorLockEventInteraction>();
+                if (all == null) return;
+                for (int i = 0; i < all.Length; i++)
+                {
+                    var d = all[i];
+                    if (d == null || d.done || d.puzzle == null || d.puzzle != status) continue;
+                    long wid = unchecked((long)WorldId.FromGameObject(d.gameObject));
+                    ApplyDoorLockEvent(d, Mk(PuzzleType.DoorLockEventInteraction, wid, true, false, false, 0, 0, 0, 0, 0));
+                }
+            }
+            catch (System.Exception ex) { Guard.Swallow(ex); }
+        }
+
         internal static void ApplyBiodome(BiodomeDoorLock x, PuzzleStateEntry e)
         {
             if (x == null) return;
@@ -411,7 +437,10 @@ namespace SyncRADation.Networking
         static void SnapServiceLock(DET_ServiceLock x)
         {
             if (x.solved != null)
+            {
+                LatchDoorLockEvents(x.solved);
                 x.solved.solved = true;
+            }
             PuzzleSyncService.DisableInteractions(x);
             DisableAll(x.Buttons);
             DisableAll(x.CounterButtons);

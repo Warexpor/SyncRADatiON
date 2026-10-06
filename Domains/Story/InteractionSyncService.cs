@@ -1,5 +1,5 @@
 // Host side of client interaction requests: validate, run the native world mutation, ack the sender.
-// UseItem / UseItemMulti: InteractionSyncService.UseItem.cs. Cutscene start / skip / proceed: CutsceneSync.
+// UseItem: InteractionSyncService.UseItem.cs. Cutscene start / skip / proceed: CutsceneSync.
 using SyncRADation.Patches;
 using SyncRADation.Sync;
 using UnityEngine;
@@ -53,12 +53,7 @@ namespace SyncRADation.Networking
                         if (!ok) reason = "no key";
                         else if (!string.IsNullOrEmpty(consumeReason)) reason = consumeReason;
                         break;
-                    case InteractionKind.UseItemMulti:
-                        ok = ApplyUseItemMulti(id, msg.SenderPlayerId, out string multiReason);
-                        if (!ok) reason = "no key";
-                        else if (!string.IsNullOrEmpty(multiReason)) reason = multiReason;
-                        break;
-                    // KeypadSubmit / Dialogue* / EventScreen* / Book* / SceneFollowRequest are wire values only: no
+                    // KeypadSubmit / Dialogue* / EventScreen* / Book* / SceneFollowRequest / UseItemMulti are wire values only: no
                     // build sends them (keypads are live puzzle state, dialogues and inspect screens stay local, scene
                     // requests ride SceneFollow). Anything unhandled is acked FAIL below.
                     case InteractionKind.CutsceneStart:

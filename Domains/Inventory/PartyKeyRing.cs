@@ -385,10 +385,7 @@ namespace SyncRADation.Networking
 
         static string _uiName;
 
-        /// <summary>
-        /// Story dumps overwrite Dialoguer s0/s3 with the host's last use (often AirlockKey).
-        /// Re-apply the local inspect/use name after XML apply.
-        /// </summary>
+        /// <summary>Re-apply the local inspect/use name to Dialoguer s0/s3 (flavor dialogue start / continue).</summary>
         public static void RestoreUiNames()
         {
             if (string.IsNullOrEmpty(_uiName)) return;

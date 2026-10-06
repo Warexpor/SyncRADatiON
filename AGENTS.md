@@ -17,7 +17,7 @@ Version and protocol: `Bootstrap/PluginInfo.cs` (single source).
 | Soak checklist before any release | `docs/PLAYTEST.md` |
 | Player docs | `README.md`, `INSTALL.md` |
 
-Decompile: `~/Archive/Windows-Desktop/Dev/SIGNALIS DECOMPILED/` (`07_Ghidra_pseudoC/<Class>.c`, AssetRipper scenes and script stubs).
+Decompile: `~/Archive/Windows-Desktop/Dev/SIGNALIS DECOMPILED/` (`07_Ghidra_pseudoC/<Class>.c`, `07_Ghidra_pseudoC/_lib/<Assembly>/` for FMODUnity, A* Pathfinding, Timeline, UI, firstpass and engine modules, `06_FMOD_banks/Master.strings.tsv` for FMOD GUID ↔ path, AssetRipper scenes and script stubs).
 
 ## Layout
 

@@ -296,9 +296,6 @@ guard	ROT_MeatBlocker$$pickup	0x4BB310
 guard	RegexParser$$MoveRight	0x4BB310
 guard	FlipSwitch$$Flip	0x4BFB20
 guard	ROT_Tarot$$flip	0x4BFB20
-guard	CutsceneCut$$Proceed	0x516A00
-guard	END_Boss$$StartBattle	0x516A00
-guard	XmlSerializationWriter$$TopLevelElement	0x516A00
 guard	Interaction$$reset	0x60E4D0
 guard	InteractionItem$$reset	0x60E4D0
 guard	UnityDefaultGui$$onEndedHandler	0x60E4D0

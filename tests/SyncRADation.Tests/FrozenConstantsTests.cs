@@ -15,10 +15,10 @@ namespace SyncRADation.Tests
     {
         // NetSchema.StructuralHash (Hash minus the module id, which changes with every rebuild) with the test assembly pinned to AssemblyVersion 9.9.9.9 (see the csproj).
         // Moves whenever PluginInfo.ProtocolVersion or any id of the mixed enums changes.
-        private const uint GoldenSchemaHash = 0x34857153U;
+        private const uint GoldenSchemaHash = 0x49E426EAU;
 
         [Fact]
-        public void ProtocolVersion_is_18() => Assert.Equal(18, PluginInfo.ProtocolVersion);
+        public void ProtocolVersion_is_19() => Assert.Equal(19, PluginInfo.ProtocolVersion);
 
         [Fact]
         public void Channels_and_connection_key_are_frozen()
@@ -34,7 +34,6 @@ namespace SyncRADation.Tests
         public void Wire_caps_are_frozen()
         {
             Assert.Equal(16000, NetWire.MaxString);
-            Assert.Equal(4 * 1024 * 1024, NetWire.MaxLongStringBytes);
             Assert.Equal(8, NetWire.MaxWorldCategories);
             Assert.Equal(256, NetWire.MaxSceneDiffIds);
             Assert.Equal(2048, NetWire.MaxSceneDiffTotalIds);
@@ -189,7 +188,7 @@ namespace SyncRADation.Tests
         public void SchemaHash_golden_value()
         {
             Assert.Equal(GoldenSchemaHash, NetSchema.StructuralHash);
-            Assert.Equal(GoldenSchemaHash, Replicate("9.9.9.9", 18));
+            Assert.Equal(GoldenSchemaHash, Replicate("9.9.9.9", 19));
         }
 
         [Fact]

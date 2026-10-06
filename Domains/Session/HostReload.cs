@@ -32,10 +32,14 @@ namespace SyncRADation.Networking
             public Mode Mode;
             public string Scene;
             public int Slot;
+            /// <summary>Save mode: the save's "RoomName" (LoadingManager.Start puts the player at that SavePoint).</summary>
+            public string Room;
         }
 
         /// <summary>SProgress string key SaveManager.Save writes the active scene name to (string literal 8527).</summary>
         private const string SceneKey = "SceneName";
+        /// <summary>SProgress string key SaveManager.Save writes the save room to; LoadingManager.Start reads it.</summary>
+        private const string RoomKey = "RoomName";
         /// <summary>Non-transient time (LoadingScreen does not count) a reload may take before it is retried / abandoned.</summary>
         private const float PendingTimeout = 45f;
         /// <summary>Absolute cap, loading screen included: a reload that never leaves the LoadingScreen is abandoned.</summary>
@@ -65,6 +69,8 @@ namespace SyncRADation.Networking
         private static string _savedScene = "";
         // persistent: run's save slot outlives the session
         private static int _savedSlot;
+        // persistent: run's save slot outlives the session
+        private static string _savedRoom = "";
 
         /// <summary>A reload was started and SaveManager.Load has not run yet.</summary>
         public static bool Pending => _pending;
@@ -93,6 +99,7 @@ namespace SyncRADation.Networking
             {
                 _savedSlot = SaveManager.slotID;
                 _savedScene = SProgress.GetString(SceneKey, "") ?? "";
+                _savedRoom = SProgress.GetString(RoomKey, "") ?? "";
             }
             catch (Exception ex) { Guard.Swallow("HostReload.NoteSavedScene", ex); }
         }
@@ -130,7 +137,7 @@ namespace SyncRADation.Networking
 
         public static Plan TryBegin()
         {
-            var plan = new Plan { Scene = "", Mode = Mode.None };
+            var plan = new Plan { Scene = "", Mode = Mode.None, Room = "" };
             if (_pending) return plan;
             // The gate would swallow our LoadLevel (GateLevel -> false) after ResetNow already emptied the host.
             if (SceneFollowService.LoadsSuppressed)
@@ -218,6 +225,7 @@ namespace SyncRADation.Networking
             plan.Mode = mode;
             plan.Scene = scene;
             plan.Slot = slot;
+            if (mode == Mode.Save) plan.Room = SavedRoomFor(slot);
             PlaytestLog.Event("Damage", "wipe reload " + mode + " scene='" + scene + "'"
                 + (mode == Mode.Save ? " slot=" + slot : ""));
             return plan;
@@ -377,6 +385,14 @@ namespace SyncRADation.Networking
         /// Load of this slot). Only when this process never saved or loaded the slot is the file read, which
         /// overwrites the live SProgress - acceptable there: nothing of this run is in memory to lose.
         /// </summary>
+        private static string SavedRoomFor(int slot)
+        {
+            if (_savedSlot == slot) return _savedRoom ?? "";
+            // SavedSceneFor just read the slot file into SProgress when this process never saved / loaded it.
+            try { return SProgress.GetString(RoomKey, "") ?? ""; }
+            catch (Exception ex) { Guard.Swallow("HostReload.SavedRoom", ex); return ""; }
+        }
+
         private static string SavedSceneFor(int slot)
         {
             if (_savedSlot == slot && !string.IsNullOrEmpty(_savedScene)) return _savedScene;

@@ -17,7 +17,10 @@ namespace SyncRADation.Networking
             => Mk(PuzzleType.SaveRoomEvent, wid, x.triggered, false, false, 0, 0, 0, 0, 0);
 
         internal static PuzzleStateEntry ReadCutscene(CutsceneManager x, long wid)
-            => Mk(PuzzleType.CutsceneCompleted, wid, x.completed, false, false, 0, 0, 0, 0, 0);
+        {
+            if (x.completed && NetGate.Host) CutsceneSync.PersistCompleted(x);
+            return Mk(PuzzleType.CutsceneCompleted, wid, x.completed, false, false, 0, 0, 0, 0, 0);
+        }
 
         /// <summary>Flavor / EventScreen / lock lines stay local and are not party-synced.</summary>
         internal static bool TryReadDialogue(Dialogue x, long wid, out PuzzleStateEntry entry)
@@ -61,12 +64,18 @@ namespace SyncRADation.Networking
                 x.eventInter.enabled = false;
         }
 
+        /// <summary>
+        /// Per-player cutscenes: the host finishing (or skipping) its copy first must not mark this peer's copy, still
+        /// playing, completed (its skip would then be refused); its own coroutine sets completed at the end. A copy that
+        /// never ran here (other room, late join) gets what the native load does for a completed cutscene
+        /// (CutsceneManager.OnEnable / Load: completed from SProgress "cut &lt;id&gt;", then onGameLoad, the "already
+        /// happened" state: SetActive, LoadState, setLevel, stopInstant ...).
+        /// </summary>
         internal static void ApplyCutscene(CutsceneManager x, PuzzleStateEntry e)
         {
-            // Per-player cutscenes: the host finishing (or skipping) its copy first must not mark this peer's copy, still
-            // playing, completed (its skip would then be refused); its own coroutine sets completed at the end.
-            if (x != null && e.Bool0 && !CutsceneSync.StartedHere(x))
-                x.completed = true;
+            if (x == null || !e.Bool0 || x.completed || CutsceneSync.StartedHere(x)) return;
+            x.completed = true;
+            if (x.onGameLoad != null) Native("cutscene-onGameLoad", () => x.onGameLoad.Invoke());
         }
 
         internal static void ApplyDialogue(Dialogue x, PuzzleStateEntry e)

@@ -28,7 +28,6 @@ namespace SyncRADation.Networking
         private bool _fullDump = true;
         // The next full broadcast carries the Authoritative bit (SaveManager.Load / NewGame replaced the live slot).
         private bool _authFull;
-        private string _lastXml = "";
         private float _timer;
         const float CommitInterval = 0.75f;
 
@@ -77,7 +76,6 @@ namespace SyncRADation.Networking
             _needSend = true;
             _fullDump = true;
             _authFull = false;
-            _lastXml = "";
             _timer = 0f;
             _hasPendingCommit = false;
             _authoritativeUntil = 0f;
@@ -200,17 +198,13 @@ namespace SyncRADation.Networking
             // An incremental broadcast never satisfies a pending full.
             if (!unicast) _needSend = _fullDump;
 
-            string xml = "";
-            try { xml = Dialoguer.GetGlobalVariablesState() ?? ""; } catch (System.Exception e) { Guard.Swallow(e); }
-            // Dialoguer globals ride every full commit; an incremental one only when they changed (client ignores "").
-            string xmlWire = !full && string.Equals(xml, _lastXml, System.StringComparison.Ordinal) ? "" : xml;
-            if (!unicast) _lastXml = xml;
-
+            // Dialoguer globals are never sent: every one the game reads is this player's own (the pickup yes/no
+            // answer ItemPickup.release reads 0.1 s after the callback, item / key names, MedicationCheck's bag test);
+            // the only dialogues with conditional phases are unused prototypes.
             bool replay = replayPresentation && CanReplayPresentation();
             var msg = new StoryCommitMessage
             {
                 FullRefresh = full,
-                DialoguerXml = xmlWire,
                 Flags = flags,
                 ActiveWorldId = replay ? unchecked((long)_lastWorldId) : 0,
                 ActiveStoryCmd = replay ? (byte)_lastCmd : (byte)0,
@@ -232,7 +226,7 @@ namespace SyncRADation.Networking
             catch (System.Exception e) { Guard.Swallow(e); }
             net.StoryHandlers.SendStoryCommit(msg);
             if (full)
-                PlaytestLog.Event("Story", "commit full flags=" + flags.Length + " xml=" + xml.Length
+                PlaytestLog.Event("Story", "commit full flags=" + flags.Length
                     + " cmd=" + (replay ? _lastCmd.ToString() : "-")
                     + (authoritative ? " authoritative" : ""));
         }
@@ -275,7 +269,6 @@ namespace SyncRADation.Networking
                     msg.ActiveWorldId = old.ActiveWorldId;
                 }
             }
-            if (string.IsNullOrEmpty(msg.DialoguerXml)) msg.DialoguerXml = old.DialoguerXml;
             _hasPendingCommit = false;
         }
 
@@ -314,8 +307,8 @@ namespace SyncRADation.Networking
             {
                 if (authoritative) ok = ProgressSlot.ClearShared();
                 ok &= ProgressSlot.Apply(msg.Flags, out written);
-                ok &= ApplyDialoguerXml(msg.DialoguerXml);
                 ok &= ApplyEnd(msg, unsent);
+                DynamicSupplySync.ReconcileResupply();
             }
             finally
             {
@@ -325,26 +318,11 @@ namespace SyncRADation.Networking
 
             PlaytestLog.Event("Story", "apply commit full=" + msg.FullRefresh
                 + " flags=" + (msg.Flags != null ? msg.Flags.Length : 0) + " written=" + written
-                + " xml=" + (msg.DialoguerXml != null ? msg.DialoguerXml.Length : 0)
                 + " cmd=" + (StoryCmd)msg.ActiveStoryCmd);
             if (!ok) HealAfterFailedApply(net);
 
             if (msg.FullRefresh && msg.ActiveStoryCmd != 0)
                 ReplayActivePresentation(msg);
-        }
-
-        static bool ApplyDialoguerXml(string xml)
-        {
-            if (string.IsNullOrEmpty(xml)) return true;
-            try
-            {
-                Dialoguer.SetGlobalVariablesState(xml);
-                // The globals carry the host's last use / inspect item names: rebind this peer's own.
-                PartyKeyRing.RestoreUiNames();
-                return true;
-            }
-            catch (System.Exception ex) { WarnOnce("ApplyCommit Dialoguer", ex); }
-            return false;
         }
 
         /// <summary>

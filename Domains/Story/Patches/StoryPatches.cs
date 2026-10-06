@@ -423,14 +423,9 @@ namespace SyncRADation.Patches
         }
     }
 
-    // Only the int overloads: the DialoguerDialogues overloads are the same native functions (see DialoguerGate).
-    [HarmonyPatch(typeof(Dialoguer), nameof(Dialoguer.StartDialogue), new[] { typeof(int) })]
-    public static class DialoguerStartIntPatch
-    {
-        [HarmonyPrefix]
-        public static void Prefix(int dialogueId) => DialoguerGate.Start(dialogueId);
-    }
-
+    // Only the (int, callback) overload: Dialoguer.StartDialogue(int) / (DialoguerDialogues) have no caller in game
+    // code; Dialogue.StartDialogue reaches DialoguerDialogueManager.startDialogueWithCallback, the same native function
+    // as this overload (RVA 0x426320, see DialoguerGate).
     [HarmonyPatch(typeof(Dialoguer), nameof(Dialoguer.StartDialogue), new[] { typeof(int), typeof(DialoguerCallback) })]
     public static class DialoguerStartIntCbPatch
     {

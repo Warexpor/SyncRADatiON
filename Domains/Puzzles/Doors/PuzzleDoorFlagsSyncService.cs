@@ -28,6 +28,7 @@ namespace SyncRADation.Networking
         internal static void ApplyPuzzleStatus(PuzzleStatus x, PuzzleStateEntry e)
         {
             if (x == null) return;
+            if (e.Bool0) LockSyncService.LatchDoorLockEvents(x);
             x.solved = e.Bool0;
             if (e.Bool0) TryUnlockDoors(x.gameObject);
         }

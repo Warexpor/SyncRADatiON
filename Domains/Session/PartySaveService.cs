@@ -66,6 +66,11 @@ namespace SyncRADation.Networking
         private static readonly Dictionary<int, PartySaveToken> _slotTokens = new Dictionary<int, PartySaveToken>();
         // persistent: mirrors host_saves.txt
         private static readonly Dictionary<string, ushort[]> _rings = new Dictionary<string, ushort[]>();
+        // Which save a slot's token was minted for (SaveFingerprint). A slot number exists once per profile
+        // (FileBasedPrefs.profile "01".."05"), and a solo save over a party slot, or a game restart in between, keeps
+        // the slot but is another save: its token / ring / bag snapshots must not be applied to it.
+        // persistent: mirrors host_saves.txt
+        private static readonly Dictionary<int, string> _slotPrints = new Dictionary<int, string>();
         // persistent: mirrors the bag file
         private static readonly List<string> _bagOrder = new List<string>();
         // persistent: mirrors the bag file
@@ -77,6 +82,9 @@ namespace SyncRADation.Networking
         private static int _runSlot;
         // persistent: the run outlives the session
         private static bool _runDirty;
+        // Fingerprint of the run's save at its last Save / Load (in memory, read from the live SProgress).
+        // persistent: the run outlives the session
+        private static string _runPrint = "";
         // Client: the join token restores a bag once per (host stamp, slot) (a reconnect to the same host and save mid-session
         // must not roll the bag back; a different host or save is a different run). Persistent on purpose: not a session value.
         // persistent: once per (host stamp, slot)
@@ -170,6 +178,13 @@ namespace SyncRADation.Networking
                             PartySaveToken t;
                             if (PartySaveToken.TryParse(v, out t)) _slotTokens[t.Slot] = t;
                         }
+                        else if (k == "print")
+                        {
+                            int bar = v.IndexOf('|');
+                            int slot;
+                            if (bar > 0 && int.TryParse(v.Substring(0, bar), NumberStyles.Integer, CultureInfo.InvariantCulture, out slot))
+                                _slotPrints[slot] = v.Substring(bar + 1);
+                        }
                         else if (k == "ring")
                         {
                             int bar = v.IndexOf('|');
@@ -200,6 +215,8 @@ namespace SyncRADation.Networking
                 sb.Append("next=").Append(_next).Append('\n');
                 foreach (var kvp in _slotTokens)
                     sb.Append("slot=").Append(kvp.Value.Key).Append('\n');
+                foreach (var kvp in _slotPrints)
+                    sb.Append("print=").Append(kvp.Key).Append('|').Append(kvp.Value).Append('\n');
                 foreach (var kvp in _rings)
                     sb.Append("ring=").Append(kvp.Key).Append('|').Append(JoinRing(kvp.Value)).Append('\n');
                 File.WriteAllText(Path.Combine(Dir(), HostFile), sb.ToString());
@@ -320,11 +337,40 @@ namespace SyncRADation.Networking
             }
         }
 
+        /// <summary>
+        /// The save the live SProgress holds: profile folder + SaveManager session id ("sid") + save count ("Saves"),
+        /// all written by SaveManager.Save and read back by Load. "" when unreadable.
+        /// </summary>
+        private static string SaveFingerprint()
+        {
+            try
+            {
+                return (FileBasedPrefs.profile ?? "") + "/" + (SProgress.GetString("sid", "") ?? "") + "/"
+                    + SProgress.GetInt("Saves", 0).ToString(CultureInfo.InvariantCulture);
+            }
+            catch (Exception ex) { Guard.Swallow("PartySave.Fingerprint", ex); return ""; }
+        }
+
+        /// <summary>The slot's token, only when it was minted for the save the run holds (legacy tokens had no print).</summary>
+        private static bool TryTokenForRun(int slot, out PartySaveToken token)
+        {
+            if (!_slotTokens.TryGetValue(slot, out token)) return false;
+            string print;
+            if (!_slotPrints.TryGetValue(slot, out print) || string.IsNullOrEmpty(print) || string.IsNullOrEmpty(_runPrint)
+                || string.Equals(print, _runPrint, StringComparison.Ordinal))
+                return true;
+            PlaytestLog.Event("PartySave", "slot=" + slot + " token " + token.Key + " is for another save (" + print
+                + " != " + _runPrint + "): not used");
+            token = default(PartySaveToken);
+            return false;
+        }
+
         /// <summary>Hosted session: a native SaveManager.Save happened. Mints the party token for the slot.</summary>
         public static PartySaveToken OnHostSaved()
         {
             _runSlot = CurrentSlot();
             _runDirty = false;
+            _runPrint = SaveFingerprint();
             return Mint(_runSlot, PartyKeyRing.Export());
         }
 
@@ -333,6 +379,7 @@ namespace SyncRADation.Networking
             EnsureHostLoaded();
             var token = new PartySaveToken { Slot = slot, Counter = ++_next, Stamp = _stamp };
             _slotTokens[slot] = token;
+            _slotPrints[slot] = _runPrint ?? "";
             _rings[token.Key] = ring ?? new ushort[0];
             PruneRings();
             SaveHostFile();
@@ -346,6 +393,7 @@ namespace SyncRADation.Networking
         {
             _runSlot = CurrentSlot();
             _runDirty = true;
+            _runPrint = SaveFingerprint();
             _soloKeys = CaptureBagKeys();
         }
 
@@ -356,8 +404,9 @@ namespace SyncRADation.Networking
             int slot = CurrentSlot();
             _runSlot = slot;
             _runDirty = false;
+            _runPrint = SaveFingerprint();
             PartySaveToken token;
-            if (!_slotTokens.TryGetValue(slot, out token))
+            if (!TryTokenForRun(slot, out token))
                 token = default(PartySaveToken);
             Current = token;
             PlaytestLog.Event("PartySave", "host loaded slot=" + slot
@@ -369,6 +418,7 @@ namespace SyncRADation.Networking
         {
             _runSlot = CurrentSlot();
             _runDirty = false;
+            _runPrint = SaveFingerprint();
             Current = default(PartySaveToken);
             _soloKeys = CaptureBagKeys();
         }
@@ -378,6 +428,7 @@ namespace SyncRADation.Networking
         {
             _runSlot = 0;
             _runDirty = false;
+            _runPrint = "";
             Current = default(PartySaveToken);
             _soloKeys = null;
         }
@@ -400,7 +451,7 @@ namespace SyncRADation.Networking
             }
             EnsureHostLoaded();
             PartySaveToken token;
-            if (_slotTokens.TryGetValue(_runSlot, out token))
+            if (TryTokenForRun(_runSlot, out token))
             {
                 Current = token;
             }
@@ -411,11 +462,12 @@ namespace SyncRADation.Networking
             }
         }
 
-        /// <summary>Token of the last party save in a slot (invalid when none).</summary>
+        /// <summary>Token of the last party save in a slot (invalid when none, or minted for another save than the run's).</summary>
         public static PartySaveToken TokenForSlot(int slot)
         {
             EnsureHostLoaded();
             PartySaveToken token;
+            if (slot == _runSlot) return TryTokenForRun(slot, out token) ? token : default(PartySaveToken);
             return _slotTokens.TryGetValue(slot, out token) ? token : default(PartySaveToken);
         }
 

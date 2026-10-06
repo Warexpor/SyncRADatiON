@@ -184,67 +184,6 @@ namespace SyncRADation.Tests
             Assert.True(r.EndOfData);
         }
 
-        // ------------------------------------------------------------------ long strings (DialoguerXml)
-
-        [Fact]
-        public void Long_string_round_trips_above_the_64KB_short_string_limit()
-        {
-            string xml = "<d>" + new string('x', 200_000) + "€é</d>";
-            var msg = new StoryCommitMessage { DialoguerXml = xml, EndingId = 9 };
-            var back = (StoryCommitMessage)WireFuzz.RoundTrip(msg, out var r, out _);
-            Assert.Equal(xml, back.DialoguerXml);
-            Assert.Equal(9, back.EndingId);
-            Assert.True(r.EndOfData);
-        }
-
-        [Fact]
-        public void Long_string_at_exactly_MaxLongStringBytes_is_kept_and_one_byte_more_is_dropped_without_desync()
-        {
-            ResetWarnOnce();
-            string atCap = new string('a', NetWire.MaxLongStringBytes);
-            var ok = (StoryCommitMessage)WireFuzz.RoundTrip(new StoryCommitMessage { DialoguerXml = atCap, EndCircle = 4 }, out var r1, out _);
-            Assert.Equal(NetWire.MaxLongStringBytes, ok.DialoguerXml.Length);
-            Assert.Equal(4, ok.EndCircle);
-            Assert.True(r1.EndOfData);
-
-            string over = new string('a', NetWire.MaxLongStringBytes + 1);
-            var dropped = (StoryCommitMessage)WireFuzz.RoundTrip(new StoryCommitMessage { DialoguerXml = over, EndCircle = 5 }, out var r2, out _);
-            Assert.Equal("", dropped.DialoguerXml);
-            Assert.Equal(5, dropped.EndCircle); // following fields intact
-            Assert.True(r2.EndOfData);
-            Assert.Contains(ModRuntime.Log.Warnings, m => m.Contains("long string"));
-        }
-
-        [Fact]
-        public void Long_string_cap_is_measured_in_utf8_bytes_not_chars()
-        {
-            string s = new string('€', NetWire.MaxLongStringBytes / 3 + 1); // 3 bytes per char -> just over the cap
-            Assert.True(Encoding.UTF8.GetByteCount(s) > NetWire.MaxLongStringBytes);
-            var back = (StoryCommitMessage)WireFuzz.RoundTrip(new StoryCommitMessage { DialoguerXml = s }, out _, out _);
-            Assert.Equal("", back.DialoguerXml);
-        }
-
-        [Theory]
-        [InlineData(-1)]
-        [InlineData(NetWire.MaxLongStringBytes + 1)]
-        [InlineData(int.MinValue)]
-        [InlineData(int.MaxValue)]
-        public void GetLongString_rejects_out_of_range_length(int n)
-        {
-            var w = new NetDataWriter();
-            w.Put(n);
-            Assert.Throws<InvalidDataException>(() => NetWire.GetLongString(new NetDataReader(w.CopyData())));
-        }
-
-        [Fact]
-        public void GetLongString_throws_when_payload_is_shorter_than_its_prefix()
-        {
-            var w = new NetDataWriter();
-            w.Put(1000);
-            w.Put(new byte[10], 0, 10);
-            Assert.ThrowsAny<Exception>(() => NetWire.GetLongString(new NetDataReader(w.CopyData())));
-        }
-
         // ------------------------------------------------------------------ helpers
 
         [Fact]

@@ -40,6 +40,11 @@ namespace SyncRADation.Networking
         private readonly HashSet<ulong> _partyOnPickupFired = new HashSet<ulong>();
         /// <summary>Host: count a partial take left on a prop this visit (the join dump carries it).</summary>
         private readonly Dictionary<ulong, int> _remainder = new Dictionary<ulong, int>();
+        // Host: props DynamicSupply.Entered switched off for this run (sent as Count = -1, see WithheldCount).
+        private readonly HashSet<ulong> _withheld = new HashSet<ulong>();
+
+        /// <summary>WorldPickupEntry.Count of an untriggered prop the host's DynamicSupply withheld (switched off).</summary>
+        public const int WithheldCount = -1;
 
         // ------------------------------------------------------------------ scene index
 
@@ -466,6 +471,7 @@ namespace SyncRADation.Networking
             _byId.Clear();
             _uniqueProps.Clear();
             _remainder.Clear();
+            _withheld.Clear();
             _lastRescanAt = -10f;
             _partyOnPickupFired.Clear();
             // _claimedItems survives: a unique claimed in another scene stays claimed.
@@ -496,6 +502,7 @@ namespace SyncRADation.Networking
             _byId.Clear();
             _uniqueProps.Clear();
             _remainder.Clear();
+            _withheld.Clear();
             _lastRescanAt = -10f;
             _partyOnPickupFired.Clear();
             _takes.Clear();
@@ -538,6 +545,17 @@ namespace SyncRADation.Networking
         }
 
         public bool IsClaimed(ulong worldId) => worldId != 0 && _claims.ContainsKey(worldId);
+
+        /// <summary>Host: DynamicSupply switched this prop off; every peer gets it off (next state tick, join dump).</summary>
+        public void NoteWithheld(ItemPickup p)
+        {
+            if (p == null || !NetGate.Host) return;
+            ulong id;
+            try { id = WorldId.FromGameObject(p.gameObject); }
+            catch (System.Exception e) { Guard.Swallow(e); return; }
+            if (id != 0 && _withheld.Add(id))
+                PlaytestLog.Event("Pickup", "dynamic supply withheld id=" + id.ToString("X16"));
+        }
 
         /// <summary>Record a claim this peer learned about (no claimer known) without overwriting a host record.</summary>
         void MarkClaimed(ulong id, Items.itemlist item)
@@ -878,7 +896,8 @@ namespace SyncRADation.Networking
                     _sent.TryGetValue(id, out last);
                     if (!full && last.Triggered == triggered && last.Active == active) continue;
                     int rem = 0;
-                    if (!triggered) _remainder.TryGetValue(id, out rem);
+                    if (!triggered && _withheld.Contains(id)) rem = WithheldCount;
+                    else if (!triggered) _remainder.TryGetValue(id, out rem);
                     _tickList.Add(new WorldPickupEntry
                     {
                         WorldId = unchecked((long)id),
@@ -1083,6 +1102,16 @@ namespace SyncRADation.Networking
                 if (id == 0) continue;
                 var p = Find(id);
 
+                if (!e.Triggered && e.Count == WithheldCount)
+                {
+                    // The host's DynamicSupply withheld it (the party is stocked): off here too, no onPickup.
+                    if (p != null)
+                    {
+                        try { p.gameObject.SetActive(false); } catch (System.Exception ex) { Guard.Swallow(ex); }
+                        PlaytestLog.Verbose("Pickup", "withheld id=" + id.ToString("X16"));
+                    }
+                    continue;
+                }
                 if (!e.Triggered)
                 {
                     // Host gave the claim back (declined yes/no / partial take / rollback) — restore the prop. Only

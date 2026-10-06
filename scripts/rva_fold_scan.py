@@ -99,6 +99,8 @@ def main():
     rows, unresolved = [], []
     targets = patch_targets() + [("(patch removed)", 0, c, n, a) for c, n, a in KNOWN_REMOVED]
     for f, line, cls, name, args in targets:
+        # Unhollower names a compiler-generated nested type <Name>d__N as _Name_d__N.
+        cls = re.sub(r"\._(\w+?)_d__(\d+)$", r".<\1>d__\2", cls)
         short = cls.split(".")[-1]
         cands = []
         for nm in (name, "get_" + name, "set_" + name):

@@ -91,8 +91,7 @@ namespace SyncRADation.Networking
         public static bool LocalIsTransient() => IsTransient(ActiveScene());
 
         /// <summary>
-        /// "MainMenu" (SceneHelper.resetGame, StringLiteral_13696 -> index 13695) or "MainMenu2" (CreditsEnd,
-        /// StringLiteral_13714 -> index 13713): Ghidra string literals are off by one against stringliteral.json.
+        /// "MainMenu" (PauseMenu.quit → quitToScene) or "MainMenu2" (CreditsEnd).
         /// </summary>
         public static bool IsMainMenu(string sceneName)
         {
@@ -103,9 +102,30 @@ namespace SyncRADation.Networking
         {
             return IsMainMenu(sceneName)
                 || string.Equals(sceneName, DeadMenuScene, System.StringComparison.Ordinal)
-                || string.Equals(sceneName, EndCreditsScene, System.StringComparison.Ordinal)
+                || IsEndCredits(sceneName)
                 || string.Equals(sceneName, "Credits", System.StringComparison.Ordinal);
         }
+
+        /// <summary>EndCredits, and EndCredits2 (RedRoomFinale / SanctuaryFinale load it; not in build settings).</summary>
+        public static bool IsEndCredits(string sceneName)
+        {
+            return !string.IsNullOrEmpty(sceneName) && sceneName.StartsWith(EndCreditsScene, System.StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// A load that leaves the game for the title flow: MainMenu (PauseMenu.quit → quitToScene("MainMenu") →
+        /// NewApplication.LoadLevel; CreditsEnd → MainMenu2), StartupPC (PlatformManager.RestartGame, AsyncLoader's
+        /// LoadLevel(0) fallback) or Profile Select. Never a follow target: it is one player leaving.
+        /// </summary>
+        public static bool IsLeaveGame(string sceneName)
+        {
+            return IsMainMenu(sceneName)
+                || string.Equals(sceneName, "StartupPC", System.StringComparison.Ordinal)
+                || string.Equals(sceneName, "Profile Select", System.StringComparison.Ordinal);
+        }
+
+        /// <summary>This peer is watching end credits (its CreditsEnd re-issues the MainMenu load until the host's ends).</summary>
+        public static bool InEndCredits() => IsEndCredits(ActiveScene());
 
         static string[] BuildNames()
         {
@@ -130,8 +150,8 @@ namespace SyncRADation.Networking
             return dot <= start ? path.Substring(start) : path.Substring(start, dot - start);
         }
 
-        // Every load path (AsyncLoader, SceneHelper, LoadLevelZone, LoadLevelInteraction, PenroseAirlock,
-        // AirlockDoorLoadZone) can only reach a scene in build settings, so that is the whole check.
+        // Every load path (AsyncLoader, SceneHelper, LoadLevelZone, LoadLevelInteraction, PenroseAirlock) can only
+        // reach a scene in build settings, so that is the whole check.
         static bool IsKnownScene(string sceneName)
         {
             return !IsTransient(sceneName) && BuildNames().Length > 0 && _buildSet.Contains(sceneName);
@@ -284,6 +304,13 @@ namespace SyncRADation.Networking
                 PlaytestLog.Event("Scene", "reject peer '" + sceneName + "' (airlock split, host='" + here + "')");
                 return true;
             }
+            if (IsLeaveGame(sceneName) && !(IsMainMenu(sceneName) && IsEndCredits(here)))
+            {
+                // One player quitting to the title must not take the host (and everyone else) with it; a client
+                // leaves the session itself (SceneLoadGate). Only an old client still sends this.
+                PlaytestLog.Event("Scene", "ignore peer '" + sceneName + "' (leaving the game is per player)");
+                return true;
+            }
             bool alreadyHere = string.Equals(here, sceneName, System.StringComparison.Ordinal);
             if (AirlockCinematic.DeferFollowWhileAirlockPresent())
             {
@@ -291,7 +318,7 @@ namespace SyncRADation.Networking
                 PlaytestLog.Event("Scene", "reject peer '" + sceneName + "' (host airlock cinematic)");
                 return false;
             }
-            if (IsMainMenu(sceneName) && string.Equals(here, EndCreditsScene, System.StringComparison.Ordinal))
+            if (IsMainMenu(sceneName) && IsEndCredits(here))
             {
                 // CreditsEnd runs ResetGame + LoadLevel(MainMenu) on every peer when *its* credits finish. A client that
                 // is faster must not cut the host's credits short: the host's own load follows.
@@ -427,7 +454,7 @@ namespace SyncRADation.Networking
             finally { NetGate.EndApply(); }
         }
 
-        // SceneHelper.resetGame / CreditsEnd run ResetNow before the menu load; a peer the host drags there never ran it.
+        // CreditsEnd runs ResetNow before the menu load; a peer the host drags there never ran it.
         // A failed reset still loads the menu.
         static void ResetBeforeMenu()
         {

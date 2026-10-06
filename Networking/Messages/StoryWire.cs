@@ -29,7 +29,8 @@ namespace SyncRADation.Networking
         /// SProgress keys the game writes per player outside the shared story (Ghidra-verified writers: EnemyController.Save
         /// "enemy &lt;name&gt; hp/rp/pos/rot/ded/burn", RadioManager "RadioFreq", HelpInputPrompts "showHelp", InventoryBase
         /// "InventorySlot", MinimapPOIManager "mPOI&lt;id&gt;", PersistentMinimapManager "MMSet" / "F&lt;n&gt;R &lt;..&gt;",
-        /// SaveGameScreenshotMaker "Screenshot"). The host never commits them: they would overwrite each client's own.
+        /// SaveGameScreenshotMaker "Screenshot", Diagnostics.SaveState (OnDisable) "ElsterFrameStatus" / "Mental_Frag" /
+        /// "Mental_Panic"). The host never commits them: they would overwrite each client's own.
         /// </summary>
         public static bool IsPerPlayerKey(string key)
         {
@@ -43,6 +44,9 @@ namespace SyncRADation.Networking
                 case "InventorySlot":
                 case "Screenshot":
                 case "MMSet":
+                case "ElsterFrameStatus":
+                case "Mental_Frag":
+                case "Mental_Panic":
                     return true;
             }
             // PersistentMinimapManager.Save: "F" + <int> + "R " + <cells>.

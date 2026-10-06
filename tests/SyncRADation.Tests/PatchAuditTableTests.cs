@@ -27,9 +27,9 @@ namespace SyncRADation.Tests
                 foreach (Match m in Regex.Matches(File.ReadAllText(f), "(?:GetField|GetMethod|GetProperty|AccessTools\\.(?:Field|Method|Property))\\(\\s*\"(\\w+)\""))
                     lookups.Add(m.Groups[1].Value + " (" + Path.GetFileName(f) + ")");
             }
-            // Sanity floor for the regex: DoorNative "cycle" + InteractionSyncService "ready" today (a StorageLid comment
-            // that quoted GetField("open") used to count as a third).
-            Assert.True(lookups.Count >= 2, "scanner found only " + lookups.Count + " reflected lookups: regex out of date?");
+            // Sanity floor for the regex: DoorNative "cycle" today (InteractionSyncService "ready" went with the
+            // UseItemMulti request; a StorageLid comment that quoted GetField("open") used to count too).
+            Assert.True(lookups.Count >= 1, "scanner found only " + lookups.Count + " reflected lookups: regex out of date?");
             var missing = lookups.Where(l => !audit.Contains("\"" + l.Substring(0, l.IndexOf(' ')) + "\"")).ToList();
             Assert.True(missing.Count == 0, "add to PatchAudit.Reflected: " + string.Join(", ", missing));
         }

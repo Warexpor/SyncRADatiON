@@ -14,9 +14,10 @@ namespace SyncRADation.Cheats
         public const string SpawnPrefix = "SR_Spawn_";
         public const string TemplatePrefix = "SR_Template_";
 
+        // AnEnemyType names with an enemy preset in the game (KNCR has none: never bankable).
         private static readonly string[] TypeKeys =
         {
-            "EULR", "STAR", "ARAR", "STCR", "MNHR", "KLBR", "KNCR", "ADLR"
+            "EULR", "STAR", "ARAR", "STCR", "MNHR", "KLBR", "ADLR"
         };
 
         // persistent: constant lookup table
@@ -24,11 +25,10 @@ namespace SyncRADation.Cheats
         {
             { "EULR", "PEN_Wreck" },
             { "STCR", "PEN_Wreck" },
-            { "STAR", "LOV_Reeducation" },
+            { "STAR", "DET_Detention" },
             { "ARAR", "RES_Residential" },
             { "MNHR", "MED_Medical" },
             { "KLBR", "ROT_Rotfront" },
-            { "KNCR", "BOS_Adler" },
             { "ADLR", "BOS_Adler" },
         };
 
@@ -478,10 +478,7 @@ namespace SyncRADation.Cheats
                 if (e.Preset != null)
                 {
                     string t = e.Preset.Type.ToString();
-                    if (!string.IsNullOrEmpty(t)
-                        && !string.Equals(t, "None", System.StringComparison.Ordinal)
-                        && t != "0")
-                        return t;
+                    if (!string.IsNullOrEmpty(t)) return t;
                 }
             }
             catch (System.Exception ex) { Guard.Swallow(ex); }

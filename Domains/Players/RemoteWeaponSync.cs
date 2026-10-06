@@ -268,16 +268,19 @@ namespace SyncRADation.Players
         {
             if (string.IsNullOrEmpty(name)) return false;
             var low = name.ToLowerInvariant();
+            // Elster's models (AssetRipper Elster hierarchy): Weapons/{FlareGun, SMG, Shotgun, Machete, Rifle, Revolver,
+            // Pistol, ...}, the Taser under MagazineMount.
             switch (weapon)
             {
-                case WeaponType.Handgun: return low.Contains("handgun");
+                case WeaponType.Handgun: return low.Contains("taser"); // WeaponUtils: Taser
                 case WeaponType.Pistol: return low.Contains("pistol");
                 case WeaponType.Revolver: return low.Contains("revolver");
                 case WeaponType.Shotgun: return low.Contains("shotgun");
                 case WeaponType.Rifle: return low.Contains("rifle");
-                case WeaponType.SMG: return low.Contains("smg") || low.Contains("machine");
+                case WeaponType.SMG: return low.Contains("smg");
                 case WeaponType.Flare: return low.Contains("flaregun");
-                case WeaponType.CAR: return low.Contains("car") && !low.Contains("flare");
+                // FlakGun: the flare gun loaded with flak (InventoryManager.SwapToFlak); it has no model of its own.
+                case WeaponType.CAR: return low.Contains("flaregun");
                 case WeaponType.Melee: return low.Contains("machete") || low.Contains("melee");
                 default: return false;
             }

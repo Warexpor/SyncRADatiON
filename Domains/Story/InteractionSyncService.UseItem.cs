@@ -1,5 +1,7 @@
-// Host apply of a client's UseItem / UseItemMulti, and the ConsumesKey ring revoke shared with host-local unlocks.
-using System.Reflection;
+// Host apply of a client's UseItem, and the ConsumesKey ring revoke shared with host-local unlocks.
+// UseItemMultiInteraction is not an item use: its ready() only clears the static `blocked` after any dialogue ends
+// (Dialogue.onReadyForNewDialog) and callback() opens the inventory; each part's own UseItemInteraction does the
+// unlock, synced like any UseItem.
 using SyncRADation.Patches;
 using SyncRADation.Sync;
 
@@ -48,55 +50,6 @@ namespace SyncRADation.Networking
             return true;
         }
 
-        private static bool ApplyUseItemMulti(ulong id, int senderId, out string consumeReason)
-        {
-            consumeReason = "";
-            var m = Find<UseItemMultiInteraction>(id);
-            if (m == null) return false;
-            var ready = typeof(UseItemMultiInteraction).GetMethod("ready",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (ready == null) return false;
-
-            var list = m.Interactions;
-            int n = list != null ? list.Count : 0;
-            for (int i = 0; i < n; i++)
-            {
-                var u = list[i];
-                AnItem key = u != null ? u.key : null;
-                if (key == null || PartyKeyRing.LocalOrRingHas(key)) continue;
-                if (!TrustKey(key, senderId, "UseItemMulti")) return false;
-            }
-
-            NetGate.BeginApply();
-            try { ready.Invoke(m, null); }
-            finally { NetGate.EndApply(); }
-
-            // ready() unlocked natively; whatever consume step fails, the ring broadcast below still goes out.
-            var parts = new System.Collections.Generic.List<string>();
-            try
-            {
-                for (int i = 0; i < n; i++)
-                {
-                    var u = list[i];
-                    AnItem key = u != null ? u.key : null;
-                    if (key == null) continue;
-                    if (UnlockInteractiveLocks(u, key))
-                    {
-                        bool hostHad = PartyKeyRing.InLocalBag(key);
-                        ConsumeKey(key);
-                        if (!hostHad) parts.Add((int)key._item + ":1");
-                    }
-                    else
-                        PartyKeyRing.Note(key);
-                }
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
-            if (parts.Count > 0)
-                consumeReason = "consume:" + string.Join("|", parts);
-            PartyKeyRing.Broadcast();
-            return true;
-        }
-
         /// <summary>
         /// A client used a key the host holds neither in its bag nor on the party ring (the ring update is still in
         /// flight): trust the requester, never the host itself, and note the key on the ring.
@@ -126,25 +79,6 @@ namespace SyncRADation.Networking
         public static void HostRevokeIfConsumed(UseItemInteraction u)
         {
             if (u != null) TryRevokeUseItemKey(u);
-        }
-
-        /// <summary>Host-local UseItemMulti.ready() runs natively without ApplyUseItemMulti: revoke each ConsumesKey part.</summary>
-        public static void HostRevokeUseItemMulti(UseItemMultiInteraction m)
-        {
-            if (m == null) return;
-            try
-            {
-                var list = m.Interactions;
-                if (list == null) return;
-                bool any = false;
-                for (int i = 0; i < list.Count; i++)
-                {
-                    var u = list[i];
-                    if (u != null && TryRevokeUseItemKey(u)) any = true;
-                }
-                if (any) PartyKeyRing.Broadcast();
-            }
-            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         /// <returns>true if a ConsumesKey revoke ran</returns>

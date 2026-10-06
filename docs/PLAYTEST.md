@@ -183,7 +183,7 @@ For each family: (a) H starts/solves part or all, C verifies; (b) C does the sam
 
 ## 16. Client quit-to-menu
 
-- [ ] **Client quit-to-menu** (`SceneHelper.resetGame`): known risk (blocked silently). Record what actually happens: menu opens or nothing; either way the session is not corrupted, and the client can Disconnect from F2.
+- [ ] **Client quit-to-menu** (pause menu Quit → `PauseMenu.quitToScene("MainMenu")`): the client goes offline and loads the title; the host stays in game, its session keeps running for any other client.
 - [ ] Host quit-to-menu: clients go offline cleanly.
 
 ## 17. Performance and hitches

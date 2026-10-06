@@ -78,7 +78,7 @@ namespace SyncRADation.Networking
         Gunshot = 13,
         MultiCondition = 14,
         SceneFollowRequest = 15,
-        UseItemMulti = 16,
+        UseItemMulti = 16, // wire value only since 0.5.66: ready() is not an item use (each part's UseItem is)
         CutsceneProceed = 17, // wire value only since 0.5.65: proceeds are per player
         BookOpen = 18,
         BookMemory = 19,
@@ -162,7 +162,10 @@ namespace SyncRADation.Networking
         public long WorldId;
         public bool Triggered;
         public bool Active;
-        /// <summary>Untriggered only: units a partial take left on the prop (0 = count unchanged).</summary>
+        /// <summary>
+        /// Untriggered only: units a partial take left on the prop (0 = count unchanged); -1 = the host's DynamicSupply
+        /// withheld it (prop off, WorldPickupSyncService.WithheldCount).
+        /// </summary>
         public int Count;
 
         public void Serialize(NetDataWriter w)
@@ -537,7 +540,9 @@ namespace SyncRADation.Networking
         public byte HurtState;
         public float PosX, PosY, PosZ;
         public float RotY;
-        public float VelX, VelY, VelZ;
+        /// <summary>Animator floats the host's AI drives (ThirdPersonCharacter.UpdateAnimator Forward / Turn,
+        /// EnemyController hit direction HitFromX / HitFromY); a halted puppet never sets them.</summary>
+        public float AnimForward, AnimTurn, AnimHitX, AnimHitY;
         public int AnimHash;
         public float AnimTime;
         public int HP;
@@ -552,7 +557,7 @@ namespace SyncRADation.Networking
             w.Put(HurtState);
             w.Put(PosX); w.Put(PosY); w.Put(PosZ);
             w.Put(RotY);
-            w.Put(VelX); w.Put(VelY); w.Put(VelZ);
+            w.Put(AnimForward); w.Put(AnimTurn); w.Put(AnimHitX); w.Put(AnimHitY);
             w.Put(AnimHash);
             w.Put(AnimTime);
             w.Put(HP);
@@ -570,7 +575,7 @@ namespace SyncRADation.Networking
                 HurtState = r.GetByte(),
                 PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
                 RotY = r.GetFloat(),
-                VelX = r.GetFloat(), VelY = r.GetFloat(), VelZ = r.GetFloat(),
+                AnimForward = r.GetFloat(), AnimTurn = r.GetFloat(), AnimHitX = r.GetFloat(), AnimHitY = r.GetFloat(),
                 AnimHash = r.GetInt(),
                 AnimTime = r.GetFloat(),
                 HP = r.GetInt(),
@@ -1559,7 +1564,6 @@ namespace SyncRADation.Networking
     public struct StoryCommitMessage
     {
         public bool FullRefresh;
-        public string DialoguerXml;
         public int EndCircle;
         public int EndDeath;
         public int EndGraves;
@@ -1580,7 +1584,6 @@ namespace SyncRADation.Networking
         public void Serialize(NetDataWriter w)
         {
             w.Put(FullRefresh);
-            NetWire.PutLongString(w, DialoguerXml);
             w.Put(EndCircle);
             w.Put(EndDeath);
             w.Put(EndGraves);
@@ -1606,7 +1609,6 @@ namespace SyncRADation.Networking
             var msg = new StoryCommitMessage
             {
                 FullRefresh = r.GetBool(),
-                DialoguerXml = NetWire.GetLongString(r),
                 EndCircle = r.GetInt(),
                 EndDeath = r.GetInt(),
                 EndGraves = r.GetInt(),

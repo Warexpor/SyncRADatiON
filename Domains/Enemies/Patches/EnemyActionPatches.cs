@@ -2,7 +2,6 @@
 using HarmonyLib;
 using SyncRADation.Networking;
 using SyncRADation.Sync;
-using UnityEngine;
 
 namespace SyncRADation.Patches
 {
@@ -45,36 +44,16 @@ namespace SyncRADation.Patches
         [HarmonyPrefix, HarmonyPatch(nameof(EnemyController.WakeUpFlashlight))]
         public static bool WakeFlashlightPrefix(EnemyController __instance) => Forward(__instance, EnemyActionKind.WakeUp);
 
+        /// <summary>
+        /// Native Hit (an animation event, outside the EnemyTargetPatch swap) measures and hurts only the host's own
+        /// Elster (playerPos.position = PlayerState.player.position, HurtElster); a remote player in reach is hurt
+        /// through OnEnemyHit. playerPos itself is never a player root (native code only writes its position).
+        /// </summary>
         [HarmonyPrefix, HarmonyPatch(nameof(EnemyController.Hit))]
-        public static void HitPrefix(EnemyController __instance, out Transform __state)
+        public static void HitPrefix(EnemyController __instance)
         {
-            __state = null;
             if (!NetGate.Host) return;
             ClientDamageService.OnEnemyHit(__instance);
-            // Native Hit moves playerPos onto the host Elster; when that slot holds a remote proxy, park a
-            // scratch transform there for the call so the proxy is not teleported (restored in the Postfix).
-            var scratch = ClientDamageService.HitScratchFor(__instance);
-            if (scratch != null)
-            {
-                __state = __instance.playerPos;
-                __instance.playerPos = scratch;
-            }
-        }
-
-        /// <summary>
-        /// Finalizer, not a Postfix: it also runs when native Hit throws, so playerPos is always put back
-        /// (a skipped Postfix would leave the enemy chasing the scratch transform). The exception is passed
-        /// through unchanged.
-        /// </summary>
-        [HarmonyFinalizer, HarmonyPatch(nameof(EnemyController.Hit))]
-        public static System.Exception HitFinalizer(EnemyController __instance, Transform __state, System.Exception __exception)
-        {
-            if (__state != null && __instance != null)
-            {
-                try { __instance.playerPos = __state; }
-                catch (System.Exception e) { Guard.Swallow(e); }
-            }
-            return __exception;
         }
     }
 }

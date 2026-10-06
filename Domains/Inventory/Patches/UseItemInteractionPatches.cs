@@ -107,26 +107,4 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(UseItemInteraction __instance) => UseItemInteractionPatch.OnLocalUnlocked(__instance, false);
     }
-
-    [HarmonyPatch(typeof(UseItemMultiInteraction), nameof(UseItemMultiInteraction.ready))]
-    public static class UseItemMultiPatch
-    {
-        [HarmonyPrefix]
-        public static bool Prefix(UseItemMultiInteraction __instance)
-        {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
-            if (__instance == null) return true;
-            if (NetGate.Host) return true;
-            LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(
-                WorldId.FromGameObject(__instance.gameObject), InteractionKind.UseItemMulti);
-            return false;
-        }
-
-        [HarmonyPostfix]
-        public static void Postfix(UseItemMultiInteraction __instance)
-        {
-            if (NetGate.IsApplying || !NetGate.Live || !NetGate.Host) return;
-            try { InteractionSyncService.HostRevokeUseItemMulti(__instance); } catch (System.Exception e) { Guard.Swallow(e); }
-        }
-    }
 }

@@ -52,6 +52,16 @@ namespace SyncRADation.Patches
                 return true;
             }
 
+            // Quit to title (pause menu, restart): this client leaves the party and loads it offline. Stop synchronously
+            // so the load runs ungated. Not after end credits: CreditsEnd re-issues MainMenu2 every frame and the host's
+            // own credits end brings everyone to the menu together (SceneFollowService.TryApplyRequest).
+            if (SceneFollowService.IsLeaveGame(scene) && !SceneFollowService.InEndCredits())
+            {
+                PlaytestLog.Event("Scene", "client load '" + scene + "' - leaving the session");
+                LanNetworkManager.Instance.EndSession("Left to the main menu");
+                return true;
+            }
+
             // This player's scene-ending cutscene finished after the host's: the host is already there.
             if (SceneFollowService.TryReleaseHeldFollow(scene)) return false;
 
@@ -118,21 +128,6 @@ namespace SyncRADation.Patches
         public static bool Prefix(string scene) => SceneLoadGate.GateLevel(scene);
     }
 
-    [HarmonyPatch(typeof(SceneHelper), nameof(SceneHelper.resetGame))]
-    public static class SceneHelperResetPatch
-    {
-        [HarmonyPrefix]
-        public static bool Prefix()
-        {
-            if (NetGate.IsApplying || !NetGate.Party) return true;
-            // Host: allowed; its ResetNow + LoadLevel(MainMenu) ends the session (SceneLoadGate). Client: quit to menu
-            // leaves the party. Stop synchronously so the native ResetNow + LoadLevel that follows run offline - a
-            // deferred stop would let that load be gated as a follow request and the quit silently did nothing.
-            if (NetGate.Client) LanNetworkManager.Instance.EndSession("Left to the main menu");
-            return true;
-        }
-    }
-
     // CreditsEnd.Update (every frame after the fade) runs ResetGame.ResetNow, then LoadLevel(MainMenu2). On a client in
     // the party that load is gated into a request, so ResetNow ran natively every frame (statics wiped repeatedly)
     // until the host's own credits end. The host's follow runs ResetNow itself (SceneFollowService.Apply, apply scope).
@@ -158,8 +153,9 @@ namespace SyncRADation.Patches
     [HarmonyPatch(typeof(UnityEngine.SceneManagement.SceneManager), nameof(UnityEngine.SceneManagement.SceneManager.LoadScene), new[] { typeof(string) })]
     public static class SceneManagerLoadStringPatch
     {
-        // AirlockDoorLoadZone.Update calls SceneManager.LoadScene(string) directly
-        // (PenroseAirlock already goes through AsyncLoader.LoadLevel(int)).
+        // Direct SceneManager.LoadScene(string) callers (PenroseAirlock goes through AsyncLoader.LoadLevel(int)).
+        // AirlockDoorLoadZone.Update inlines AsyncLoader.LoadLevel(int) and only loads "LoadingScreen" here
+        // (transient, passes); no scene or prefab places that component.
         [HarmonyPrefix]
         public static bool Prefix(string sceneName) => SceneLoadGate.GateLevel(sceneName);
     }

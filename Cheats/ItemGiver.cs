@@ -28,6 +28,7 @@ namespace SyncRADation.Cheats
             new ItemEntry("Rifle Ammo",    "RifleAmmo"),
             new ItemEntry("SMG Ammo",      "SmgAmmo"),
             new ItemEntry("Flare Ammo",    "FlareGunAmmo"),
+            new ItemEntry("Flak Shells",   "FlakGunAmmo"),
             new ItemEntry("Health 25",     "Health25"),
             new ItemEntry("Health 50",     "Health50"),
             new ItemEntry("Health 100",    "Health100"),

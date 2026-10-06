@@ -26,7 +26,6 @@ namespace SyncRADation
         {
             new ReflectedMember(typeof(EventSlidingDoor), "cycle", MemberKind.Method, "DoorNative"),
             new ReflectedMember(typeof(StorageBox), "open", MemberKind.FieldOrProperty, "StorageLidSyncService"),
-            new ReflectedMember(typeof(UseItemMultiInteraction), "ready", MemberKind.Method, "InteractionSyncService"),
         };
 
         /// <summary>

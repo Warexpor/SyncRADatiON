@@ -268,34 +268,6 @@ namespace SyncRADation.Networking
 
         // --- Weapon-less enemy melee (EnemyController.Hit direct branch) ---------------------------
 
-        static Transform _hitScratch;
-
-        /// <summary>
-        /// Native Hit does playerPos.position = Elster.position before measuring (Ghidra EnemyController.c).
-        /// On the host e.playerPos is the nearest remote proxy, which would be teleported onto the host for
-        /// a frame. Returns a scratch transform to stand in for playerPos during Hit (null = leave it).
-        /// </summary>
-        internal static Transform HitScratchFor(EnemyController e)
-        {
-            var net = LanNetworkManager.Instance;
-            if (net == null || e == null || net.GetPlayerCount() <= 1) return null; // lone host: playerPos is the Elster
-            try
-            {
-                var pp = e.playerPos;
-                if (pp == null || pp.gameObject == null) return null;
-                var pm = net.ProxyManager;
-                if (pm == null || pm.GetPlayerIdByGameObject(pp.gameObject) < 0) return null;
-                if (_hitScratch == null)
-                {
-                    var go = new GameObject("SR_HitScratch");
-                    Object.DontDestroyOnLoad(go);
-                    _hitScratch = go.transform;
-                }
-                return _hitScratch;
-            }
-            catch (System.Exception ex) { WarnOnce("hit scratch", ex); return null; }
-        }
-
         /// <summary>
         /// Host, EnemyController.Hit Prefix. Enemies with no WeaponHurtbox hurt the player straight from
         /// Hit(): attackRange + attackAngle + staggerType==none -> HurtElster (Ghidra EnemyController.c).

@@ -1,3 +1,32 @@
+## 0.5.66 — 2026-10-06
+
+Protocol **v19** (see `docs/PROTOCOL.md`). Coverage pass against the expanded decompile: Ghidra pseudo-C now covers namespaced game types (DialoguerCore, PlatformManagement), every identical-code-folded class, FMODUnity, A* Pathfinding, Unity.Timeline, UnityEngine.UI and the engine modules, with string literals inlined and the il2cpp runtime helpers named; `06_FMOD_banks/Master.strings.tsv` maps every FMOD GUID to its path.
+
+### Fixed
+- **Enemies chasing a client only attacked when the host could see the client** (`EnemyTargetPatch`): `TrackAndAttack` runs `LOS` against `PlayerState.player` every tracking frame and `Attack` Linecasts to it before charging, on coroutine steps after `Update` returned, so they still checked the host. The chase-target swap now also wraps the `TrackAndAttack`, `Attack`, `Hurt`, `Stagger`, `Critical` and `Fire` coroutine steps, so attack decisions, the 6.4 m range and the hit / fall direction follow the chased player.
+- **Client enemy puppets slid with an idle walk and fell the wrong way**: the halted puppet never got the `Forward` / `Turn` locomotion blend or the `HitFromX` / `HitFromY` hit direction (the snapshot carried an always-zero velocity instead). A puppet halted mid-attack no longer keeps charging (`StopAllCoroutines`).
+- **Combat music and the enemy-presence radio followed the host's room on clients**: the host's `EnemyManager.inCombat` / `enemyPresence` statics overwrote the client's own (native `CheckIfLeft` computes them for the listener's room).
+- **Audio**
+  - Host one-shots: 70 game call sites play by `"{guid}"` string and 183 of 196 at `Vector3.zero` (2D). GUID paths slipped past every Elster / UI / door / bed filter (the host's ladder, storage box and options-menu sounds were relayed), and the zero position put them at the world origin. Paths are resolved first; a 2D one-shot stays with whoever caused it (a client action applied on the host is placed at that client).
+  - **One player tuning the radio switched the other's stations on and off**: `RadioStation` / `MorseCodeGenerator` emitters are driven by each player's own tuner and stay local.
+  - A relayed Play no longer restarts a loop already running here (fans, monitors, Paternoster, every join dump); the host relays a Stop of a loop the game started through `ObjectEnable`; a `TriggerOnce` emitter that already fired, or one with a blank event, is not relayed; mixer snapshots (`Reverb EXC`, `Reverb RES_Overflow`) stay local.
+  - Remote footsteps set four FMOD parameters that exist in no bank (`ElsterStep` runs on the global `RunSpeed`): removed, walk vs run is volume.
+  - Removed the `PlayOneShot(Guid)`, both `PlayOneShotAttached` and `fmod.PlayOneShot` hooks: the game never calls them.
+- **A client quitting to the title from the pause menu sent the host to the main menu and ended everyone's session**: `PauseMenu.quit` loads `MainMenu` through `NewApplication.LoadLevel`, which became a follow request. A client leaving for the title (MainMenu, StartupPC, Profile Select) now goes offline and loads it itself; the host ignores such a request. `EndCredits2` counts as end credits.
+- **After a party wipe that reloads the save, clients started at the level entrance and replayed its intro** while the host stood at the save point: clients now load with `SaveManager.loading` like the host and are placed at the save's `SavePoint` (`LoadingManager.Start` placement, without reading their own slot).
+- **Party save tokens were keyed by slot number only**: slot 1 of another profile, or a solo save over a party slot followed by a restart, reused an old token and rolled bags / the key ring back. Tokens now carry the save's fingerprint (profile, sid, save count).
+- **Story**
+  - The host's Dialoguer variables were pushed to clients with every story commit, including the pickup yes/no answer `ItemPickup.release` reads 0.1 s after the callback (a "no" could become a duplicate add). Dialoguer globals are never sent.
+  - A finished cutscene forgot it had played when its object re-enabled (`CutsceneManager.OnEnable` re-reads SProgress `cut <id>`, written only at a save room) and could start again; peers that never ran it never got its "already happened" state (`onGameLoad`). The host now writes the key when a cutscene completes, peers that did not run it get `onGameLoad`, and a deactivated cutscene object no longer looks live (a later pause skip re-fired its end events).
+  - Removed the `CutsceneCut.Proceed` detour (it only sets a bool; the cut's events run later in the coroutine) and the never-called `Dialoguer.StartDialogue(int)` hook.
+  - `Diagnostics` panel keys (`ElsterFrameStatus`, `Mental_Frag`, `Mental_Panic`) are per player.
+- **Items / puzzles**
+  - **Reading a multi-item prompt (tarot cards, disks, LAB rings, scale dolls) gave the whole party every part key**: `UseItemMultiInteraction.ready()` is just the "dialogue over" flag reset, not a use; the client request and the host revoke are gone (each part's own `UseItemInteraction` is synced).
+  - **A peer could freeze in the cutscene state at the DET service hatch**: a `PuzzleStatus.solved` arriving one frame before the solver's `DoorLockEventInteraction` latched `done` started the native solved coroutine, whose exit only runs from an open lock screen. The DoorLockEvent is latched first.
+  - **Dynamic supply props (39 in ROT / LAB / MED / RES / EXC) were there for one player and gone for the other**: each peer decided from its own bag on first entry. The host decides (withheld props go to every peer and the join dump); BOS_Adler's resupply weapon follows the host's choice.
+  - Remote weapon models: the Taser and the FlakGun (the flare gun loaded with flak) now find their model; dropped items find pickup models not named exactly `Model`.
+- Cheats: F11 no longer lists KNCR (no enemy preset exists), STAR's home hint is DET_Detention; F6 Useful gains Flak shells.
+
 ## 0.5.65 — 2026-10-01
 
 Protocol **v18** (`PlayerState` rebuilt for an Animator-less proxy, `PlayerRoster.HostFlags`, pickup counts; see `docs/PROTOCOL.md`). Live shared puzzle screens, then a full code audit (7 reviewers) with about 40 verified bugs fixed and a structural refactor of every domain.

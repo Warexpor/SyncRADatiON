@@ -180,13 +180,14 @@ namespace SyncRADation.Players
             _lastEmptyClick = emptyClick;
             _lastAiming = aiming;
 
-            // Footsteps: Step from the sender's locomotion loop; run vs walk is an FMOD param.
+            // Footsteps: Step from the sender's locomotion loop. ElsterStep's run variation is the global
+            // parameter:/RunSpeed (the local player's), so run vs walk is volume only.
             if (nearby && (flags & PoseFlags.Step) != 0)
             {
                 bool running = (flags & PoseFlags.Running) != 0;
                 float vol = running ? 0.7f : 0.4f + state.ForwardAmount * 0.2f;
                 if (!string.IsNullOrEmpty(_footstepPath))
-                    WorldSfx.PlayFootstep(_footstepPath, _audioAnchor.transform, running, vol);
+                    WorldSfx.Play(_footstepPath, _audioAnchor.transform, vol);
                 else if (_footstepClip != null)
                     AudioSource.PlayClipAtPoint(_footstepClip, _proxyTransform.position, vol * (running ? 0.85f : 0.6f));
             }

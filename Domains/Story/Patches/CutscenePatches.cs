@@ -1,4 +1,4 @@
-// Cutscene Start / Skip / Proceed detours and the pause-during-cutscene skip remap. Logic: Story/CutsceneSync.
+// Cutscene Start / Skip / OnDisable detours and the pause-during-cutscene skip remap. Logic: Story/CutsceneSync.
 using HarmonyLib;
 using SyncRADation.Networking;
 using SyncRADation.Sync;
@@ -101,17 +101,10 @@ namespace SyncRADation.Patches
         }
     }
 
-    [HarmonyPatch(typeof(CutsceneCut), nameof(CutsceneCut.Proceed))]
-    public static class CutsceneProceedPatch
+    [HarmonyPatch(typeof(CutsceneManager), "OnDisable")]
+    public static class CutsceneOnDisablePatch
     {
-        [HarmonyPrefix]
-        public static bool Prefix(CutsceneCut __instance)
-        {
-            // CutsceneCut.Proceed shares RVA 0x516A00 with END_Boss.StartBattle and XmlSerializationWriter.TopLevelElement
-            // (script.json, identical code folding): the detour also fires for those, with a foreign `this`.
-            if (!Il2CppRealType.Is<CutsceneCut>(__instance)) return true;
-            if (NetGate.IsApplying || !NetGate.Party) return true;
-            return CutsceneSync.LocalProceed(__instance);
-        }
+        [HarmonyPostfix]
+        public static void Postfix(CutsceneManager __instance) => CutsceneSync.OnDisabled(__instance);
     }
 }

@@ -22,3 +22,9 @@ Current: `Bootstrap/PluginInfo.cs` `ProtocolVersion`. Port default `7777`, conne
   - `WorldPickupEntry.Count` (units left on an untriggered prop, also in the join dump) and `WorldPickupClaimMessage.Remaining` (> 0: a partial take's leftover, host releases the claim).
   - `StoryCommit` drops the never-read `ActiveGameState` byte.
   - Puzzle field meanings: `EXC_Elevator` `Float0` is the stopped `pos.z` (0 while riding).
+- v19 (0.5.66):
+  - `StoryCommit` drops `DialoguerXml`: every Dialoguer global the game reads is the player's own (the pickup yes/no answer, item / key names, MedicationCheck), so the host's no longer overwrite each client's.
+  - `EnemySnapshotNet`: `VelX/VelY/VelZ` (always zero: `AIBase.velocity` is only updated by `FinalizeMovement`, which `canMove = false` never reaches) become the animator floats `AnimForward`, `AnimTurn`, `AnimHitX`, `AnimHitY` (`Forward` / `Turn` from `ThirdPersonCharacter.UpdateAnimator`, `HitFromX` / `HitFromY` from the hurt coroutines); the puppet sets them.
+  - `WorldPickupEntry.Count = -1`: the host's `DynamicSupply.Entered` withheld that prop (switched off, no onPickup); also in the join dump.
+  - `PartyLife` Wipe: `Room` carries the save's `RoomName` for a save reload; clients load with `SaveManager.loading` and start at that `SavePoint` (`Session/WipePlacement`).
+  - `InteractionKind.UseItemMulti` (16) is a wire value only: `UseItemMultiInteraction.ready()` is not an item use.

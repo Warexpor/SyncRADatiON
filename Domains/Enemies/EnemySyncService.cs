@@ -26,8 +26,8 @@ namespace SyncRADation.Networking
             public int Hp;
             public bool HasAnim;
             public float AnimTime;
-            // Which state bools this enemy's controller has (bit 0 Dead, 1 Critical, 2 Fire, 3 Pursuit; -1 unread):
-            // SetBool on a missing parameter warns every call.
+            // Which parameters this enemy's controller has (bools: bit 0 Dead, 1 Critical, 2 Fire, 3 Pursuit; floats:
+            // 4 Forward, 5 Turn, 6 HitFromX, 7 HitFromY; -1 unread): Set* on a missing parameter warns every call.
             public int AnimParams = -1;
             public int ShownHp = int.MinValue, ShownMaxHp;  // what debugHP.text was last set to
         }
@@ -149,17 +149,19 @@ namespace SyncRADation.Networking
             int hp = hb != null ? hb.HP : maxHp;
 
             int animHash = 0;
-            float animTime = 0f;
+            float animTime = 0f, fwd = 0f, turn = 0f, hitX = 0f, hitY = 0f;
             var anim = e.animator;
             if (anim != null)
             {
                 var si = anim.GetCurrentAnimatorStateInfo(0);
                 animHash = si.fullPathHash;
                 animTime = si.normalizedTime;
+                int mask = HostAnimParams(anim);
+                if ((mask & ParamForward) != 0) fwd = anim.GetFloat(AnimForward);
+                if ((mask & ParamTurn) != 0) turn = anim.GetFloat(AnimTurn);
+                if ((mask & ParamHitX) != 0) hitX = anim.GetFloat(AnimHitX);
+                if ((mask & ParamHitY) != 0) hitY = anim.GetFloat(AnimHitY);
             }
-
-            Vector3 vel = Vector3.zero;
-            if (e.agent != null) vel = e.agent.velocity;
 
             var state = e.state;
             return new EnemySnapshotNet
@@ -171,9 +173,10 @@ namespace SyncRADation.Networking
                 PosY = pos.y,
                 PosZ = pos.z,
                 RotY = et.eulerAngles.y,
-                VelX = vel.x,
-                VelY = vel.y,
-                VelZ = vel.z,
+                AnimForward = fwd,
+                AnimTurn = turn,
+                AnimHitX = hitX,
+                AnimHitY = hitY,
                 AnimHash = animHash,
                 AnimTime = animTime,
                 HP = hp,
@@ -292,6 +295,8 @@ namespace SyncRADation.Networking
             public float WakeRefusedUntil;
         }
         static readonly Dictionary<int, HostEnemy> _hostEnemies = new Dictionary<int, HostEnemy>();
+        // Host: animator instance id -> ReadAnimParams mask (GetFloat on a missing parameter logs a warning).
+        static readonly Dictionary<int, int> _hostAnimParams = new Dictionary<int, int>();
         static int _hostGeneration = -1;
         static BasicEnemy[] _basics = Array.Empty<BasicEnemy>();
         static EnemyCookBase[] _cooks = Array.Empty<EnemyCookBase>();
@@ -303,13 +308,24 @@ namespace SyncRADation.Networking
             if (g == _hostGeneration) return;
             _hostGeneration = g;
             _hostEnemies.Clear();
+            _hostAnimParams.Clear();
             _basics = WorldLookup.All<BasicEnemy>() ?? Array.Empty<BasicEnemy>();
             _cooks = WorldLookup.All<EnemyCookBase>() ?? Array.Empty<EnemyCookBase>();
+        }
+
+        static int HostAnimParams(Animator anim)
+        {
+            SyncHostCache();
+            int key = anim.GetInstanceID(), mask;
+            if (!_hostAnimParams.TryGetValue(key, out mask))
+                _hostAnimParams[key] = mask = ReadAnimParams(anim);
+            return mask;
         }
 
         static void ClearHostCache()
         {
             _hostEnemies.Clear();
+            _hostAnimParams.Clear();
             _hostGeneration = -1;
             _basics = Array.Empty<BasicEnemy>();
             _cooks = Array.Empty<EnemyCookBase>();
@@ -755,6 +771,12 @@ namespace SyncRADation.Networking
         static readonly int AnimCritical = Animator.StringToHash("Critical");
         static readonly int AnimFire = Animator.StringToHash("Fire");
         static readonly int AnimPursuit = Animator.StringToHash("Pursuit");
+        // ThirdPersonCharacter.Awake / EnemyController.ctor hashes (Ghidra): locomotion blend and hit direction.
+        static readonly int AnimForward = Animator.StringToHash("Forward");
+        static readonly int AnimTurn = Animator.StringToHash("Turn");
+        static readonly int AnimHitX = Animator.StringToHash("HitFromX");
+        static readonly int AnimHitY = Animator.StringToHash("HitFromY");
+        const int ParamForward = 16, ParamTurn = 32, ParamHitX = 64, ParamHitY = 128;
 
         static int ReadAnimParams(Animator anim)
         {
@@ -765,8 +787,17 @@ namespace SyncRADation.Networking
                 for (int i = 0; ps != null && i < ps.Length; i++)
                 {
                     var ap = ps[i];
-                    if (ap == null || ap.type != AnimatorControllerParameterType.Bool) continue;
+                    if (ap == null) continue;
                     int h = ap.nameHash;
+                    if (ap.type == AnimatorControllerParameterType.Float)
+                    {
+                        if (h == AnimForward) mask |= ParamForward;
+                        else if (h == AnimTurn) mask |= ParamTurn;
+                        else if (h == AnimHitX) mask |= ParamHitX;
+                        else if (h == AnimHitY) mask |= ParamHitY;
+                        continue;
+                    }
+                    if (ap.type != AnimatorControllerParameterType.Bool) continue;
                     if (h == AnimDead) mask |= 1;
                     else if (h == AnimCritical) mask |= 2;
                     else if (h == AnimFire) mask |= 4;
@@ -796,6 +827,11 @@ namespace SyncRADation.Networking
             if ((p.AnimParams & 4) != 0) anim.SetBool(AnimFire, !dead && hs == EnemyController.hurtState.fire);
             if ((p.AnimParams & 8) != 0)
                 anim.SetBool(AnimPursuit, !dead && (es == EnemyController.enemystate.pursuit || es == EnemyController.enemystate.attack));
+            // Walk / turn blend and the hurt / fall direction: the halted puppet's own AI never sets them.
+            if ((p.AnimParams & ParamForward) != 0) anim.SetFloat(AnimForward, snap.AnimForward);
+            if ((p.AnimParams & ParamTurn) != 0) anim.SetFloat(AnimTurn, snap.AnimTurn);
+            if ((p.AnimParams & ParamHitX) != 0) anim.SetFloat(AnimHitX, snap.AnimHitX);
+            if ((p.AnimParams & ParamHitY) != 0) anim.SetFloat(AnimHitY, snap.AnimHitY);
             var stateInfo = anim.GetCurrentAnimatorStateInfo(0);
             bool restarted = p.HasAnim && snap.AnimTime < p.AnimTime - 0.5f;
             p.HasAnim = true;
@@ -931,9 +967,15 @@ namespace SyncRADation.Networking
             catch (Exception ex) { Guard.Swallow(ex); return 0; }
         }
 
+        /// <summary>
+        /// A disabled MonoBehaviour keeps its coroutines: a TrackAndAttack / Attack its own Update started before the
+        /// first snapshot halted it would keep charging the puppet (ThirdPersonCharacter.MoveOverride / Translate)
+        /// against the network interpolation.
+        /// </summary>
         static void Halt(EnemyController enemy)
         {
             enemy.enabled = false;
+            enemy.StopAllCoroutines();
             if (enemy.agent != null) enemy.agent.enabled = false;
         }
 
@@ -991,35 +1033,14 @@ namespace SyncRADation.Networking
 
         // ------------------------------------------------------------------ PuzzleState (EnemyManager / global alert)
 
-        /// <summary>EnemyManagerState from the registry (never FindObjectsOfType).</summary>
+        /// <summary>EnemyManagerState: the room's durable cleared / inOperation flags (Int0 unused, see ApplyPuzzle).</summary>
         internal static bool TryReadPuzzle(EnemyManager x, long wid, out PuzzleStateEntry entry)
         {
             entry = default;
             if (x == null) return false;
-            bool combat = EnemyManager.inCombat;
-            if (!combat)
-            {
-                foreach (var kvp in WorldRegistry.AllEnemies())
-                {
-                    var en = kvp.Value;
-                    if (en == null) continue;
-                    try
-                    {
-                        if (en.state == EnemyController.enemystate.attack)
-                        {
-                            combat = true;
-                            break;
-                        }
-                    }
-                    catch (Exception e) { Guard.Swallow(e); }
-                }
-            }
-            int bits = 0;
-            if (combat) bits |= 1;
-            if (EnemyManager.enemyPresence) bits |= 2;
             entry = PuzzleDomainUtil.Mk(
                 PuzzleType.EnemyManagerState, wid,
-                x.cleared, x.inOperation, false, bits, 0, 0, 0, 0);
+                x.cleared, x.inOperation, false, 0, 0, 0, 0, 0);
             return true;
         }
 
@@ -1037,11 +1058,15 @@ namespace SyncRADation.Networking
             GlobalAlertStatus.currentStatus = (GlobalAlertStatus.alarm)e.Int0;
         }
 
+        /// <summary>
+        /// The static inCombat / enemyPresence (Int0 bits) are the listener's own: native EnemyManager.CheckIfLeft writes
+        /// them only for PlayerState.currentRoom, from the enemies' state (mirrored onto puppets), and CombatMusic /
+        /// EnemyPresenceRadio read them for this player's music and radio. Applying the host's would play the host's
+        /// room's combat music in the client's room, so only the room's durable flags are applied.
+        /// </summary>
         internal static void ApplyPuzzle(EnemyManager x, PuzzleStateEntry e)
         {
             if (x != null) { x.cleared = e.Bool0; x.inOperation = e.Bool1; }
-            EnemyManager.inCombat = (e.Int0 & 1) != 0;
-            EnemyManager.enemyPresence = (e.Int0 & 2) != 0;
         }
     }
 }

@@ -3,13 +3,32 @@
 Decompile root: `~/Archive/Windows-Desktop/Dev/SIGNALIS DECOMPILED`
 (`~/Omarchy_Backup/Desktop/Dev/SIGNALIS DECOMPILED` is **gone** on this machine — Archive path is canonical.)
 
-Prefer `05_CSharp_source/Assembly-CSharp_MelonLoader/` + `00_CODE_VIEW/dump.cs`.
+Prefer `05_CSharp_source/Assembly-CSharp_MelonLoader/` + `00_CODE_VIEW/dump.cs` for types; method bodies in `07_Ghidra_pseudoC/` (game types at the top, FMODUnity / A* / Timeline / UI / engine under `_lib/`, folded functions marked `// folded with`). FMOD GUID ↔ path: `06_FMOD_banks/Master.strings.tsv`.
 
 **Rules:** no invented sync. New `PuzzleType` / Boss / StoryCommit fields = protocol bump. **No park tables** — close gaps or classify intentional local.
 
-Last loop: 2026-09-30 (protocol 14). Shipped in product **0.5.59**.
+Last loop: 2026-10-06 (protocol 19). Shipped in product **0.5.66**.
 
-## Implemented this loop (protocol 11)
+## Implemented this loop (protocol 19, 0.5.66): expanded decompile
+
+Six audits against the new pseudo-C (FMODUnity, A*, DialoguerCore, PlatformManagement, folded classes, inlined literals). See `CHANGELOG.md` 0.5.66 for the full list; citations live in the code comments.
+
+| Fix | Citation |
+|-----|----------|
+| Chase swap covers the enemy coroutines (LOS / Attack Linecast / hit direction) | `EnemyController.c` `<TrackAndAttack>d__151` / `<Attack>d__172` / `<Hurt>` / `<Stagger>` / `<Critical>` / `<Fire>` MoveNext |
+| Enemy snapshot carries Forward / Turn / HitFromX / HitFromY | `ThirdPersonCharacter.c` UpdateAnimator, `EnemyController.c` ctor hashes, `Pathfinding.AIBase.c` velocity |
+| Combat music statics stay per listener | `EnemyManager.c` `<CheckIfLeft>` (currentRoom), `CombatMusic.c` |
+| One-shot GUID paths + 2D one-shots; radio stations local; loop restart; ObjectEnable Stop; TriggerOnce; snapshots | `FMODUnity.RuntimeManager.c` PlayOneShot, `FMODUnity.StudioEventEmitter.c` Play / PlayInstance / HandleGameEvent, `RadioStation.c` SuspendCheck, `Master.strings.tsv` |
+| Client quit-to-title leaves the session | `PauseMenu.c` quit → quitToScene |
+| Wipe reload places clients at the save point | `LoadingManager.c` Start, `Room.c` Awake, `CutsceneManager.c` Start |
+| Party save token fingerprint | `SaveManager.c` Save / Load (sid, Saves), `SProgress.c`, `ProfileManager.c` |
+| Dialoguer globals not sent | `ItemPickup.c` dialoguerCallback / release, `MedicationCheck.c`, `DialoguerCore.*` |
+| Cutscene `cut <id>` persisted + onGameLoad; OnDisable clears `cutscene` | `CutsceneManager.c` OnEnable / Load / Save / OnDisable |
+| UseItemMulti ready() not an item use | `UseItemMultiInteraction.c` ready / callback |
+| DoorLockEvent latched before PuzzleStatus.solved | `DoorLockEventInteraction.c` Update / `<solved>d__10` |
+| DynamicSupply / DynamicResupplyPickup host-decided | `DynamicSupply.c` Entered, `DynamicResupplyPickup.c` OnEnable |
+
+## Implemented (protocol 11)
 
 | Fix | Reverse-check | Citation |
 |-----|---------------|----------|

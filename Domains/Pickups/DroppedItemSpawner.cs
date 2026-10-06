@@ -530,16 +530,33 @@ namespace SyncRADation.ItemSystem
             }
         }
 
+        /// <summary>
+        /// The pickup's visual child. Level scenes name it "Model" (324 pickups), else "Model (1)" / "Model_1",
+        /// "KeycardModel", "FGun Model", "Nitro Model", "KeyCard", "Pistol Pickup" / "Revolver Pickup" (AssetRipper
+        /// level scenes); an exact "Model" wins.
+        /// </summary>
         static Transform FindModel(Transform root)
         {
             if (root == null) return null;
             var tfs = root.GetComponentsInChildren<Transform>(true);
+            Transform fallback = null;
             for (int i = 0; i < tfs.Length; i++)
             {
-                if (tfs[i] != null && tfs[i] != root && tfs[i].name == "Model")
-                    return tfs[i];
+                var t = tfs[i];
+                if (t == null || t == root) continue;
+                string n = t.name ?? "";
+                if (n == "Model") return t;
+                if (fallback == null && IsModelName(n)) fallback = t;
             }
-            return null;
+            return fallback;
+        }
+
+        static bool IsModelName(string n)
+        {
+            return n.StartsWith("Model", System.StringComparison.Ordinal)
+                || n.EndsWith("Model", System.StringComparison.Ordinal)
+                || n == "KeyCard"
+                || n.EndsWith(" Pickup", System.StringComparison.Ordinal);
         }
 
         static Transform NearestNativeModel(Vector3 pos)

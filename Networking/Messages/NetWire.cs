@@ -2,7 +2,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Text;
 using LiteNetLib.Utils;
 
 namespace SyncRADation.Networking
@@ -20,7 +19,6 @@ namespace SyncRADation.Networking
     {
         /// <summary>UTF-16 chars per short string. 16000 * 3 UTF-8 bytes stays under LiteNetLib's ushort prefix.</summary>
         public const int MaxString = 16000;
-        public const int MaxLongStringBytes = 4 * 1024 * 1024;
 
         public const int MaxEnemies = 512;
         public const int MaxBosses = 64;
@@ -80,36 +78,6 @@ namespace SyncRADation.Networking
                 s = s.Substring(0, MaxString);
             }
             w.Put(s);
-        }
-
-        /// <summary>Length-prefixed UTF-8 blob for strings that may exceed 64 KB (DialoguerXml).</summary>
-        public static void PutLongString(NetDataWriter w, string s)
-        {
-            if (string.IsNullOrEmpty(s))
-            {
-                w.Put(0);
-                return;
-            }
-            byte[] bytes = Encoding.UTF8.GetBytes(s);
-            if (bytes.Length > MaxLongStringBytes)
-            {
-                WarnOnce("longstr", "long string of " + bytes.Length + " bytes exceeds " + MaxLongStringBytes + " — dropped");
-                w.Put(0);
-                return;
-            }
-            w.Put(bytes.Length);
-            w.Put(bytes, 0, bytes.Length);
-        }
-
-        public static string GetLongString(NetDataReader r)
-        {
-            int n = r.GetInt();
-            if (n < 0 || n > MaxLongStringBytes)
-                throw new InvalidDataException("long string length " + n);
-            if (n == 0) return "";
-            var bytes = new byte[n];
-            r.GetBytes(bytes, n);
-            return Encoding.UTF8.GetString(bytes);
         }
     }
 

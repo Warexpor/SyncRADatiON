@@ -398,6 +398,9 @@ namespace SyncRADation.Networking
                             PlaytestLog.Verbose("FMOD", "skip far Play id=" + id.ToString("X16"));
                         return;
                     }
+                    // StudioEventEmitter.PlayInstance keeps a live non-oneshot instance and calls start() on it again,
+                    // which restarts the loop: ObjectEnable loops (fans, monitors, Paternoster) already run here.
+                    if (!e.isOneshot && e.IsPlaying()) return;
                     e.Play();
                 }
                 else e.Stop();
@@ -422,16 +425,20 @@ namespace SyncRADation.Networking
             catch (Exception ex) { Guard.Swallow(ex); return true; }
         }
 
-        /// <summary>StudioEventEmitter.Play/Stop postfix: host fans out, a client forwards its own world sounds to the host.</summary>
-        public static void EmitterChanged(StudioEventEmitter emitter, bool play)
+        /// <summary>
+        /// StudioEventEmitter.Play/Stop postfix: host fans out, a client forwards its own world sounds to the host.
+        /// nativePlaying (Stop only): the emitter was playing when Stop was called, also when it was started by
+        /// HandleGameEvent (ObjectEnable / ObjectStart / triggers), which inlines Play and never reaches the Play hook.
+        /// </summary>
+        public static void EmitterChanged(StudioEventEmitter emitter, bool play, bool nativePlaying = false)
         {
             if (emitter == null) return;
             if (PuzzleFx.Active) return; // a peer's puzzle press replayed here: every peer replays it itself
-            if (NetGate.Host) { if (NetGate.Party) HostEmit(emitter, play); }
+            if (NetGate.Host) { if (NetGate.Party) HostEmit(emitter, play, nativePlaying); }
             else if (NetGate.Client && !NetGate.IsApplying) ClientEmit(emitter, play);
         }
 
-        static void HostEmit(StudioEventEmitter emitter, bool play)
+        static void HostEmit(StudioEventEmitter emitter, bool play, bool nativePlaying)
         {
             // On the host, IsApplying is only ever a client-originated apply (puzzle/door/interaction).
             // Those world sounds must still fan out to every client, so the gate is not checked here.
@@ -441,7 +448,7 @@ namespace SyncRADation.Networking
             var info = InfoOf(emitter);
             if (info == null) return;
             // Repeat Stop is redundant. Repeat Play is not: one-shot emitters must replay on clients.
-            if (!play && !info.WasPlaying) return;
+            if (!play && !info.WasPlaying && !nativePlaying) return;
             if (play)
             {
                 int frame = Time.frameCount;
@@ -672,6 +679,30 @@ namespace SyncRADation.Networking
             catch { return ""; }
         }
 
+        // persistent: "{guid}" -> event path is fixed game data (Master.strings.bank), valid across sessions
+        static readonly Dictionary<string, string> _guidPaths = new Dictionary<string, string>();
+
+        /// <summary>
+        /// RuntimeManager.PlayOneShot(string) takes an event path or a "{guid}" string (PathToGUID parses both); 70 game
+        /// call sites pass the GUID form (Ladder, StorageBox, InteractiveLockSingle, OptionsMenu, RES_Ara, ...). Every
+        /// path filter (Elster / UI / door / scene bed) needs the event path, so the GUID form is resolved first.
+        /// </summary>
+        public static string NormalizePath(string path)
+        {
+            if (string.IsNullOrEmpty(path) || path[0] != '{') return path;
+            string resolved;
+            if (_guidPaths.TryGetValue(path, out resolved)) return resolved;
+            resolved = path;
+            try
+            {
+                string p = PathFromGuid(new Il2CppSystem.Guid(path.Trim('{', '}')));
+                if (p.StartsWith("event:/") || p.StartsWith("snapshot:/")) resolved = p;
+            }
+            catch (Exception e) { Guard.Swallow(e); }
+            _guidPaths[path] = resolved;
+            return resolved;
+        }
+
         /// <summary>Host relay for world one-shots (string / Guid / attached / fmod helper).</summary>
         public static void TryHostWorldOneShot(string path, Vector3 position)
         {
@@ -679,14 +710,38 @@ namespace SyncRADation.Networking
             if (string.IsNullOrEmpty(path)) return;
             // A peer's puzzle press replayed here: every peer replays it from the puzzle state itself.
             if (PuzzleFx.Active) return;
+            path = NormalizePath(path);
             if (IsLocalOneShot(path)) return;
             if (IsDoorSfxPath(path)) return;
-            // Host's own nearby sounds stay local; a host-applied client action is relayed even next to the host.
-            var player = PlayerState.player;
-            if (!NetGate.IsApplying && player != null
-                && (player.transform.position - position).sqrMagnitude < 4f)
-                return;
+            // Vector3.zero is how the game plays a 2D sound (183 of its 196 PlayOneShot calls): it belongs to whoever
+            // caused it. The host's own stays here; a client action applied on the host is placed at that client.
+            if (position == Vector3.zero)
+            {
+                if (!NetGate.IsApplying || !TryApplySenderPosition(out position)) return;
+            }
+            else
+            {
+                // Host's own nearby sounds stay local; a host-applied client action is relayed even next to the host.
+                var player = PlayerState.player;
+                if (!NetGate.IsApplying && player != null
+                    && (player.transform.position - position).sqrMagnitude < 4f)
+                    return;
+            }
             HostOneShot(path, position);
+        }
+
+        static bool TryApplySenderPosition(out Vector3 position)
+        {
+            position = Vector3.zero;
+            try
+            {
+                var pm = LanNetworkManager.Instance?.ProxyManager;
+                var proxy = NetGate.ApplySender >= 1 && pm != null ? pm.GetProxy(NetGate.ApplySender) : null;
+                if (proxy == null || proxy.GameObject == null) return false;
+                position = proxy.GameObject.transform.position;
+                return true;
+            }
+            catch (Exception e) { Guard.Swallow(e); return false; }
         }
 
         // ------------------------------------------------------------------ local playback gates
@@ -811,6 +866,9 @@ namespace SyncRADation.Networking
             if (path.StartsWith("event:/Ambience/")) return true;
             // UI emitters (dialogue text blips, menus) belong to whoever has the UI open.
             if (path.StartsWith("event:/UI/")) return true;
+            // Mixer snapshots (Reverb EXC on ObjectEnable, Reverb RES_Overflow on a player trigger) are the
+            // listener's own mix.
+            if (path.StartsWith("snapshot:/")) return true;
             return false;
         }
 
@@ -861,6 +919,13 @@ namespace SyncRADation.Networking
                     if (p.GetComponent<EventOnlyRoom>() != null) return true;
                     if (p.GetComponent<EventScreen>() != null) return true;
                     if (p.GetComponent<EventScreen3DCam>() != null) return true;
+                    // RadioStation.SuspendCheck / MorseCodeGenerator Play/Stop their emitter from this peer's own
+                    // tuner (audible = local RadioManager.frequency && RadioManager.tuner): one peer tuning must not
+                    // switch the other's station on or off.
+                    var station = p.GetComponent<RadioStation>();
+                    if (station != null && station._source != null && station._source.transform == t) return true;
+                    var morse = p.GetComponent<MorseCodeGenerator>();
+                    if (morse != null && morse._audio != null && morse._audio.transform == t) return true;
                     // Tarot klick: native Update plays it on every peer from the synced darkmode edge.
                     if (p.GetComponent<ROT_Tarot>() != null) return true;
                 }
