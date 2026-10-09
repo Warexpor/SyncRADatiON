@@ -425,12 +425,19 @@ namespace SyncRADation.Networking
             return atd != null && atd.blocker != null && atd.blocker.activeSelf;
         }
 
+        /// <summary>
+        /// The blocker is the doorway's 2D collider (BoxCollider2D, layer 8; the player moves on 3D physics). Native code
+        /// switches it off only for the length of a traverse and back on at its end, locked door or not (Ghidra
+        /// ConnectedDoors.traverseAB; Unlock / UpdateProperties never touch it), so its rest state is always on. "Off"
+        /// therefore leaves it alone: clearing it on every unlocked link left a client's doorways open to anything
+        /// that paths on 2D physics while the host's stayed closed (test pilot digest, DET_Detention).
+        /// </summary>
         static void SetTraversePlate(AutoTraverseDoor atd, bool on)
         {
             try
             {
-                if (atd == null || atd.blocker == null) return;
-                atd.blocker.SetActive(on);
+                if (!on || atd == null || atd.blocker == null) return;
+                atd.blocker.SetActive(true);
             }
             catch (System.Exception e) { Guard.Swallow(e); }
         }

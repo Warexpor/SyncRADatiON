@@ -36,7 +36,8 @@ namespace SyncRADation.Sync
             // Walk the keys and ask the native getCount: the Il2Cpp KeyValuePair enumerator returns garbage
             // values here ("None x2090114272").
             var en = dict.Keys.GetEnumerator();
-            while (en.MoveNext())
+            int count = dict.Count;
+            for (int step = 0; step < count && en.MoveNext(); step++)
             {
                 var key = en.Current;
                 if (key == null) continue;

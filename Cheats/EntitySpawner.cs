@@ -421,13 +421,27 @@ namespace SyncRADation.Cheats
             Stash(e, key);
         }
 
+        // persistent: DontDestroyOnLoad root of the banked templates, recreated if a scene change ever destroyed it
+        private static GameObject _holder;
+
+        private static GameObject Holder()
+        {
+            if (_holder != null) return _holder;
+            _holder = new GameObject("SR_Templates");
+            _holder.SetActive(false);
+            Object.DontDestroyOnLoad(_holder);
+            return _holder;
+        }
+
         private static void Stash(EnemyController src, string key)
         {
             try
             {
-                var go = Object.Instantiate(src.gameObject);
+                // Cloned under an inactive holder: no Awake on the template (an active enemy's clone ran
+                // EnemyController.Awake outside its room and threw a NullReferenceException, test pilot LOV STAR).
+                // The template itself is switched off, so a spawn's clone wakes only on its SetActive(true).
+                var go = Object.Instantiate(src.gameObject, Holder().transform, false);
                 if (go == null) return;
-                Object.DontDestroyOnLoad(go);
                 go.name = TemplatePrefix + key;
                 go.SetActive(false);
                 var ec = go.GetComponent<EnemyController>();

@@ -15,6 +15,8 @@ Debug deploy copies the DLL to **both** `Mods/` folders. csproj names: `Signalis
 
 **Audio:** user service `signalis-volume` (`scripts/signalis-volume-watch.sh`) sets each new SIGNALIS stream once: host (prefix `compatdata/1262350`) 60%, client (`compatdata/syncradation-client`) muted. Off: `systemctl --user disable --now signalis-volume`.
 
+**Test pilot (3+ players, unattended, in an omabox box, never on the desktop):** `docs/PILOT.md` (`scripts/pilot/pilot-run.sh`, `coop-soak.sh`, `story-run.sh`).
+
 **Unattended run:** `--sync-scene <Scene>` loads that chapter the F7 way 4 s after MainMenu (host or offline only). Host: `steam -applaunch 1262350 --sync-host --sync-scene DET_Detention`; ~60–75 s later client: `secondsignalis --sync-connect 127.0.0.1 7777`. Healthy join: `Handshake OK`, `[Puzzle] C client live`, identical `[WorldRegistry] … checksum=` on both, no `WorldId divergence`, no `[Guard]`. Stop: `pgrep -f '[S]IGNALIS\.exe' | xargs -r kill` (a bare `pkill -f SIGNALIS.exe` also matches your own shell).
 
 ## Logs

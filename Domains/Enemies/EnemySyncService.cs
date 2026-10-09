@@ -87,7 +87,10 @@ namespace SyncRADation.Networking
                 if (_snapList.Count > 0)
                     net.EnemyHandlers.SendEnemyState(_snapList);
                 if (!dump)
+                {
                     RetargetAltAi(net, pm, remote);
+                    PeerRoomEnemies.Tick(net, pm, remote);
+                }
             }
             finally
             {
@@ -317,8 +320,10 @@ namespace SyncRADation.Networking
         {
             SyncHostCache();
             int key = anim.GetInstanceID(), mask;
-            if (!_hostAnimParams.TryGetValue(key, out mask))
-                _hostAnimParams[key] = mask = ReadAnimParams(anim);
+            if (_hostAnimParams.TryGetValue(key, out mask)) return mask;
+            mask = ReadAnimParams(anim);
+            if (mask < 0) return 0; // not initialized yet: ask again next snapshot
+            _hostAnimParams[key] = mask;
             return mask;
         }
 
@@ -778,34 +783,52 @@ namespace SyncRADation.Networking
         static readonly int AnimHitY = Animator.StringToHash("HitFromY");
         const int ParamForward = 16, ParamTurn = 32, ParamHitX = 64, ParamHitY = 128;
 
+        /// <summary>
+        /// Which of the synced parameters this animator has, as a mask; -1 while it cannot tell yet (animator not
+        /// initialized: asleep in its room chunk), so the caller asks again later. Animator.parameters cannot be read in
+        /// this IL2CPP build (the AnimatorControllerParameter[] instantiation was stripped: TypeLoadException "Invalid
+        /// generic instantiation" on every call, so the mask stayed 0 and no parameter was ever driven, host floats or
+        /// puppet bools; test pilot log). Each parameter is probed instead: a parameter of that name and type keeps a
+        /// value written to it (write, read back, restore, all before the animator next evaluates). A miss costs one native
+        /// "parameter does not exist" warning in Player.log, once per animator (the mask is cached).
+        /// </summary>
         static int ReadAnimParams(Animator anim)
         {
             int mask = 0;
             try
             {
-                var ps = anim.parameters;
-                for (int i = 0; ps != null && i < ps.Length; i++)
-                {
-                    var ap = ps[i];
-                    if (ap == null) continue;
-                    int h = ap.nameHash;
-                    if (ap.type == AnimatorControllerParameterType.Float)
-                    {
-                        if (h == AnimForward) mask |= ParamForward;
-                        else if (h == AnimTurn) mask |= ParamTurn;
-                        else if (h == AnimHitX) mask |= ParamHitX;
-                        else if (h == AnimHitY) mask |= ParamHitY;
-                        continue;
-                    }
-                    if (ap.type != AnimatorControllerParameterType.Bool) continue;
-                    if (h == AnimDead) mask |= 1;
-                    else if (h == AnimCritical) mask |= 2;
-                    else if (h == AnimFire) mask |= 4;
-                    else if (h == AnimPursuit) mask |= 8;
-                }
+                if (anim == null || !anim.isInitialized) return -1;
+                if (anim.parameterCount == 0) return 0;
+                if (HasBool(anim, AnimDead)) mask |= 1;
+                if (HasBool(anim, AnimCritical)) mask |= 2;
+                if (HasBool(anim, AnimFire)) mask |= 4;
+                if (HasBool(anim, AnimPursuit)) mask |= 8;
+                if (HasFloat(anim, AnimForward)) mask |= ParamForward;
+                if (HasFloat(anim, AnimTurn)) mask |= ParamTurn;
+                if (HasFloat(anim, AnimHitX)) mask |= ParamHitX;
+                if (HasFloat(anim, AnimHitY)) mask |= ParamHitY;
             }
-            catch (Exception e) { Guard.Swallow(e); }
+            catch (Exception e) { Guard.Swallow(e); return -1; }
             return mask;
+        }
+
+        static bool HasFloat(Animator anim, int hash)
+        {
+            float was = anim.GetFloat(hash);
+            float probe = was + 1.5f;
+            anim.SetFloat(hash, probe);
+            bool has = Mathf.Abs(anim.GetFloat(hash) - probe) < 0.01f;
+            if (has) anim.SetFloat(hash, was);
+            return has;
+        }
+
+        static bool HasBool(Animator anim, int hash)
+        {
+            bool was = anim.GetBool(hash);
+            anim.SetBool(hash, !was);
+            bool has = anim.GetBool(hash) != was;
+            if (has) anim.SetBool(hash, was);
+            return has;
         }
 
         static void ApplyAnim(Puppet p, EnemyController enemy, EnemySnapshotNet snap)
@@ -822,16 +845,17 @@ namespace SyncRADation.Networking
             var hs = (EnemyController.hurtState)snap.HurtState;
             bool dead = !snap.Alive || es == EnemyController.enemystate.dead;
             if (p.AnimParams < 0) p.AnimParams = ReadAnimParams(anim);
-            if ((p.AnimParams & 1) != 0) anim.SetBool(AnimDead, dead);
-            if ((p.AnimParams & 2) != 0) anim.SetBool(AnimCritical, !dead && hs == EnemyController.hurtState.critical);
-            if ((p.AnimParams & 4) != 0) anim.SetBool(AnimFire, !dead && hs == EnemyController.hurtState.fire);
-            if ((p.AnimParams & 8) != 0)
+            int prm = p.AnimParams < 0 ? 0 : p.AnimParams; // -1: animator not initialized yet, probe again next snapshot
+            if ((prm & 1) != 0) anim.SetBool(AnimDead, dead);
+            if ((prm & 2) != 0) anim.SetBool(AnimCritical, !dead && hs == EnemyController.hurtState.critical);
+            if ((prm & 4) != 0) anim.SetBool(AnimFire, !dead && hs == EnemyController.hurtState.fire);
+            if ((prm & 8) != 0)
                 anim.SetBool(AnimPursuit, !dead && (es == EnemyController.enemystate.pursuit || es == EnemyController.enemystate.attack));
             // Walk / turn blend and the hurt / fall direction: the halted puppet's own AI never sets them.
-            if ((p.AnimParams & ParamForward) != 0) anim.SetFloat(AnimForward, snap.AnimForward);
-            if ((p.AnimParams & ParamTurn) != 0) anim.SetFloat(AnimTurn, snap.AnimTurn);
-            if ((p.AnimParams & ParamHitX) != 0) anim.SetFloat(AnimHitX, snap.AnimHitX);
-            if ((p.AnimParams & ParamHitY) != 0) anim.SetFloat(AnimHitY, snap.AnimHitY);
+            if ((prm & ParamForward) != 0) anim.SetFloat(AnimForward, snap.AnimForward);
+            if ((prm & ParamTurn) != 0) anim.SetFloat(AnimTurn, snap.AnimTurn);
+            if ((prm & ParamHitX) != 0) anim.SetFloat(AnimHitX, snap.AnimHitX);
+            if ((prm & ParamHitY) != 0) anim.SetFloat(AnimHitY, snap.AnimHitY);
             var stateInfo = anim.GetCurrentAnimatorStateInfo(0);
             bool restarted = p.HasAnim && snap.AnimTime < p.AnimTime - 0.5f;
             p.HasAnim = true;

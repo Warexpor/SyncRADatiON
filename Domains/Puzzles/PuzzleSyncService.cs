@@ -863,6 +863,45 @@ namespace SyncRADation.Networking
             }
         }
 
+        /// <summary>
+        /// Test pilot digest: every registered puzzle / lock and the WorldId-0 globals as one line each, read through
+        /// the same spec readers a full dump uses. Read only: nothing recorded as sent.
+        /// </summary>
+        public void PilotDigest(List<string> into)
+        {
+            EnsureScanned();
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            foreach (var typeMap in _maps)
+            {
+                var spec = Spec(typeMap.Key);
+                foreach (var kvp in typeMap.Value)
+                {
+                    if (kvp.Value == null) continue;
+                    PuzzleStateEntry e;
+                    if (!TryRead(typeMap.Key, kvp.Key, kvp.Value, out e)) continue;
+                    // A component in a room chunk this peer never woke holds its serialized value until its Start / the
+                    // held re-snap on room entry: marked, so the diff reports it apart from awake differences.
+                    bool awake = false;
+                    try { awake = kvp.Value.gameObject.activeInHierarchy; } catch (Exception ex) { Guard.Swallow(ex); }
+                    into.Add(PilotLine(e, ci) + (awake ? "" : " asleep"));
+                    if (spec != null && spec.FirstInstanceOnly) break;
+                }
+            }
+            var globals = PuzzleSpecs.Globals;
+            for (int i = 0; i < globals.Length; i++)
+            {
+                PuzzleStateEntry e;
+                try { e = globals[i].ReadGlobal(); }
+                catch (Exception ex) { Guard.Swallow(ex); continue; }
+                into.Add(PilotLine(e, ci));
+            }
+        }
+
+        static string PilotLine(PuzzleStateEntry e, System.Globalization.CultureInfo ci) =>
+            "puzzle " + e.Type + ":" + unchecked((ulong)e.WorldId).ToString("X16") + " b=" + (e.Bool0 ? 1 : 0) + (e.Bool1 ? 1 : 0) + (e.Bool2 ? 1 : 0)
+            + " i=" + e.Int0 + "," + e.Int1 + "," + e.Int2 + "," + e.Int3
+            + " f=" + e.Float0.ToString("0.0", ci) + "," + e.Float1.ToString("0.0", ci);
+
         /// <summary>The one try around a read: a read that throws yields no entry this tick (never a half-read one).</summary>
         private bool TryRead(PuzzleType type, ulong id, Component c, out PuzzleStateEntry entry)
         {

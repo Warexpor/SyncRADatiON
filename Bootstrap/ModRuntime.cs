@@ -159,6 +159,7 @@ namespace SyncRADation
             var net = LanNetworkManager.Instance;
             var pm = net?.ProxyManager;
             HitchTrace.FrameBegin(net != null && net.IsConnected);
+            StallWatch.Frame();
             long tp = HitchTrace.Begin();
             try { SyncRADation.UI.FreeCursor.Tick(); } catch (System.Exception e) { Guard.Swallow(e); }
             try { EventCamTrace.Tick(); } catch (System.Exception e) { Guard.Swallow(e); }

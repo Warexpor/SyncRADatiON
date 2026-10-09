@@ -334,7 +334,8 @@ namespace SyncRADation.Networking
             int bagGain = Gained(t, out magGain);
             // hasItem/getCount are ring-masqueraded outside release, so only the raw bag delta is logged.
             PlaytestLog.Event("Pickup", "native release id=" + id.ToString("X16") + " " + t.Item
-                + " gained=" + bagGain + "/" + t.Count);
+                + " gained=" + bagGain + "/" + t.Count + " bag " + t.BagBefore + "->" + ItemBag.CountInBag(t.Item)
+                + " mag+" + magGain + " prop x" + (p != null ? p.count : -1) + " yes=" + SyncRADation.Patches.ItemPickupPatches.AnsweredYes());
             int remainder = t.Count - bagGain - magGain;
             if (remainder <= 0 || t.Item == Items.itemlist.None) return;
             // Key/Object ride the party key ring; they never stack or overflow.
@@ -840,6 +841,30 @@ namespace SyncRADation.Networking
         /// Host: push pending prop changes to every peer now, outside the tick. The pre-unicast flush: a change still
         /// waiting for its broadcast must reach everyone before a join dump goes to one peer.
         /// </summary>
+        /// <summary>
+        /// Test pilot digest: every scanned world pickup as "pickup &lt;id&gt; here|claimed|triggered|hidden|gone" (read only).
+        /// activeSelf, not activeInHierarchy: a prop in a room chunk this peer never woke is still there.
+        /// </summary>
+        public void PilotDigest(List<string> into)
+        {
+            EnsureScanned();
+            foreach (var kvp in _byId)
+            {
+                var p = kvp.Value;
+                string state;
+                try
+                {
+                    if (p == null || p.gameObject == null) state = "gone";
+                    else if (_claims.ContainsKey(kvp.Key)) state = "claimed";
+                    else if (p.triggered) state = "triggered";
+                    else if (!p.gameObject.activeSelf || !p.enabled) state = "hidden";
+                    else state = "here";
+                }
+                catch { continue; }
+                into.Add("pickup " + kvp.Key.ToString("X16") + " " + state);
+            }
+        }
+
         public void FlushDiffNow()
         {
             var net = LanNetworkManager.Instance;

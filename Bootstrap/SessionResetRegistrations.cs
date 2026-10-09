@@ -49,6 +49,8 @@ namespace SyncRADation
             SessionReset.Register("Fmod", Scene | Session, FmodEmitterSync.Reset);
             SessionReset.Register("EnemyScene", Scene, () => Net()?.EnemySync.OnSceneChanged());   // EnemySyncService room / wake caches
             SessionReset.Register("EnemyAdopted", Scene | Connection, EnemySpawnerPatches.ClearAdopted);
+            SessionReset.Register("PeerRoomEnemies", Scene | Session, PeerRoomEnemies.Reset);
+            SessionReset.Register("AraNestHeld", Scene | Session, AraNestUpdatePeerPatch.Reset);
             SessionReset.Register("ClientDamage", Scene | Session, ClientDamageService.OnSceneChanged);
             SessionReset.Register("PuzzleScene", Scene, () => Net()?.PuzzleSync.RefreshScene());  // also clears EnvEmit once-set, BiodomeLockPatch, LibraryPcUpdatePatch
             SessionReset.Register("BossScene", Scene, () => Net()?.BossSync.OnSceneChanged());

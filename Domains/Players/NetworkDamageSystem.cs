@@ -206,18 +206,17 @@ namespace SyncRADation.Players
             {
                 // Snapshot first: RemoveItem below mutates the bag dictionary.
                 var itemsToDrop = new List<(AnItem item, int count, Items.itemlist enumVal)>();
-                var enumerator = dict.GetEnumerator();
-                while (enumerator.MoveNext())
+                // ItemBag reads counts by key (the KeyValuePair enumerator's values are garbage in this build).
+                var bag = SyncRADation.ItemSystem.ItemBag.Read(dict, new List<SyncRADation.ItemSystem.ItemBag.Stack>(8));
+                foreach (var st in bag)
                 {
-                    var kvp = enumerator.Current;
-                    var item = kvp.key;
-                    int count = kvp.value;
+                    var item = st.Item;
+                    int count = st.Count;
                     if (item == null || count <= 0) continue;
                     var itemEnum = item._item;
                     if (itemEnum == Items.itemlist.None || itemEnum == Items.itemlist.Injector) continue;
                     itemsToDrop.Add((item, count, itemEnum));
                 }
-                enumerator.Dispose();
 
                 foreach (var entry in itemsToDrop)
                 {

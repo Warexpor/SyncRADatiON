@@ -92,6 +92,7 @@ namespace SyncRADation.Sync
         public static void End(string phase, long t0)
         {
             if (t0 == 0L) return;
+            StallWatch.Phase(phase);
             float ms = Ms(Stopwatch.GetTimestamp() - t0);
             if (ms < PhaseWarnMs) return;
             float now = Time.unscaledTime;

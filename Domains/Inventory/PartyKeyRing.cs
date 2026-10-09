@@ -305,7 +305,8 @@ namespace SyncRADation.Networking
                 var all = InventoryManager.allItems;
                 if (all == null) return null;
                 var en = all.GetEnumerator();
-                while (en.MoveNext())
+                int count = all.Count;
+                for (int step = 0; step < count && en.MoveNext(); step++)
                 {
                     var cat = en.Current.value;
                     if (cat == null) continue;

@@ -15,6 +15,7 @@ Version and protocol: `Bootstrap/PluginInfo.cs` (single source).
 | Decompile coverage (implemented + intentional locals) | `docs/DECOMPILE_COVERAGE.md` |
 | RVA folding check | `docs/RVA_FOLDING.md` |
 | Soak checklist before any release | `docs/PLAYTEST.md` |
+| Unattended 3+ player runs (test pilot: commands, world digests, story run) | `docs/PILOT.md`, `scripts/pilot/` |
 | Player docs | `README.md`, `INSTALL.md` |
 
 Decompile: `~/Archive/Windows-Desktop/Dev/SIGNALIS DECOMPILED/` (`07_Ghidra_pseudoC/<Class>.c`, `07_Ghidra_pseudoC/_lib/<Assembly>/` for FMODUnity, A* Pathfinding, Timeline, UI, firstpass and engine modules, `06_FMOD_banks/Master.strings.tsv` for FMOD GUID ↔ path, AssetRipper scenes and script stubs).

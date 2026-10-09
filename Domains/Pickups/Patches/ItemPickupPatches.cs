@@ -253,11 +253,8 @@ namespace SyncRADation.Patches
             // Inspect yes/no is still open here (native release runs after the answer). Claim on
             // confirm (NoteTaken) so declining never hides the prop for everyone.
             if (inspect || sync.IsClaimed(id)) return;
-            if (BagFullFor(_pendingItem))
-            {
-                PlaytestLog.Event("Pickup", "deny bag full after inspect item=" + _pendingItem);
-                return;
-            }
+            // No bag-full check here: the item is already in the bag (inBag), so a full stack / bag now is this add's
+            // own result, and denying the claim left the prop on the host (duplicate).
             PlaytestLog.Event("Pickup", "claim after inspect " + (__instance != null ? __instance.gameObject.name : "gone")
                 + " id=" + id.ToString("X16"));
             int count = CountOf(__instance);

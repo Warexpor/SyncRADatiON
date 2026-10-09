@@ -2,13 +2,13 @@
 
 LAN/VPN co-op for **SIGNALIS**, for **2 to 8 players** (default 4). One player hosts and owns the world and story. Everyone else plays as a real Elster and their actions go through the host.
 
-**Status: 0.5.66, protocol 19, pre-release.** This build is in the playtest phase. Nothing in it is proven in a real multi-player session yet, so expect bugs. Back up your saves before you try it.
+**Status: 0.5.67, protocol 19, pre-release.** This build is in the playtest phase. Nothing in it is proven in a real multi-player session yet, so expect bugs. Back up your saves before you try it.
 
 ## Requirements
 
 - SIGNALIS (Steam, Windows build; Linux via Proton works, see below).
 - **MelonLoader 0.5.7, exactly.** Newer or older versions do not work. The mod is built against the Unhollower assembly layout that 0.5.7 generates, and later MelonLoader versions changed it.
-- **Every player runs the exact same mod build.** The connection handshake rejects any version or protocol mismatch, even a patch-level one (for example 0.5.65 vs 0.5.66).
+- **Every player runs the exact same mod build.** The connection handshake rejects any version or protocol mismatch, even a patch-level one (for example 0.5.66 vs 0.5.67).
 - A network path between players: same LAN, or a VPN (see Hosting and joining).
 
 ## Install
@@ -87,7 +87,7 @@ A solo game (no session running) behaves like vanilla SIGNALIS.
 
 ## Known limitations
 
-- Pre-release: the whole 0.5.57 to 0.5.66 feature set (death/revive, party save, 3+ players, boss and enemy client hits, puzzle merging) is compile- and unit-tested; host+client join into a real chapter is smoke-tested, gameplay is not.
+- Pre-release: the whole 0.5.57 to 0.5.67 feature set (death/revive, party save, 3+ players, boss and enemy client hits, puzzle merging) is compile- and unit-tested; host+client join into a real chapter is smoke-tested, gameplay is not.
 - A client's "quit to menu" is blocked silently.
 - If a client joins while loading, it may wait up to 6 seconds for the host's state and then start from local defaults. Use **Resync world**.
 - A Falke spear held only by a client may not count as held for the Falke fight.

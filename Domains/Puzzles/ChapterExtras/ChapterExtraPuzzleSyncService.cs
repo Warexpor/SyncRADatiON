@@ -54,10 +54,17 @@ namespace SyncRADation.Networking
             PuzzleSyncService.DisableInteractions(x);
         }
 
+        /// <summary>
+        /// triggered / dead are the nest's; activated is not applied: native Activate sets it from the local player's
+        /// room entry (PlayerState.EnteredRoomEvent) and Update clears it once that player left, so it means "this
+        /// peer's player is in the nest's room". Copying the host's value reset every nest a client stood at (activated
+        /// false + triggered = Update puts the ARAR back to bed); the host runs Activate for a remote player in the
+        /// room itself (PeerRoomEnemies).
+        /// </summary>
         internal static void ApplyAraNest(AraNest x, PuzzleStateEntry e)
         {
             if (x == null) return;
-            x.activated = e.Bool1;
+            if (!Sync.NetGate.Host) SyncRADation.Patches.AraNestUpdatePeerPatch.NoteHost(x, e.Bool0);
             if (e.Bool0)
             {
                 if (!x.triggered)
@@ -95,8 +102,8 @@ namespace SyncRADation.Networking
             x.hasFiche = e.Bool0;
             x.IsaVisited = e.Bool1;
             x.IsaGone = e.Bool2;
-            if (x.book != null) x.book.setActive(e.Bool0);
-            if (x.ItemInter != null) x.ItemInter.setActive(!e.Bool0);
+            SetPersistent(x.book, e.Bool0);
+            SetPersistent(x.ItemInter, !e.Bool0);
             SetGo(x.Isa, e.Bool1 && !e.Bool2);
             SetGo(x.IsaNote, e.Bool2);
             SetGo(x.IsaCutscene, !e.Bool1 && !e.Bool2);
@@ -120,6 +127,25 @@ namespace SyncRADation.Networking
             var p = door.localPosition;
             p.x = localX;
             door.localPosition = p;
+        }
+
+        // PersistentGameObject.setActive writes its UniqueId key to SProgress, Awake / OnEnable only read it (default
+        // initialState). When the value they would read already is the target, only the GameObject follows: writing
+        // it would give this peer's slot keys the host never wrote (test pilot LOV_Reeducation, story digest). The
+        // object's own activeSelf is no guide: inside a chunk that never woke, Awake has not applied the key yet.
+        static void SetPersistent(PersistentGameObject p, bool active)
+        {
+            if (p == null) return;
+            bool stored = active;
+            try
+            {
+                var uid = p.GetComponent<UniqueId>();
+                if (uid != null && !string.IsNullOrEmpty(uid.id)) stored = SProgress.GetBool(uid.id, p.initialState);
+                else stored = !active;
+            }
+            catch (System.Exception e) { Guard.Swallow(e); stored = !active; }
+            if (stored != active) p.setActive(active);
+            else if (p.gameObject.activeSelf != active) p.gameObject.SetActive(active);
         }
 
         static void SetGo(GameObject go, bool active)

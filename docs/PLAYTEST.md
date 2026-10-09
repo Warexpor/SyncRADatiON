@@ -214,3 +214,7 @@ With the mod loaded but **no session running**, start each chapter from its star
 - [ ] `[Guard]`, `[Harmony]` and `[Hitch]` lines reviewed on both logs; new findings filed.
 
 Known risks to watch (from CHANGELOG 0.5.57/0.5.58 "Open risks"): Harmony detours on `HurtElster`, `GameOverHandler.hurt`, `SaveManager.Load`, `EnemyController.Hit`, `END_Graves`, `SceneHelper`/`CreditsEnd`; whether a direct `SaveManager.Load()` reloads the scene like the native game-over; Falke spear held only by a client; client `Hitbox.HP` rollback; bag snapshots without ammo; client-authored puzzle Mask/Seq merge; hurtbox radius and pulse timing; `ItemPickedUp` has no owner field (a client can still despawn other players' drops); recycled dropped-item id collisions; client-local world FMOD not relayed; no distance filtering of enemy snapshots.
+
+## Automated runs
+
+The test pilot (`docs/PILOT.md`) runs host + two clients unattended and diffs every peer's world against the host's after each step. `scripts/pilot/coop-soak.sh` covers sections 2 (late join), 3 (downed / revive), 6 (one door arrow), 8 (pickups, simultaneous grab) and 9 (client kills, including rooms the host never entered) for three players in one chapter; `scripts/pilot/story-run.sh` covers section 5 (host and client chapter loads) across the story. A pilot pass does not replace the hands-on items (presentation, audio, feel), it gates them: run it first and fix what it finds.

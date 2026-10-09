@@ -34,6 +34,7 @@ namespace SyncRADation.Networking
                 return;
             }
 
+            Sync.StallWatch.Message(messageType);
             try
             {
                 if (!(TryDispatchSession(type, reader, senderId)
@@ -54,6 +55,7 @@ namespace SyncRADation.Networking
                 if (n == 1 || n % 200 == 0)
                     ModRuntime.Log?.Error("[Network] " + type + " from player " + senderId + " threw (x" + n + "): " + ex);
             }
+            Sync.StallWatch.MessageDone();
         }
 
         /// <summary>Message types only the host may originate; a client sending them is dropped on the host.</summary>

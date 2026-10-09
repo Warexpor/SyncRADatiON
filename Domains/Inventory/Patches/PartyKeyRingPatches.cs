@@ -372,4 +372,15 @@ namespace SyncRADation.Patches
         [HarmonyPrefix] public static void Prefix() => PartyKeyRing.SuspendMasquerade();
         [HarmonyFinalizer] public static void Finalizer() => PartyKeyRing.ResumeMasquerade();
     }
+
+    // InventoryThumbs.ItemViewHandling (Ghidra InventoryThumbs.c): while the pickup item view shows a key, hasItem(queuedItem)
+    // picks images[currentItems.IndexOf(queuedItem)]. The ring notes a picked key before native release adds it to the bag,
+    // so the masquerade answered true with the key not yet in currentItems: IndexOf -1, ArgumentOutOfRangeException each
+    // frame (test pilot LOV_Reeducation ObservationKey). The thumbs are this player's own bag: no masquerade.
+    [HarmonyPatch(typeof(InventoryThumbs), nameof(InventoryThumbs.ItemViewHandling))]
+    public static class InventoryThumbsItemViewScopePatch
+    {
+        [HarmonyPrefix] public static void Prefix() => PartyKeyRing.SuspendMasquerade();
+        [HarmonyFinalizer] public static void Finalizer() => PartyKeyRing.ResumeMasquerade();
+    }
 }

@@ -7,6 +7,7 @@
 // token). The run is remembered in memory (_runSlot / _runDirty) and a token is minted when a host session starts.
 using System;
 using System.Collections.Generic;
+using SyncRADation.ItemSystem;
 using System.Globalization;
 using System.IO;
 using System.Text;
@@ -604,13 +605,12 @@ namespace SyncRADation.Networking
             var list = new List<BagEntry>(8);
             try
             {
-                var dict = InventoryManager.elsterItems;
-                if (dict == null) return list.ToArray();
-                var en = dict.GetEnumerator();
-                while (en.MoveNext())
+                // ItemBag reads counts by key (the KeyValuePair enumerator's values are garbage in this build).
+                var bag = ItemBag.Bag(new List<ItemBag.Stack>(8));
+                for (int i = 0; i < bag.Count; i++)
                 {
-                    var item = en.Current.key;
-                    int count = en.Current.value;
+                    var item = bag[i].Item;
+                    int count = bag[i].Count;
                     if (item == null || count <= 0) continue;
                     Items.itemlist e;
                     try { e = item._item; } catch { continue; }
@@ -618,7 +618,6 @@ namespace SyncRADation.Networking
                     if (PartyKeyRing.IsKeyOrObject(item)) continue;
                     list.Add(new BagEntry { Item = (ushort)e, Count = count });
                 }
-                en.Dispose();
             }
             catch (Exception ex)
             {
@@ -633,20 +632,17 @@ namespace SyncRADation.Networking
             var list = new List<ushort>(4);
             try
             {
-                var dict = InventoryManager.elsterItems;
-                if (dict == null) return list.ToArray();
-                var en = dict.GetEnumerator();
-                while (en.MoveNext())
+                var bag = ItemBag.Bag(new List<ItemBag.Stack>(8));
+                for (int i = 0; i < bag.Count; i++)
                 {
-                    var item = en.Current.key;
-                    if (item == null || en.Current.value <= 0) continue;
+                    var item = bag[i].Item;
+                    if (item == null || bag[i].Count <= 0) continue;
                     Items.itemlist e;
                     try { e = item._item; }
                     catch (Exception ex) { Guard.Swallow("PartySave.KeyItem", ex); continue; }
                     if (e == Items.itemlist.None || !PartyKeyRing.IsKeyOrObject(item)) continue;
                     if (!list.Contains((ushort)e)) list.Add((ushort)e);
                 }
-                en.Dispose();
             }
             catch (Exception ex)
             {
@@ -664,19 +660,12 @@ namespace SyncRADation.Networking
             {
                 var have = new List<AnItem>();
                 var counts = new List<int>();
-                var dict = InventoryManager.elsterItems;
-                if (dict != null)
+                var bag = ItemBag.Bag(new List<ItemBag.Stack>(8));
+                for (int i = 0; i < bag.Count; i++)
                 {
-                    var en = dict.GetEnumerator();
-                    while (en.MoveNext())
-                    {
-                        var key = en.Current.key;
-                        int count = en.Current.value;
-                        if (key == null || count <= 0) continue;
-                        have.Add(key);
-                        counts.Add(count);
-                    }
-                    en.Dispose();
+                    if (bag[i].Item == null || bag[i].Count <= 0) continue;
+                    have.Add(bag[i].Item);
+                    counts.Add(bag[i].Count);
                 }
                 for (int i = 0; i < have.Count; i++)
                 {

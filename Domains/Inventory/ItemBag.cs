@@ -18,8 +18,6 @@ namespace SyncRADation.ItemSystem
         // persistent: per-call scratch buffer
         static readonly List<Stack> _countScratch = new List<Stack>(8);
         // persistent: per-call scratch buffer
-        static readonly List<Stack> _roomScratch = new List<Stack>(8);
-        // persistent: per-call scratch buffer
         static readonly List<Stack> _findScratch = new List<Stack>(8);
 
         /// <summary>
@@ -32,10 +30,20 @@ namespace SyncRADation.ItemSystem
             if (dict == null) return into;
             try
             {
-                var en = dict.GetEnumerator();
-                while (en.MoveNext())
-                    into.Add(new Stack { Item = en.Current.key, Count = en.Current.value });
-                en.Dispose();
+                // Keys, then the indexer per key: the Il2Cpp KeyValuePair enumerator returns garbage values
+                // (BagTrace: "None x2090114272"), which CountInBag read as one unit, so a pickup's gain measured 1 of 2
+                // and the host put the "remainder" back on the prop (test pilot MED_Medical Health25: duplicated).
+                // At most Count steps: a client froze in this walk on a join and grew to 13.8 GB in two seconds
+                // (test pilot LOV, mem-guard kill), so an enumerator that never ends cannot grow the list.
+                int count = dict.Count;
+                var keys = new List<AnItem>(count > 0 && count < 64 ? count : 8);
+                var en = dict.Keys.GetEnumerator();
+                for (int step = 0; step < count && en.MoveNext(); step++)
+                    if (en.Current != null) keys.Add(en.Current);
+                if (count > 0 && en.MoveNext())
+                    PlaytestLog.Event("Bag", "WARN key walk ran past Count=" + count + " (stopped)");
+                for (int i = 0; i < keys.Count; i++)
+                    into.Add(new Stack { Item = keys[i], Count = dict[keys[i]] });
             }
             catch (System.Exception e) { Guard.Swallow(e); }
             return into;
@@ -113,13 +121,22 @@ namespace SyncRADation.ItemSystem
             {
                 if (FindInBag(id) != null)
                     return !StackAtCap(id);
-                int used = 0;
-                var all = Bag(_roomScratch);
-                for (int i = 0; i < all.Count; i++)
-                    if (all[i].Item != null && all[i].Count > 0) used++;
+                // Native ItemPickup.pickUp (Ghidra ItemPickup.c): no space when maxSlots <= elsterItems.Count - 1 (the
+                // dictionary always holds the None / empty-hands entry), and a module takes no slot unless
+                // ElsterSettings.modulesTakeInventorySpace. Counting the None entry as a used slot said "full" one item
+                // early: the client denied its claim while native release still added the item, so the prop stayed on
+                // the host and the item was duplicated (test pilot EXC_Mines Health50).
+                var item = InventoryManager.getItem(id);
+                if (item != null && !item.keinModul)
+                {
+                    var settings = PlayerState.settings;
+                    if (settings == null || !settings.modulesTakeInventorySpace) return true;
+                }
+                var dict = InventoryManager.elsterItems;
+                int count = dict != null ? dict.Count : 0;
                 int max = InventoryManager.maxSlots;
                 if (max <= 0) max = 6;
-                return used < max;
+                return !(max <= count - 1);
             }
             catch { return true; }
         }

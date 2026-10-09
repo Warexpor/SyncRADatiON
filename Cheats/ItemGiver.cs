@@ -166,37 +166,42 @@ namespace SyncRADation.Cheats
         {
             try
             {
-                var target = FindAnItem(item.ItemId);
-                if (target == null) { SetStatus("Can't find '" + item.ItemId + "'", true); return; }
-
-                // Keys / story objects go onto the shared party ring and unlock the world for everyone: a client
-                // needs the host's AllowClientCheats for those. Consumables stay personal.
-                if (Sync.NetGate.Client && !Config.ModConfig.ClientCheatsAllowed
-                    && (target.type == AnItem.AnItemType.Object || target.type == AnItem.AnItemType.Key))
-                {
-                    SetStatus("Host does not allow client cheats (keys)", true);
-                    return;
-                }
-
-                InventoryManager.AddItem(target, 1);
-                try
-                {
-                    if (Sync.NetGate.Live
-                        && (target.type == AnItem.AnItemType.Object || target.type == AnItem.AnItemType.Key))
-                    {
-                        SyncRADation.Networking.PartyKeyRing.Note(target);
-                        if (Sync.NetGate.Host)
-                            SyncRADation.Networking.PartyKeyRing.Broadcast();
-                    }
-                }
-                catch (System.Exception e) { Guard.Swallow(e); }
-                SetStatus("Added: " + item.DisplayName);
+                string err = Give(item.ItemId, 1);
+                if (err != null) SetStatus(err, true);
+                else SetStatus("Added: " + item.DisplayName);
             }
             catch (System.Exception ex)
             {
                 ModRuntime.Log?.Error("ItemGiver: " + ex.Message);
                 SetStatus("Error: " + ex.Message, true);
             }
+        }
+
+        /// <summary>The F6 grant (also the test pilot's "give"): null on success, else why it was refused.</summary>
+        internal static string Give(string itemId, int count)
+        {
+            var target = FindAnItem(itemId);
+            if (target == null) return "Can't find '" + itemId + "'";
+
+            // Keys / story objects go onto the shared party ring and unlock the world for everyone: a client
+            // needs the host's AllowClientCheats for those. Consumables stay personal.
+            if (Sync.NetGate.Client && !Config.ModConfig.ClientCheatsAllowed
+                && (target.type == AnItem.AnItemType.Object || target.type == AnItem.AnItemType.Key))
+                return "Host does not allow client cheats (keys)";
+
+            InventoryManager.AddItem(target, count < 1 ? 1 : count);
+            try
+            {
+                if (Sync.NetGate.Live
+                    && (target.type == AnItem.AnItemType.Object || target.type == AnItem.AnItemType.Key))
+                {
+                    SyncRADation.Networking.PartyKeyRing.Note(target);
+                    if (Sync.NetGate.Host)
+                        SyncRADation.Networking.PartyKeyRing.Broadcast();
+                }
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            return null;
         }
 
         private static AnItem FindAnItem(string name)

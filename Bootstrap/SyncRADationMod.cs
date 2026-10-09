@@ -30,6 +30,8 @@ namespace SyncRADation
                 ProcessCommandLine();
             }
 
+            Sync.TestPilot.Tick();
+
             if (_autoSceneAt >= 0f && UnityEngine.Time.realtimeSinceStartup >= _autoSceneAt)
             {
                 _autoSceneAt = -1f;
@@ -74,6 +76,7 @@ namespace SyncRADation
         {
             var args = System.Environment.GetCommandLineArgs();
             // Parsed first: the host/connect branches below return as soon as they match.
+            string pilotMode = null, pilotDir = null;
             for (int i = 0; i + 1 < args.Length; i++)
             {
                 if (args[i] == "--sync-scene")
@@ -81,6 +84,16 @@ namespace SyncRADation
                     _autoScene = args[i + 1];
                     LoggerInstance.Msg("[Auto] Will load chapter " + _autoScene + " after MainMenu");
                 }
+                else if (args[i] == "--sync-pilot") pilotMode = args[i + 1];
+                else if (args[i] == "--sync-pilot-dir") pilotDir = args[i + 1];
+            }
+            if (pilotMode != null)
+            {
+                // The test pilot hosts / joins and loads the chapter itself (Sync/TestPilot).
+                LoggerInstance.Msg("[Auto] Test pilot '" + pilotMode + "'" + (pilotDir != null ? " dir " + pilotDir : ""));
+                Sync.TestPilot.Configure(pilotMode, pilotDir);
+                _autoScene = null;
+                return;
             }
             for (int i = 0; i < args.Length; i++)
             {
