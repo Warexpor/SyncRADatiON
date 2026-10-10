@@ -1,3 +1,13 @@
+## 0.5.69 — 2026-10-10
+
+Protocol **v20** (unchanged).
+
+### Fixed
+- **An enemy a client was fighting teleported and spun once the host left the room** (LOV West Corridor, host into the Library): native `Room.LeaveRoom` switches the room chunk off 2 s after the local player walks out (`delayedDisabling`), so on the host the floor, walls and colliders vanished under the enemy it simulates for the client, and `CheckIfLeft`'s "Enemy is floating, resetting!" put it back home again and again. The host keeps the chunk of a room a remote player is in (the native "player is back" path) and switches it off the native way 2 s after the last one left; chunks the host woke for a client are released the same way.
+- **The host walking into a client's fight moved the enemy to another patrol point**: native `EnemyManager.Enter` has no "already running" guard (it re-ran the "give elster some space" repositioning and started a second `CheckIfLeft`). The host's entry into a room that already runs for a remote player skips it.
+- **The host kept the combat music of a fight it walked away from** (it played over the Library cutscene): with a client still in the room `CheckIfLeft` keeps running for that player and the host's `inCombat` / `enemyPresence` were handed back as they were, never cleared. They are cleared on the step after the host leaves, as the native "left" branch does.
+- **A client walking into a cutscene the host was already watching did not get it**: its trigger's request was answered `dup` and nothing came back. A requester of a cutscene that is already running gets the start for itself.
+
 ## 0.5.68 — 2026-10-10
 
 Protocol **v20** (cutscene starts carry the author's room, `CutsceneDone`).

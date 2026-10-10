@@ -491,6 +491,8 @@ namespace SyncRADation.Networking
                     NetGate.BeginApply(); // RoomChunkPuzzlePatch: not a local room entry, no re-apply sweep
                     try { room.SetChunkStatus(true); }
                     finally { NetGate.EndApply(); }
+                    // Released again once no player is in the room (PeerRoomEnemies.Tick).
+                    if (room != PlayerState.currentRoom) PeerRoomEnemies.Hold(room);
                     if (!enemy.gameObject.activeInHierarchy)
                     {
                         FlickerTrace.HostWake(enemy, false, "still inactive after chunk on");

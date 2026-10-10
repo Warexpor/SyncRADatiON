@@ -57,7 +57,7 @@ namespace SyncRADation.Networking
                     // build sends them (keypads are live puzzle state, dialogues and inspect screens stay local, scene
                     // requests ride SceneFollow). Anything unhandled is acked FAIL below.
                     case InteractionKind.CutsceneStart:
-                        ok = CutsceneSync.HostApplyStart(id, msg.Text ?? "", net);
+                        ok = CutsceneSync.HostApplyStart(id, msg.Text ?? "", msg.SenderPlayerId, net);
                         break;
                     case InteractionKind.CutsceneDone:
                         ok = CutsceneSync.HostApplyDone(id);

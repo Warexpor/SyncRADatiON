@@ -18,6 +18,10 @@ namespace SyncRADation.Networking
     /// A manager of the host's own room that comes alive after the host walked in gets the entry it missed
     /// (EnterHostRoom).
     /// Managers that own a Kolibri get the same Enter: it switches the room's enemies and the Kolibri on as the host's
+    /// The room itself is held too: native Room.LeaveRoom switches the chunk (floor, walls, colliders) off 2 s after the
+    /// host walks out (Room.c delayedDisabling), under the enemy a client is still fighting there, so it walked
+    /// through walls and CheckIfLeft's "Enemy is floating, resetting!" teleported it home over and over
+    /// (RoomDelayedDisablingPatch keeps it, Tick releases it once no player is left).
     /// own entry would, and the Kolibri's state then rides the host's boss sync (BossSyncService). Skipping them left
     /// every other enemy of such a room asleep on the host, so a client's hits there all missed (test pilot
     /// LAB_Labyrinth Loop Hall STCR: "client hit miss" x12). ARAR nests get the same treatment (ActivateNests).
@@ -28,7 +32,99 @@ namespace SyncRADation.Networking
         // Next check (unscaled time). Cleared by SessionReset "PeerRoomEnemies" (scene / session).
         static float _nextAt;
 
-        public static void Reset() => _nextAt = 0f;
+        public static void Reset()
+        {
+            _nextAt = 0f;
+            _held.Clear();
+            _hostWasIn.Clear();
+        }
+
+        // ------------------------------------------------------------------ room chunks kept on for a remote player
+
+        private sealed class Held
+        {
+            public Room Room;
+            public float EmptySince;
+        }
+        // Rooms (instance id, never sent) whose chunk the mod keeps or switched on for a remote player while the host
+        // is elsewhere. Cleared by Reset.
+        static readonly System.Collections.Generic.Dictionary<int, Held> _held = new System.Collections.Generic.Dictionary<int, Held>();
+        static readonly System.Collections.Generic.List<int> _heldScratch = new System.Collections.Generic.List<int>(4);
+        /// <summary>Native delayedDisabling waits this long after the player left.</summary>
+        const float ReleaseDelay = 2f;
+
+        /// <summary>The mod owns this room's chunk now: a remote player is in it and the host is not.</summary>
+        public static void Hold(Room room)
+        {
+            if (room == null) return;
+            int key = room.GetInstanceID();
+            Held h;
+            if (_held.TryGetValue(key, out h)) h.EmptySince = 0f;
+            else _held[key] = new Held { Room = room };
+        }
+
+        /// <summary>Switch a held room's chunk off the native way once nobody has been in it for the native delay.</summary>
+        static void ReleaseEmpty(Room hostRoom, PlayerProxyManager pm, int[] remote, float now)
+        {
+            if (_held.Count == 0) return;
+            _heldScratch.Clear();
+            foreach (var kvp in _held)
+            {
+                var h = kvp.Value;
+                try
+                {
+                    // The host's own room (again): native entry / leave owns the chunk from here.
+                    if (h.Room == null || h.Room == hostRoom || h.Room.containsElster)
+                    {
+                        _heldScratch.Add(kvp.Key);
+                        continue;
+                    }
+                    if (PeerIn(h.Room, pm, remote) != null)
+                    {
+                        h.EmptySince = 0f;
+                        continue;
+                    }
+                    if (h.EmptySince <= 0f)
+                    {
+                        h.EmptySince = now;
+                        continue;
+                    }
+                    if (now - h.EmptySince < ReleaseDelay) continue;
+                    _heldScratch.Add(kvp.Key);
+                    if (h.Room.chunk != null && h.Room.chunk.activeSelf)
+                    {
+                        NetGate.BeginApply();
+                        try { h.Room.SetChunkStatus(false); }
+                        finally { NetGate.EndApply(); }
+                    }
+                }
+                catch (Exception e)
+                {
+                    Guard.Swallow("PeerRoomEnemies.Release", e);
+                    _heldScratch.Add(kvp.Key);
+                }
+            }
+            for (int i = 0; i < _heldScratch.Count; i++) _held.Remove(_heldScratch[i]);
+        }
+
+        // ------------------------------------------------------------------ the host listener's combat statics
+
+        // Managers (instance id) whose last CheckIfLeft step ran with the host in the room. Cleared by Reset.
+        static readonly System.Collections.Generic.HashSet<int> _hostWasIn = new System.Collections.Generic.HashSet<int>();
+
+        /// <summary>CheckIfLeft step with the host in this manager's room: native writes inCombat / enemyPresence itself.</summary>
+        public static void NoteHostIn(EnemyManager m)
+        {
+            if (m != null) _hostWasIn.Add(m.GetInstanceID());
+        }
+
+        /// <summary>
+        /// The host is not in this manager's room. True once, on the first step after it left: native CheckIfLeft would
+        /// clear inCombat / enemyPresence there ("Sleeping Enemies."), but the room stays live for the remote player
+        /// and PeerView hands the statics back as they were, so the host kept the combat music of a fight it walked
+        /// away from (LOV West Corridor, into the Library cutscene).
+        /// </summary>
+        public static bool TakeHostLeft(EnemyManager m) => m != null && _hostWasIn.Remove(m.GetInstanceID());
 
         /// <summary>Host tick (EnemySyncService.TickHost): enter every manager whose room holds a remote player.</summary>
         public static void Tick(LanNetworkManager net, PlayerProxyManager pm, int[] remote)
@@ -63,6 +159,7 @@ namespace SyncRADation.Networking
                 catch (Exception e) { Guard.Swallow("PeerRoomEnemies.Tick", e); }
             }
             ActivateNests(hostRoom, pm, remote);
+            ReleaseEmpty(hostRoom, pm, remote, now);
         }
 
         /// <summary>
@@ -132,6 +229,7 @@ namespace SyncRADation.Networking
                 try { room.SetChunkStatus(true); }
                 finally { NetGate.EndApply(); }
             }
+            Hold(room);
             using (new PeerView(room, peer))
                 m.Enter(room);
             int on = 0;
@@ -154,9 +252,12 @@ namespace SyncRADation.Networking
             readonly bool _inCombat;
             readonly bool _presence;
             readonly bool _active;
+            readonly bool _hostLeft;
 
-            public PeerView(Room room, GameObject peer)
+            /// <param name="hostLeft">The host just walked out of this room: its combat statics end cleared (TakeHostLeft).</param>
+            public PeerView(Room room, GameObject peer, bool hostLeft = false)
             {
+                _hostLeft = hostLeft;
                 _player = PlayerState.player;
                 _room = PlayerState.currentRoom;
                 _inCombat = EnemyManager.inCombat;
@@ -173,8 +274,8 @@ namespace SyncRADation.Networking
                 {
                     PlayerState.player = _player;
                     PlayerState.currentRoom = _room;
-                    EnemyManager.inCombat = _inCombat;
-                    EnemyManager.enemyPresence = _presence;
+                    EnemyManager.inCombat = !_hostLeft && _inCombat;
+                    EnemyManager.enemyPresence = !_hostLeft && _presence;
                 }
                 catch (Exception e) { Guard.Swallow(e); }
             }

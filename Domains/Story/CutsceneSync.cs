@@ -6,7 +6,8 @@
 //   Rooms: a start belongs to the room of the player whose trigger started it (the author's room, a Room WorldId on
 //     the request and the presentation). CutsceneManagers sit under a scene-level "Cutscenes" root, outside every
 //     Room, so the object itself says nothing about where it plays. Only peers in the author's room start it, the
-//     host included: a host elsewhere relays a client's start without running it.
+//     host included: a host elsewhere relays a client's start without running it. A client whose trigger fires for a
+//     cutscene that is already running elsewhere in the party (it walked in late) gets the start for itself.
 //   Observer replay: a CutsceneStart presentation starts the cutscene on every peer in the author's room that is not
 //     running it. Everyone else gets the durable form once a watcher's copy completes (`completed` + onGameLoad):
 //     the host's through the PuzzleState CutsceneCompleted poll, a client's through CutsceneDone when the host did
@@ -294,7 +295,7 @@ namespace SyncRADation.Networking
         /// Host: a client's trigger asked for this cutscene from that room. N requesters (or the host's own start)
         /// start it once; the host runs it only when it stands in that room too.
         /// </summary>
-        internal static bool HostApplyStart(ulong id, string room, LanNetworkManager net)
+        internal static bool HostApplyStart(ulong id, string room, int sender, LanNetworkManager net)
         {
             var c = InteractionSyncService.FindAlive<CutsceneManager>(id, "Interact");
             if (c == null || LocalInspect.AirlockCinematic(c.gameObject)) return true;
@@ -305,9 +306,18 @@ namespace SyncRADation.Networking
                 PlaytestLog.Event("Interact", "CutsceneStart completed id=" + Hex(id));
                 return true;
             }
-            if (StartedHere(c) || !_stamps.TryStart(id, Now))
+            if (StartedHere(c) || _deferred.Contains(c) || !_stamps.TryStart(id, Now))
             {
-                PlaytestLog.Event("Interact", "CutsceneStart dup id=" + Hex(id));
+                // Started moments ago (the host is watching it, or another player's request): that broadcast named
+                // its author's room and this requester was not in it then. Its own trigger fired now, so it gets the
+                // start for its room alone (a peer already running it drops the repeat).
+                PlaytestLog.Event("Interact", "CutsceneStart dup id=" + Hex(id) + ", start sent to p" + sender);
+                net.StoryHandlers.SendStoryPresentationTo(sender, new StoryPresentationMessage
+                {
+                    WorldId = unchecked((long)id),
+                    Cmd = StoryCmd.CutsceneStart,
+                    Text = room ?? ""
+                });
                 return true;
             }
             if (WatchHere(c, room, false))

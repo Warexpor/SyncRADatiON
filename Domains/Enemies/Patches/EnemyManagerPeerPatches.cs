@@ -24,12 +24,19 @@ namespace SyncRADation.Patches
             {
                 var m = __instance.__4__this;
                 var room = m != null ? m.room : null;
-                if (room == null || room == PlayerState.currentRoom) return;
+                if (room == null) return;
+                if (room == PlayerState.currentRoom)
+                {
+                    PeerRoomEnemies.NoteHostIn(m);
+                    return;
+                }
+                bool hostLeft = PeerRoomEnemies.TakeHostLeft(m);
                 var net = LanNetworkManager.Instance;
                 if (net == null) return;
                 var peer = PeerRoomEnemies.PeerIn(room, net.ProxyManager, net.GetRemotePlayerIds());
+                // Nobody left: the native step sleeps the room and clears the statics itself.
                 if (peer == null) return;
-                __state = new PeerRoomEnemies.PeerView(room, peer);
+                __state = new PeerRoomEnemies.PeerView(room, peer, hostLeft);
             }
             catch (System.Exception e) { Guard.Swallow(e); }
         }
@@ -54,19 +61,31 @@ namespace SyncRADation.Patches
     /// EnemyPatrol threw there, and every enemy after it in the list stayed off. A player walks in through a door,
     /// far away; the player stood beside it (pilot, or the host's PeerView for a client standing there) hit it. For
     /// the call, such an enemy counts as idle (native skips the repositioning for idle), then gets its value back.
+    /// Host walking into a room that already runs for a remote player (in operation, entered through PeerView): native
+    /// Enter has no "already running" guard. It would move every patrolling enemy within 20 of the host to another
+    /// waypoint ("Cycling to other patrol point to give elster some space") in the middle of the client's fight and
+    /// start a second CheckIfLeft. The entry is skipped; the running CheckIfLeft now sees the host in the room and
+    /// writes its combat statics natively. checkVeil (the one other thing Enter does) still runs.
     /// </summary>
     [HarmonyPatch(typeof(EnemyManager), nameof(EnemyManager.Enter))]
     public static class EnemyManagerEnterGuardPatch
     {
         [HarmonyPrefix]
-        public static void Prefix(EnemyManager __instance,
+        public static bool Prefix(EnemyManager __instance, Room enterRoom,
             out System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<EnemyController, EnemyController.idleBehaviour>> __state)
         {
             __state = null;
             try
             {
+                if (LiveForPeer(__instance, enterRoom))
+                {
+                    PlaytestLog.Event("Enemy", "host enters " + enterRoom.roomName + ": already live for a peer, native Enter skipped");
+                    var veil = EnemyManager.checkVeil;
+                    if (veil != null) veil.Invoke();
+                    return false;
+                }
                 var en = __instance != null ? __instance.enemies : null;
-                if (en == null) return;
+                if (en == null) return true;
                 for (int i = 0; i < en.Count; i++)
                 {
                     var e = en[i];
@@ -81,6 +100,15 @@ namespace SyncRADation.Patches
                 }
             }
             catch (System.Exception e) { Guard.Swallow(e); }
+            return true;
+        }
+
+        static bool LiveForPeer(EnemyManager m, Room enterRoom)
+        {
+            if (!NetGate.Host || m == null || enterRoom == null || !m.inOperation || m.room != enterRoom) return false;
+            if (global::Cheats.tourist) return false;
+            var net = LanNetworkManager.Instance;
+            return net != null && PeerRoomEnemies.PeerIn(enterRoom, net.ProxyManager, net.GetRemotePlayerIds()) != null;
         }
 
         [HarmonyFinalizer]
@@ -119,6 +147,46 @@ namespace SyncRADation.Patches
             }
             catch (System.Exception e) { Guard.Swallow(e); }
             return null;
+        }
+    }
+}
+
+namespace SyncRADation.Patches
+{
+    /// <summary>
+    /// Room.LeaveRoom starts delayedDisabling (Ghidra Room.c): the instantChunk goes off at once and, 2 s later, the
+    /// chunk and Cell, unless containsElster came back. On the host that pulled the floor, walls and colliders from
+    /// under a remote player's fight (PeerRoomEnemies). While one is in the room, each step sees containsElster set,
+    /// which is the native "the player is back" path: nothing is switched off. PeerRoomEnemies.Tick lets the chunk go
+    /// once the room is empty.
+    /// </summary>
+    [HarmonyPatch(typeof(Room._delayedDisabling_d__28), nameof(Room._delayedDisabling_d__28.MoveNext))]
+    public static class RoomDelayedDisablingPatch
+    {
+        [HarmonyPrefix]
+        public static void Prefix(Room._delayedDisabling_d__28 __instance, out Room __state)
+        {
+            __state = null;
+            if (!NetGate.Host) return;
+            try
+            {
+                var room = __instance.__4__this;
+                if (room == null || room.containsElster) return;
+                var net = LanNetworkManager.Instance;
+                if (net == null || PeerRoomEnemies.PeerIn(room, net.ProxyManager, net.GetRemotePlayerIds()) == null) return;
+                PeerRoomEnemies.Hold(room);
+                room.containsElster = true;
+                __state = room;
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+        }
+
+        [HarmonyFinalizer]
+        public static System.Exception Finalizer(Room __state, System.Exception __exception)
+        {
+            try { if (__state != null) __state.containsElster = false; }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            return __exception;
         }
     }
 }
