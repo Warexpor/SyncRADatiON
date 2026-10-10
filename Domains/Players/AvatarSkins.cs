@@ -74,9 +74,11 @@ namespace SyncRADation.Players
             if (ModConfig.RemotePlayerModel == null) return;
             ModConfig.RemotePlayerModel.Value = (int)model;
             try { MelonLoader.MelonPreferences.Save(); } catch (System.Exception e) { Guard.Swallow(e); }
-            if (Has(model)) return;
-            Harvest();
-            if (!Has(model) && CanPreload) Preload();
+            if (!Has(model)) Harvest();
+            bool load = !Has(model) && CanPreload;
+            PlaytestLog.EventAlways("Skin", "selected " + model + " in " + ActiveScene() + ": "
+                + (Has(model) ? "ready" : load ? "loading now" : "not loaded, waits for the main menu"));
+            if (load) Preload();
         }
 
         /// <summary>F2 status line for the chosen model.</summary>
