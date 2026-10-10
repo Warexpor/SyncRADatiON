@@ -65,7 +65,7 @@ namespace SyncRADation.Networking
         }
 
         /// <summary>StartCutscene postfix: a cutscene is running on this peer now (whoever started it). Log only.</summary>
-        internal static void NoteStarted(CutsceneManager c)
+        internal static void NoteStarted(CutsceneManager c, string by = null)
         {
             try
             {
@@ -76,7 +76,7 @@ namespace SyncRADation.Networking
                 _live.Add(l);
                 PlaytestLog.Event("Cutscene", "start '" + l.Name + "' id=" + Hex(l.Id) + " room='"
                     + NetworkDamageSystem.CurrentRoomName() + "' skippable=" + !c.unskippable
-                    + " by=" + (NetGate.IsApplying ? "party" : "local trigger"));
+                    + " by=" + (by ?? (NetGate.IsApplying ? "party" : "local trigger")));
             }
             catch (System.Exception e) { Guard.Swallow(e); }
         }
@@ -166,6 +166,14 @@ namespace SyncRADation.Networking
                 if (c.unskippable) CutsceneSkippingUI.skippableCutscene = false;
             }
             finally { NetGate.EndApply(); }
+            if (!StartedHere(c))
+            {
+                bool active = false, done = false;
+                try { active = c.gameObject.activeInHierarchy; done = c.completed; } catch (System.Exception e) { Guard.Swallow(e); }
+                PlaytestLog.Event("Cutscene", "start of '" + c.gameObject.name + "' did nothing here (object active=" + active
+                    + " completed=" + done + ")");
+                return;
+            }
             if (NetGate.Client && !_watching.Contains(c)) _watching.Add(c);
         }
 
@@ -276,6 +284,10 @@ namespace SyncRADation.Networking
             {
                 if (LocalInspect.AirlockCinematic(c.gameObject)) return true;
                 if (c.completed) return false;
+                // Native StartCutscene does nothing on a switched-off manager (CutsceneManager.c: activeInHierarchy
+                // && !completed). A trigger reaching one (LOV Library before the pistol is taken) must not ask the
+                // party to start it: the host stamped and broadcast a start nobody could run.
+                if (!c.gameObject.activeInHierarchy) return true;
                 ulong id = WorldId.FromGameObject(c.gameObject);
                 if (_stamps.Skipped(id, Now)) return false;
                 if (AirlockCinematic.ClientSplitFromHost()) return true;
@@ -283,10 +295,17 @@ namespace SyncRADation.Networking
                 {
                     // A client request (HostApplyStart) may have started it already; a second native StartCutscene would
                     // run a second coroutine. That start already broadcast.
-                    if (StartedHere(c) || !_stamps.TryStart(id, Now))
+                    if (StartedHere(c) || _deferred.Contains(c))
                     {
                         PlaytestLog.Event("Story", "host StartCutscene dup id=" + Hex(id));
                         return false;
+                    }
+                    if (!_stamps.TryStart(id, Now))
+                    {
+                        // Started moments ago for another room (a client's request the host relayed without
+                        // watching): the host's own trigger fired now, so it plays here. That start was broadcast.
+                        PlaytestLog.Event("Story", "host joins the running CutsceneStart id=" + Hex(id));
+                        return true;
                     }
                     LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.CutsceneStart, id, 0,
                         LocalInspect.LocalRoomKey());

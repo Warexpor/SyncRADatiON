@@ -19,6 +19,17 @@ namespace SyncRADation.Patches
         }
     }
 
+    /// <summary>A level intro (onStart) starts from CutsceneManager.Start, never StartCutscene: logged like any other.</summary>
+    [HarmonyPatch(typeof(CutsceneManager), "Start")]
+    public static class CutsceneIntroLogPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(CutsceneManager __instance)
+        {
+            if (__instance != null && NetGate.Live) CutsceneSync.NoteStarted(__instance, "level intro");
+        }
+    }
+
     [HarmonyPatch(typeof(CutsceneManager), nameof(CutsceneManager.StartCutscene))]
     public static class CutsceneStartPatch
     {

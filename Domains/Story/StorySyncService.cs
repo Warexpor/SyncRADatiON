@@ -396,9 +396,20 @@ namespace SyncRADation.Networking
         /// Client: a story-flag write that must be authored on the host (host applies + commits to everyone).
         /// The local write still happens so the client's own logic sees it immediately.
         /// </summary>
+        /// <summary>
+        /// Keys native code rolls at random when a scene starts and they are missing: DET_RadioCodeLock.Start writes
+        /// WallSafeF0-5 / WallSafeC0-5 (the wall safe's radio frequencies and codes). Every peer loads the scene at
+        /// once and rolls its own; a client that forwarded its roll replaced the host's in the shared story, while the
+        /// host's lock component (and every client's, through the puzzle sync) kept the host's roll: the saved code
+        /// was not the one on the wall. The host's roll is the party's; the commit hands it to everyone.
+        /// </summary>
+        internal static bool HostRolled(string key) =>
+            key.StartsWith("WallSafeF", System.StringComparison.Ordinal) || key.StartsWith("WallSafeC", System.StringComparison.Ordinal);
+
         public void ClientForward(StoryFlagEntry e)
         {
             if (string.IsNullOrEmpty(e.Key) || ForwardSuppressed || SameAsLocal(e)) return;
+            if (HostRolled(e.Key)) return;
             _outbox[e.Key] = e;
         }
 

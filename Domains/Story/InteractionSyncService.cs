@@ -280,6 +280,7 @@ namespace SyncRADation.Networking
                 }
             }
             if (string.IsNullOrEmpty(key)) return false;
+            if (StorySyncService.HostRolled(key)) return true; // the host's roll stands (an older client still forwards its own)
             var e = new StoryFlagEntry
             {
                 Kind = (byte)msg.Int0,

@@ -253,11 +253,27 @@ namespace SyncRADation.Networking
             readonly bool _presence;
             readonly bool _active;
             readonly bool _hostLeft;
+            readonly bool _swapped;
+
+            /// <summary>No player swap: only the host's combat statics come back as they were.</summary>
+            public static PeerView StaticsOnly() => new PeerView(true);
+
+            PeerView(bool staticsOnly)
+            {
+                _hostLeft = false;
+                _swapped = false;
+                _player = null;
+                _room = null;
+                _inCombat = EnemyManager.inCombat;
+                _presence = EnemyManager.enemyPresence;
+                _active = true;
+            }
 
             /// <param name="hostLeft">The host just walked out of this room: its combat statics end cleared (TakeHostLeft).</param>
             public PeerView(Room room, GameObject peer, bool hostLeft = false)
             {
                 _hostLeft = hostLeft;
+                _swapped = true;
                 _player = PlayerState.player;
                 _room = PlayerState.currentRoom;
                 _inCombat = EnemyManager.inCombat;
@@ -272,8 +288,11 @@ namespace SyncRADation.Networking
                 if (!_active) return;
                 try
                 {
-                    PlayerState.player = _player;
-                    PlayerState.currentRoom = _room;
+                    if (_swapped)
+                    {
+                        PlayerState.player = _player;
+                        PlayerState.currentRoom = _room;
+                    }
                     EnemyManager.inCombat = !_hostLeft && _inCombat;
                     EnemyManager.enemyPresence = !_hostLeft && _presence;
                 }

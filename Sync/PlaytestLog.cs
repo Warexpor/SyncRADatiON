@@ -4,7 +4,7 @@
 //   Rate     a line that can repeat fast: at most one per key per interval, and the next one that goes out says how
 //            many were dropped ("+N suppressed"), so a throttled line still shows how loud the thing is.
 //   Warn     something the mod did not expect; counted per tag for the session summary (LogSink).
-// An identical line repeated back to back is written once; when the run ends a "(previous line xN)" line follows.
+// An identical line repeated back to back is written once; when the run ends a "(xN in a row: <line>)" line follows.
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -105,7 +105,9 @@ namespace SyncRADation.Sync
             if (_repeats <= 0) return;
             int n = _repeats;
             _repeats = 0;
-            ModRuntime.Log?.Raw(0, "  (previous line x" + (n + 1) + ")");
+            // Names the line: lines written straight to the sink may have come in between.
+            string what = _lastLine.Length > 60 ? _lastLine.Substring(0, 60) + "..." : _lastLine;
+            ModRuntime.Log?.Raw(0, "  (x" + (n + 1) + " in a row: " + what + ")");
         }
 
         static void Emit(string tag, string msg, int level)

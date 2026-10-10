@@ -1,3 +1,21 @@
+## 0.5.72 — 2026-10-10
+
+Protocol **v21** (unchanged). From the logs of the first 0.5.71 session (LOV into DET: no warnings, no desync).
+
+### Fixed
+- **The host did not get a cutscene it walked into right after a client started it** (LOV Library, host 3 s behind the client: `host StartCutscene dup`, the host stood in the room without it). A start the host relayed for another room no longer blocks the host's own trigger: it joins.
+- **A cutscene trigger on a switched-off cutscene asked the whole party to start it** (LOV Library before anyone took the pistol: the client's request was stamped and broadcast, and nothing ran anywhere, silently). Native `StartCutscene` does nothing on an inactive manager; such a trigger now stays local, and a party start that does nothing says so (`[Cutscene] start of '<name>' did nothing here`).
+- **The wall safe's saved code was not the one on the wall** (DET): `DET_RadioCodeLock.Start` rolls `WallSafeF0-5` / `WallSafeC0-5` at random on every peer as the scene loads; the client forwarded its roll and replaced the host's in the shared story, while every lock component kept the host's. After a save and reload the safe would have had another code. The host's roll stands: clients no longer forward those keys and the host ignores them.
+- **The host's combat statics blinked off when a client left a room** (DET, host fighting in Mensa while the client walked Kitchen -> corridor: `inCombat` False then True 11 ms later, twice): the emptied room's `CheckIfLeft` clears the statics natively, which are the host's own. They are handed back unless the host is the one who left.
+
+### Logging
+- `[State]` no longer follows the game state: opening the inventory, an event screen or a pickup dialogue wrote a line each (a third of the 150 lines). It changes on rooms, players, enemies, combat, cutscenes and loading.
+- `[Enemy] H state`: a sleeping enemy is not logged (scene load wrote 18 lines for 9 sleeping enemies), `->` marks what changed, and pursuit / attack flips are one line per enemy per 5 s with the count (a 30 s fight with two STAR was 60 lines).
+- `[Cutscene] start ... by=level intro` for intros that start from `CutsceneManager.Start` (they only showed up as a `skip`).
+- The repeat marker names its line: `(x3 in a row: [Pickup] H hide deferred ...)`.
+- `oob rescue held` is a `VerboseLogging` line (one per door transit). `script relock` reads `locked again (script, or its room woke)`: most were a room waking.
+- No `[Stall]` warnings after `[Session] application quit`; no empty second summary at quit.
+
 ## 0.5.71 — 2026-10-10
 
 Protocol **v21** (`WorldDigest` 75). Logging rework: `docs/LOGGING.md`.

@@ -17,7 +17,7 @@ grep -a -E '\[Log\] summary|DESYNC|\[State\]' Latest.log
 
 - **An edge, not a level.** A line is written when something changes, with the values that explain it (who, which object, before -> after, which room). Nothing is written every frame.
 - **Named.** Objects carry their WorldId and a human name: `id=<16 hex> '<object>' in <room>`.
-- **Throttled out loud.** A line that can repeat fast goes through `PlaytestLog.Rate`: one per key per interval, and the next one that goes out ends in `(+N suppressed)`. An identical line repeated back to back is written once and followed by `(previous line xN)`.
+- **Throttled out loud.** A line that can repeat fast goes through `PlaytestLog.Rate`: one per key per interval, and the next one that goes out ends in `(+N suppressed)`. An identical line repeated back to back is written once and followed by `(xN in a row: <line>)`.
 - **ASCII.** `Latest.log` mangles anything else.
 
 ## API (`Sync/PlaytestLog.cs`, `Sync/LogSink.cs`)
@@ -48,7 +48,7 @@ For a bug report: `VerboseLogging` and `Diagnostics` on, on every install, quit 
 
 | Line | Meaning |
 |------|---------|
-| `[State] <scene> \| me pN '<room>' gs= hp= weapon= at= \| pM '<room>' d= ping= \| enemies A/T alive, W awake, H hunting, inCombat= presence= \| cutscene <names> \| fps=` | Written when any of scene, room, game state, a player down, a peer's room or scene, alive enemies, hunting, combat statics or the running cutscene changes (at most one every 2 s; a cutscene flipping cutscene/dialogue and a door transit do not count), and every 30 s as `(heartbeat)`. |
+| `[State] <scene> \| me pN '<room>' gs= hp= weapon= at= \| pM '<room>' d= ping= \| enemies A/T alive, W awake, H hunting, inCombat= presence= \| cutscene <names> \| fps=` | Written when any of scene, room, loading, a player down, a peer's room or scene, alive enemies, hunting, combat statics or the running cutscene changes (at most one every 2 s; a cutscene flipping cutscene/dialogue and a door transit do not count), and every 30 s as `(heartbeat)`. |
 | `[Net] 30s tx N msg X KB top: <Type> n/KB ... \| rx ... \| pN ping= lost=` | Traffic by message type, top five by bytes each way, and the link. |
 | `[Log] summary (session end\|last player left\|quit): N lines, warnings W (Tag n, ...), errors E (...)` | See above. |
 | `[Room] pN 'old' -> 'new'` | A remote player's room as this peer knows it. `[Room] enter` / `chunk ON\|OFF` are this peer's own (Diagnostics). |
@@ -70,7 +70,7 @@ The host's log carries each client's lines as `[Desync] H pN ...`. Two in a row 
 
 | Line | Meaning |
 |------|---------|
-| `[Enemy] H state <name> id= a->b stagger= target=host\|pN\|- hp= awake= room=` | Host: an enemy's state, stagger, target or awake flag changed. |
+| `[Enemy] H state <name> id= a->b stagger= target=host\|pN\|- hp= room=` | Host: an enemy woke, died, staggered or switched player (`->` marks what changed). Pursuit / attack flips are one line per enemy per 5 s with the count. A sleeping enemy is not logged. |
 | `[Enemy] C hit <name> id= dmg= ... -> host` / `[Enemy] H TakeDamage id= dmg= hp=a->b state=a->b` | A client's hit as sent and as the host applied it. `(downed, revive hp)`: native code wrote the revive HP. |
 | `[Enemy] C client <id> <name> active= hostAlive= hostState=` | Client: what its puppet shows (Diagnostics). |
 | `[Weapon] shot <weapon> mag= room=` / `local a -> b` | The local player's shots and weapon changes. |

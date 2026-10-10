@@ -56,9 +56,9 @@ namespace SyncRADation.Sync
             // A cutscene flips cutscene <-> dialogue with every line of text, and a door transit is a second of
             // traversing: neither is news. The line itself still prints the exact state.
             string cut = CutsceneSync.LiveNames();
-            string coarse = cut.Length > 0 ? "cut"
-                : gs == PlayerState.gameStates.traversing ? ((int)PlayerState.gameStates.play).ToString()
-                : ((int)gs).ToString();
+            // Nor are the screens a player opens and closes (inventory, an event screen, a pickup dialogue): only
+            // loading is its own picture.
+            string coarse = cut.Length > 0 ? "cut" : gs == PlayerState.gameStates.loading ? "load" : "in";
             _sig.Append(scene).Append('|').Append(room).Append('|').Append(coarse).Append(dead ? "|D" : "|A");
             _line.Append(scene).Append(" | me p").Append(net.LocalPlayerId).Append(" '").Append(room).Append("' gs=").Append(gs)
                 .Append(" hp=").Append(PlayerState.hp);

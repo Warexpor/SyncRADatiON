@@ -351,7 +351,7 @@ namespace SyncRADation.Patches
                 if (now - _lastLog > 5f)
                 {
                     _lastLog = now;
-                    PlaytestLog.Event("Door", "oob rescue held: cast (" + dir.x.ToString("0") + "," + dir.y.ToString("0") + ") leaves through open door " + door);
+                    PlaytestLog.Verbose("Door", "oob rescue held: cast (" + dir.x.ToString("0") + "," + dir.y.ToString("0") + ") leaves through open door " + door);
                 }
             }
             catch (System.Exception e) { Guard.Swallow(e); }

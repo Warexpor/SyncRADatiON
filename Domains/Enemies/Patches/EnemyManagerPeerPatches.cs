@@ -34,8 +34,14 @@ namespace SyncRADation.Patches
                 var net = LanNetworkManager.Instance;
                 if (net == null) return;
                 var peer = PeerRoomEnemies.PeerIn(room, net.ProxyManager, net.GetRemotePlayerIds());
-                // Nobody left: the native step sleeps the room and clears the statics itself.
-                if (peer == null) return;
+                // Nobody left: the native step sleeps the room. It also clears inCombat / enemyPresence, which are the
+                // host's own: right when the host is the one who left, wrong when a remote player did while the host
+                // fights elsewhere (DET: the music cut out for a frame each time the client changed rooms).
+                if (peer == null)
+                {
+                    if (!hostLeft) __state = PeerRoomEnemies.PeerView.StaticsOnly();
+                    return;
+                }
                 __state = new PeerRoomEnemies.PeerView(room, peer, hostLeft);
             }
             catch (System.Exception e) { Guard.Swallow(e); }

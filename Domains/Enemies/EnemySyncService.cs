@@ -164,19 +164,31 @@ namespace SyncRADation.Networking
             bool had = _hostSeen.TryGetValue(id, out was);
             if (had && was == packed) return;
             _hostSeen[id] = packed;
-            // First sight of an enemy that is just asleep in its room: nothing happened.
-            if (!had && snap.State == (byte)EnemyController.enemystate.sleep && !awake) return;
-            int suppressed;
-            if (!PlaytestLog.RateOk("enemyState:" + id, 0.25f, out suppressed)) return;
+            var state = (EnemyController.enemystate)snap.State;
+            var stateWas = had ? (EnemyController.enemystate)(was & 0xFF) : state;
+            bool stateChanged = had && stateWas != state;
+            // An enemy asleep in its room: the chunk going on / off around it ([Room] chunk) and the nearest-player
+            // pick are not its own news. Nor is the first sight of it.
+            if (state == EnemyController.enemystate.sleep && !stateChanged) return;
+            bool staggerChanged = had && ((was >> 8) & 0xFF) != (snap.HurtState & ~SleepAnimBit);
+            bool targetChanged = had && ((was >> 16) & 0xFF) != target;
+            // A fight flips pursuit <-> attack a few times a second: one line per enemy every few seconds carries the
+            // count; everything else (woke, died, staggered, switched player) is written at once.
+            bool swing = stateChanged && !staggerChanged && !targetChanged
+                && stateWas != EnemyController.enemystate.sleep && state != EnemyController.enemystate.dead
+                && state != EnemyController.enemystate.sleep;
+            int suppressed = 0;
+            if (swing && !PlaytestLog.RateOk("enemySwing:" + id, 5f, out suppressed)) return;
             string room = "?";
             try { var r = RoomOfEnemy(e).Room; if (r != null) room = r.roomName; }
             catch (Exception ex) { Guard.Swallow(ex); }
-            PlaytestLog.Event("Enemy", "state " + e.gameObject.name + " id=" + id.ToString("X16")
-                + " " + (had ? ((EnemyController.enemystate)(was & 0xFF)).ToString() + "->" : "") + (EnemyController.enemystate)snap.State
-                + " stagger=" + (EnemyController.hurtState)(snap.HurtState & ~SleepAnimBit)
-                + " target=" + (targetPid < 0 ? "-" : targetPid == net.LocalPlayerId ? "host" : "p" + targetPid)
-                + " hp=" + snap.HP + " awake=" + awake + " room='" + room + "'"
-                + (suppressed > 0 ? " (+" + suppressed + " changes)" : ""));
+            string who = targetPid < 0 ? "-" : targetPid == net.LocalPlayerId ? "host" : "p" + targetPid;
+            PlaytestLog.Event("Enemy", "state " + e.gameObject.name + " id=" + id.ToString("X16") + " "
+                + (stateChanged ? stateWas + "->" + state : state.ToString())
+                + (staggerChanged ? " stagger->" : " stagger=") + (EnemyController.hurtState)(snap.HurtState & ~SleepAnimBit)
+                + (targetChanged ? " target->" : " target=") + who
+                + " hp=" + snap.HP + " room='" + room + "'"
+                + (suppressed > 0 ? " (+" + suppressed + " attack/pursuit flips)" : ""));
         }
 
         static EnemySnapshotNet ReadSnapshot(EnemyController e, Transform et, Vector3 pos, ulong id)

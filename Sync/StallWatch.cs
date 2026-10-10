@@ -41,6 +41,12 @@ namespace SyncRADation.Sync
             _watcher.Start();
         }
 
+        // persistent: set once when the game quits
+        static volatile bool _quit;
+
+        /// <summary>The game is quitting: Unity's teardown blocks the main thread for seconds, which is not a stall.</summary>
+        public static void Quit() => _quit = true;
+
         public static void Phase(string phase) => _phase = phase;
         public static void Enter(System.Reflection.MethodBase m) => _method = m;
         public static void Exit(System.Reflection.MethodBase m)
@@ -102,6 +108,7 @@ namespace SyncRADation.Sync
             while (true)
             {
                 Thread.Sleep(PollMs);
+                if (_quit) return;
                 try
                 {
                     int f = Volatile.Read(ref _frame);

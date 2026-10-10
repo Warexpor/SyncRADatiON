@@ -173,7 +173,7 @@ namespace SyncRADation.Networking
                 NoteLockEdge(HeldDoubleUnlock, id, lk);
                 if (host && lk)
                 {
-                    PlaytestLog.Event("Door", "script relock " + DoorNative.Label(d.gameObject));
+                    PlaytestLog.Event("Door", "locked again (script, or its room woke) " + DoorNative.Label(d.gameObject));
                     SendDoorChange(DoorType.DoorwayDouble, id, d.open, true, false, false, false);
                 }
             }
