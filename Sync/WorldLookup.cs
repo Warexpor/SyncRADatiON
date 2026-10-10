@@ -149,7 +149,7 @@ namespace SyncRADation.Sync
             try { a = WorldId.GetHierarchyPath(candidate.transform); } catch (Exception e) { Guard.Swallow(e); }
             try { b = WorldId.GetHierarchyPath(existing.transform); } catch (Exception e) { Guard.Swallow(e); }
             ModRuntime.Log?.Warning("[WorldLookup] duplicate WorldId " + id.ToString("X16") + " (" + what
-                + "): '" + a + "' vs '" + b + "' — keeping the stable-order winner");
+                + "): '" + a + "' vs '" + b + "' - keeping the stable-order winner");
         }
 
         // PreferOver runs per registration (several rebuilds per scene load): one tie line per path.
@@ -192,7 +192,7 @@ namespace SyncRADation.Sync
                 string tiePath = WorldId.GetHierarchyPath(candidate.transform);
                 if (_loggedTies.Count > 256) _loggedTies.Clear();
                 if (_loggedTies.Add(tiePath))
-                    PlaytestLog.Warn("World", "PreferOver tie on '" + tiePath + "' — keeping the first registered");
+                    PlaytestLog.Warn("World", "PreferOver tie on '" + tiePath + "' - keeping the first registered");
             }
             catch (Exception ex)
             {

@@ -33,6 +33,11 @@ namespace SyncRADation.Networking
         private static readonly List<ulong> _pendingScratch = new List<ulong>(4);
         private const float OpenGraceSeconds = 1f;
 
+        // Remote closes of a door this player is walking through right now (ApplyDoorwayDouble): applied when the
+        // transit is over, unless native code closed the door first or a remote open came in.
+        private static readonly HashSet<ulong> _heldClose = new HashSet<ulong>();
+        private const float TransitDoorRange = 30f;
+
         private static float _scanTimer;
         private const float ScanInterval = 0.3f;
         private static bool _ready;
@@ -86,6 +91,7 @@ namespace SyncRADation.Networking
         private static void ResetScene()
         {
             _pendingOpens.Clear();
+            _heldClose.Clear();
             LastDoubleOpen.Clear();
             LastDoubleLocked.Clear();
             LastCdLocked.Clear();
@@ -106,6 +112,7 @@ namespace SyncRADation.Networking
                 return;
             }
 
+            if (_heldClose.Count > 0) ReleaseHeldCloses();
             _scanTimer += Mathf.Min(Time.unscaledDeltaTime, 0.1f);
             if (_scanTimer < ScanInterval) return;
             _scanTimer = 0f;
@@ -166,7 +173,7 @@ namespace SyncRADation.Networking
                 NoteLockEdge(HeldDoubleUnlock, id, lk);
                 if (host && lk)
                 {
-                    PlaytestLog.Event("Door", "script relock " + d.gameObject.name);
+                    PlaytestLog.Event("Door", "script relock " + DoorNative.Label(d.gameObject));
                     SendDoorChange(DoorType.DoorwayDouble, id, d.open, true, false, false, false);
                 }
             }
@@ -219,7 +226,8 @@ namespace SyncRADation.Networking
             }
             LastDoubleOpen[id] = open;
             LastDoubleLocked[id] = lockedNow;
-            PlaytestLog.Event("Door", (open ? "open" : "close") + " id=" + id.ToString("X16"));
+            _heldClose.Remove(id);
+            PlaytestLog.Event("Door", (open ? "open " : "close ") + DoorNative.Label(d.gameObject, id));
             SendDoorChange(DoorType.DoorwayDouble, id, open, lockedNow, false, false, false);
         }
 
@@ -236,7 +244,7 @@ namespace SyncRADation.Networking
             if (lo == opened && lm == moving) return;
             LastSdOpened[id] = opened;
             LastSdMoving[id] = moving;
-            PlaytestLog.Event("Door", (opened ? "slide-open" : "slide-close") + " id=" + id.ToString("X16"));
+            PlaytestLog.Event("Door", (opened ? "slide-open " : "slide-close ") + DoorNative.Label(sd.gameObject, id));
             SendDoorChange(DoorType.EventSlidingDoor, id, opened, false, false, false, moving);
         }
 
@@ -333,7 +341,7 @@ namespace SyncRADation.Networking
                     if (DoorNative.IsFlavorSeal(d.gameObject) || DoorNative.HasUnsolvedLock(d)) continue;
                     d.locked = false;
                     LastDoubleLocked[id] = false;
-                    PlaytestLog.Event("Door", "reapply unlock " + d.gameObject.name);
+                    PlaytestLog.Event("Door", "reapply unlock " + DoorNative.Label(d.gameObject));
                 }
                 catch (System.Exception ex) { Guard.Swallow("Door.ReapplyDouble", ex); }
             }
@@ -400,13 +408,13 @@ namespace SyncRADation.Networking
                     if (!HostLockSolved(d))
                     {
                         _pendingOpens[id] = new PendingOpen { Msg = msg, DueAt = Time.unscaledTime + OpenGraceSeconds };
-                        PlaytestLog.Event("Door", "defer client open (lock not solved yet) " + d.gameObject.name);
+                        PlaytestLog.Event("Door", "defer client open (lock not solved yet) " + DoorNative.Label(d.gameObject));
                         return false; // neither relayed nor rejected yet
                     }
                     try { d.locked = false; } catch (System.Exception ex) { Guard.Swallow("Door.Unlock", ex); }
                     msg.Locked = false;
                     _pendingOpens.Remove(id);
-                    PlaytestLog.Event("Door", "honor client open (lock solved) " + d.gameObject.name);
+                    PlaytestLog.Event("Door", "honor client open (lock solved) " + DoorNative.Label(d.gameObject));
                 }
                 else
                     msg.Locked = true;
@@ -418,14 +426,25 @@ namespace SyncRADation.Networking
                 {
                     // A client can never lock a door the host holds unlocked (a script relock on its side, a stale
                     // flag): the host's flag wins and the corrected state goes back to everyone incl. the sender.
-                    PlaytestLog.Event("Door", "ignore client relock (host door unlocked) " + d.gameObject.name);
+                    PlaytestLog.Event("Door", "ignore client relock (host door unlocked) " + DoorNative.Label(d.gameObject));
                     msg.Locked = false;
                     msg.SenderPlayerId = net.LocalPlayerId;
                 }
             }
 
-            DoorNative.ApplyDoubleDoor(d, msg.Open, msg.Locked);
-            LastDoubleOpen[id] = msg.Open;
+            // Two players through one doorway: the other's transit ends (ConnectedDoors.End closes both leaves) while
+            // this player is still walking through. The door stays open here until this transit is over.
+            bool open = msg.Open;
+            if (!open && LocalTransitThrough(d))
+            {
+                if (_heldClose.Add(id))
+                    PlaytestLog.Event("Door", "hold remote close (local transit) " + DoorNative.Label(d.gameObject, id));
+                open = true;
+            }
+            else
+                _heldClose.Remove(id);
+            DoorNative.ApplyDoubleDoor(d, open, msg.Locked);
+            LastDoubleOpen[id] = open;
             // ApplyDoubleDoor keeps flavor seals sealed: record the door's real flag (or the lock poll reads a phantom
             // edge for a flavor seal), and hold the solve from it. Unlock edge holds, relock drops.
             bool nowLocked = msg.Locked;
@@ -436,13 +455,55 @@ namespace SyncRADation.Networking
             return true;
         }
 
+        /// <summary>The local player is in a door transit (gameState traversing) and this open door is the one beside it.</summary>
+        static bool LocalTransitThrough(Doorway_Double d)
+        {
+            try
+            {
+                if (!d.open || PlayerState.gameState != PlayerState.gameStates.traversing) return false;
+                var pl = PlayerState.player;
+                if (pl == null) return false;
+                Vector2 a = pl.transform.position, b = d.transform.position;
+                return (a - b).sqrMagnitude <= TransitDoorRange * TransitDoorRange;
+            }
+            catch (System.Exception e) { Guard.Swallow("Door.Transit", e); return false; }
+        }
+
+        /// <summary>Closes held behind the local transit: applied once it is over (a door the transit closed itself is already shut).</summary>
+        static void ReleaseHeldCloses()
+        {
+            try { if (PlayerState.gameState == PlayerState.gameStates.traversing) return; }
+            catch (System.Exception e) { Guard.Swallow("Door.HeldState", e); }
+            _heldScratch.Clear();
+            foreach (var id in _heldClose) _heldScratch.Add(id);
+            _heldClose.Clear();
+            for (int i = 0; i < _heldScratch.Count; i++)
+            {
+                ulong id = _heldScratch[i];
+                Doorway_Double d;
+                if (!WorldRegistry.TryGetDoubleDoor(id, out d) || d == null) continue;
+                try
+                {
+                    if (!d.open) continue;
+                    PlaytestLog.Event("Door", "held close now " + DoorNative.Label(d.gameObject, id));
+                    NetGate.BeginApply();
+                    try { DoorNative.ApplyDoubleDoor(d, false, d.locked); }
+                    finally { NetGate.EndApply(); }
+                    LastDoubleOpen[id] = false;
+                    try { _instOpen[d.GetInstanceID()] = false; } catch (System.Exception e) { Guard.Swallow(e); }
+                }
+                catch (System.Exception e) { Guard.Swallow("Door.HeldClose", e); }
+            }
+            _heldScratch.Clear();
+        }
+
         static bool HostLockSolved(Doorway_Double d)
             => DoorNative.LockSolvedFor(d) || DoorNative.DoorLockUnlocked(d);
 
         /// <summary>Host: keep the door sealed and push the sealed state to everyone (the sender re-syncs too).</summary>
         static bool RejectOpen(LanNetworkManager net, Doorway_Double d, ref DoorStateMessage msg)
         {
-            PlaytestLog.Event("Door", "reject client open (lock not solved) " + d.gameObject.name);
+            PlaytestLog.Event("Door", "reject client open (lock not solved) " + DoorNative.Label(d.gameObject));
             msg.Open = d.open;
             msg.Locked = true;
             msg.SenderPlayerId = net.LocalPlayerId;
@@ -477,7 +538,7 @@ namespace SyncRADation.Networking
                     try { d.locked = false; } catch (System.Exception ex) { Guard.Swallow("Door.Unlock", ex); }
                     msg.Locked = false;
                     msg.SenderPlayerId = net.LocalPlayerId;
-                    PlaytestLog.Event("Door", "honor deferred client open " + d.gameObject.name);
+                    PlaytestLog.Event("Door", "honor deferred client open " + DoorNative.Label(d.gameObject));
                     DoorNative.ApplyDoubleDoor(d, msg.Open, false);
                     LastDoubleOpen[id] = msg.Open;
                     LastDoubleLocked[id] = false;
@@ -519,7 +580,7 @@ namespace SyncRADation.Networking
                 if (!hostLocked)
                 {
                     // Same rule as Doorway_Double: a client never locks a connected door the host holds unlocked.
-                    PlaytestLog.Event("Door", "ignore client relock (host connected door unlocked) " + cd.gameObject.name);
+                    PlaytestLog.Event("Door", "ignore client relock (host connected door unlocked) " + DoorNative.Label(cd.gameObject));
                     msg.Locked = false;
                     msg.SenderPlayerId = net.LocalPlayerId;
                     return true;

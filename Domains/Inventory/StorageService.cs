@@ -133,7 +133,7 @@ namespace SyncRADation.Networking
             catch (Exception ex) { ModRuntime.Log?.Warning("[Interact] bag ack: " + ex.Message); }
         }
 
-        /// <summary>"enum:n": the host took n out of the box for this peer — add them to the bag.</summary>
+        /// <summary>"enum:n": the host took n out of the box for this peer - add them to the bag.</summary>
         static void ApplyTakeGrant(string rest)
         {
             string[] parts = rest.Split(':');
@@ -195,7 +195,7 @@ namespace SyncRADation.Networking
             // (InteractionSyncService.HandleRequest only rejects DroppedPickup / StorageTake), so the item may
             // already be boxed. Giving the bag copy back would duplicate it; the reserve stays consumed.
             if (_putReserved)
-                PlaytestLog.Event("StorageBox", "session end with put in flight " + _item + " x" + _count + " — left to the host box");
+                PlaytestLog.Event("StorageBox", "session end with put in flight " + _item + " x" + _count + " - left to the host box");
             _busy = false;
             _putReserved = false;
             _count = 0;
@@ -218,7 +218,7 @@ namespace SyncRADation.Networking
             {
                 if (Time.unscaledTime - _since <= TimeoutSec)
                     return false;
-                PlaytestLog.Warn("StorageBox", "txn timeout — restoring reserve");
+                PlaytestLog.Warn("StorageBox", "txn timeout - restoring reserve");
                 // Restore gives the reserved put back; remember it so a late OK ack can undo that again.
                 if (_putReserved)
                 {
@@ -265,12 +265,12 @@ namespace SyncRADation.Networking
                 if (max > 0 && have + n > max) n = max - have;
                 if (n <= 0)
                 {
-                    PlaytestLog.Event("StorageBox", "take blocked — bag stack full item=" + kind);
+                    PlaytestLog.Event("StorageBox", "take blocked - bag stack full item=" + kind);
                     return false;
                 }
                 if (have <= 0 && !ItemBag.BagHasRoom(kind))
                 {
-                    PlaytestLog.Event("StorageBox", "take blocked — no free slot item=" + kind);
+                    PlaytestLog.Event("StorageBox", "take blocked - no free slot item=" + kind);
                     return false;
                 }
                 _putReserved = false;
@@ -323,7 +323,7 @@ namespace SyncRADation.Networking
                 var an = InventoryManager.getItem(late.Item);
                 if (an != null)
                     InventoryManager.RemoveItem(PartyKeyRing.FindInBag(an) ?? an, late.Count > 0 ? late.Count : 1);
-                PlaytestLog.Event("StorageBox", "late put ack — removed restored copy " + late.Item + " x" + late.Count);
+                PlaytestLog.Event("StorageBox", "late put ack - removed restored copy " + late.Item + " x" + late.Count);
             }
             catch (Exception ex)
             {
@@ -354,7 +354,7 @@ namespace SyncRADation.Networking
             _txn = 0;
         }
 
-        /// <summary>Overflow the bag could not hold — host boxes it again (no bag reserve, flagged "return").</summary>
+        /// <summary>Overflow the bag could not hold - host boxes it again (no bag reserve, flagged "return").</summary>
         internal static void ReturnToBox(int enumVal, int n)
         {
             if (n <= 0) return;

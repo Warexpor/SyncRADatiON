@@ -90,7 +90,7 @@ namespace SyncRADation.Patches
                 {
                     // Stack at max / no free slot: nothing moved, the floor item stays for everyone.
                     PlaytestLog.Event("Drop", "take " + _pendingDropItem + " x" + _pendingDropCount
-                        + " key=" + key + " — bag took nothing, drop stays");
+                        + " key=" + key + " - bag took nothing, drop stays");
                     ClearPendingDrop();
                     DroppedItemRegistry.RestorePlay();
                     return true;
@@ -202,7 +202,7 @@ namespace SyncRADation.Patches
                     string reason;
                     if (!net.DroppedItemHandlers.TryClaimDropped(key, net.LocalPlayerId, out reason, skipLocalGrant: true))
                     {
-                        PlaytestLog.Event("Drop", "host claim refused key=" + key + " " + reason + " — undo x" + added);
+                        PlaytestLog.Event("Drop", "host claim refused key=" + key + " " + reason + " - undo x" + added);
                         RemoveAdded(item, added);
                         _claimedDrops.Remove(key);
                         ClearPendingDrop();

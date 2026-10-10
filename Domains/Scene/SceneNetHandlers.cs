@@ -220,7 +220,7 @@ namespace SyncRADation.Networking
                 {
                     _net.SetStatusText("Following host scene '" + compareTo + "'");
                     ModRuntime.Log?.Warning("[Scene] MISMATCH local='" + localScene + "' host='" + compareTo
-                        + "' — following host");
+                        + "' - following host");
                 }
                 SceneFollowService.FollowHost(compareTo);
             }

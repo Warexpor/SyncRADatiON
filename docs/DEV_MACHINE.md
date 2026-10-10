@@ -39,6 +39,8 @@ Read with `grep -a` (non-UTF8 bytes). Connected lines are prefixed `H ` (host) /
 
 **Story:** `[Story] apply commit … written=N`; `commit applied only in part` warns and requests one resync per scene.
 
+**Cutscenes / music / rooms**: `[Cutscene] start|skip|end` (what ran on this peer, how long, how it ended), `[Music] inCombat= enemyPresence=` (Diagnostics, on change), `[Room] pN 'old' -> 'new'` (a remote player's room as this peer knows it). Door lines read `id=<WorldId> 'Inter' in <room>`.
+
 **Event cam** (`Sync/EventCamTrace.cs`, Diagnostics): `[EventCam] click …` explains every click in a zoom-in puzzle (inputs, cursor, zoom, interaction under the cursor, `MOD-KILLED`).
 
 **Move** (`Sync/MoveTrace.cs`, Diagnostics): `[Move] BLOCKED …` when the local player holds a direction for 1 s without moving: every native movement gate (gameState, charState, suspendInput, hurt/stun, animating/useAnim/grappled, cutscene/eventScreen flags, overrideInput, MoveOverrideActive, controller/rigidbody state, foto mode, tuner) plus what the native forward wall raycasts (`ThirdPersonCharacter.CollisionDetection`, `WallMask`) hit and the solid 3D colliders within 1.2 units; `[Move] free` when walking works again.

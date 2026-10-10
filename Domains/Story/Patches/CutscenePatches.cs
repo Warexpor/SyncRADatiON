@@ -39,7 +39,9 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(CutsceneManager __instance)
         {
-            if (__instance == null || !NetGate.Party) return;
+            if (__instance == null) return;
+            if (NetGate.Live) CutsceneSync.NoteStarted(__instance);
+            if (!NetGate.Party) return;
             try
             {
                 if (!LocalInspect.AirlockCinematic(__instance.gameObject) && !__instance.unskippable)

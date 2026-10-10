@@ -32,7 +32,8 @@ namespace SyncRADation.Networking
                 Text = text ?? ""
             };
             if (kind != InteractionKind.Gunshot)
-                PlaytestLog.Event("Interact", "request " + kind + " id=" + worldId.ToString("X16"));
+                PlaytestLog.Event("Interact", "request " + kind + " id=" + worldId.ToString("X16")
+                    + (kind == InteractionKind.InspectFlag ? InteractionSyncService.FlagLabel(int0, int1, f0, text) : ""));
             if (NetGate.HostRole)
             {
                 InteractionSyncService.HandleRequest(msg);

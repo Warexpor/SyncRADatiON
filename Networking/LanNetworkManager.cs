@@ -515,7 +515,7 @@ namespace SyncRADation.Networking
                 NetPeer peer;
                 if (_peers.TryGetValue(pid, out peer) && !_readyPeers.Contains(pid))
                 {
-                    ModRuntime.Log?.Warning("[Network] Player " + pid + " handshake timed out — disconnecting");
+                    ModRuntime.Log?.Warning("[Network] Player " + pid + " handshake timed out - disconnecting");
                     RejectPeer(peer, "Handshake timed out (mod build mismatch?)");
                 }
             }

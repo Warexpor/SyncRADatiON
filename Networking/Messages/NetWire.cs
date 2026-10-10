@@ -51,7 +51,7 @@ namespace SyncRADation.Networking
         public static int ClampCount(int count, int cap, string what)
         {
             if (count <= cap) return count;
-            WarnOnce("cap:" + what, what + " count " + count + " exceeds wire cap " + cap + " — clamped");
+            WarnOnce("cap:" + what, what + " count " + count + " exceeds wire cap " + cap + " - clamped");
             return cap;
         }
 

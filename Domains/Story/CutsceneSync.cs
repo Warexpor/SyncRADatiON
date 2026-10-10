@@ -41,6 +41,16 @@ namespace SyncRADation.Networking
         // persistent: cleared with the stamps on scene change / session reset (OnSceneChanged)
         static readonly System.Collections.Generic.List<CutsceneManager> _watching = new System.Collections.Generic.List<CutsceneManager>();
 
+        sealed class Live
+        {
+            public CutsceneManager C;
+            public ulong Id;
+            public string Name;
+            public float At;
+        }
+        // persistent: log bookkeeping of the cutscenes running on this peer; cleared with the stamps (OnSceneChanged)
+        static readonly System.Collections.Generic.List<Live> _live = new System.Collections.Generic.List<Live>();
+
         static float Now => Time.unscaledTime;
 
         static string Hex(ulong id) => id.ToString("X16");
@@ -51,6 +61,46 @@ namespace SyncRADation.Networking
             _stamps.Clear();
             _deferred.Clear();
             _watching.Clear();
+            _live.Clear();
+        }
+
+        /// <summary>StartCutscene postfix: a cutscene is running on this peer now (whoever started it). Log only.</summary>
+        internal static void NoteStarted(CutsceneManager c)
+        {
+            try
+            {
+                if (!StartedHere(c)) return;
+                for (int i = 0; i < _live.Count; i++)
+                    if (_live[i].C == c) return;
+                var l = new Live { C = c, Id = WorldId.FromGameObject(c.gameObject), Name = c.gameObject.name, At = Now };
+                _live.Add(l);
+                PlaytestLog.Event("Cutscene", "start '" + l.Name + "' id=" + Hex(l.Id) + " room='"
+                    + NetworkDamageSystem.CurrentRoomName() + "' skippable=" + !c.unskippable
+                    + " by=" + (NetGate.IsApplying ? "party" : "local trigger"));
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+        }
+
+        static void TickLive()
+        {
+            for (int i = _live.Count - 1; i >= 0; i--)
+            {
+                var l = _live[i];
+                try
+                {
+                    if (l.C != null && StartedHere(l.C)) continue;
+                    _live.RemoveAt(i);
+                    PlaytestLog.Event("Cutscene", "end '" + l.Name + "' id=" + Hex(l.Id) + " after "
+                        + (Now - l.At).ToString("F1") + "s: "
+                        + (l.C == null ? "object gone" : l.C.completed ? "completed" : "stopped, not completed")
+                        + " room='" + NetworkDamageSystem.CurrentRoomName() + "'");
+                }
+                catch (System.Exception e)
+                {
+                    Guard.Swallow(e);
+                    if (i < _live.Count) _live.RemoveAt(i);
+                }
+            }
         }
 
         /// <summary>
@@ -141,6 +191,7 @@ namespace SyncRADation.Networking
         /// </summary>
         internal static void TickDeferred()
         {
+            if (_live.Count > 0) TickLive();
             if (_watching.Count > 0) TickWatched();
             if (_deferred.Count == 0 || PickupOpenHere()) return;
             var run = _deferred.ToArray();
@@ -280,6 +331,7 @@ namespace SyncRADation.Networking
                 // Already over here, or never started (a stray skipper firing late): nothing to skip.
                 if (c.completed || !StartedHere(c)) return false;
                 // Blocks a re-start of this cutscene on this peer (CutsceneStamps skip window).
+                PlaytestLog.Event("Cutscene", "skip '" + c.gameObject.name + "' id=" + Hex(WorldId.FromGameObject(c.gameObject)));
                 _stamps.TrySkip(WorldId.FromGameObject(c.gameObject), Now);
                 if (!NetGate.Client) return true;
                 SkipInAuthorScope(c);

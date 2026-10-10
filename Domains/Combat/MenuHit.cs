@@ -61,7 +61,7 @@ namespace SyncRADation.Players
                 _pending = true;
                 _forced = false;
                 _at = Time.unscaledTime;
-                PlaytestLog.Event("Damage", "hit in " + gs + " (" + damage + ") — closing it");
+                PlaytestLog.Event("Damage", "hit in " + gs + " (" + damage + ") - closing it");
                 CloseOpenScreen(gs);
             }
             return false;
@@ -82,7 +82,7 @@ namespace SyncRADation.Players
                 if (!_forced && Time.unscaledTime - _at > CloseTimeout && MenuState(gs))
                 {
                     _forced = true;
-                    PlaytestLog.Event("Damage", "screen " + gs + " did not close — forcing play");
+                    PlaytestLog.Event("Damage", "screen " + gs + " did not close - forcing play");
                     DroppedItemRegistry.RestorePlay();
                 }
                 return;

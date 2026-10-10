@@ -363,7 +363,7 @@ namespace SyncRADation.Networking
                 // Measurement and native disagree: never give back more than native kept. The claim stays for this
                 // visit; the prop comes back with its saved count (LoadState) on the next scene load.
                 PlaytestLog.Warn("Pickup", "partial " + t.Item + " measured x" + remainder + " prop x" + onProp
-                    + " id=" + id.ToString("X16") + " — claim kept");
+                    + " id=" + id.ToString("X16") + " - claim kept");
                 return;
             }
             PlaytestLog.Event("Pickup", "partial " + t.Item + " x" + remainder + " stays on prop id=" + id.ToString("X16"));
@@ -1014,7 +1014,7 @@ namespace SyncRADation.Networking
 
             if (HoldTarotDeathForSacrifice(itemEnum))
             {
-                PlaytestLog.Event("Pickup", "deny TarotDeath — KeyOfSacrifice still available");
+                PlaytestLog.Event("Pickup", "deny TarotDeath - KeyOfSacrifice still available");
                 return false;
             }
 
@@ -1045,7 +1045,7 @@ namespace SyncRADation.Networking
                 NoteOnPickupFired(id); // native pickUp already Invoked onPickup: the broadcast's Ensure must not re-fire (Dig H)
             else
                 ModRuntime.Log?.Msg("[WorldPickup] Claim OK id=" + id.ToString("X16") + " item=" + item + " x" + count
-                    + " → player " + claimer);
+                    + " -> player " + claimer);
             PartyKeyRing.Note(item);
             PartyKeyRing.Broadcast();
             if (!hostNative && net != null)

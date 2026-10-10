@@ -972,7 +972,7 @@ namespace SyncRADation.Networking
                 var e = entries[i];
                 parts[i] = e.Type + (e.Bool0 ? "+ " : " ") + unchecked((ulong)e.WorldId).ToString("X16");
             }
-            return string.Join(", ", parts) + (entries.Count > n ? "…" : "");
+            return string.Join(", ", parts) + (entries.Count > n ? "..." : "");
         }
 
         private void NoteApplied(PuzzleStateEntry entry, bool keepPending)

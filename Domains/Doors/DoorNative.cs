@@ -21,6 +21,26 @@ namespace SyncRADation.Networking
             _slideCycle = typeof(EventSlidingDoor).GetMethod("cycle", f);
         }
 
+        /// <summary>A door for the log: WorldId plus the room it stands in (every door object is named "Inter").</summary>
+        public static string Label(GameObject go, ulong id = 0)
+        {
+            if (go == null) return "id=?";
+            string room = "?";
+            try
+            {
+                if (id == 0) id = WorldId.FromGameObject(go);
+                for (Transform t = go.transform; t != null; t = t.parent)
+                {
+                    var r = t.GetComponent<Room>();
+                    if (r == null) continue;
+                    room = string.IsNullOrEmpty(r.roomName) ? r.gameObject.name : r.roomName;
+                    break;
+                }
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            return "id=" + id.ToString("X16") + " '" + go.name + "' in " + room;
+        }
+
         public static void ApplyDoubleDoor(Doorway_Double d, bool open, bool locked)
         {
             if (d == null) return;
@@ -47,7 +67,7 @@ namespace SyncRADation.Networking
             if (open == d.open)
                 return;
 
-            PlaytestLog.Event("Door", "apply " + (open ? "open" : "close") + " " + d.gameObject.name);
+            PlaytestLog.Event("Door", "apply " + (open ? "open" : "close") + " " + Label(d.gameObject));
             // `open` is the whole state: native Update calls openDoors / closeDoors every frame to lerp the leaves
             // toward it (Ghidra Doorway_Double.c Update).
             try { d.open = open; }
@@ -498,13 +518,10 @@ namespace SyncRADation.Networking
             if (string.IsNullOrEmpty(path) || at == null) return;
             float vol;
             if (!WorldSfx.TryVolume(at.transform.position, out vol))
-            {
-                PlaytestLog.Event("Door", "sfx skip far " + at.name);
-                return;
-            }
+                return; // out of earshot
             WorldSfx.Play(path, at.transform);
             if (ModRuntime.VerboseLogging)
-                PlaytestLog.Verbose("Door", "sfx " + path + " @ " + at.name + " vol=" + vol.ToString("0.00"));
+                PlaytestLog.Verbose("Door", "sfx " + path + " @ " + Label(at) + " vol=" + vol.ToString("0.00"));
         }
     }
 }

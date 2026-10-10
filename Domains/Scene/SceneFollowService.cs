@@ -91,7 +91,7 @@ namespace SyncRADation.Networking
         public static bool LocalIsTransient() => IsTransient(ActiveScene());
 
         /// <summary>
-        /// "MainMenu" (PauseMenu.quit → quitToScene) or "MainMenu2" (CreditsEnd).
+        /// "MainMenu" (PauseMenu.quit -> quitToScene) or "MainMenu2" (CreditsEnd).
         /// </summary>
         public static bool IsMainMenu(string sceneName)
         {
@@ -113,7 +113,7 @@ namespace SyncRADation.Networking
         }
 
         /// <summary>
-        /// A load that leaves the game for the title flow: MainMenu (PauseMenu.quit → quitToScene("MainMenu") →
+        /// A load that leaves the game for the title flow: MainMenu (PauseMenu.quit -> quitToScene("MainMenu") ->
         /// NewApplication.LoadLevel; CreditsEnd → MainMenu2), StartupPC (PlatformManager.RestartGame, AsyncLoader's
         /// LoadLevel(0) fallback) or Profile Select. Never a follow target: it is one player leaving.
         /// </summary>

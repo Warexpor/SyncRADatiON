@@ -147,7 +147,11 @@ namespace SyncRADation.Players
         public static void NoteRoom(int playerId, string room)
         {
             if (playerId < 0 || IsLocal(playerId)) return;
-            Get(playerId).Room = room ?? "";
+            var e = Get(playerId);
+            room = room ?? "";
+            if (e.Room != room)
+                PlaytestLog.Event("Room", "p" + playerId + " '" + e.Room + "' -> '" + room + "'");
+            e.Room = room;
         }
 
         public static bool TryGetPos(int playerId, out Vector3 pos)

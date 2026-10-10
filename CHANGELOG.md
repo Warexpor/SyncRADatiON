@@ -1,3 +1,21 @@
+## 0.5.70 — 2026-10-10
+
+Protocol **v20** (unchanged). From reading the host and client logs of the 0.5.69 session.
+
+### Fixed
+- **A door slammed on a player walking through it when another player came the other way** (LOV West Corridor / Library, both crossing at once: the host's door opened three times in 1.4 s). `ConnectedDoors.End` closes both leaves when a transit ends, and that close was applied on the peer still walking through. A remote close of the open door beside a player in a transit (`gameState traversing`) is held until that transit is over (`[Door] hold remote close`, `held close now`).
+- **The host learned a player's new room up to half a second late** (0.23 to 0.49 s in the log): rooms were reported on a 0.5 s slot, so the host switched a room's enemies on that much after the client walked in, and room-scoped starts judged the old room. `Room.EnterRoom` now reports with the same frame's party tick.
+
+### Logging
+- `[Cutscene] start '<name>' … by=local trigger|party`, `skip`, `end … after N s: completed|stopped, not completed|object gone` on every peer: until now only the wire side of a cutscene was logged, not what ran here or for how long.
+- `[Music] inCombat=… enemyPresence=…` on every flip of the statics that drive the combat music (Diagnostics).
+- `[Room] pN 'old' -> 'new'` for every remote player's room change.
+- Door lines name the door: `id=<WorldId> 'Inter' in <room>` on local, applied, relock, blocked and oob-rescue lines (every door object is called "Inter", so applied lines could not be matched to local ones). `sfx skip far` is gone (a third of the log).
+- `[Enemy] TakeDamage` shows `hp=before->after` and `state=before->after`, and marks a downing hit: native code writes the revive HP there, which read as HP going up between two hits.
+- `InspectFlag` lines carry the key and value (they logged `id=0000000000000000` only); incremental story commits list their keys on both sides.
+- `[Proxy] vis` counts the Ariane model's renderers (a skinned proxy logged `drawn=0 onScreen=True`, the hidden-player signature).
+- `oob rescue` printed `UnityEngine.Vector2` for its direction. Log text is ASCII (the dash and arrow came out as `?` / `�` in `Latest.log`). `[Session] application quit` ahead of Unity's teardown, so the `[Stall]` warnings after it are not read as a freeze.
+
 ## 0.5.69 — 2026-10-10
 
 Protocol **v20** (unchanged).

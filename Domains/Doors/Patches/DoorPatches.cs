@@ -33,7 +33,7 @@ namespace SyncRADation.Patches
             int key = 0;
             try { key = __instance.GetInstanceID(); } catch (System.Exception e) { Guard.Swallow(e); }
             if (_blockLogged.Add(key))
-                PlaytestLog.Event("Door", "block locked open " + __instance.gameObject.name);
+                PlaytestLog.Event("Door", "block locked open " + DoorNative.Label(__instance.gameObject));
             return false;
         }
 
@@ -351,7 +351,7 @@ namespace SyncRADation.Patches
                 if (now - _lastLog > 5f)
                 {
                     _lastLog = now;
-                    PlaytestLog.Event("Door", "oob rescue held: cast " + dir + " leaves through open door " + door);
+                    PlaytestLog.Event("Door", "oob rescue held: cast (" + dir.x.ToString("0") + "," + dir.y.ToString("0") + ") leaves through open door " + door);
                 }
             }
             catch (System.Exception e) { Guard.Swallow(e); }
@@ -363,13 +363,13 @@ namespace SyncRADation.Patches
             {
                 var d = kvp.Value;
                 if (d == null || !d.isActiveAndEnabled || !DoubleOpenish(d)) continue;
-                if (OnRay(p, dir, d.transform.position)) return d.gameObject.name;
+                if (OnRay(p, dir, d.transform.position)) return DoorNative.Label(d.gameObject, kvp.Key);
             }
             foreach (var kvp in WorldRegistry.AllSlidingDoors())
             {
                 var s = kvp.Value;
                 if (s == null || !s.isActiveAndEnabled || !(s.opened || s.moving)) continue;
-                if (OnRay(p, dir, s.transform.position)) return s.gameObject.name;
+                if (OnRay(p, dir, s.transform.position)) return DoorNative.Label(s.gameObject, kvp.Key);
             }
             return null;
         }
@@ -405,6 +405,8 @@ namespace SyncRADation.Patches
         public static void Postfix(Room __instance)
         {
             try { FlickerTrace.RoomEnter(__instance); } catch (System.Exception e) { Guard.Swallow(e); }
+            // The others learn the new room with this frame's party tick, not at the next report slot.
+            Players.NetworkDamageSystem.RoomChangedNow();
             if (NetGate.IsApplying) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;

@@ -39,6 +39,7 @@ namespace SyncRADation.Sync
             public bool HavePos;
             public float NextVisAt;
             public float RendsAt = -999f;
+            public int Children = -1;
         }
         static readonly Dictionary<int, ProxyVis> _proxy = new Dictionary<int, ProxyVis>();
 
@@ -138,6 +139,7 @@ namespace SyncRADation.Sync
             _enemyState.Clear();
             _missSeen.Clear();
             _wakeLogged.Clear();
+            _combatState = -1;
         }
 
         static void Emit(string tag, string msg)
@@ -187,6 +189,21 @@ namespace SyncRADation.Sync
                 + " flips=" + flips + " here=" + Here());
         }
 
+        // ---- Combat music statics (EnemyManager.inCombat / enemyPresence drive the combat music and the heartbeat) ----
+        static int _combatState = -1;
+
+        /// <summary>Every frame: one line when either static flips, with the room, so stuck combat music has a timestamp.</summary>
+        public static void CombatStatics()
+        {
+            if (!ModConfig.DiagnosticsOn || !NetGate.Live) return;
+            int s = (EnemyManager.inCombat ? 1 : 0) | (EnemyManager.enemyPresence ? 2 : 0);
+            if (s == _combatState) return;
+            bool first = _combatState < 0;
+            _combatState = s;
+            if (first && s == 0) return;
+            Emit("Music", "inCombat=" + ((s & 1) != 0) + " enemyPresence=" + ((s & 2) != 0) + " here=" + Here());
+        }
+
         public static void RoomEnter(Room room)
         {
             if (!ModConfig.DiagnosticsOn || room == null || !NetGate.Live) return;
@@ -232,7 +249,12 @@ namespace SyncRADation.Sync
             v.NextVisAt = now + ProxyVisInterval;
 
             bool stale = v.Rends == null || v.Rends.Length == 0 || v.Rends[0] == null;
-            if (stale && now - v.RendsAt >= ProxyRendRefetch)
+            // Another model on the proxy (ProxySkin) hangs under its root: count those renderers too, or a skinned
+            // proxy reads as "on screen, nothing drawn".
+            int children = go.transform.childCount;
+            bool regrown = children != v.Children;
+            v.Children = children;
+            if (regrown || (stale && now - v.RendsAt >= ProxyRendRefetch))
             {
                 v.Rends = go.GetComponentsInChildren<Renderer>(true);
                 v.RendsAt = now;

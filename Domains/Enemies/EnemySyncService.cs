@@ -654,6 +654,8 @@ namespace SyncRADation.Networking
 
                 int dmg = 0;
                 var hb = enemy.hitbox;
+                int hpWas = hb != null ? hb.HP : -1;
+                var stateWas = enemy.state;
                 if (hb != null && enemy.state != EnemyController.enemystate.dead
                     && !float.IsNaN(damage) && damage > 0f)
                 {
@@ -670,8 +672,11 @@ namespace SyncRADation.Networking
                     + " fire=" + fire.ToString("F2")
                     + " crit=" + crit.ToString("F2")
                     + " hurt=" + hurt.ToString("F2")
-                    + " hp=" + (hb != null ? hb.HP.ToString() : "?")
-                    + " state=" + enemy.state);
+                    // Native TakeDamage at 0 HP downs the enemy and writes its revive HP (EnemyRegeneration / reviveHP),
+                    // so "after" can be higher than "before".
+                    + " hp=" + hpWas + "->" + (hb != null ? hb.HP.ToString() : "?")
+                    + (hb != null && hpWas - dmg <= 0 ? " (downed, revive hp)" : "")
+                    + " state=" + stateWas + "->" + enemy.state);
                 return true;
             }
             catch (Exception ex)

@@ -95,6 +95,7 @@ namespace SyncRADation.Networking
                 PlaytestLog.Event("Interact", (ok ? "ok " : "FAIL ") + msg.Kind
                     + " from=" + msg.SenderPlayerId
                     + " id=" + unchecked((ulong)msg.WorldId).ToString("X16")
+                    + (msg.Kind == InteractionKind.InspectFlag ? FlagLabel(msg.Int0, msg.Int1, msg.Float0, msg.Text) : "")
                     + (string.IsNullOrEmpty(reason) ? "" : " " + reason));
             // DroppedPickup: echo drop key in WorldId (request Int0) so client FAIL revert matches.
             long ackId = msg.WorldId;
@@ -244,6 +245,25 @@ namespace SyncRADation.Networking
         }
 
         /// <summary>A client's SProgress write (Int0 = kind, see StorySyncService.SendFlag): the host applies and commits it.</summary>
+        /// <summary>An InspectFlag request for the log: the SProgress key and value it writes, or the story request it carries.</summary>
+        internal static string FlagLabel(int int0, int int1, float f0, string text)
+        {
+            if (int0 >= 100) return " story=" + (StoryCmd)(int0 - 100);
+            string key = text ?? "";
+            int nl = key.IndexOf('\n');
+            string val;
+            switch (int0)
+            {
+                case 0: val = int1 != 0 ? "true" : "false"; break;
+                case 1: val = int1.ToString(); break;
+                case 2: val = f0.ToString("0.###"); break;
+                case 3: val = nl >= 0 ? "'" + key.Substring(nl + 1) + "'" : "''"; break;
+                default: val = "vec"; break;
+            }
+            if (nl >= 0) key = key.Substring(0, nl);
+            return " " + key + "=" + val;
+        }
+
         private static bool ApplyInspectFlag(InteractionRequestMessage msg)
         {
             if (msg.Int0 >= 100) return ApplyStoryRequest(msg);

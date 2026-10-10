@@ -230,6 +230,32 @@ namespace SyncRADation.Networking
                 PlaytestLog.Event("Story", "commit full flags=" + flags.Length
                     + " cmd=" + (replay ? _lastCmd.ToString() : "-")
                     + (authoritative ? " authoritative" : ""));
+            else
+                PlaytestLog.Event("Story", "commit flags=" + flags.Length + FlagKeys(flags));
+        }
+
+        /// <summary>The first few keys of a commit with their values, for the log (an incremental one is a handful).</summary>
+        static string FlagKeys(StoryFlagEntry[] flags)
+        {
+            if (flags == null || flags.Length == 0) return "";
+            var sb = new System.Text.StringBuilder(" [");
+            int n = System.Math.Min(flags.Length, 6);
+            for (int i = 0; i < n; i++)
+            {
+                var e = flags[i];
+                if (i > 0) sb.Append(", ");
+                sb.Append(e.Key).Append('=');
+                switch (e.Kind)
+                {
+                    case 0: sb.Append(e.BoolVal ? "true" : "false"); break;
+                    case 1: sb.Append(e.IntVal); break;
+                    case 2: sb.Append(e.FloatVal.ToString("0.###")); break;
+                    case 3: sb.Append('\'').Append(e.StringVal).Append('\''); break;
+                    default: sb.Append("vec"); break;
+                }
+            }
+            if (flags.Length > n) sb.Append(", +").Append(flags.Length - n);
+            return sb.Append(']').ToString();
         }
 
         // ------------------------------------------------------------------ client: commit apply
@@ -319,6 +345,7 @@ namespace SyncRADation.Networking
 
             PlaytestLog.Event("Story", "apply commit full=" + msg.FullRefresh
                 + " flags=" + (msg.Flags != null ? msg.Flags.Length : 0) + " written=" + written
+                + (msg.FullRefresh ? "" : FlagKeys(msg.Flags))
                 + " cmd=" + (StoryCmd)msg.ActiveStoryCmd);
             if (!ok) HealAfterFailedApply(net);
 

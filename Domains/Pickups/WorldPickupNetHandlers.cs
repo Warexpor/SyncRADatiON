@@ -118,7 +118,7 @@ namespace SyncRADation.Networking
             // Peer disconnected before host handled the claim — do not hide the prop.
             if (claim.ClaimerPlayerId != _net.LocalPlayerId && !_net.HasPeer(claim.ClaimerPlayerId))
             {
-                ModRuntime.Log?.Msg("[WorldPickup] Claim ignored — peer gone id=" + id.ToString("X16")
+                ModRuntime.Log?.Msg("[WorldPickup] Claim ignored - peer gone id=" + id.ToString("X16")
                     + " by " + claim.ClaimerPlayerId);
                 return;
             }

@@ -200,7 +200,7 @@ namespace SyncRADation.Networking
                 if (!_loggedOversizedPose)
                 {
                     _loggedOversizedPose = true;
-                    ModRuntime.Log?.Error("[Net] sequenced packet " + writer.Length + " bytes exceeds MTU " + mtu + " — dropped");
+                    ModRuntime.Log?.Error("[Net] sequenced packet " + writer.Length + " bytes exceeds MTU " + mtu + " - dropped");
                 }
                 return;
             }

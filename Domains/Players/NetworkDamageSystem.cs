@@ -135,7 +135,7 @@ namespace SyncRADation.Players
             net.CombatHandlers.SendDeathPolicy(DeathKind.ClientDowned);
             net.AvatarHandlers.SendLocalVital();
             PlaytestLog.Event("Damage", (NetGate.HostRole ? "host" : "client")
-                + " downed — respawn in " + ModConfig.DownedRespawnSeconds.ToString("F0") + "s");
+                + " downed - respawn in " + ModConfig.DownedRespawnSeconds.ToString("F0") + "s");
         }
 
         private static void PlayDeathSound()
@@ -192,7 +192,7 @@ namespace SyncRADation.Players
             if (PartyVitals.AnyOtherAlive(net))
                 DropInventoryOnDeath(net);
             else
-                PlaytestLog.Event("Damage", "last player down — skip floor drop (wipe follows)");
+                PlaytestLog.Event("Damage", "last player down - skip floor drop (wipe follows)");
         }
 
         private static void DropInventoryOnDeath(LanNetworkManager net)
@@ -331,7 +331,7 @@ namespace SyncRADation.Players
         {
             var net = LanNetworkManager.Instance;
             if (net == null) return;
-            PlaytestLog.Event("Damage", "party wipe — host reloads '" + msg.Scene + "'");
+            PlaytestLog.Event("Damage", "party wipe - host reloads '" + msg.Scene + "'");
             // The host reverted to a save, this peer never loads a slot: story progress is replaced by the host's next full dump.
             Step("wipe story", net.StorySync.OnPartyWipe);
 
@@ -553,7 +553,7 @@ namespace SyncRADation.Players
             var token = plan.Mode == HostReload.Mode.Save ? PartySaveService.TokenForSlot(plan.Slot) : default(PartySaveToken);
             // NewGame: SaveSlot = -1 tells clients the world is brand new (empty bag), not "restore bag at down".
             if (plan.Mode == HostReload.Mode.NewGame) token.Slot = -1;
-            PlaytestLog.Event("Damage", "party wipe — " + plan.Mode + " reload '" + plan.Scene + "'"
+            PlaytestLog.Event("Damage", "party wipe - " + plan.Mode + " reload '" + plan.Scene + "'"
                 + (token.Valid ? " token=" + token.Key : " (no party snapshot)"));
 
             net.SendPartyLife(new PartyLifeMessage
@@ -580,6 +580,10 @@ namespace SyncRADation.Players
             int hp = s != null && s.InjectorReviveHP > 0 ? s.InjectorReviveHP : 50;
             return Mathf.Clamp(hp, 1, 100);
         }
+
+        /// <summary>Room.EnterRoom ran: the next party tick reports the room at once. Enemy wake on the host (PeerRoomEnemies)
+        /// and room-scoped cutscenes key off it, and a report slot could be half a second away.</summary>
+        public static void RoomChangedNow() => _roomTimer = RoomReportInterval;
 
         public static string CurrentRoomName()
         {
@@ -679,7 +683,7 @@ namespace SyncRADation.Players
                 if (Time.unscaledTime - _lastSafetyLog > 5f)
                 {
                     _lastSafetyLog = Time.unscaledTime;
-                    PlaytestLog.Event("Damage", "hp<=0 poll — downing");
+                    PlaytestLog.Event("Damage", "hp<=0 poll - downing");
                 }
                 Die();
             }

@@ -106,7 +106,7 @@ namespace SyncRADation
                 Log.Msg("  grep always-on: [Story] [Interact] [KeyRing] [StorageBox] [Scene] [Damage]");
                 Log.Msg("    [Door] [Puzzle] [Pickup] [Harmony] [Hitch] [Spawn] [Enemy] [Proxy] [Weapon]");
                 Log.Msg("  VerboseLogging also: [FMOD] Play/Stop, [Proxy]/[DRV] clone/FX, puzzle diffs");
-                Log.Msg("  Diagnostics also: [Room] [Proxy] vis/jump, [Enemy] client/wake, [Move] [Bag] [EventCam],");
+                Log.Msg("  Diagnostics also: [Room] [Proxy] vis/jump, [Enemy] client/wake, [Move] [Bag] [EventCam] [Music],");
                 Log.Msg("    [Hitch] phase=/stall, full [Harmony] audit");
                 Log.Msg("  Hitch tags (spike-only): frame | send gap | recv | puzzle | enemy | boss");
                 Log.Msg("    | pickup | weaponClone | 5s sendHz/recvHz/maxSend/maxRecv/maxDt/cost");
@@ -229,6 +229,8 @@ namespace SyncRADation
             HitchTrace.End("friendlyFire", tp);
             tp = HitchTrace.Begin();
 
+            try { FlickerTrace.CombatStatics(); }
+            catch (System.Exception ex) { Guard.Swallow("ModRuntime.CombatStatics", ex); }
             try { NetworkDamageSystem.TickRespawn(); }
             catch (System.Exception ex) { Guard.Swallow("ModRuntime.TickRespawn", ex); }
             HitchTrace.End("tickRespawn", tp);

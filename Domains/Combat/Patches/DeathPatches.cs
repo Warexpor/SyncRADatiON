@@ -40,7 +40,7 @@ namespace SyncRADation.Patches
                 }
                 PartySaveService.OnHostLoaded();
                 HostReload.ResetHostWorldState(net);
-                PlaytestLog.Event("PartySave", "host load — ring/claims/floor drops reset" + (wipe ? " (wipe reload)" : ""));
+                PlaytestLog.Event("PartySave", "host load - ring/claims/floor drops reset" + (wipe ? " (wipe reload)" : ""));
                 if (wipe)
                     SessionReset.RunAll(SessionReset.ReasonWipe);
                 // The snapshot sent at scene arrival was held back (HostReload.Pending) or pre-dates this reset:

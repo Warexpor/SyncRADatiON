@@ -379,7 +379,7 @@ namespace SyncRADation.Networking
                 Items.itemlist have;
                 if (DroppedItemRegistry.TryGet(key, out have, out _) && have != kind)
                     ModRuntime.Log?.Warning("[Drop] key collision " + key + " existing=" + have
-                        + " incoming=" + kind + " — dropped duplicate spawn");
+                        + " incoming=" + kind + " - dropped duplicate spawn");
                 DetachDroppedKey(kind);
                 return;
             }
