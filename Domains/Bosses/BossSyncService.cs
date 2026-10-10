@@ -724,7 +724,7 @@ namespace SyncRADation.Networking
             x.intensity = e.Float0;
             x.radioIntensity = e.Float1;
             // Client Update recomputes glitch from local Elster/radio: hold the host snap.
-            SyncRADation.Patches.KolibriAdlerAuthPatches.HoldKolibri(e.Bool0, e.Int0, e.Float0, e.Float1);
+            SyncRADation.Patches.KolibriAdlerAuthPatches.HoldKolibri(x, e.Bool0, e.Int0, e.Float0, e.Float1);
         }
 
         internal static void ApplyAdler(BOS_Adler x, PuzzleStateEntry e)
@@ -732,7 +732,7 @@ namespace SyncRADation.Networking
             if (x == null) return;
             x.intensity = e.Float0;
             x.progress = e.Float1;
-            SyncRADation.Patches.KolibriAdlerAuthPatches.HoldAdler(e.Float0, e.Float1);
+            SyncRADation.Patches.KolibriAdlerAuthPatches.HoldAdler(x, e.Float0, e.Float1);
         }
     }
 }

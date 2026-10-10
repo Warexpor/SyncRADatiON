@@ -18,11 +18,12 @@ MelonLoader's console is off for pilot instances (`--melonloader.hideconsole`): 
 | Script | What it does |
 |--------|--------------|
 | `setup.sh [--fresh]` | Make the instances `h`, `c1`, `c2`, `c3` and their prefixes; sets the pilot prefs (MaxPlayers 4, AllowClientCheats, VerboseLogging, Diagnostics) |
-| `pilot-run.sh [Scene]` | Deploy `bin/stage/Debug/SyncRADation.dll` (`PILOT_DLL`) to every instance (md5 checked), start the box, host `Scene` (default `DET_Detention`), join `CLIENTS` clients (default 2 = three players), return when all are in the world |
+| `pilot-run.sh [Scene]` | Deploy `bin/stage/Debug/SyncRADation.dll` (`PILOT_DLL`) to every instance (md5 checked), start the box, host `Scene` (default `DET_Detention`), join `CLIENTS` clients (default 2 = three players) all at once (`JOIN=serial`: one after another), return when all are in the world |
 | `pcmd.sh <h\|c1\|c2\|c3\|all> <command...>` | Send one command, print its reply |
 | `check.sh <tag>` | Every peer writes its digest at the same moment (`at`), each client's is diffed against the host's (`digest-diff.py`); exit 1 on a difference |
 | `coop-soak.sh` | One chapter, every arrow: a pickup each, all peers racing for one pickup, each peer killing an enemy (clients in rooms the host never entered), a client opening a door, a client downed and revived, a client leaving and rejoining late; a check after each step |
 | `story-run.sh [chapters...]` | The chapters in story order; loads alternate between the host and a client (F7 follow request); in each: settle, skip the opening cutscene, check, a pickup each, each client kills an enemy, check |
+| `soak-all.sh [chapters...]` | The full scope in one session: the chapters in story order (loads alternate as in `story-run.sh`), `coop-soak.sh` in each; a chapter that ends in a menu scene is loaded and checked, not soaked. One boot for every chapter |
 | `pilot-quit.sh [tag]` | Collect every peer's `Latest.log`, transcript and digests into `artifacts/pilot/<tag>/`, print `report.sh`, quit and take the box down (`KEEP=1`: collect only) |
 | `symbolize.py <log...>` | The `[Stall]` lines with native frames, one frame per line, GameAssembly frames named from the decompile's `@ RVA` lines |
 | `report.sh <dir>` | Per peer: version, handshakes, scenes, registry checksums, warnings by tag, `[Guard]`, divergence, exceptions, Unity errors, failed pilot commands |
@@ -34,6 +35,14 @@ scripts/build.sh --debug
 scripts/pilot/pilot-run.sh DET_Detention
 scripts/pilot/coop-soak.sh
 scripts/pilot/pilot-quit.sh soak
+```
+
+Full scope (every chapter, ~3 min each):
+
+```bash
+scripts/pilot/pilot-run.sh PEN_Wreck
+scripts/pilot/soak-all.sh
+scripts/pilot/pilot-quit.sh full
 ```
 
 With Diagnostics on (the pilot prefs), every instance runs the stall watch: `[Stall] main thread stuck Nms phase after=… harmony=… lastPatched=… msg=…` once a second while a frame does not end (a scene load shows a few of these), from the second second on (and at once on a memory runaway, over 1 GB in one stall) it appends the main thread's native frames, `native GameAssembly.dll+0x… < UnityPlayer.dll+0x…`. `scripts/pilot/symbolize.py <log>` names the GameAssembly frames from the decompile's `@ RVA` lines.
@@ -66,4 +75,4 @@ World: `enemies [r]`, `hit <id|name|near> [dmg] [hurt%]`, `kill <id|name|near>`,
 Inventory / state: `give <item> [n]`, `inv`, `story [filter]`, `digest <tag>`, `dlg [choice]`, `autodlg [0|1] [choice]`.
 Run: `wait <sec>`, `at <unix ms> <command...>`, `say <text>`, `errors`, `shot [name]`, `fps [n]`, `quit`.
 
-Actions on an object in another room stand the player beside it, enter that room, and run once the object has been awake for half a second (a room that just woke runs its components' `OnEnable` / `Start` over the next frames). `autodlg` (on by default, choice 0 = yes) continues any line or yes/no prompt that stays open for over a second. `enemies` marks each enemy's EnemyManager `mgr=on|off|none` (`off`: the manager's object is inactive, story-gated, so the enemy cannot wake), an ARAR of a `remoteActivationOnly` or 0-range nest `nest=remote` (only a boss script drops it), and `pickups` marks a prop that is switched off itself or under a switched-off holder (not the room chunk Room.EnterRoom wakes), or under an `NGP_only` holder while the NGP pref is off (its Start only switches it off on the first wake), `self=off`; the story run and the soak skip these as targets. `kill` keeps hitting: native `TakeDamage` at 0 HP only downs an enemy (critical, HP back to its revive value) and the next hit finishes it.
+Actions on an object in another room stand the player beside it, enter that room, and run once the object has been awake for half a second (a room that just woke runs its components' `OnEnable` / `Start` over the next frames). `autodlg` (on by default, choice 0 = yes) continues any line or yes/no prompt that stays open for over a second. `enemies` marks each enemy's EnemyManager `mgr=on|off|none` (`off`: the manager's object is inactive, story-gated, so the enemy cannot wake), an ARAR of a `remoteActivationOnly` or 0-range nest `nest=remote` (only a boss script drops it), and `pickups` marks a prop that is switched off itself or under a switched-off holder (not the room chunk Room.EnterRoom wakes), or under an `NGP_only` holder while the NGP pref is off (its Start only switches it off on the first wake), or in a Room that is itself switched off, `self=off` (`doors` marks a double door the same way); the story run and the soak skip these as targets. `kill` keeps hitting: native `TakeDamage` at 0 HP only downs an enemy (critical, HP back to its revive value) and the next hit finishes it.

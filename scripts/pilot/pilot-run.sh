@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # pilot-run.sh [scene] : deploy the built DLL to every pilot instance, start the box, host the scene (default
-# DET_Detention) and join CLIENTS clients one after another; returns once everyone is settled in the scene.
+# DET_Detention) and join CLIENTS clients (together; JOIN=serial for one after another); returns once everyone is
+# settled in the scene.
 #   CLIENTS=1 scripts/pilot/pilot-run.sh MED_Medical      two players
 #   PILOT_DLL=... to run another build (default: bin/stage/Debug, scripts/build.sh --debug)
 set -uo pipefail
@@ -51,9 +52,18 @@ start() {
 start h "host:$SCENE"
 waitfor h "stage InWorld" 240 || { echo "host did not reach the world"; tail -20 "$(pdir h)/out.txt"; exit 1; }
 echo "h   in $SCENE"
+# Clients boot together (JOIN=serial: one after another). Booting is most of a run's start-up, and joins landing on
+# the host at the same moment are an arrow of their own.
 for n in $(peers); do
   [ "$n" = h ] && continue
   start "$n" join
+  if [ "${JOIN:-}" = serial ]; then
+    waitfor "$n" "stage InWorld" 240 || { echo "$n did not reach the world"; tail -20 "$(pdir "$n")/out.txt"; exit 1; }
+    echo "$n  in $SCENE"
+  fi
+done
+for n in $(peers); do
+  [ "$n" = h ] || [ "${JOIN:-}" = serial ] && continue
   waitfor "$n" "stage InWorld" 240 || { echo "$n did not reach the world"; tail -20 "$(pdir "$n")/out.txt"; exit 1; }
   echo "$n  in $SCENE"
 done

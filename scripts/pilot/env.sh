@@ -42,7 +42,7 @@ waitfor() {
   local end=$((SECONDS + $3)) from="${4:-0}"
   while [ $SECONDS -lt $end ]; do
     tail -n +"$((from + 1))" "$f" 2>/dev/null | grep -qE -- "$2" && return 0
-    sleep 1
+    sleep 0.3
   done
   return 1
 }
@@ -66,9 +66,9 @@ waitplay() {
       "$(dirname "${BASH_SOURCE[0]}")/pcmd.sh" "$1" skip >/dev/null
     fi
     if echo "$s" | grep -q "gs=eventScreen" && echo "$s" | grep -q "cutscene=False"; then
-      es=$((es + 1)); [ $es -ge 5 ] && return 0
+      es=$((es + 1)); [ $es -ge 10 ] && return 0
     else es=0; fi
-    sleep 2
+    sleep 1
   done
   return 1
 }

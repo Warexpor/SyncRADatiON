@@ -18,6 +18,7 @@ namespace SyncRADation.Networking
         {
             public bool Triggered;
             public bool Active;
+            public bool Withheld;
         }
         // What every peer was last told per WorldId. Never written inside a unicast dump (one peer only).
         private readonly Dictionary<ulong, Sent> _sent = new Dictionary<ulong, Sent>();
@@ -202,6 +203,18 @@ namespace SyncRADation.Networking
                 return;
             }
             _takes.Remove(id);
+        }
+
+        /// <summary>
+        /// This player has a world pickup's yes/no open (native pickUp ran, release has not): a cutscene must not start
+        /// over it (CutsceneSync defers a shared start until it closes).
+        /// </summary>
+        public bool LocalPickupOpen()
+        {
+            if (!DialogueOpenNow()) return false;
+            foreach (var kv in _takes)
+                if (kv.Value != null && !kv.Value.ReleaseRan && kv.Value.Phase != Phase.AwaitVerdict) return true;
+            return false;
         }
 
         bool IsReleasePending(ulong id)
@@ -919,9 +932,12 @@ namespace SyncRADation.Networking
 
                     Sent last;
                     _sent.TryGetValue(id, out last);
-                    if (!full && last.Triggered == triggered && last.Active == active) continue;
+                    // Withheld is its own change: a prop withheld in a room that is asleep here was already sent as
+                    // inactive, and peers read plain inactive as asleep, not gone (pilot soak LAB_Labyrinth Flesh Health50).
+                    bool withheld = !triggered && _withheld.Contains(id);
+                    if (!full && last.Triggered == triggered && last.Active == active && last.Withheld == withheld) continue;
                     int rem = 0;
-                    if (!triggered && _withheld.Contains(id)) rem = WithheldCount;
+                    if (withheld) rem = WithheldCount;
                     else if (!triggered) _remainder.TryGetValue(id, out rem);
                     _tickList.Add(new WorldPickupEntry
                     {
@@ -930,7 +946,7 @@ namespace SyncRADation.Networking
                         Active = active,
                         Count = rem
                     });
-                    if (record) _sent[id] = new Sent { Triggered = triggered, Active = active };
+                    if (record) _sent[id] = new Sent { Triggered = triggered, Active = active, Withheld = withheld };
                 }
 
                 if (_tickList.Count == 0) return;

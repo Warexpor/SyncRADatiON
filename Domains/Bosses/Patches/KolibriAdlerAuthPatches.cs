@@ -15,15 +15,15 @@ namespace SyncRADation.Patches
     /// </summary>
     public static class KolibriAdlerAuthPatches
     {
-        static bool _kolibriHeld;
-        static bool _kolibriDead;
-        static int _kolibriFreq;
-        static float _kolibriIntensity;
-        static float _kolibriRadio;
-
-        static bool _adlerHeld;
-        static float _adlerIntensity;
-        static float _adlerProgress;
+        // Held host snaps per local instance (GetInstanceID, this peer only; the snap was routed by WorldId). One per
+        // instance: BOS_Adler has two ADLR Managers, and one shared hold let the asleep one's snap overwrite the live
+        // one's every frame (pilot soak: a rejoined client's Adler intensity stuck at 0 while the host's was 1).
+        struct KolibriHold { public bool Dead; public int Freq; public float Intensity, Radio; }
+        struct AdlerHold { public float Intensity, Progress; }
+        static readonly System.Collections.Generic.Dictionary<int, KolibriHold> _kolibri =
+            new System.Collections.Generic.Dictionary<int, KolibriHold>();
+        static readonly System.Collections.Generic.Dictionary<int, AdlerHold> _adler =
+            new System.Collections.Generic.Dictionary<int, AdlerHold>();
 
         // Client: the KolibriManager whose Update is running right now (held), and the frame it started in.
         static KolibriManager _inUpdate;
@@ -31,8 +31,8 @@ namespace SyncRADation.Patches
 
         public static void Clear()
         {
-            _kolibriHeld = false;
-            _adlerHeld = false;
+            _kolibri.Clear();
+            _adler.Clear();
             _inUpdate = null;
             _inUpdateFrame = -1;
         }
@@ -54,44 +54,44 @@ namespace SyncRADation.Patches
             catch (System.Exception ex) { Guard.Swallow(ex); return false; }
         }
 
-        public static void HoldKolibri(bool dead, int frequency, float intensity, float radioIntensity)
+        public static void HoldKolibri(KolibriManager inst, bool dead, int frequency, float intensity, float radioIntensity)
         {
-            if (!NetGate.Live || NetGate.Host) return;
-            _kolibriHeld = true;
-            _kolibriDead = dead;
-            _kolibriFreq = frequency;
-            _kolibriIntensity = intensity;
-            _kolibriRadio = radioIntensity;
+            if (inst == null || !NetGate.Live || NetGate.Host) return;
+            _kolibri[inst.GetInstanceID()] = new KolibriHold
+                { Dead = dead, Freq = frequency, Intensity = intensity, Radio = radioIntensity };
         }
 
-        public static void HoldAdler(float intensity, float progress)
+        public static void HoldAdler(BOS_Adler inst, float intensity, float progress)
         {
-            if (!NetGate.Live || NetGate.Host) return;
-            _adlerHeld = true;
-            _adlerIntensity = intensity;
-            _adlerProgress = progress;
+            if (inst == null || !NetGate.Live || NetGate.Host) return;
+            _adler[inst.GetInstanceID()] = new AdlerHold { Intensity = intensity, Progress = progress };
         }
 
-        static void ApplyKolibriHold(KolibriManager inst)
+        static bool ApplyKolibriHold(KolibriManager inst)
         {
-            if (inst == null || !_kolibriHeld || !NetGate.Live || NetGate.Host) return;
+            if (inst == null || !NetGate.Live || NetGate.Host) return false;
             try
             {
-                inst.dead = _kolibriDead;
-                inst.frequency = _kolibriFreq;
-                inst.intensity = _kolibriIntensity;
-                inst.radioIntensity = _kolibriRadio;
+                KolibriHold h;
+                if (!_kolibri.TryGetValue(inst.GetInstanceID(), out h)) return false;
+                inst.dead = h.Dead;
+                inst.frequency = h.Freq;
+                inst.intensity = h.Intensity;
+                inst.radioIntensity = h.Radio;
+                return true;
             }
-            catch (System.Exception e) { Guard.Swallow("BossAuth.HoldKolibri", e); }
+            catch (System.Exception e) { Guard.Swallow("BossAuth.HoldKolibri", e); return false; }
         }
 
         static void ApplyAdlerHold(BOS_Adler inst)
         {
-            if (inst == null || !_adlerHeld || !NetGate.Live || NetGate.Host) return;
+            if (inst == null || !NetGate.Live || NetGate.Host) return;
             try
             {
-                inst.intensity = _adlerIntensity;
-                inst.progress = _adlerProgress;
+                AdlerHold h;
+                if (!_adler.TryGetValue(inst.GetInstanceID(), out h)) return;
+                inst.intensity = h.Intensity;
+                inst.progress = h.Progress;
             }
             catch (System.Exception e) { Guard.Swallow("BossAuth.HoldAdler", e); }
         }
@@ -103,8 +103,7 @@ namespace SyncRADation.Patches
             public static void Prefix(KolibriManager __instance)
             {
                 _inUpdate = null;
-                ApplyKolibriHold(__instance);
-                if (_kolibriHeld && NetGate.Client)
+                if (ApplyKolibriHold(__instance) && NetGate.Client)
                 {
                     _inUpdate = __instance;
                     _inUpdateFrame = Time.frameCount;

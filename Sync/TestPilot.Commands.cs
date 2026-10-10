@@ -623,7 +623,8 @@ namespace SyncRADation.Sync
         /// The object or a parent below its Room is switched off, and that parent is not one Room.EnterRoom switches on
         /// (chunk, Cell, instantChunk: Ghidra Room.c): story-gated, not asleep (DET Isolation KeyOfLove: active itself
         /// under an off holder, no peer could take it). An NGP_only holder counts as off while the NGP pref is false even
-        /// before its room ever woke: NGP_only.Start (Ghidra NGP_only.c) only switches it off on the first wake.
+        /// before its room ever woke: NGP_only.Start (Ghidra NGP_only.c) only switches it off on the first wake. So does
+        /// one in a Room that is itself switched off.
         /// </summary>
         private static bool GatedOff(Transform t)
         {
@@ -631,7 +632,9 @@ namespace SyncRADation.Sync
             bool ngp = FileBasedPrefs.GetBool("NGP", false);
             for (Transform q = t; q != null; q = q.parent)
             {
-                if (room != null && q == room.transform) return false;
+                // Room.EnterRoom only switches the room's chunks; a Room object that is itself off is story-gated
+                // (BOS_Adler Final Penrose/Storage: entering it threw NewCameraCatcher's inactive CameraPos error).
+                if (room != null && q == room.transform) return !room.gameObject.activeInHierarchy;
                 var go = q.gameObject;
                 if (!ngp && q.GetComponent<NGP_only>() != null) return true;
                 if (go.activeSelf) continue;
@@ -913,7 +916,7 @@ namespace SyncRADation.Sync
                 if (d == null || Dist(d.transform.position) > radius) continue;
                 if (n++ < 60)
                     Out("  double " + kv.Key.ToString("X16") + " " + Owner(d) + "@" + Pos(d.transform.position)
-                        + " open=" + d.open + " locked=" + d.locked);
+                        + " open=" + d.open + " locked=" + d.locked + (GatedOff(d.transform) ? " self=off" : ""));
             }
             foreach (var kv in WorldRegistry.AllSlidingDoors())
             {

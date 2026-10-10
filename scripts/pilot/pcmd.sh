@@ -12,6 +12,7 @@ D="$(pdir "$w")"
 [ -d "$D" ] || { echo "no pilot dir for $w" >&2; exit 1; }
 n=$(wc -l < "$D/out.txt")
 echo "$*" >> "$D/cmd.txt"
-# Replies arrive within a few frames; long commands (talk, wait) print later lines on their own.
-for i in $(seq 1 40); do sleep 0.25; m=$(wc -l < "$D/out.txt"); [ "$m" -gt "$n" ] && sleep 0.5 && break; done
+# Replies arrive within a few frames (a multi-line reply is written in one frame); long commands (talk, wait) print
+# later lines on their own.
+for i in $(seq 1 100); do sleep 0.1; m=$(wc -l < "$D/out.txt"); [ "$m" -gt "$n" ] && sleep 0.15 && break; done
 tail -n +$((n + 1)) "$D/out.txt"

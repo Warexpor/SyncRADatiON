@@ -29,7 +29,7 @@ for n in $(peers); do
   [ $i -lt ${#PK[@]} ] || break
   $P "$n" take "${PK[$i]}" | grep -E "take|no pickup|inactive" ; i=$((i + 1))
 done
-sleep 6
+sleep 2
 for n in $(peers); do waitplay "$n" 30 >/dev/null; done
 $P all inv | grep bag=
 check s1-pickups
@@ -40,7 +40,7 @@ if [ $i -lt ${#PK[@]} ]; then
   note "race on $RACE"
   at=$(( $(date +%s%3N) + 3000 ))
   for n in $(peers); do echo "at $at take $RACE" >> "$(pdir "$n")/cmd.txt"; done
-  sleep 10
+  sleep 5
   for n in $(peers); do waitplay "$n" 30 >/dev/null; done
   $P all inv | grep bag=
   check s2-race
@@ -54,15 +54,18 @@ for n in $(peers); do
   [ $i -lt ${#EN[@]} ] || break
   mark=$(lines "$n")
   $P "$n" kill "${EN[$i]}" >/dev/null; i=$((i + 1))
-  waitfor "$n" "dead after|still [a-z]* after|no live|inactive" 25 "$mark" && tail -n 2 "$(pdir "$n")/out.txt" | grep -E "dead after|still|no live|inactive"
+  waitfor "$n" "dead after|still [a-z]* after|no live|kill .*stayed inactive" 25 "$mark" && tail -n 2 "$(pdir "$n")/out.txt" | grep -E "dead after|still|no live|inactive"
 done
-sleep 4
+sleep 2
 for k in $(seq 0 $((i - 1))); do echo "  ${EN[$k]}: host $($P h enemies | grep "${EN[$k]}" | grep -o "state=[a-z]*")"; done
 check s3-combat
 
 # --- door: the first client opens a double door the host has never been near
-# A door in the client's own (awake) room, unlocked there.
-DOOR=$($P "${CL[0]}" doors 60 | grep " double " | grep "open=False locked=False" | head -1 | awk '{print $3}')
+# A door in the client's own (awake) room, unlocked there; else the first unlocked one in the chapter (BOS_Adler Falke:
+# every door near the arena is story-gated, self=off).
+pickdoor() { $P "${CL[0]}" doors "$@" | grep " double " | grep "open=False locked=False" | grep -v "self=off" | head -1 | awk '{print $3}'; }
+DOOR=$(pickdoor 60)
+[ -n "$DOOR" ] || DOOR=$(pickdoor)
 if [ -n "$DOOR" ] && [ ${#CL[@]} -ge 1 ]; then
   note "door $DOOR by ${CL[0]}"
   $P "${CL[0]}" door "$DOOR" open >/dev/null
@@ -95,14 +98,14 @@ if [ ${#CL[@]} -ge 1 ]; then
   V=${CL[${#CL[@]} - 1]}
   note "late join of $V"
   $P "$V" leave | tail -1
-  sleep 3
+  sleep 2
   LJ=$($P h pickups | grep -E "item=[A-Za-z]" | grep -v "room=-" | grep -v "self=off" | tail -1 | awk '{print $2}')
   [ -n "$LJ" ] && $P h take "$LJ" | grep take
-  sleep 5
+  sleep 3
   from=$(lines "$V")
   $P "$V" connect | tail -1
   waitfor "$V" "party \[p0.*role=Client" 60 "$from" || echo "  $V did not rejoin the party"
-  sleep 8
+  sleep 2
   waitplay "$V" 60 >/dev/null
   $P "$V" god >/dev/null
   check s6-latejoin

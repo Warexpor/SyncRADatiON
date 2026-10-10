@@ -43,7 +43,7 @@ for ch in "${CHAPTERS[@]}"; do
   fi
   if [ $ok = 0 ]; then fails=$((fails + 1)); continue; fi
   # Opening cutscenes are per player: skip each peer's own once it runs, then wait for play.
-  sleep 4
+  sleep 2
   $P all skip >/dev/null
   for n in $(peers); do waitplay "$n" 90 skip || { say "  $n not in play in $ch: $($P "$n" status | tail -1 | grep -o 'gs=[a-z]*')"; }; done
   $P all god >/dev/null
@@ -57,14 +57,16 @@ for ch in "${CHAPTERS[@]}"; do
     [ $i -lt ${#PK[@]} ] && { $P "$n" take "${PK[$i]}" >/dev/null; }
     i=$((i + 1))
   done
-  sleep 6
+  sleep 2
+  for n in $(peers); do waitplay "$n" 30 >/dev/null; done
   i=0
   for n in "${CL[@]}"; do
     [ $i -lt ${#EN[@]} ] || break
-    # From the transcript's length before the command: an older "stayed inactive" (a take) must not count.
+    # From the transcript's length before the command, and only a kill's own "stayed inactive": a take's answer can land
+    # up to 15 s later, after this mark (BOS_Adler: the stuck take's line ended a kill wait at once).
     mark=$(lines "$n")
     $P "$n" kill "${EN[$i]}" >/dev/null
-    waitfor "$n" "dead after|still [a-z]* after|no live|inactive" 25 "$mark"
+    waitfor "$n" "dead after|still [a-z]* after|no live|kill .*stayed inactive" 25 "$mark"
     say "  $n kill ${EN[$i]}: $(tail -n 1 "$(pdir "$n")/out.txt" | cut -c14-) | host $($P h enemies | grep "${EN[$i]}" | grep -o "state=[a-z]*")"
     i=$((i + 1))
   done

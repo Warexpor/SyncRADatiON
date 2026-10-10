@@ -137,6 +137,7 @@ namespace SyncRADation.Networking
         public void TickHost(LanNetworkManager net)
         {
             if (net == null || !NetGate.Host) return;
+            CutsceneSync.TickDeferred();
             // END_Manager statics are written directly by NPC_Tracker / InteractiveLockSingle / PlayerState.
             int sig = EndSignature();
             if (sig != _endSig)
@@ -342,6 +343,7 @@ namespace SyncRADation.Networking
         public void TickClient(LanNetworkManager net)
         {
             if (net == null || !NetGate.Client) return;
+            CutsceneSync.TickDeferred();
             // A blocked / queued scene request that never arrived is re-asked (LanNetworkManager ticks only the host side).
             SceneFollowService.TickClient();
             if (SceneFollowService.LocalIsTransient()) return;

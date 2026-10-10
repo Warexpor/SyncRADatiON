@@ -129,6 +129,7 @@ namespace SyncRADation.ItemSystem
 
             go.name = DroppedItemRegistry.NamePrefix + netID;
             StripUniqueId(go, src);
+            StripSupplyScripts(go);
             StripInspectJunk(go);
             try { go.transform.SetParent(null, true); } catch (System.Exception e) { Guard.Swallow(e); }
             Object.Destroy(holder);
@@ -684,6 +685,27 @@ namespace SyncRADation.ItemSystem
                         try { t.gameObject.SetActive(false); } catch (System.Exception e) { Guard.Swallow(e); }
                     }
                 }
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+        }
+
+        /// <summary>
+        /// A dynamic-difficulty prop (DynamicSupply on the pickup itself: LAB / ROT / MED / RES / EXC ammo and heals) is a
+        /// template like any other, and its clone kept the script: OnEnable subscribes Entered to every room entry, and
+        /// Entered reads the UniqueId the clone no longer has first thing (Ghidra DynamicSupply.c), so the drop threw on
+        /// each room the host entered (pilot soak, LAB_Labyrinth) and could have switched itself off by the host's stock.
+        /// A drop offers what was dropped: no supply decision.
+        /// </summary>
+        static void StripSupplyScripts(GameObject go)
+        {
+            try
+            {
+                var ds = go.GetComponentsInChildren<DynamicSupply>(true);
+                for (int i = 0; i < ds.Length; i++)
+                    if (ds[i] != null) Object.DestroyImmediate(ds[i]);
+                var rs = go.GetComponentsInChildren<DynamicResupplyPickup>(true);
+                for (int i = 0; i < rs.Length; i++)
+                    if (rs[i] != null) Object.DestroyImmediate(rs[i]);
             }
             catch (System.Exception e) { Guard.Swallow(e); }
         }

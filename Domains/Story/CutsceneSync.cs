@@ -27,12 +27,75 @@ namespace SyncRADation.Networking
         // persistent: holder object only; its stamps are cleared on scene change / session reset by InteractionSyncService.OnSceneChanged
         static readonly CutsceneStamps _stamps = new CutsceneStamps();
 
+        // persistent: cleared with the stamps on scene change / session reset (OnSceneChanged)
+        static readonly System.Collections.Generic.List<CutsceneManager> _deferred = new System.Collections.Generic.List<CutsceneManager>();
+
         static float Now => Time.unscaledTime;
 
         static string Hex(ulong id) => id.ToString("X16");
 
         /// <summary>Scene change / session reset (via InteractionSyncService.OnSceneChanged): stamps are per-scene WorldIds.</summary>
-        public static void OnSceneChanged() => _stamps.Clear();
+        public static void OnSceneChanged()
+        {
+            _stamps.Clear();
+            _deferred.Clear();
+        }
+
+        /// <summary>
+        /// This player has a pickup's yes/no open. Solo, no cutscene can start then (pickUp pauses the game and sets the
+        /// cutscene flag); a shared start from another player would replace that dialogue, so its callback and release
+        /// never ran: the item was never added, the prop stayed triggered here (taken in this peer's world, there on
+        /// everyone else's), and gameState was left wrong (pilot soak, ROT_Rotfront: a client's trigger started
+        /// Isa_Death while the host and the other client each had a pickup open).
+        /// </summary>
+        static bool PickupOpenHere()
+        {
+            var net = LanNetworkManager.Instance;
+            try { return net != null && net.PickupSync != null && net.PickupSync.LocalPickupOpen(); }
+            catch (System.Exception e) { Guard.Swallow(e); return false; }
+        }
+
+        /// <summary>Start a shared cutscene here now, or once this player's open pickup has been answered and released.</summary>
+        static void StartOrDefer(CutsceneManager c, ulong id)
+        {
+            if (PickupOpenHere())
+            {
+                if (!_deferred.Contains(c)) _deferred.Add(c);
+                PlaytestLog.Event("Story", "CutsceneStart waits for the open pickup id=" + Hex(id));
+                return;
+            }
+            NativeStart(c);
+        }
+
+        static void NativeStart(CutsceneManager c)
+        {
+            NetGate.BeginApply();
+            try
+            {
+                c.StartCutscene();
+                // The StartCutscene postfix arms the skip UI for a skippable one; an unskippable start disarms it.
+                if (c.unskippable) CutsceneSkippingUI.skippableCutscene = false;
+            }
+            finally { NetGate.EndApply(); }
+        }
+
+        /// <summary>Every frame (host and client story tick): run the starts held behind a pickup that has now closed.</summary>
+        internal static void TickDeferred()
+        {
+            if (_deferred.Count == 0 || PickupOpenHere()) return;
+            var run = _deferred.ToArray();
+            _deferred.Clear();
+            foreach (var c in run)
+            {
+                try
+                {
+                    if (c == null || c.completed || StartedHere(c)) continue;
+                    PlaytestLog.Event("Story", "CutsceneStart after pickup id=" + Hex(WorldId.FromGameObject(c.gameObject)));
+                    NativeStart(c);
+                }
+                catch (System.Exception e) { Guard.Swallow(e); }
+            }
+        }
 
         /// <summary>This peer's coroutine for the cutscene is live (started here, not completed).</summary>
         internal static bool StartedHere(CutsceneManager c)
@@ -184,16 +247,7 @@ namespace SyncRADation.Networking
                 return true;
             }
             if (LocalInspect.InLocalRoom(c.gameObject))
-            {
-                NetGate.BeginApply();
-                try
-                {
-                    c.StartCutscene();
-                    // The StartCutscene postfix arms the skip UI for a skippable one; an unskippable start disarms it.
-                    if (c.unskippable) CutsceneSkippingUI.skippableCutscene = false;
-                }
-                finally { NetGate.EndApply(); }
-            }
+                StartOrDefer(c, id);
             else
                 PlaytestLog.Event("Interact", "CutsceneStart other-room id=" + Hex(id));
             net.StorySync.BroadcastPresentation(StoryCmd.CutsceneStart, id, 0, "");
@@ -228,7 +282,7 @@ namespace SyncRADation.Networking
                 PlaytestLog.Event("Story", "CutsceneStart already done id=" + Hex(id));
                 return;
             }
-            c.StartCutscene();
+            StartOrDefer(c, id);
         }
 
         // Client skip: its events may write flags the host never ran (the host is still watching, or in another room):
