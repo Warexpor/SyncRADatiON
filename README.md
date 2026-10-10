@@ -39,7 +39,7 @@ Set `single-instance=0` in `boot.config` of both installs and use `127.0.0.1` as
 4. The host sends the current world state to each joiner. If doors or pickups look wrong, press **Resync world** in the F2 menu.
 5. For play over the internet use a VPN that gives everyone a shared virtual LAN: **Tailscale**, **ZeroTier** or **Radmin VPN**. Clients connect to the host's VPN address. There is no relay server and no direct internet hosting support.
 
-The F2 menu shows a roster of everyone connected. The host can cap the session with `MaxPlayers` (applies the next time you press Host Game).
+The F2 menu shows a roster of everyone connected. It also has **Other players look like**: Elster, or Ariane in her dress or her uniform. That only changes your own screen. The Ariane model is taken from the game itself, so it has to be loaded once: pick it at the main menu (it loads there in a few seconds, and on every later start by itself), or it appears after you have been through a chapter that has her. The host can cap the session with `MaxPlayers` (applies the next time you press Host Game).
 
 ## Controls
 

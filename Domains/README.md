@@ -42,6 +42,7 @@ Authority: `docs/SYNC.md`; reverse-check rule: repo root `AGENTS.md`. Wire in `N
 | Bosses (END/Chimera/Mynah/Kolibri/Adler) | `Bosses/` (+ `Patches/KolibriAdlerAuthPatches`) | Kolibri/Adler Prefix+Postfix Hold; Falke snap stage/corrupt + SetBodySpearStates; HaltBossController StopAllCoroutines |
 | Client boss hits (Falke Stab / TakeSpear, boss HP, Chimera rifle shot) | `Bosses/Patches/BossActionPatches` + `Bosses/BossNetHandlers` | `BossHit` (62) |
 | Avatar / bones / weapons | `Players/` (`PlayerProxyBuilder` → `ProxyRig`, `ProxyPose` bones+hips, `ProxyMotion` root, `SnapshotRing`, `SnapClock`) + `AvatarNetHandlers` + `SourceAnimReader` | Peer-authored; the proxy has no Animator; per-sender scene check |
+| Other players drawn as Ariane (F2) | `Players/AvatarSkins` (templates, harvest, main-menu preload) + `Players/ProxySkin` (bone copy, mounts on her hands) | local only |
 | Party vitals: downed / revive / wipe, party-life state | `Players/PartyVitals` + `Combat/PartyNetHandlers` + `Combat/Patches/DeathPatches` | `PartyLife`/`PartyRoom` (40, 42); `DownedRespawnDelay` |
 | Party save token / key-ring + bag snapshots (host_saves.txt, bag_snapshots.txt) | `Session/PartySaveService` + `Combat/PartyNetHandlers` | `PartySave` (41); `SaveManager.Save/Load` hooks |
 | Client → player/enemy damage checks (hurtbox / melee vs proxies) | `Combat/ClientDamageService` | Host-side; skips downed peers; friendly fire opt-in |

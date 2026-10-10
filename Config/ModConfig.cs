@@ -30,6 +30,11 @@ namespace SyncRADation.Config
         /// <summary>Host: let clients use the F6 / F7 / F11 cheats that touch the shared world. Default off.</summary>
         public static MelonPreferences_Entry<bool> AllowClientCheats;
 
+        /// <summary>How this peer draws the other players: 0 Elster, 1 Ariane (sleep dress), 2 Ariane (uniform). Local only.</summary>
+        public static MelonPreferences_Entry<int> RemotePlayerModel;
+        /// <summary>Marker: an Ariane model preload was started and has not finished (a crash there disables the automatic one).</summary>
+        public static MelonPreferences_Entry<bool> SkinPreloadPending;
+
         public static void Bind()
         {
             Category = MelonPreferences.CreateCategory("SyncRADation", "SyncRADation");
@@ -57,6 +62,12 @@ namespace SyncRADation.Config
                 MaxPlayers.Value = System.Math.Max(MinMaxPlayers, System.Math.Min(HardMaxPlayers, MaxPlayers.Value));
             DownedRespawnDelay = Category.CreateEntry("DownedRespawnDelay", 20f,
                 "Seconds a downed player (host or client) waits before respawning next to the nearest living teammate. The party wipes (host reloads its last save) only when everyone is down.");
+
+            RemotePlayerModel = Category.CreateEntry("RemotePlayerModel", 0,
+                "How the other players look on this screen: 0 = Elster, 1 = Ariane (white sleep dress), 2 = Ariane (Penrose uniform). Local display only (F2 menu).");
+            if (RemotePlayerModel.Value < 0 || RemotePlayerModel.Value > 2) RemotePlayerModel.Value = 0;
+            SkinPreloadPending = Category.CreateEntry("SkinPreloadPending", false,
+                "Internal: set while the Ariane model is being loaded at the main menu. Left true by a crash: the automatic load is then skipped (F2 has a manual button). Set false to re-enable.");
 
             AllowClientCheats = Category.CreateEntry("AllowClientCheats", false,
                 "Host: allow clients' F6 (keys onto the party ring), F7 (chapter loads) and F11 (enemy spawns). Off = only the host can cheat.");

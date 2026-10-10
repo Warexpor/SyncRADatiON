@@ -15,6 +15,7 @@ namespace SyncRADation.Players
         private readonly ProxyAudioSync _audio;
         private readonly RemoteWeaponSync _weapon;
         private readonly ProxyRig _rig;
+        private readonly ProxySkin _skin;
         private WeaponType _lastWeapon;
         private int _lastOutfit = -1;
         private bool _aiming;
@@ -32,6 +33,7 @@ namespace SyncRADation.Players
             LastStateAt = Time.unscaledTime;
             Motion = new ProxyMotion(go.transform);
             Pose = new ProxyPose(rig.Model, rig.Hips);
+            _skin = new ProxySkin(go.transform, rig, Pose);
             _audio = new ProxyAudioSync(go);
             _weapon = new RemoteWeaponSync(go);
             _weapon.OnShotFired = _audio.OnWeaponShot;
@@ -78,11 +80,12 @@ namespace SyncRADation.Players
             _audio.OnCues(_lastWeapon, cues);
         }
 
-        /// <summary>Every frame at the delayed render time: root, body pose, then weapon FX at the posed hand.</summary>
+        /// <summary>Every frame at the delayed render time: root, body pose, the model drawn over it, then weapon FX at the posed hand.</summary>
         public void LateTick(float renderTime)
         {
             Motion.LateTick(renderTime);
             Pose.LateTick(renderTime);
+            _skin.LateTick();
             _audio.LateTick();
             _weapon.Tick(_aiming, _pendingFx, GameObject.transform.position, Pose.AimDirection);
             _pendingFx = AvatarCue.None;

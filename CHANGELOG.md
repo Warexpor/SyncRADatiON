@@ -2,6 +2,9 @@
 
 Protocol **v20** (unchanged).
 
+### Added
+- **Other players as Ariane** (F2: "Other players look like" Elster / Ariane dress / Ariane uniform; `RemotePlayerModel` pref). A local display choice, nothing on the wire: each player picks how it sees everyone else. Her rig is the same metarig as Elster's, so the remote Elster's pose is copied onto her bone by bone (world rotations, hips position, shorter legs taken into account) and the gun rides her hand. The game has no prefab of her: the model is banked from the first loaded scene that has it (PEN_Wreck has the dress; MEM_Memory, LAB_Emptiness and BOS_Adler both) and kept for the whole run of the game. With an Ariane model chosen, the main menu loads it once from LAB_Emptiness (additive, its objects are destroyed before they start; "Load now" in F2 does the same by hand, only at the main menu with no session).
+
 ### Fixed
 - **An enemy a client was fighting teleported and spun once the host left the room** (LOV West Corridor, host into the Library): native `Room.LeaveRoom` switches the room chunk off 2 s after the local player walks out (`delayedDisabling`), so on the host the floor, walls and colliders vanished under the enemy it simulates for the client, and `CheckIfLeft`'s "Enemy is floating, resetting!" put it back home again and again. The host keeps the chunk of a room a remote player is in (the native "player is back" path) and switches it off the native way 2 s after the last one left; chunks the host woke for a client are released the same way.
 - **The host walking into a client's fight moved the enemy to another patrol point**: native `EnemyManager.Enter` has no "already running" guard (it re-ran the "give elster some space" repositioning and started a second `CheckIfLeft`). The host's entry into a room that already runs for a remote player skips it.

@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using SyncRADation.Config;
 using SyncRADation.Networking;
+using SyncRADation.Players;
 using SyncRADation.Sync;
 using UnityEngine;
 
@@ -9,7 +10,7 @@ namespace SyncRADation.UI
 {
     public static class MultiplayerMenu
     {
-        private const float BaseHeight = 400f;
+        private const float BaseHeight = 480f;
         private const float RowHeight = 18f;
 
         // persistent: F2 window state
@@ -129,6 +130,26 @@ namespace SyncRADation.UI
             }
             y += 35f;
 
+            // How this screen draws the other players (local only, AvatarSkins).
+            GUI.Label(CR(10, y, 340, 20), "Other players look like:");
+            y += 20f;
+            var model = AvatarSkins.Wanted;
+            if (GUI.Button(CR(10, y, 100, 24), Mark(model == RemoteModel.Elster) + "Elster"))
+                AvatarSkins.Select(RemoteModel.Elster);
+            if (GUI.Button(CR(115, y, 112, 24), Mark(model == RemoteModel.ArianeDress) + "Ariane dress"))
+                AvatarSkins.Select(RemoteModel.ArianeDress);
+            if (GUI.Button(CR(232, y, 118, 24), Mark(model == RemoteModel.ArianeUniform) + "Ariane uniform"))
+                AvatarSkins.Select(RemoteModel.ArianeUniform);
+            y += 28f;
+            string skin = AvatarSkins.Status();
+            if (skin.Length > 0)
+            {
+                GUI.Label(CR(10, y, 250, 20), skin);
+                if (AvatarSkins.CanPreload && !AvatarSkins.Has(model) && GUI.Button(CR(265, y, 85, 20), "Load now"))
+                    AvatarSkins.Preload();
+            }
+            y += 30f;
+
             GUI.Label(CR(10, y, 340, 20), "G/DROP=drop  TAKE=pickup  F6/F7/F11 cheats");
             y += 30f;
 
@@ -151,6 +172,8 @@ namespace SyncRADation.UI
                 y += RowHeight;
             }
         }
+
+        private static string Mark(bool on) => on ? "> " : "";
 
         private static Rect CR(float x, float y, float w, float h)
         {

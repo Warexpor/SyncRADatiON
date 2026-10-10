@@ -31,6 +31,7 @@ namespace SyncRADation
             }
 
             Sync.TestPilot.Tick();
+            Players.AvatarSkins.Tick();
 
             if (_autoSceneAt >= 0f && UnityEngine.Time.realtimeSinceStartup >= _autoSceneAt)
             {
@@ -146,6 +147,8 @@ namespace SyncRADation
 
         public override void OnSceneWasLoaded(int buildIndex, string sceneName)
         {
+            // The Ariane model preload scene (additive, torn down in this call) is not a scene change.
+            if (Players.AvatarSkins.OnSceneLoaded(sceneName)) return;
             ModRuntime.OnSceneChanged();
             // Give the menu a few seconds to settle before the auto chapter load (a client never loads on its own).
             if (_autoScene != null && sceneName == "MainMenu" && !Sync.NetGate.Client)

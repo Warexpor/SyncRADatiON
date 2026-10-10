@@ -42,8 +42,26 @@ namespace SyncRADation.Players
         private int _assembleGot;
         private int _mismatchLogged = -1;
 
-        private SkinnedMeshRenderer[] _hidden;
+        // The clone's own body renderers (enabled at clone time), and which of them are weapon / reload props.
+        private SkinnedMeshRenderer[] _body;
+        private bool[] _bodyProp;
+        private bool _revealed;
+        private bool _bodyHidden;
         private readonly float _revealAt;
+
+        /// <summary>The sender's first pose has landed (or timed out): the body is shown.</summary>
+        public bool Revealed => _revealed;
+
+        /// <summary>
+        /// Another model stands in for the Elster body (ProxySkin): its renderers stay off, the skeleton keeps being
+        /// posed (the skin copies it) and the props in her hands (reload magazine) stay visible.
+        /// </summary>
+        public void SetBodyHidden(bool hidden)
+        {
+            if (_bodyHidden == hidden) return;
+            _bodyHidden = hidden;
+            if (_revealed) ApplyBody();
+        }
 
         public ProxyPose(Transform model, Transform hips)
         {
@@ -125,7 +143,7 @@ namespace SyncRADation.Players
             var mode = _ring.Sample(renderTime, out int lo, out int hi, out float t);
             if (mode == RingSample.Empty)
             {
-                if (_hidden != null && Time.unscaledTime >= _revealAt) Reveal();
+                if (!_revealed && Time.unscaledTime >= _revealAt) Reveal();
                 return;
             }
             if (mode == RingSample.Between)
@@ -148,7 +166,7 @@ namespace SyncRADation.Players
                     _heldSerial = f.Serial;
                 }
             }
-            if (_hidden != null) Reveal();
+            if (!_revealed) Reveal();
         }
 
         private void SetHips(Vector3 p)
@@ -160,24 +178,32 @@ namespace SyncRADation.Players
         private void Hide()
         {
             var smrs = _model.GetComponentsInChildren<SkinnedMeshRenderer>(true);
-            var hidden = new System.Collections.Generic.List<SkinnedMeshRenderer>(smrs.Length);
+            var body = new System.Collections.Generic.List<SkinnedMeshRenderer>(smrs.Length);
             for (int i = 0; i < smrs.Length; i++)
             {
                 var r = smrs[i];
                 if (r == null || !r.enabled) continue;
                 r.enabled = false;
-                hidden.Add(r);
+                body.Add(r);
             }
-            _hidden = hidden.ToArray();
+            _body = body.ToArray();
+            _bodyProp = new bool[_body.Length];
+            for (int i = 0; i < _body.Length; i++)
+                _bodyProp[i] = BoneSyncManager.InPropTree(_body[i].transform, _model);
         }
 
         private void Reveal()
         {
-            for (int i = 0; i < _hidden.Length; i++)
+            _revealed = true;
+            ApplyBody();
+        }
+
+        private void ApplyBody()
+        {
+            for (int i = 0; i < _body.Length; i++)
             {
-                if (_hidden[i] != null) _hidden[i].enabled = true;
+                if (_body[i] != null) _body[i].enabled = _bodyProp[i] || !_bodyHidden;
             }
-            _hidden = null;
         }
     }
 }

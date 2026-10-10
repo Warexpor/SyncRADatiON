@@ -71,6 +71,9 @@ namespace SyncRADation.Players
                 CollectBonesSkipProps(t.GetChild(i));
         }
 
+        /// <summary>Under a weapon / reload mount of the model (equipped gun, magazine in the hand).</summary>
+        public static bool InPropTree(Transform t, Transform model) => InWeaponPropTree(t, model);
+
         private static bool InWeaponPropTree(Transform t, Transform stop)
         {
             while (t != null && t != stop)
