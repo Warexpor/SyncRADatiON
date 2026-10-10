@@ -78,6 +78,11 @@ namespace SyncRADation.Patches
             if (KolibriAdlerAuthPatches.InClientKolibriUpdate)
                 return false;
 
+            int suppressed;
+            if (PlaytestLog.RateOk("clientHit:" + id, 0.1f, out suppressed))
+                PlaytestLog.Event("Enemy", "hit " + enemy.gameObject.name + " id=" + id.ToString("X16") + " dmg=" + damage
+                    + " fire=" + fire.ToString("F2") + " crit=" + crit.ToString("F2") + " hurt=" + hurt.ToString("F2")
+                    + " -> host" + (suppressed > 0 ? " (+" + suppressed + " hits)" : ""));
             net.EnemyHandlers.SendNativeEnemyHit(id, damage, fire, crit, hurt, noSneak);
             return false;
         }

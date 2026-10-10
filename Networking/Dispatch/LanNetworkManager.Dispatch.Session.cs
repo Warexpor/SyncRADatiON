@@ -31,6 +31,12 @@ namespace SyncRADation.Networking
                 if (_role == NetworkRole.Client && senderId == 0) SceneHandlers.HandleSceneDiff(diff); // host-authored only
                 return true;
             }
+            case NetMessageType.WorldDigest:
+            {
+                // Host digest lines to clients, a client's findings to the host (DesyncCheck checks kind and sender).
+                DesyncCheck.Handle(this, WorldDigestMessage.Deserialize(reader), senderId);
+                return true;
+            }
             case NetMessageType.SnapshotRequest:
             {
                 var req = SnapshotRequestMessage.Deserialize(reader);

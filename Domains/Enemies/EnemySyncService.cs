@@ -140,10 +140,43 @@ namespace SyncRADation.Networking
                         // EnemyTargetPatch instead (PlayerState.player swapped around that enemy's Update).
                         snap.TargetPlayerId = (sbyte)Mathf.Clamp(nearestId, -1, 127);
                     }
+                    NoteHostState(id, e, snap, nearestId, net);
                     _snapList.Add(snap);
                 }
                 catch (Exception ex) { Guard.Swallow("EnemySync.Snapshot", ex); }
             }
+        }
+
+        // Host: what each enemy was doing in the last snapshot (state, stagger, target, awake), for the change line.
+        // Cleared with the puppets on scene change / session reset (OnSceneChanged).
+        static readonly Dictionary<ulong, int> _hostSeen = new Dictionary<ulong, int>();
+
+        /// <summary>
+        /// Host: one [Enemy] line when an enemy's state, stagger, target player or awake flag changes. The fight as the
+        /// authority saw it, next to the client's "[Enemy] C client ..." lines of what it drew.
+        /// </summary>
+        static void NoteHostState(ulong id, EnemyController e, EnemySnapshotNet snap, int targetPid, LanNetworkManager net)
+        {
+            bool awake = e.gameObject.activeInHierarchy;
+            int target = targetPid < 0 ? 255 : (targetPid & 0xFF);
+            int packed = snap.State | ((snap.HurtState & ~SleepAnimBit) << 8) | (target << 16) | (awake ? 1 << 24 : 0);
+            int was;
+            bool had = _hostSeen.TryGetValue(id, out was);
+            if (had && was == packed) return;
+            _hostSeen[id] = packed;
+            // First sight of an enemy that is just asleep in its room: nothing happened.
+            if (!had && snap.State == (byte)EnemyController.enemystate.sleep && !awake) return;
+            int suppressed;
+            if (!PlaytestLog.RateOk("enemyState:" + id, 0.25f, out suppressed)) return;
+            string room = "?";
+            try { var r = RoomOfEnemy(e).Room; if (r != null) room = r.roomName; }
+            catch (Exception ex) { Guard.Swallow(ex); }
+            PlaytestLog.Event("Enemy", "state " + e.gameObject.name + " id=" + id.ToString("X16")
+                + " " + (had ? ((EnemyController.enemystate)(was & 0xFF)).ToString() + "->" : "") + (EnemyController.enemystate)snap.State
+                + " stagger=" + (EnemyController.hurtState)(snap.HurtState & ~SleepAnimBit)
+                + " target=" + (targetPid < 0 ? "-" : targetPid == net.LocalPlayerId ? "host" : "p" + targetPid)
+                + " hp=" + snap.HP + " awake=" + awake + " room='" + room + "'"
+                + (suppressed > 0 ? " (+" + suppressed + " changes)" : ""));
         }
 
         static EnemySnapshotNet ReadSnapshot(EnemyController e, Transform et, Vector3 pos, ulong id)
@@ -1131,6 +1164,7 @@ namespace SyncRADation.Networking
             _sendTimer = 0f;
             _snapList.Clear();
             _chase.Clear();
+            _hostSeen.Clear();
             _peerStomps.Clear();
             ClearHostCache();
         }

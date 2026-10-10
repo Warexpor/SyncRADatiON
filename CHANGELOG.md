@@ -1,3 +1,19 @@
+## 0.5.71 — 2026-10-10
+
+Protocol **v21** (`WorldDigest` 75). Logging rework: `docs/LOGGING.md`.
+
+### Added
+- **Live desync check** (`DesyncCheck`, on by default, every `DesyncCheckSeconds` = 20): the host sends its digest of the shared world (scene, shared story flags, key ring, storage box, enemies, doors, pickups, puzzles, cutscenes: the pilot's digest lines), each client compares it with its own. A key that differs in two checks in a row is logged once on the client as `[Desync] DESYNC <section> <key>: host=... client=...` and on the host as `[Desync] pN DESYNC ...`, and again as `resolved`. A `check #N` line on the first check, every 15th and whenever the open count changes. The compare rules are the pilot's `digest-diff.py`, ported to `DesyncCompare` and unit tested. 2-21 ms and ~6 KB per check in LOV.
+- **`[State]`**: one line with the scene, every player's room / distance / ping / down flag, this player's game state, HP and weapon, the enemy picture (alive, awake, hunting, combat statics) and the running cutscene. Written when that picture changes (at most every 2 s) and every 30 s.
+- **`[Net]`** every 30 s: messages and KB each way, the top five message types by bytes, ping and LiteNetLib's loss counter. First finding: `PlayerState` is ~490 bytes at 30 Hz (~15 KB/s each way), nearly all the traffic.
+- **`[Log] summary`** at session end, when the last player leaves a host, and at quit: line count and every tag that warned or failed.
+- **`[Enemy] H state`**: host, an enemy's state / stagger / target player / awake flag changed. **`[Enemy] C hit`**: a client's hit as sent. **`[Weapon] shot`**: the local player's shots.
+
+### Changed
+- Every mod line goes through one sink (`Sync/LogSink.cs`): lines written straight to `ModRuntime.Log` (about 190 call sites: `[Network]`, `[Drop]`, `[PartySave]`, ...) now carry the `H` / `C` role prefix like `PlaytestLog` lines.
+- `PlaytestLog.Rate` / `RateOk`: per-key throttle whose next line says `(+N suppressed)`. A line repeated back to back is still written once, now followed by `(previous line xN)` instead of vanishing.
+- The handshake line on a client lists its sync toggles.
+
 ## 0.5.70 — 2026-10-10
 
 Protocol **v20** (unchanged). From reading the host and client logs of the 0.5.69 session.

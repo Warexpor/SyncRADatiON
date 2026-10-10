@@ -12,7 +12,7 @@ namespace SyncRADation
     public static class ModRuntime
     {
         // persistent: process logger
-        public static MelonLogger.Instance Log;
+        public static LogSink Log;
         public static bool VerboseLogging => ModConfig.VerboseLogging?.Value == true;
 
         // persistent: boot-once flag (the network manager lives for the process)
@@ -69,7 +69,7 @@ namespace SyncRADation
 
         public static void Start(MelonLogger.Instance log, HarmonyLib.Harmony harmony)
         {
-            Log = log;
+            Log = new LogSink(log);
             _harmony = harmony;
 
             try
@@ -103,13 +103,13 @@ namespace SyncRADation
                 Log.Msg("  Client MelonLoader log:");
                 Log.Msg("    ~/Work/MyProjects/SIGNALIS/MelonLoader/Latest.log");
                 Log.Msg("  Prefs (each install): .../SIGNALIS/UserData/MelonPreferences.cfg");
-                Log.Msg("  grep always-on: [Story] [Interact] [KeyRing] [StorageBox] [Scene] [Damage]");
-                Log.Msg("    [Door] [Puzzle] [Pickup] [Harmony] [Hitch] [Spawn] [Enemy] [Proxy] [Weapon]");
+                Log.Msg("  Read first: [Log] summary (warnings by tag), [Desync] DESYNC, [State] (who is where)");
+                Log.Msg("  Always on: [State] [Net] [Desync] [Story] [Cutscene] [Interact] [Door] [Enemy] [Weapon]");
+                Log.Msg("    [Pickup] [Puzzle] [Damage] [Scene] [Room] pN, [KeyRing] [StorageBox] [Spawn] [Hitch]");
                 Log.Msg("  VerboseLogging also: [FMOD] Play/Stop, [Proxy]/[DRV] clone/FX, puzzle diffs");
-                Log.Msg("  Diagnostics also: [Room] [Proxy] vis/jump, [Enemy] client/wake, [Move] [Bag] [EventCam] [Music],");
+                Log.Msg("  Diagnostics also: [Room] [Proxy] vis/jump, [Enemy] client, [Move] [Bag] [EventCam] [Music],");
                 Log.Msg("    [Hitch] phase=/stall, full [Harmony] audit");
-                Log.Msg("  Hitch tags (spike-only): frame | send gap | recv | puzzle | enemy | boss");
-                Log.Msg("    | pickup | weaponClone | 5s sendHz/recvHz/maxSend/maxRecv/maxDt/cost");
+                Log.Msg("  DesyncCheck=" + ModConfig.DesyncCheckOn + " every " + ModConfig.DesyncCheckInterval.ToString("F0") + "s | docs/LOGGING.md");
                 Log.Msg("=============================================");
 
                 Application.runInBackground = true;

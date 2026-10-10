@@ -19,8 +19,23 @@ namespace SyncRADation.Sync
             var net = LanNetworkManager.Instance;
             var lines = new List<string>(512);
             var watch = System.Diagnostics.Stopwatch.StartNew();
+            SharedLines(lines);
+            WriteDigestTail(tag, net, lines, watch);
+        }
 
+        /// <summary>
+        /// The shared world as this peer sees it: every line here must read the same on every peer (bar the rules in
+        /// DesyncCheck.Compare / digest-diff.py). Used by the pilot digest file and by the live desync check.
+        /// </summary>
+        internal static void SharedLines(List<string> lines)
+        {
+            var net = LanNetworkManager.Instance;
             lines.Add("scene name " + ActiveScene());
+            SharedBody(net, lines);
+        }
+
+        private static void SharedBody(LanNetworkManager net, List<string> lines)
+        {
 
             // Story: the shared SProgress table (per-player keys never ride a commit, so they are not compared).
             var flags = new Dictionary<string, StoryFlagEntry>();
@@ -65,7 +80,10 @@ namespace SyncRADation.Sync
                 }
             }
             catch (Exception e) { Guard.Swallow(e); }
+        }
 
+        private static void WriteDigestTail(string tag, LanNetworkManager net, List<string> lines, System.Diagnostics.Stopwatch watch)
+        {
             // Per peer (not compared): who this is and what it carries.
             GameObject me = PlayerState.player;
             lines.Add("self role " + (net != null ? net.Role.ToString() : "-") + " p" + (net != null ? net.LocalPlayerId : -1));

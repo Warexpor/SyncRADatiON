@@ -34,3 +34,4 @@ Current: `Bootstrap/PluginInfo.cs` `ProtocolVersion`. Port default `7777`, conne
   - `InteractionKind.CutsceneDone` (22): a client's copy of a shared cutscene ended (played out or skipped). A host that did not watch it takes the completed state (`completed` + `onGameLoad`) and the `CutsceneCompleted` poll carries it on.
   - `EnemyActionKind.Stomp` (6): a client pressed a downed enemy's stomp prompt; the host hands the press to that enemy's native Critical / Fire coroutine.
   - `EnemySnapshotNet.HurtState` bit 7: the host animator's `Sleep` bool (customSleep enemies); bits 0-6 stay `staggerType`.
+- v21 (0.5.71): `WorldDigest` 75. Kind 0, host to every client: the host's shared-world digest (`Sync/TestPilot.Digest.cs` lines, chunks of 128, `Seq` / `Part` / `Parts` / `Scene`) for the live desync check. Kind 1, client to host: the client's findings as log lines.

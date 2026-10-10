@@ -103,6 +103,9 @@ namespace SyncRADation
             SessionReset.Register("StorageTxn", Connection, StorageTxn.Reset);            // drops an in-flight put/take (a put stays boxed host-side)
             SessionReset.Register("DroppedItems", Connection, DroppedItemRegistry.ClearAll); // wipe clears them in the Load postfix; also DroppedItemTemplateCache
             SessionReset.Register("PlaytestLog", Connection, PlaytestLog.Reset);
+            SessionReset.Register("StateBeat", Scene | Connection, StateBeat.Reset);
+            SessionReset.Register("NetStats", Connection, NetStats.Reset);
+            SessionReset.Register("DesyncCheck", Scene | Session | Connection, SyncRADation.Networking.DesyncCheck.Reset);
             // EnemySyncService puppets + room / wake caches (Reset re-runs its scene clear).
             SessionReset.Register("EnemySync", Connection, () => Net()?.EnemySync.Reset());
             SessionReset.Register("BossSync", Connection, () => Net()?.BossSync.Reset());

@@ -78,7 +78,7 @@ namespace SyncRADation.Networking
             if (NetGate.HostRole)
                 EntitySpawner.FinishSpawn(msg.TypeKey, new Vector3(msg.PosX, msg.PosY, msg.PosZ), msg.RotY, 0, true);
             else if (_net.TryGetPeer(0, out var peer) && peer.ConnectionState == ConnectionState.Connected)
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+                SyncRADation.Sync.NetStats.Send(peer, writer, DeliveryMethod.ReliableOrdered);
         }
 
         internal void BroadcastEnemySpawn(EnemySpawnMessage msg)
@@ -130,7 +130,7 @@ namespace SyncRADation.Networking
             msg.Serialize(writer);
             if (_net.TryGetPeer(targetPlayerId, out var peer)
                 && peer.ConnectionState == ConnectionState.Connected)
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+                SyncRADation.Sync.NetStats.Send(peer, writer, DeliveryMethod.ReliableOrdered);
         }
 
         /// <summary>Client → host: a local hit on a puppet (HP the client's PlayerAttack took off + TakeDamage chances).</summary>
@@ -154,7 +154,7 @@ namespace SyncRADation.Networking
             writer.Put((byte)NetMessageType.EnemyDamage);
             msg.Serialize(writer);
             if (_net.TryGetPeer(0, out var peer) && peer.ConnectionState == ConnectionState.Connected)
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+                SyncRADation.Sync.NetStats.Send(peer, writer, DeliveryMethod.ReliableOrdered);
         }
 
         /// <summary>Client → host: stomp/push/burn/wake side effects the puppeted client cannot run itself.</summary>
@@ -171,7 +171,7 @@ namespace SyncRADation.Networking
             writer.Put((byte)NetMessageType.EnemyAction);
             msg.Serialize(writer);
             if (_net.TryGetPeer(0, out var peer) && peer.ConnectionState == ConnectionState.Connected)
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+                SyncRADation.Sync.NetStats.Send(peer, writer, DeliveryMethod.ReliableOrdered);
         }
 
         internal void HandleEnemyAction(EnemyActionMessage msg, int senderId)

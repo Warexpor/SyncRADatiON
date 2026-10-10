@@ -57,7 +57,9 @@ namespace SyncRADation.Networking
         DropRekey = 73,
         /// <summary>Host → one client: the host's WorldIds of the categories whose registry checksum differs (chunked).</summary>
         SceneDiff = 74,
-        _Highest = 74
+        /// <summary>Host → all: the host's shared-world digest (chunked). Client → host: what it found different (log lines).</summary>
+        WorldDigest = 75,
+        _Highest = 75
     }
 
     public enum InteractionKind : byte
@@ -758,6 +760,48 @@ namespace SyncRADation.Networking
     /// category (more than the ids sent = truncated at NetWire.MaxSceneDiffTotalIds). <see cref="CategoryMask"/> lists
     /// every category of this diff so the client knows when it has all of them.
     /// </summary>
+    public struct WorldDigestMessage
+    {
+        /// <summary>0: digest lines from the host. 1: a client's report for the host's log.</summary>
+        public byte Kind;
+        public int Seq;
+        public byte Part;
+        public byte Parts;
+        public string Scene;
+        public string[] Lines;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(Kind);
+            w.Put(Seq);
+            w.Put(Part);
+            w.Put(Parts);
+            NetWire.PutString(w, Scene);
+            int n = Lines != null ? Lines.Length : 0;
+            n = NetWire.ClampCount(n, NetWire.MaxDigestLines, "WorldDigest");
+            w.Put(n);
+            for (int i = 0; i < n; i++)
+                NetWire.PutString(w, Lines[i]);
+        }
+
+        public static WorldDigestMessage Deserialize(NetDataReader r)
+        {
+            var msg = new WorldDigestMessage
+            {
+                Kind = r.GetByte(),
+                Seq = r.GetInt(),
+                Part = r.GetByte(),
+                Parts = r.GetByte(),
+                Scene = r.GetString()
+            };
+            int n = NetWire.ReadCount(r, NetWire.MaxDigestLines, "WorldDigest");
+            msg.Lines = n > 0 ? new string[n] : Array.Empty<string>();
+            for (int i = 0; i < n; i++)
+                msg.Lines[i] = r.GetString();
+            return msg;
+        }
+    }
+
     public struct SceneDiffMessage
     {
         public int SenderPlayerId;

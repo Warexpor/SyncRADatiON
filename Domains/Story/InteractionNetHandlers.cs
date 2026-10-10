@@ -43,7 +43,7 @@ namespace SyncRADation.Networking
             writer.Put((byte)NetMessageType.InteractionRequest);
             msg.Serialize(writer);
             if (_net.TryGetPeer(0, out var peer) && peer.ConnectionState == ConnectionState.Connected)
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+                SyncRADation.Sync.NetStats.Send(peer, writer, DeliveryMethod.ReliableOrdered);
         }
 
         internal void SendInteractionAck(int targetPlayerId, long worldId, InteractionKind kind, bool ok, string reason)
@@ -61,7 +61,7 @@ namespace SyncRADation.Networking
             msg.Serialize(writer);
             if (targetPlayerId == _net.LocalPlayerId) return;
             if (_net.TryGetPeer(targetPlayerId, out var peer) && peer.ConnectionState == ConnectionState.Connected)
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+                SyncRADation.Sync.NetStats.Send(peer, writer, DeliveryMethod.ReliableOrdered);
         }
 
         internal void HandleInteractionRequest(InteractionRequestMessage msg)

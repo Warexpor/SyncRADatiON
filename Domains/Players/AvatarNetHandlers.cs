@@ -207,7 +207,7 @@ namespace SyncRADation.Networking
             foreach (var peer in _net.ConnectedPeers())
             {
                 if (peer == null || peer.ConnectionState != ConnectionState.Connected) continue;
-                try { peer.Send(writer, DeliveryMethod.Sequenced); }
+                try { SyncRADation.Sync.NetStats.Send(peer, writer, DeliveryMethod.Sequenced); }
                 catch (System.Exception ex)
                 {
                     if (!_loggedSendFail)
@@ -249,7 +249,7 @@ namespace SyncRADation.Networking
                 if (pid == senderId) continue;
                 if (ScenesDiffer(from, _net.SceneOf(pid))) continue;
                 if (!_net.TryGetPeer(pid, out var peer) || peer.ConnectionState != ConnectionState.Connected) continue;
-                try { peer.Send(writer, method); }
+                try { SyncRADation.Sync.NetStats.Send(peer, writer, method); }
                 catch (System.Exception ex)
                 {
                     if (!_loggedRelayFail)

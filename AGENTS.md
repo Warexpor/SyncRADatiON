@@ -11,7 +11,8 @@ Version and protocol: `Bootstrap/PluginInfo.cs` (single source).
 | What is synced, by whom, and what stays local | `docs/SYNC.md` |
 | Symptom → code folder | `Domains/README.md` |
 | Wire changes per protocol version | `docs/PROTOCOL.md` |
-| Dual-box setup, log paths, log tags, `[Hitch]` fields | `docs/DEV_MACHINE.md` |
+| Dual-box setup, log paths, `[Hitch]` fields | `docs/DEV_MACHINE.md` |
+| How to read the logs, how to write a log line, `[State]` / `[Net]` / `[Desync]` | `docs/LOGGING.md` |
 | Decompile coverage (implemented + intentional locals) | `docs/DECOMPILE_COVERAGE.md` |
 | RVA folding check | `docs/RVA_FOLDING.md` |
 | Soak checklist before any release | `docs/PLAYTEST.md` |

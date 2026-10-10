@@ -126,6 +126,20 @@ namespace SyncRADation.Networking
             return ids;
         }
 
+        /// <summary>The link for the [Net] line: ping per remote peer and LiteNetLib's loss counter.</summary>
+        internal string LinkSummary()
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (var kvp in _peers)
+            {
+                if (kvp.Key == _localPlayerId || kvp.Value == null) continue;
+                sb.Append('p').Append(kvp.Key).Append(" ping=").Append(kvp.Value.Ping).Append("ms ");
+            }
+            try { if (_net != null) sb.Append("lost=").Append(_net.Statistics.PacketLoss); }
+            catch (Exception e) { Guard.Swallow(e); }
+            return sb.ToString();
+        }
+
         /// <summary>Round-trip ms to a remote peer (0 when unknown).</summary>
         public int GetPeerPing(int playerId)
         {
@@ -202,6 +216,7 @@ namespace SyncRADation.Networking
                 UnconnectedMessagesEnabled = true,
                 DisconnectTimeout = 5000,
                 ChannelsCount = NetChannels.Count,
+                EnableStatistics = true,
                 AutoRecycle = true
             };
         }
@@ -310,6 +325,7 @@ namespace SyncRADation.Networking
             _stopReason = "";
             _connectStartedAt = 0f;
             bool wasLive = _handshakeComplete;
+            if (wasLive) LogSink.Summary("session end" + (string.IsNullOrEmpty(stopReason) ? "" : ": " + stopReason));
             _readyPeers.Clear();
             _connectedPeersDirty = true;
             _peerConnectedAt.Clear();
@@ -412,6 +428,10 @@ namespace SyncRADation.Networking
             // Solo host (no handshaken peer yet): nothing to sync, leave the game vanilla.
             if (!HasReadyPeers)
                 return;
+
+            try { StateBeat.Tick(this); } catch (Exception ex) { TickFailed("stateBeat", ex); }
+            try { NetStats.Tick(this); } catch (Exception ex) { TickFailed("netStats", ex); }
+            try { DesyncCheck.TickHost(this); } catch (Exception ex) { TickFailed("desync", ex); }
 
             // Each domain tick is isolated: one throwing must not skip the others this frame.
             long tTicks = HitchTrace.Begin();
@@ -549,6 +569,7 @@ namespace SyncRADation.Networking
             try
             {
                 peer.Send(writer, channel, method);
+                NetStats.Tx(writer);
                 return true;
             }
             catch (Exception ex)
@@ -752,6 +773,9 @@ namespace SyncRADation.Networking
                 ModRuntime.Log?.Msg("[Network] Player " + playerId + " disconnected: " + disconnectInfo.Reason
                     + (remoteReason.Length > 0 ? " (" + remoteReason + ")" : ""));
                 bool wasReady = _readyPeers.Remove(playerId);
+                // The host's session goes on, but its co-op stretch is over: the summary a host log would otherwise
+                // only get on a clean quit.
+                if (wasReady && _role == NetworkRole.Host && _readyPeers.Count == 0) LogSink.Summary("last player left");
                 _connectedPeersDirty = true;
                 _peerConnectedAt.Remove(playerId);
                 _proxyManager.DestroyProxy(playerId);
@@ -853,6 +877,7 @@ namespace SyncRADation.Networking
                 _lastStateTime = Time.unscaledTime;
                 StatusText = "Hosting (" + (GetPlayerCount() - 1) + "/" + (PluginInfo.MaxPlayers - 1) + " clients)";
                 ModRuntime.Log?.Msg("[Network] Handshake OK, player " + senderId + " ready (" + GetPlayerCount() + " players)");
+                StateBeat.Force();
                 WorldRegistry.RebuildIfStale();
                 SceneHandlers.BroadcastSceneHello();
                 BroadcastPlayerRoster();
@@ -887,7 +912,9 @@ namespace SyncRADation.Networking
             _connectStartedAt = 0f;
             _lastStateTime = Time.unscaledTime;
             StatusText = "Connected to host";
-            ModRuntime.Log?.Msg("[Network] Handshake OK, local playerId=" + _localPlayerId);
+            ModRuntime.Log?.Msg("[Network] Handshake OK, local playerId=" + _localPlayerId
+                + " | " + Config.ModConfig.Describe(Config.ModConfig.LocalSyncFlags) + " (local prefs)");
+            StateBeat.Force();
             WorldRegistry.RebuildIfStale();
             SceneHandlers.BroadcastSceneHello();
             _enemySync.PuppetAllNow();

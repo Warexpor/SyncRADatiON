@@ -53,7 +53,7 @@ namespace SyncRADation.Networking
             writer.Put((byte)NetMessageType.WorldPickupClaim);
             msg.Serialize(writer);
             if (_net.TryGetPeer(0, out var peer) && peer.ConnectionState == ConnectionState.Connected)
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+                SyncRADation.Sync.NetStats.Send(peer, writer, DeliveryMethod.ReliableOrdered);
         }
 
         /// <summary>Host → the (remote) claimer.</summary>
@@ -70,7 +70,7 @@ namespace SyncRADation.Networking
             writer.Put((byte)NetMessageType.WorldPickupGrant);
             msg.Serialize(writer);
             if (_net.TryGetPeer(targetPlayerId, out var peer) && peer.ConnectionState == ConnectionState.Connected)
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+                SyncRADation.Sync.NetStats.Send(peer, writer, DeliveryMethod.ReliableOrdered);
         }
 
         void SendWorldPickupDeny(int targetPlayerId, ulong worldId, Items.itemlist item, int count)
@@ -87,7 +87,7 @@ namespace SyncRADation.Networking
             writer.Put((byte)NetMessageType.WorldPickupDeny);
             msg.Serialize(writer);
             if (_net.TryGetPeer(targetPlayerId, out var peer) && peer.ConnectionState == ConnectionState.Connected)
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+                SyncRADation.Sync.NetStats.Send(peer, writer, DeliveryMethod.ReliableOrdered);
         }
 
         internal void HandleWorldPickupDeny(WorldPickupDenyMessage deny)

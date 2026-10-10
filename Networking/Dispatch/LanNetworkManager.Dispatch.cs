@@ -34,6 +34,7 @@ namespace SyncRADation.Networking
                 return;
             }
 
+            Sync.NetStats.Rx(messageType, reader.AvailableBytes + 1);
             Sync.StallWatch.Message(messageType);
             try
             {

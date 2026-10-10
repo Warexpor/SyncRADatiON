@@ -35,6 +35,7 @@ namespace SyncRADation.Tests
             ["SceneHelloMessage.Stats"] = new ArrayCap(NetWire.MaxWorldCategories),
             ["SceneFollowMessage.Stats"] = new ArrayCap(NetWire.MaxWorldCategories),
             ["SceneDiffMessage.Ids"] = new ArrayCap(NetWire.MaxSceneDiffIds),
+            ["WorldDigestMessage.Lines"] = new ArrayCap(NetWire.MaxDigestLines),
             ["PlayerRosterMessage.PlayerIds"] = new ArrayCap(NetWire.MaxRoster),
             ["WorldPickupStateMessage.Entries"] = new ArrayCap(NetWire.MaxPickupEntries),
             ["PlayerStateMessage.BoneRotations"] = new ArrayCap(NetWire.MaxBones, 1, true),

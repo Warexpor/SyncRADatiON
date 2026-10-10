@@ -157,7 +157,7 @@ namespace SyncRADation.Networking
             if (isRequest)
             {
                 if (_net.TryGetPeer(0, out var peer) && peer.ConnectionState == ConnectionState.Connected)
-                    peer.Send(writer, DeliveryMethod.ReliableOrdered);
+                    SyncRADation.Sync.NetStats.Send(peer, writer, DeliveryMethod.ReliableOrdered);
             }
             else
                 _net.BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);

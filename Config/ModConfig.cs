@@ -17,6 +17,9 @@ namespace SyncRADation.Config
         public static MelonPreferences_Entry<bool> VerboseLogging;
         /// <summary>Diagnostic instrumentation (traces, phase timing, stall breakdown, full patch audit). Read DiagnosticsOn.</summary>
         public static MelonPreferences_Entry<bool> Diagnostics;
+        /// <summary>Host: send the shared-world digest for the live desync check ([Desync] lines). Read DesyncCheckOn.</summary>
+        public static MelonPreferences_Entry<bool> DesyncCheck;
+        public static MelonPreferences_Entry<int> DesyncCheckSeconds;
         /// <summary>Rewrite Cursor.lockState Confined/Locked to None (free pointer for dual-box).</summary>
         public static MelonPreferences_Entry<bool> FreeCursor;
         /// <summary>Host only: session capacity (host + clients). 2..8, default 4.</summary>
@@ -52,6 +55,10 @@ namespace SyncRADation.Config
             Diagnostics = Category.CreateEntry("Diagnostics", false,
                 "Instrumentation that costs CPU every frame, read once at game start (restart to change). When true: [Room]/[Proxy]/[Enemy] flicker trace, [Move] blocked trace, [Bag] trace, [EventCam] click trace, [Hitch] phase= timing (wraps every patched Update/LateUpdate/FixedUpdate) and stall breakdowns, and the full boot [Harmony] audit. Off: only the cheap always-on [Hitch] spike lines and 5 s summary remain. Set on BOTH installs for a dual-box hunt.");
             DiagnosticsOn = Diagnostics.Value;
+            DesyncCheck = Category.CreateEntry("DesyncCheck", true,
+                "Host: every DesyncCheckSeconds send a digest of the shared world (story flags, doors, enemies, pickups, puzzles, cutscenes); each client compares it with its own and both logs get a [Desync] DESYNC line for whatever stays different. A few ms and ~15 KB per check.");
+            DesyncCheckSeconds = Category.CreateEntry("DesyncCheckSeconds", 20,
+                "Seconds between desync checks (5-300).");
 
             FreeCursor = Category.CreateEntry("FreeCursor", false,
                 "Never confine/lock the mouse to the game window (dual-box testing under Proton/Wayland). Off = vanilla.");
@@ -79,6 +86,17 @@ namespace SyncRADation.Config
         /// </summary>
         // persistent: pref latched at boot
         public static bool DiagnosticsOn { get; private set; }
+
+        public static bool DesyncCheckOn => DesyncCheck == null || DesyncCheck.Value;
+
+        public static float DesyncCheckInterval
+        {
+            get
+            {
+                int v = DesyncCheckSeconds != null ? DesyncCheckSeconds.Value : 20;
+                return v < 5 ? 5 : (v > 300 ? 300 : v);
+            }
+        }
 
         public static float DownedRespawnSeconds
         {

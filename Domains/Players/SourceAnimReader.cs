@@ -98,6 +98,8 @@ namespace SyncRADation.Players
                 {
                     ShotSerial++;
                     cues |= AvatarCue.Fire;
+                    PlaytestLog.Rate("Weapon", "shot", 0.2f, "shot " + msg.Weapon + " mag=" + (equipped != null ? equipped.magAmmo : -1)
+                        + " room='" + NetworkDamageSystem.CurrentRoomName() + "'");
                 }
 
                 bool reload = PlayerState.reloading || PlayerAttack.reloading;

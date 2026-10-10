@@ -74,7 +74,7 @@ namespace SyncRADation.Networking
             writer.Put((byte)NetMessageType.BossHit);
             msg.Serialize(writer);
             if (_net.TryGetPeer(0, out var peer) && peer.ConnectionState == ConnectionState.Connected)
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+                SyncRADation.Sync.NetStats.Send(peer, writer, DeliveryMethod.ReliableOrdered);
         }
 
         /// <summary>Host → every client: boss presentation event (spear taken, Chimera rifle shot).</summary>

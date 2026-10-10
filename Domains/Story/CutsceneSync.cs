@@ -81,6 +81,16 @@ namespace SyncRADation.Networking
             catch (System.Exception e) { Guard.Swallow(e); }
         }
 
+        /// <summary>The cutscenes running on this peer, for the [State] line ("" when none).</summary>
+        internal static string LiveNames()
+        {
+            if (_live.Count == 0) return "";
+            if (_live.Count == 1) return _live[0].Name;
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < _live.Count; i++) sb.Append(i == 0 ? "" : "+").Append(_live[i].Name);
+            return sb.ToString();
+        }
+
         static void TickLive()
         {
             for (int i = _live.Count - 1; i >= 0; i--)

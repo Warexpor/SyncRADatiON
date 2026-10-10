@@ -53,7 +53,7 @@ namespace SyncRADation.Networking
                 if (_net.TryGetPeer(targetPlayerId, out var peer)
                     && peer.ConnectionState == ConnectionState.Connected)
                 {
-                    peer.Send(writer, DeliveryMethod.ReliableOrdered);
+                    SyncRADation.Sync.NetStats.Send(peer, writer, DeliveryMethod.ReliableOrdered);
                     ModRuntime.Log?.Msg("[FF] Host sent dmg=" + damage.ToString("F0") + " to " + targetPlayerId);
                 }
             }
@@ -76,7 +76,7 @@ namespace SyncRADation.Networking
                 msg.Serialize(w);
                 if (_net.TryGetPeer(msg.TargetPlayerId, out var tpeer)
                     && tpeer.ConnectionState == ConnectionState.Connected)
-                    tpeer.Send(w, DeliveryMethod.ReliableOrdered);
+                    SyncRADation.Sync.NetStats.Send(tpeer, w, DeliveryMethod.ReliableOrdered);
             }
 
             if (!ModConfig.FriendlyFireEnabled) return;

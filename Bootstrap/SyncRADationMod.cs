@@ -160,6 +160,7 @@ namespace SyncRADation
             // Unity's own teardown blocks the main thread for seconds: without this line the [Stall] warnings that
             // follow look like a freeze in play.
             ModRuntime.Log?.Msg("[Session] application quit");
+            Sync.LogSink.Summary("quit");
             ModRuntime.Stop();
         }
     }

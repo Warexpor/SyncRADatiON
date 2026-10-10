@@ -35,6 +35,8 @@ namespace SyncRADation.Networking
         public const int MaxSceneDiffIds = 256;
         /// <summary>Most ids the host lists per category across all chunks of one SceneDiff (the rest is reported as truncated).</summary>
         public const int MaxSceneDiffTotalIds = 2048;
+        /// <summary>Digest lines per WorldDigest chunk (a line is ~60 bytes).</summary>
+        public const int MaxDigestLines = 128;
 
         // Warn-once keys: intentionally persistent (a wire warning is not repeated every session).
         // persistent: warn-once set
