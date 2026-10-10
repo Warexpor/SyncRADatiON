@@ -4,11 +4,15 @@
 // "resolved" when it matches again; the client sends those lines to the host, whose log carries them as "[Desync] pN".
 // Two in a row because the two digests are taken a network hop apart: one check can catch a door mid-swing or a hit
 // in flight. Compare rules: DesyncCompare (a port of scripts/pilot/digest-diff.py).
+// On top of the shared world come the "view" lines (ViewLines): every player as its own peer has it and as the others
+// show it (room, down, weapon, position), and every awake enemy's mode and position. Those catch a proxy standing
+// somewhere its player is not, and a puppet enemy that is not where the host's enemy is.
 using System;
 using System.Collections.Generic;
 using LiteNetLib;
 using LiteNetLib.Utils;
 using SyncRADation.Config;
+using SyncRADation.Players;
 using SyncRADation.Sync;
 using UnityEngine;
 
@@ -62,6 +66,55 @@ namespace SyncRADation.Networking
             return TestPilot.LocalSettled();
         }
 
+        // ------------------------------------------------------------------ view lines
+
+        static string Pos(Vector3 v) =>
+            v.x.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + ","
+            + v.y.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + ","
+            + v.z.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
+
+        static string Word(string s) => string.IsNullOrEmpty(s) ? "-" : s.Replace(' ', '_');
+
+        /// <summary>
+        /// "player pN ..." for the local player (the truth) and for every remote one as this peer shows it, and
+        /// "enemyv id ..." for every living enemy. DesyncCompare gives positions a tolerance and skips what one side
+        /// does not show (no proxy, a sleeping room).
+        /// </summary>
+        static void ViewLines(LanNetworkManager net, List<string> lines)
+        {
+            try
+            {
+                string scene = ActiveScene();
+                GameObject me = PlayerState.player;
+                lines.Add("player p" + net.LocalPlayerId + " room=" + Word(NetworkDamageSystem.CurrentRoomName())
+                    + " down=" + NetworkDamageSystem.IsDead + " weapon=" + WeaponUtils.EquippedWeaponType()
+                    + " pos=" + (me != null ? Pos(me.transform.position) : "-"));
+                var pm = net.ProxyManager;
+                foreach (int pid in net.GetRemotePlayerIds())
+                {
+                    var proxy = pm != null ? pm.GetProxy(pid) : null;
+                    if (proxy == null || proxy.GameObject == null)
+                    {
+                        // A player in another scene has no proxy here by design.
+                        if ((net.SceneOf(pid) ?? "") == scene) lines.Add("player p" + pid + " proxy=missing");
+                        continue;
+                    }
+                    lines.Add("player p" + pid + " room=" + Word(PartyVitals.RoomOf(pid)) + " down=" + PartyVitals.IsDown(pid)
+                        + " weapon=" + proxy.Weapon + " pos=" + Pos(proxy.GameObject.transform.position));
+                }
+                foreach (var kv in WorldRegistry.AllEnemies())
+                {
+                    var e = kv.Value;
+                    if (e == null || e.state == EnemyController.enemystate.dead) continue;
+                    string id = kv.Key.ToString("X16");
+                    if (!e.gameObject.activeInHierarchy) { lines.Add("enemyv " + id + " asleep"); continue; }
+                    lines.Add("enemyv " + id + " mode=" + (e.state == EnemyController.enemystate.sleep ? "sleep" : "hunt")
+                        + " pos=" + Pos(e.transform.position));
+                }
+            }
+            catch (Exception e) { Guard.Swallow(e); }
+        }
+
         // ------------------------------------------------------------------ host
 
         public static void TickHost(LanNetworkManager net)
@@ -76,6 +129,7 @@ namespace SyncRADation.Networking
             {
                 _mine.Clear();
                 TestPilot.SharedLines(_mine);
+                ViewLines(net, _mine);
                 _mine.Sort(StringComparer.Ordinal);
                 string scene = ActiveScene();
                 int parts = Math.Max(1, (_mine.Count + NetWire.MaxDigestLines - 1) / NetWire.MaxDigestLines);
@@ -145,6 +199,7 @@ namespace SyncRADation.Networking
             var watch = System.Diagnostics.Stopwatch.StartNew();
             _mine.Clear();
             TestPilot.SharedLines(_mine);
+            ViewLines(net, _mine);
             var now = new Dictionary<string, string>();
             int compared, skipped;
             DesyncCompare.Diff(_rxLines, _mine, now, out compared, out skipped);
@@ -186,7 +241,8 @@ namespace SyncRADation.Networking
                 foreach (var kv in now)
                 {
                     if (shown++ >= 3) break;
-                    first += (first.Length == 0 ? " (" : ", ") + kv.Key;
+                    // The first one with both values: a difference seen once is gone from the log otherwise.
+                    first += (first.Length == 0 ? " (" : ", ") + kv.Key + (shown == 1 ? ": " + kv.Value : "");
                 }
                 if (first.Length > 0) first += now.Count > 3 ? ", ...)" : ")";
                 string line = "check #" + _checks + ": " + _open.Count + " desync open, " + now.Count + " differing now" + first + ", "

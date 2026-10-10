@@ -31,6 +31,7 @@ namespace SyncRADation.Networking
             public int AnimParams = -1;
             public int ShownHp = int.MinValue, ShownMaxHp;  // what debugHP.text was last set to
             public bool StompSent;               // this client pressed the stomp prompt and told the host
+            public int SeenMode = -1;            // what the last "puppet" log line said (mode | chunk << 4 | target << 8)
         }
         private readonly Dictionary<ulong, Puppet> _puppets = new Dictionary<ulong, Puppet>();
         private const float TeleportDist = 8f;
@@ -790,6 +791,7 @@ namespace SyncRADation.Networking
                 var state = (EnemyController.enemystate)snap.State;
                 var stagger = (EnemyController.hurtState)(snap.HurtState & ~SleepAnimBit);
                 bool dead = !snap.Alive || state == EnemyController.enemystate.dead;
+                NotePuppet(id, p, enemy, snap, state, dead, prevHp);
 
                 // Off-chunk: no pose snap (it would pop through walls), but the dead/downed hurtbox gate still
                 // applies (join dump / sleeping chunk).
@@ -848,13 +850,45 @@ namespace SyncRADation.Networking
         /// Smooth toward the snapshot instead of teleporting (15 Hz feed): TickClientInterp moves the puppet each
         /// frame. First sight / big jump / freshly woken chunk snaps.
         /// </summary>
+        static readonly string[] ModeNames = { "sleep", "hunt", "dead" };
+
+        /// <summary>
+        /// Client: one line when the host's snapshot changes what this puppet is (asleep / hunting / dead), who it
+        /// hunts, or whether its room is awake here. The mirror of the host's "[Enemy] H state" line.
+        /// </summary>
+        static void NotePuppet(ulong id, Puppet p, EnemyController enemy, EnemySnapshotNet snap, EnemyController.enemystate state,
+            bool dead, int prevHp)
+        {
+            int mode = dead ? 2 : state == EnemyController.enemystate.sleep ? 0 : 1;
+            // Whether a sleeping enemy's room is awake here is not news (every room is, for a moment, as a scene loads).
+            bool chunk = mode == 0 || EnemyVisiblyInChunk(enemy);
+            int target = mode == 1 ? snap.TargetPlayerId & 0xFF : 0xFF;
+            int now = mode | (chunk ? 0x10 : 0) | (target << 8);
+            int was = p.SeenMode;
+            if (was == now) return;
+            p.SeenMode = now;
+            // The first snapshot of a sleeping enemy says nothing new.
+            if (was < 0 && mode == 0) return;
+            string from = was < 0 ? "?" : ModeNames[was & 0xF];
+            string tgt = target == 0xFF ? "-" : target == 0 ? "host" : "p" + target;
+            PlaytestLog.Event("Enemy", "puppet " + enemy.gameObject.name + " id=" + id.ToString("X16") + " " + from
+                + (was >= 0 && (was & 0xF) == mode ? "" : "->" + ModeNames[mode]) + " target=" + tgt
+                + " hp=" + (prevHp != snap.HP ? prevHp + "->" : "") + snap.HP + "/" + snap.MaxHP
+                + " chunk=" + (chunk ? "on" : "OFF") + " at=(" + snap.PosX.ToString("F0") + "," + snap.PosY.ToString("F0") + ")");
+        }
+
         static void SetPoseTarget(ulong id, Puppet p, EnemyController enemy, Transform t, EnemySnapshotNet snap)
         {
             var target = new Vector3(snap.PosX, snap.PosY, snap.PosZ);
             var cur = t.position;
             if (!p.HasPose || (cur - target).sqrMagnitude > TeleportDist * TeleportDist)
             {
-                if (p.HasPose) FlickerTrace.ClientEnemySnapJump(id, enemy, Vector3.Distance(cur, target));
+                if (p.HasPose)
+                {
+                    FlickerTrace.ClientEnemySnapJump(id, enemy, Vector3.Distance(cur, target));
+                    PlaytestLog.Rate("Enemy", "jump:" + id, 2f, "puppet " + enemy.gameObject.name + " id=" + id.ToString("X16")
+                        + " jumped " + Vector3.Distance(cur, target).ToString("F0") + " to the host's position");
+                }
                 t.position = target;
                 var rot0 = t.eulerAngles;
                 rot0.y = snap.RotY;

@@ -2,7 +2,7 @@
 
 LAN/VPN co-op for **SIGNALIS**, for **2 to 8 players** (default 4). One player hosts and owns the world and story. Everyone else plays as a real Elster and their actions go through the host.
 
-**Status: 0.5.72, protocol 21, pre-release.** This build is in the playtest phase. Nothing in it is proven in a real multi-player session yet, so expect bugs. Back up your saves before you try it.
+**Status: 0.5.73, protocol 21, pre-release.** This build is in the playtest phase. Nothing in it is proven in a real multi-player session yet, so expect bugs. Back up your saves before you try it.
 
 ## Requirements
 
@@ -87,7 +87,7 @@ A solo game (no session running) behaves like vanilla SIGNALIS.
 
 ## Known limitations
 
-- Pre-release: the whole 0.5.57 to 0.5.72 feature set (death/revive, party save, 3+ players, boss and enemy client hits, puzzle merging) is compile- and unit-tested; host+client join into a real chapter is smoke-tested, gameplay is not.
+- Pre-release: the whole 0.5.57 to 0.5.73 feature set (death/revive, party save, 3+ players, boss and enemy client hits, puzzle merging) is compile- and unit-tested; host+client join into a real chapter is smoke-tested, gameplay is not.
 - A client's "quit to menu" is blocked silently.
 - If a client joins while loading, it may wait up to 6 seconds for the host's state and then start from local defaults. Use **Resync world**.
 - A Falke spear held only by a client may not count as held for the Falke fight.

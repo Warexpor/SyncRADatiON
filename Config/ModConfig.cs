@@ -20,6 +20,10 @@ namespace SyncRADation.Config
         /// <summary>Host: send the shared-world digest for the live desync check ([Desync] lines). Read DesyncCheckOn.</summary>
         public static MelonPreferences_Entry<bool> DesyncCheck;
         public static MelonPreferences_Entry<int> DesyncCheckSeconds;
+        /// <summary>[Wire] line per sent / received message with its fields (streams excluded). Read WireTraceOn.</summary>
+        public static MelonPreferences_Entry<bool> WireTrace;
+        /// <summary>[Call] line per patched native game method that ran or was skipped. Read CallTraceOn (latched at boot).</summary>
+        public static MelonPreferences_Entry<bool> CallTrace;
         /// <summary>Rewrite Cursor.lockState Confined/Locked to None (free pointer for dual-box).</summary>
         public static MelonPreferences_Entry<bool> FreeCursor;
         /// <summary>Host only: session capacity (host + clients). 2..8, default 4.</summary>
@@ -59,6 +63,12 @@ namespace SyncRADation.Config
                 "Host: every DesyncCheckSeconds send a digest of the shared world (story flags, doors, enemies, pickups, puzzles, cutscenes); each client compares it with its own and both logs get a [Desync] DESYNC line for whatever stays different. A few ms and ~15 KB per check.");
             DesyncCheckSeconds = Category.CreateEntry("DesyncCheckSeconds", 20,
                 "Seconds between desync checks (5-300).");
+            WireTrace = Category.CreateEntry("WireTrace", true,
+                "Log volume only: one [Wire] line per message sent and received, with its decoded fields (the pose and enemy snapshot streams are left out, a burst is capped at 10 lines per type per second). The complete record of what crossed the network.");
+
+            CallTrace = Category.CreateEntry("CallTrace", true,
+                "One [Call] line per native game method the mod patches (interactions, pickups, doors, puzzles, saves, scene loads): that it ran, or that the mod SKIPPED it, or that it threw. Rate limited per method; per-frame methods are left out. Read once at game start (restart to change).");
+            CallTraceOn = CallTrace.Value;
 
             FreeCursor = Category.CreateEntry("FreeCursor", false,
                 "Never confine/lock the mouse to the game window (dual-box testing under Proton/Wayland). Off = vanilla.");
@@ -88,6 +98,11 @@ namespace SyncRADation.Config
         public static bool DiagnosticsOn { get; private set; }
 
         public static bool DesyncCheckOn => DesyncCheck == null || DesyncCheck.Value;
+
+        // persistent: pref latched at boot (the patches are installed once)
+        public static bool CallTraceOn { get; private set; }
+
+        public static bool WireTraceOn => WireTrace == null || WireTrace.Value;
 
         public static float DesyncCheckInterval
         {

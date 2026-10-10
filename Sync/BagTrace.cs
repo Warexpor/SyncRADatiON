@@ -1,6 +1,6 @@
 // Bag trace: one [Bag] line whenever the local 6-slot inventory changes (+item / -item with counts), so a
 // pickup that "vanished" shows whether it ever reached the bag and what removed it. Polled twice a second
-// while connected, Diagnostics pref only.
+// while connected.
 using System.Collections.Generic;
 using SyncRADation.Config;
 using SyncRADation.Networking;
@@ -24,7 +24,6 @@ namespace SyncRADation.Sync
 
         public static void Tick()
         {
-            if (!ModConfig.DiagnosticsOn) return;
             if (!NetGate.Live) { _primed = false; return; }
             float t = Time.unscaledTime;
             if (t < _next) return;
@@ -73,7 +72,7 @@ namespace SyncRADation.Sync
             }
             Swap();
             if (diff.Length > 0)
-                PlaytestLog.Event("Bag", "change" + diff + " | ring=" + (PartyKeyRing.Export()?.Length ?? 0));
+                PlaytestLog.Event("Bag", "change" + diff + " in '" + Players.NetworkDamageSystem.CurrentRoomName() + "' | ring=" + (PartyKeyRing.Export()?.Length ?? 0));
         }
 
         static void Swap()

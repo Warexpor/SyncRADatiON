@@ -89,5 +89,32 @@ namespace SyncRADation.Tests
             Assert.Empty(Diff(new[] { "door2 AA open=False locked=asleep" }, new[] { "door2 AA open=False locked=True" }, out _, out _));
             Assert.Single(Diff(new[] { "door2 AA open=True locked=asleep" }, new[] { "door2 AA open=False locked=True" }, out _, out _));
         }
+
+        [Fact]
+        public void A_view_position_has_a_tolerance_and_the_other_fields_do_not()
+        {
+            var h = new[] { "player p1 room=Mensa down=False weapon=Pistol pos=10.0,4.0,0.0" };
+            Assert.Empty(Diff(h, new[] { "player p1 room=Mensa down=False weapon=Pistol pos=11.5,5.0,0.0" }, out _, out _));
+            Assert.Single(Diff(h, new[] { "player p1 room=Mensa down=False weapon=Pistol pos=10.0,9.0,0.0" }, out _, out _));
+            Assert.Single(Diff(h, new[] { "player p1 room=Kitchen down=False weapon=Pistol pos=10.0,4.0,0.0" }, out _, out _));
+            Assert.Single(Diff(h, new[] { "player p1 proxy=missing" }, out _, out _));
+        }
+
+        [Fact]
+        public void A_view_only_one_peer_shows_is_skipped()
+        {
+            var d = Diff(new[] { "player p2 room=Mensa down=False weapon=None pos=1.0,1.0,0.0", "enemyv AA mode=hunt pos=1.0,2.0,0.0", "enemyv BB asleep" },
+                new[] { "enemyv AA asleep", "enemyv BB mode=sleep pos=5.0,5.0,0.0" }, out int compared, out int skipped);
+            Assert.Empty(d);
+            Assert.Equal(0, compared);
+            Assert.Equal(3, skipped);
+        }
+
+        [Fact]
+        public void An_enemy_awake_on_one_peer_and_asleep_in_place_on_the_other_is_a_difference()
+        {
+            Assert.Single(Diff(new[] { "enemyv AA mode=hunt pos=1.0,2.0,0.0" }, new[] { "enemyv AA mode=sleep pos=1.0,2.0,0.0" }, out _, out _));
+            Assert.Single(Diff(new[] { "enemyv AA mode=hunt pos=1.0,2.0,0.0" }, new[] { "enemyv AA mode=hunt pos=9.0,2.0,0.0" }, out _, out _));
+        }
     }
 }

@@ -35,6 +35,7 @@ namespace SyncRADation.Networking
             }
 
             Sync.NetStats.Rx(messageType, reader.AvailableBytes + 1);
+            Sync.WireTrace.Rx(messageType, reader, senderId);
             Sync.StallWatch.Message(messageType);
             try
             {

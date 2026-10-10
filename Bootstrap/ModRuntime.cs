@@ -78,6 +78,8 @@ namespace SyncRADation
                 PatchAllSafe();
                 try { HarmonyPhaseTiming.Install(_harmony, typeof(ModRuntime).Assembly.GetTypes()); }
                 catch (System.Exception ex) { Guard.Swallow("ModRuntime.PhaseTiming", ex); }
+                try { CallTrace.Install(_harmony, typeof(ModRuntime).Assembly.GetTypes()); }
+                catch (System.Exception ex) { Guard.Swallow("ModRuntime.CallTrace", ex); }
                 try { PatchAudit.Run(typeof(ModRuntime).Assembly.GetTypes()); }
                 catch (System.Exception ex) { Guard.Swallow("ModRuntime.PatchAudit", ex); }
                 GameBuild.Compute();
@@ -104,14 +106,15 @@ namespace SyncRADation
                 Log.Msg("    ~/Work/MyProjects/SIGNALIS/MelonLoader/Latest.log");
                 Log.Msg("  Prefs (each install): .../SIGNALIS/UserData/MelonPreferences.cfg");
                 Log.Msg("  Read first: [Log] summary (warnings by tag), [Desync] DESYNC, [State] (who is where)");
-                Log.Msg("  Always on: [State] [Net] [Desync] [Story] [Cutscene] [Interact] [Door] [Enemy] [Weapon]");
-                Log.Msg("    [Pickup] [Puzzle] [Damage] [Scene] [Room] pN, [KeyRing] [StorageBox] [Spawn] [Hitch]");
+                Log.Msg("  Always on: [State] [Net] [Wire] [Call] [Desync] [Unity] [Self] [Bag] [Story] [Cutscene] [Interact] [Door]");
+                Log.Msg("    [Enemy] [Weapon] [Pickup] [Puzzle] [Damage] [Scene] [Room] pN, [KeyRing] [StorageBox] [Spawn] [Hitch]");
                 Log.Msg("  VerboseLogging also: [FMOD] Play/Stop, [Proxy]/[DRV] clone/FX, puzzle diffs");
-                Log.Msg("  Diagnostics also: [Room] [Proxy] vis/jump, [Enemy] client, [Move] [Bag] [EventCam] [Music],");
+                Log.Msg("  Diagnostics also: [Room] [Proxy] vis/jump, [Enemy] client, [Move] [EventCam] [Music],");
                 Log.Msg("    [Hitch] phase=/stall, full [Harmony] audit");
-                Log.Msg("  DesyncCheck=" + ModConfig.DesyncCheckOn + " every " + ModConfig.DesyncCheckInterval.ToString("F0") + "s | docs/LOGGING.md");
+                Log.Msg("  DesyncCheck=" + ModConfig.DesyncCheckOn + " every " + ModConfig.DesyncCheckInterval.ToString("F0") + "s WireTrace=" + ModConfig.WireTraceOn + " CallTrace=" + ModConfig.CallTraceOn + " | docs/LOGGING.md");
                 Log.Msg("=============================================");
 
+                UnityLogTap.Install();
                 Application.runInBackground = true;
             }
             catch (System.Exception ex)
@@ -164,6 +167,7 @@ namespace SyncRADation
             try { SyncRADation.UI.FreeCursor.Tick(); } catch (System.Exception e) { Guard.Swallow(e); }
             try { EventCamTrace.Tick(); } catch (System.Exception e) { Guard.Swallow(e); }
             try { BagTrace.Tick(); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { SelfWatch.Tick(); } catch (System.Exception e) { Guard.Swallow(e); }
             try { MoveTrace.Tick(); } catch (System.Exception e) { Guard.Swallow(e); }
             try { MenuHit.Tick(); } catch (System.Exception e) { Guard.Swallow(e); }
             try { DroppedItemRegistry.TickDeferred(); } catch (System.Exception e) { Guard.Swallow(e); }

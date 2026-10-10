@@ -36,6 +36,7 @@ namespace SyncRADation.Sync
             byte t = w.Data[0];
             _txN[t]++;
             _txB[t] += w.Length;
+            WireTrace.Tx(w);
         }
 
         public static void Rx(byte type, int bytes)

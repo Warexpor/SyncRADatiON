@@ -77,6 +77,7 @@ namespace SyncRADation.Sync
             if (log == null) return;
             // Nothing since the last summary (quit right after the session ended): one block is enough.
             if (_lines == 0 && _warns.Count == 0 && _errors.Count == 0) return;
+            CallTrace.WriteTotals();
             try
             {
                 var sb = new StringBuilder("[Log] summary (" + why + "): " + _lines + " lines");

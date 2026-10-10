@@ -68,6 +68,7 @@ namespace SyncRADation
             SessionReset.Register("Door", Session, DoorSyncService.Reset);                       // Last* maps, held unlocks
             SessionReset.Register("FlickerTrace", Session, FlickerTrace.Reset);
             SessionReset.Register("BagTrace", Session, BagTrace.Reset);
+            SessionReset.Register("SelfWatch", Session, SelfWatch.Reset);
             SessionReset.Register("MoveTrace", Session, MoveTrace.Reset);
             SessionReset.Register("EventCamTrace", Session, EventCamTrace.Reset);
             SessionReset.Register("DialoguerFlavor", Session, DialoguerGate.ResetSession);       // local line id / flavor flag (key-ring name binding)
@@ -105,6 +106,8 @@ namespace SyncRADation
             SessionReset.Register("PlaytestLog", Connection, PlaytestLog.Reset);
             SessionReset.Register("StateBeat", Scene | Connection, StateBeat.Reset);
             SessionReset.Register("NetStats", Connection, NetStats.Reset);
+            SessionReset.Register("WireTrace", Connection, WireTrace.Reset);
+            SessionReset.Register("CallTrace", Session, CallTrace.Reset);
             SessionReset.Register("DesyncCheck", Scene | Session | Connection, SyncRADation.Networking.DesyncCheck.Reset);
             // EnemySyncService puppets + room / wake caches (Reset re-runs its scene clear).
             SessionReset.Register("EnemySync", Connection, () => Net()?.EnemySync.Reset());

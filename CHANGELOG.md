@@ -1,3 +1,16 @@
+## 0.5.73 — 2026-10-10
+
+Protocol **v21** (unchanged). Logging only: the 0.5.72 session had many more bugs on screen than its logs showed.
+
+### Logging
+- **`[Wire]`**: one line per message sent and received, with its decoded fields (`[Wire] C tx WorldPickupClaim 23B ClaimerPlayerId=1 WorldId=... ItemEnum=10 Count=1`). Every message type, also the ones no domain logged (puzzles, locks, bosses, party life, one-shots). The pose / enemy snapshot / vital streams stay in `[Net]`; a burst is capped at 10 lines per type per second with the dropped count. Pref `WireTrace` (default on).
+- **`[Call]`**: every native game method the mod patches (136: interactions, pickups, doors, puzzles, cutscenes, saves, scene loads) writes that it `ran`, that the mod `SKIPPED` it (a prefix returned false) or that it `THREW`, with the object's name. A method called more than 25 times a second is only counted. At session end one line lists every native the mod skipped and how often. Pref `CallTrace` (default on, read at game start).
+- **`[Unity]`**: the game's own errors and exceptions (they only reached Unity's `Player.log`) with the first stack frames; counted in the session summary when they happen in a session.
+- **`[Desync]` also compares views**: every player as its own peer has it against how the others show it (room, down, weapon, position within 3 units, `proxy=missing`), and every awake enemy's mode (sleep / hunt) and position on host against client.
+- **`[Self]`**: the local player's game state, HP, input lock, grapple, cloak and player object edges, with the room and the interaction prompt.
+- **`[Enemy] C puppet`**: a client's line when the host's snapshot changes what an enemy is (asleep / hunting / dead), who it hunts, or whether its room is awake there; and when a puppet jumps to the host's position.
+- `[Bag]` inventory changes are always on (were Diagnostics), with the room.
+
 ## 0.5.72 — 2026-10-10
 
 Protocol **v21** (unchanged). From the logs of the first 0.5.71 session (LOV into DET: no warnings, no desync).

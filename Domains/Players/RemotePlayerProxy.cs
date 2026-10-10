@@ -22,6 +22,8 @@ namespace SyncRADation.Players
         private AvatarCue _pendingFx;
 
         public bool LastDead { get; private set; }
+        /// <summary>The weapon this proxy shows (the sender's last PlayerState).</summary>
+        public WeaponType Weapon => _lastWeapon;
         /// <summary>Unscaled time of the last PlayerState applied (stale-proxy cleanup).</summary>
         public float LastStateAt { get; private set; }
 

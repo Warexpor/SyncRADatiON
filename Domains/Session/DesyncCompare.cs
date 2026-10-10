@@ -73,6 +73,13 @@ namespace SyncRADation.Networking
                 cv = MaskSecondBool(cv);
             }
             if (hv == cv) { compared++; return; }
+            if (section == "player" || section == "enemyv")
+            {
+                // A view: one side may not show it at all (no proxy for a player elsewhere, a room it never woke),
+                // and a position is where the thing was a network hop and an interpolation delay ago.
+                if (hv == null || cv == null || hv == "asleep" || cv == "asleep") { skipped++; return; }
+                if (SameView(hv, cv)) { compared++; return; }
+            }
             if (section == "puzzle")
             {
                 int colon = name.IndexOf(':');
@@ -90,6 +97,36 @@ namespace SyncRADation.Networking
             }
             compared++;
             diffs[key] = "host=" + (showH ?? "(none)") + " client=" + (showC ?? "(none)");
+        }
+
+        /// <summary>How far apart two views of one position may be (world units) before it counts.</summary>
+        public const float ViewPosTolerance = 3f;
+
+        static bool SameView(string a, string b)
+        {
+            var pa = a.Split(' ');
+            var pb = b.Split(' ');
+            if (pa.Length != pb.Length) return false;
+            for (int i = 0; i < pa.Length; i++)
+            {
+                if (pa[i] == pb[i]) continue;
+                if (!pa[i].StartsWith("pos=", StringComparison.Ordinal) || !pb[i].StartsWith("pos=", StringComparison.Ordinal)) return false;
+                float ax, ay, az, bx, by, bz;
+                if (!TryPos(pa[i], out ax, out ay, out az) || !TryPos(pb[i], out bx, out by, out bz)) return false;
+                float dx = ax - bx, dy = ay - by, dz = az - bz;
+                if (dx * dx + dy * dy + dz * dz > ViewPosTolerance * ViewPosTolerance) return false;
+            }
+            return true;
+        }
+
+        static bool TryPos(string token, out float x, out float y, out float z)
+        {
+            x = y = z = 0f;
+            var p = token.Substring(4).Split(',');
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            var style = System.Globalization.NumberStyles.Float;
+            return p.Length == 3 && float.TryParse(p[0], style, inv, out x) && float.TryParse(p[1], style, inv, out y)
+                && float.TryParse(p[2], style, inv, out z);
         }
 
         static string DropLastWord(string v)
