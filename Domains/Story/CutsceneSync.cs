@@ -3,10 +3,16 @@
 //   Host-authored start: the host runs StartCutscene natively (its own trigger, or a client's CutsceneStart request)
 //     and broadcasts CutsceneStart. A client never starts one from its own trigger: it asks the host once and plays
 //     the host's answer like every other peer.
-//   Observer replay: a CutsceneStart presentation starts the cutscene on every in-room peer that is not running it.
-//     Peers in another room do not start it (the PuzzleState CutsceneCompleted poll settles `completed` later).
+//   Rooms: a start belongs to the room of the player whose trigger started it (the author's room, a Room WorldId on
+//     the request and the presentation). CutsceneManagers sit under a scene-level "Cutscenes" root, outside every
+//     Room, so the object itself says nothing about where it plays. Only peers in the author's room start it, the
+//     host included: a host elsewhere relays a client's start without running it.
+//   Observer replay: a CutsceneStart presentation starts the cutscene on every peer in the author's room that is not
+//     running it. Everyone else gets the durable form once a watcher's copy completes (`completed` + onGameLoad):
+//     the host's through the PuzzleState CutsceneCompleted poll, a client's through CutsceneDone when the host did
+//     not watch (the host then settles its own copy and the poll carries it on).
 //   Late-join replay: the host's full commit names the cutscene it is running (StorySyncService.Send), and the joiner
-//     applies it as a CutsceneStart presentation through the same gates.
+//     applies it as a CutsceneStart presentation through the same gates (room = the host's room on the roster).
 //   Level intros (onStart) start from CutsceneManager.Start, never StartCutscene: every peer, joiners included, runs
 //     its own when it loads the scene, so they are not broadcast.
 //   Skip / Proceed: per player. Every peer watches its own copy and skips / proceeds it alone, like solo; nothing goes
@@ -17,6 +23,7 @@
 // Wreck / hole split (AirlockCinematic.ClientSplitFromHost): the host has none of the client's cutscenes, they run
 // locally like solo. PEN_Titles airlock cinematics (LocalInspect.AirlockCinematic) stay local on every path.
 using SyncRADation.Patches;
+using SyncRADation.Players;
 using SyncRADation.Sync;
 using UnityEngine;
 
@@ -30,6 +37,9 @@ namespace SyncRADation.Networking
         // persistent: cleared with the stamps on scene change / session reset (OnSceneChanged)
         static readonly System.Collections.Generic.List<CutsceneManager> _deferred = new System.Collections.Generic.List<CutsceneManager>();
 
+        // persistent: cleared with the stamps on scene change / session reset (OnSceneChanged)
+        static readonly System.Collections.Generic.List<CutsceneManager> _watching = new System.Collections.Generic.List<CutsceneManager>();
+
         static float Now => Time.unscaledTime;
 
         static string Hex(ulong id) => id.ToString("X16");
@@ -39,6 +49,24 @@ namespace SyncRADation.Networking
         {
             _stamps.Clear();
             _deferred.Clear();
+            _watching.Clear();
+        }
+
+        /// <summary>
+        /// Does a shared start play for this peer? Yes in the author's room. Without a room on either side (a scene
+        /// with no rooms, a late-join replay) the roster's host room decides for a replay, else the cutscene's own
+        /// Room ancestor when it has one.
+        /// </summary>
+        static bool WatchHere(CutsceneManager c, string authorRoom, bool replay)
+        {
+            if (replay && string.IsNullOrEmpty(authorRoom))
+            {
+                // The host is watching it, so the host's room is the author's.
+                string host = PartyVitals.RoomOf(0) ?? "";
+                string mine = NetworkDamageSystem.CurrentRoomName();
+                if (host.Length > 0 && mine.Length > 0) return string.Equals(host, mine, System.StringComparison.Ordinal);
+            }
+            return LocalInspect.InAuthorRoom(c.gameObject, authorRoom);
         }
 
         /// <summary>
@@ -77,11 +105,42 @@ namespace SyncRADation.Networking
                 if (c.unskippable) CutsceneSkippingUI.skippableCutscene = false;
             }
             finally { NetGate.EndApply(); }
+            if (NetGate.Client && !_watching.Contains(c)) _watching.Add(c);
         }
 
-        /// <summary>Every frame (host and client story tick): run the starts held behind a pickup that has now closed.</summary>
+        /// <summary>
+        /// Client: a shared cutscene this peer watched is over here (played out or skipped). The host may not have
+        /// watched it (other room): tell it, so the party's one copy of the story gets it as completed.
+        /// </summary>
+        static void TickWatched()
+        {
+            for (int i = _watching.Count - 1; i >= 0; i--)
+            {
+                var c = _watching[i];
+                try
+                {
+                    if (c != null && !c.completed && StartedHere(c)) continue;
+                    _watching.RemoveAt(i);
+                    // Stopped without completing (its object was switched off): nothing to report.
+                    if (c == null || !c.completed || !NetGate.Client) continue;
+                    LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(
+                        WorldId.FromGameObject(c.gameObject), InteractionKind.CutsceneDone);
+                }
+                catch (System.Exception e)
+                {
+                    Guard.Swallow(e);
+                    if (i < _watching.Count) _watching.RemoveAt(i);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Every frame (host and client story tick): report watched cutscenes that ended, and run the starts held
+        /// behind a pickup that has now closed.
+        /// </summary>
         internal static void TickDeferred()
         {
+            if (_watching.Count > 0) TickWatched();
             if (_deferred.Count == 0 || PickupOpenHere()) return;
             var run = _deferred.ToArray();
             _deferred.Clear();
@@ -167,11 +226,13 @@ namespace SyncRADation.Networking
                         PlaytestLog.Event("Story", "host StartCutscene dup id=" + Hex(id));
                         return false;
                     }
-                    LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.CutsceneStart, id, 0, "");
+                    LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.CutsceneStart, id, 0,
+                        LocalInspect.LocalRoomKey());
                     return true;
                 }
                 if (!StartedHere(c) && _stamps.TryRequest(id, Now))
-                    LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(id, InteractionKind.CutsceneStart);
+                    LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(id, InteractionKind.CutsceneStart,
+                        text: LocalInspect.LocalRoomKey());
                 return false;
             }
             catch (System.Exception e) { Guard.Swallow(e); }
@@ -229,8 +290,11 @@ namespace SyncRADation.Networking
 
         // ------------------------------------------------------------------ host: client requests
 
-        /// <summary>Host: a client's trigger asked for this cutscene. N requesters (or the host's own start) start it once.</summary>
-        internal static bool HostApplyStart(ulong id, LanNetworkManager net)
+        /// <summary>
+        /// Host: a client's trigger asked for this cutscene from that room. N requesters (or the host's own start)
+        /// start it once; the host runs it only when it stands in that room too.
+        /// </summary>
+        internal static bool HostApplyStart(ulong id, string room, LanNetworkManager net)
         {
             var c = InteractionSyncService.FindAlive<CutsceneManager>(id, "Interact");
             if (c == null || LocalInspect.AirlockCinematic(c.gameObject)) return true;
@@ -246,18 +310,33 @@ namespace SyncRADation.Networking
                 PlaytestLog.Event("Interact", "CutsceneStart dup id=" + Hex(id));
                 return true;
             }
-            if (LocalInspect.InLocalRoom(c.gameObject))
+            if (WatchHere(c, room, false))
                 StartOrDefer(c, id);
             else
-                PlaytestLog.Event("Interact", "CutsceneStart other-room id=" + Hex(id));
-            net.StorySync.BroadcastPresentation(StoryCmd.CutsceneStart, id, 0, "");
+                PlaytestLog.Event("Interact", "CutsceneStart other-room id=" + Hex(id) + " room=" + room
+                    + " here=" + LocalInspect.LocalRoomKey());
+            net.StorySync.BroadcastPresentation(StoryCmd.CutsceneStart, id, 0, room ?? "");
+            return true;
+        }
+
+        /// <summary>
+        /// Host: a client's copy of a shared cutscene is over. A host that watched it too completes its own; one that
+        /// did not (other room) takes the durable form now, and the CutsceneCompleted poll hands it to everyone else.
+        /// </summary>
+        internal static bool HostApplyDone(ulong id)
+        {
+            var c = InteractionSyncService.FindAlive<CutsceneManager>(id, "Interact");
+            if (c == null || LocalInspect.AirlockCinematic(c.gameObject)) return true;
+            if (c.completed || StartedHere(c) || _deferred.Contains(c)) return true;
+            PlaytestLog.Event("Interact", "CutsceneDone durable id=" + Hex(id));
+            StoryFlagPuzzleSyncService.ApplyCutscene(c, new PuzzleStateEntry { Bool0 = true });
             return true;
         }
 
         // ------------------------------------------------------------------ observers: presentations (inside the apply scope)
 
-        /// <summary>Host's CutsceneStart (live or late-join replay): start it here once, in the room, unless it runs already.</summary>
-        internal static void ApplyStart(ulong id, bool replay)
+        /// <summary>Host's CutsceneStart (live or late-join replay): start it here once, in the author's room, unless it runs already.</summary>
+        internal static void ApplyStart(ulong id, string room, bool replay)
         {
             var c = InteractionSyncService.FindAlive<CutsceneManager>(id, "Story");
             if (c == null) return;
@@ -266,9 +345,10 @@ namespace SyncRADation.Networking
                 PlaytestLog.Event("Story", "skip local cinematic CutsceneStart");
                 return;
             }
-            if (!LocalInspect.InLocalRoom(c.gameObject))
+            if (!WatchHere(c, room, replay))
             {
-                PlaytestLog.Event("Story", "skip other-room CutsceneStart id=" + Hex(id));
+                PlaytestLog.Event("Story", "skip other-room CutsceneStart id=" + Hex(id) + " room=" + room
+                    + " here=" + LocalInspect.LocalRoomKey());
                 return;
             }
             if (c.completed) return;

@@ -124,8 +124,7 @@ namespace SyncRADation.Players
                 return null;
             }
 
-            // Same mount as on the local Elster (found by name in the clone), else the proxy root.
-            Transform parent = FindByName(_proxy.transform, source.parent.name) ?? _proxy.transform;
+            Transform parent = MountFor(source.parent);
             GameObject clone;
             try { clone = Object.Instantiate(source.gameObject, parent, false); }
             catch (System.Exception ex)
@@ -235,6 +234,42 @@ namespace SyncRADation.Players
             for (var a = t.parent; a != null && a != root; a = a.parent)
                 p = a.name + "/" + p;
             return p;
+        }
+
+        /// <summary>
+        /// The clone's counterpart of the source weapon's parent. Guns hang in "Weapons", which native SetWeapon.Start
+        /// re-parents under hand_R/WeaponMount at a zero local pose; the proxy's copy of it is removed with the weapon
+        /// the local Elster held at clone time (PlayerProxyBuilder.ClearRuntimeMounts), so the nearest ancestor the
+        /// clone still has (the mount bone) gets the missing nodes back with the source's local pose. Parenting to the
+        /// proxy root instead left the gun at the feet, pointing along the root.
+        /// </summary>
+        private Transform MountFor(Transform sourceParent)
+        {
+            var missing = new List<Transform>();
+            Transform found = null;
+            for (var t = sourceParent; t != null; t = t.parent)
+            {
+                found = FindByName(_proxy.transform, t.name);
+                if (found != null) break;
+                missing.Add(t);
+            }
+            if (found == null)
+            {
+                PlaytestLog.Warn("Weapon", "no mount for '" + sourceParent.name + "' in the proxy");
+                return _proxy.transform;
+            }
+            for (int i = missing.Count - 1; i >= 0; i--)
+            {
+                var src = missing[i];
+                var node = new GameObject(src.name);
+                node.layer = _targetLayer;
+                node.transform.SetParent(found, false);
+                node.transform.localPosition = src.localPosition;
+                node.transform.localRotation = src.localRotation;
+                node.transform.localScale = src.localScale;
+                found = node.transform;
+            }
+            return found;
         }
 
         private static Transform FindByName(Transform root, string name)

@@ -1,5 +1,5 @@
 // Host side of client interaction requests: validate, run the native world mutation, ack the sender.
-// UseItem: InteractionSyncService.UseItem.cs. Cutscene start / skip / proceed: CutsceneSync.
+// UseItem: InteractionSyncService.UseItem.cs. Cutscene start / done: CutsceneSync.
 using SyncRADation.Patches;
 using SyncRADation.Sync;
 using UnityEngine;
@@ -46,7 +46,7 @@ namespace SyncRADation.Networking
                 switch (msg.Kind)
                 {
                     case InteractionKind.EventZone:
-                        ok = ApplyEventZone(id, msg.SenderPlayerId);
+                        ok = ApplyEventZone(id, msg.SenderPlayerId, msg.Text ?? "");
                         break;
                     case InteractionKind.UseItem:
                         ok = ApplyUseItem(id, msg.SenderPlayerId, out string consumeReason);
@@ -57,7 +57,10 @@ namespace SyncRADation.Networking
                     // build sends them (keypads are live puzzle state, dialogues and inspect screens stay local, scene
                     // requests ride SceneFollow). Anything unhandled is acked FAIL below.
                     case InteractionKind.CutsceneStart:
-                        ok = CutsceneSync.HostApplyStart(id, net);
+                        ok = CutsceneSync.HostApplyStart(id, msg.Text ?? "", net);
+                        break;
+                    case InteractionKind.CutsceneDone:
+                        ok = CutsceneSync.HostApplyDone(id);
                         break;
                     case InteractionKind.StoragePut:
                     case InteractionKind.StorageTake:
@@ -68,7 +71,7 @@ namespace SyncRADation.Networking
                         ok = true;
                         break;
                     case InteractionKind.MultiCondition:
-                        ok = ApplyMultiCondition(id, msg.Int0);
+                        ok = ApplyMultiCondition(id, msg.Int0, msg.Text ?? "");
                         break;
                     case InteractionKind.DroppedPickup:
                         ok = net.DroppedItemHandlers.TryClaimDropped(msg.Int0, msg.SenderPlayerId, out reason);
@@ -100,7 +103,11 @@ namespace SyncRADation.Networking
             net.InteractionHandlers.SendInteractionAck(msg.SenderPlayerId, ackId, msg.Kind, ok, reason);
         }
 
-        private static bool ApplyEventZone(ulong id, int senderId)
+        /// <summary>
+        /// A client stepped into this zone in that room. The host invokes it only when it stands there too (zones can
+        /// sit outside every Room); the broadcast carries the room for the other clients.
+        /// </summary>
+        private static bool ApplyEventZone(ulong id, int senderId, string room)
         {
             var z = Find<EventZone>(id);
             if (z == null) return false;
@@ -108,16 +115,17 @@ namespace SyncRADation.Networking
             if (z.triggered) return true;
             z.triggered = true;
             EventZonePatch.MarkFired(id);
-            bool hostRan = LocalInspect.InLocalRoom(z.gameObject);
+            bool hostRan = LocalInspect.InAuthorRoom(z.gameObject, room);
             if (hostRan)
             {
                 try { if (z.onInRange != null) z.onInRange.Invoke(); } catch (System.Exception e) { Guard.Swallow(e); }
             }
             else
-                PlaytestLog.Event("Interact", "EventZone other-room id=" + id.ToString("X16"));
+                PlaytestLog.Event("Interact", "EventZone other-room id=" + id.ToString("X16") + " room=" + room
+                    + " here=" + LocalInspect.LocalRoomKey());
             // END attribution: host ran it natively (it counted) or only the requesting client counts.
             LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.EventZoneFire, id, 0,
-                hostRan ? StoryWire.HostCounted : StoryWire.PlayerCounted(senderId));
+                StoryWire.WithRoom(hostRan ? StoryWire.HostCounted : StoryWire.PlayerCounted(senderId), room));
             return true;
         }
 
@@ -189,7 +197,7 @@ namespace SyncRADation.Networking
             return best;
         }
 
-        private static bool ApplyMultiCondition(ulong id, int kind)
+        private static bool ApplyMultiCondition(ulong id, int kind, string room)
         {
             // The host runs TryOnce / TryTrigger natively whatever room it is in, so it always counts END effects.
             var m = Find<MultiConditionEvent>(id);
@@ -204,7 +212,7 @@ namespace SyncRADation.Networking
             // TryTrigger's count reaches peers through the PuzzleState poll only (MultiConditionTriggerPatch).
             if (kind != 1)
                 LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.MultiConditionFire, id, kind,
-                    StoryWire.HostCounted);
+                    StoryWire.WithRoom(StoryWire.HostCounted, room));
             return true;
         }
 

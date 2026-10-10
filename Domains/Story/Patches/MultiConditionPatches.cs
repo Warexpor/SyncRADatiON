@@ -16,7 +16,8 @@ namespace SyncRADation.Patches
             if (NetGate.Host) return true;
             if (AirlockCinematic.ClientSplitFromHost()) return true; // the host has no such object (wreck / hole split)
             LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(
-                WorldId.FromGameObject(__instance.gameObject), InteractionKind.MultiCondition, 0);
+                WorldId.FromGameObject(__instance.gameObject), InteractionKind.MultiCondition, 0,
+                text: LocalInspect.LocalRoomKey());
             return false;
         }
 
@@ -28,7 +29,8 @@ namespace SyncRADation.Patches
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             if (id == 0 || !EventZonePatch.MarkMultiOnce(id)) return;
             LanNetworkManager.Instance.StorySync.BroadcastPresentation(
-                StoryCmd.MultiConditionFire, id, 0, StoryWire.HostCounted);
+                StoryCmd.MultiConditionFire, id, 0,
+                StoryWire.WithRoom(StoryWire.HostCounted, LocalInspect.LocalRoomKey()));
         }
     }
 

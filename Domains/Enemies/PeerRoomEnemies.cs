@@ -15,6 +15,8 @@ namespace SyncRADation.Networking
     /// Here the host runs that same Enter for a room a remote player is in (and the host is not), with that player as
     /// the native reference player, and EnemyManagerPeerPatches keeps CheckIfLeft from sleeping the room while one is
     /// still there. EnemyManager.inCombat / enemyPresence are the host listener's own and stay as they were.
+    /// A manager of the host's own room that comes alive after the host walked in gets the entry it missed
+    /// (EnterHostRoom).
     /// Managers that own a Kolibri get the same Enter: it switches the room's enemies and the Kolibri on as the host's
     /// own entry would, and the Kolibri's state then rides the host's boss sync (BossSyncService). Skipping them left
     /// every other enemy of such a room asleep on the host, so a client's hits there all missed (test pilot
@@ -48,7 +50,12 @@ namespace SyncRADation.Networking
                     // ("Coroutine couldn't be started ... 'Enemy Manager' is inactive", test pilot LOV / DET).
                     if (m == null || m.inOperation || !m.gameObject.activeInHierarchy) continue;
                     Room room = m.room;
-                    if (room == null || room == hostRoom) continue;
+                    if (room == null) continue;
+                    if (room == hostRoom)
+                    {
+                        EnterHostRoom(m, room);
+                        continue;
+                    }
                     GameObject peer = PeerIn(room, pm, remote);
                     if (peer == null) continue;
                     Enter(m, room, peer);
@@ -99,6 +106,20 @@ namespace SyncRADation.Networking
                 if (PartyVitals.RoomOf(pid) == name) return proxy.GameObject;
             }
             return null;
+        }
+
+        /// <summary>
+        /// The host's own room, with a manager that is not in operation: the story switched it on while the host was
+        /// already standing there (LOV West Corridor: a client took the pistol in the Overlook Office, which arms the
+        /// corridor's EULR). Native Enter only runs from the room entry, which solo always comes after such an event,
+        /// so the manager never started CheckIfLeft: it is what sets EnemyManager.inCombat / enemyPresence, and the
+        /// host fought beside the client with no combat music and no presence static. Run the entry it missed.
+        /// </summary>
+        static void EnterHostRoom(EnemyManager m, Room room)
+        {
+            m.Enter(room);
+            PlaytestLog.Event("Enemy", "host room " + room.roomName + ": late EnemyManager.Enter (in operation="
+                + m.inOperation + ")");
         }
 
         static void Enter(EnemyManager m, Room room, GameObject peer)

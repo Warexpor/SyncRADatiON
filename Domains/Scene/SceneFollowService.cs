@@ -252,6 +252,18 @@ namespace SyncRADation.Networking
             return true;
         }
 
+        /// <summary>
+        /// Client: a follow to this scene waits for this player's cutscene. Not for the scene this player asked for
+        /// itself (its own cutscene already ended in that load and is waiting on the host; gameState stays cutscene
+        /// until it leaves).
+        /// </summary>
+        public static bool HoldsForCutscene(string sceneName)
+        {
+            return InLocalCutscene() && !IsMainMenu(sceneName)
+                && !string.Equals(ActiveScene(), sceneName, System.StringComparison.Ordinal)
+                && !string.Equals(_requested, sceneName, System.StringComparison.Ordinal);
+        }
+
         /// <summary>Client tick: run a held follow once the cutscene is over; re-ask when a blocked / queued request never produced a load.</summary>
         public static void TickClient()
         {
@@ -495,18 +507,26 @@ namespace SyncRADation.Networking
                 PlaytestLog.Event("Scene", "ignore follow '" + msg.SceneName + "' (airlock split)");
                 return;
             }
-            // Not for the scene this player asked for itself (its own cutscene already ended in that load and is
-            // waiting on the host; gameState stays cutscene until it leaves).
-            if (InLocalCutscene() && !IsMainMenu(msg.SceneName)
-                && !string.Equals(ActiveScene(), msg.SceneName, System.StringComparison.Ordinal)
-                && !string.Equals(_requested, msg.SceneName, System.StringComparison.Ordinal))
+            FollowHost(msg.SceneName);
+        }
+
+        /// <summary>
+        /// Client: the host is in (or loading) this scene. Every follow source goes through here, the SceneFollow
+        /// message and the SceneHello scene compare alike: the host's hello from the new scene arrives under a second
+        /// after its follow and used to load straight past the hold, cutting this player's cutscene short whenever
+        /// the host skipped a scene-ending one (PEN_Hole -> LOV_Reeducation).
+        /// </summary>
+        public static void FollowHost(string sceneName)
+        {
+            if (HoldsForCutscene(sceneName))
             {
                 if (string.IsNullOrEmpty(_heldFollow)) _heldAt = Time.unscaledTime;
-                _heldFollow = msg.SceneName;
-                PlaytestLog.Event("Scene", "hold follow '" + msg.SceneName + "' until this cutscene ends");
+                if (!string.Equals(_heldFollow, sceneName, System.StringComparison.Ordinal))
+                    PlaytestLog.Event("Scene", "hold follow '" + sceneName + "' until this cutscene ends");
+                _heldFollow = sceneName;
                 return;
             }
-            Apply(msg.SceneName);
+            Apply(sceneName);
         }
     }
 }

@@ -30,6 +30,7 @@ namespace SyncRADation.Networking
             // 4 Forward, 5 Turn, 6 HitFromX, 7 HitFromY; -1 unread): Set* on a missing parameter warns every call.
             public int AnimParams = -1;
             public int ShownHp = int.MinValue, ShownMaxHp;  // what debugHP.text was last set to
+            public bool StompSent;               // this client pressed the stomp prompt and told the host
         }
         private readonly Dictionary<ulong, Puppet> _puppets = new Dictionary<ulong, Puppet>();
         private const float TeleportDist = 8f;
@@ -153,6 +154,7 @@ namespace SyncRADation.Networking
 
             int animHash = 0;
             float animTime = 0f, fwd = 0f, turn = 0f, hitX = 0f, hitY = 0f;
+            bool sleepAnim = false;
             var anim = e.animator;
             if (anim != null)
             {
@@ -164,6 +166,7 @@ namespace SyncRADation.Networking
                 if ((mask & ParamTurn) != 0) turn = anim.GetFloat(AnimTurn);
                 if ((mask & ParamHitX) != 0) hitX = anim.GetFloat(AnimHitX);
                 if ((mask & ParamHitY) != 0) hitY = anim.GetFloat(AnimHitY);
+                if ((mask & ParamSleep) != 0) sleepAnim = anim.GetBool(AnimSleep);
             }
 
             var state = e.state;
@@ -171,7 +174,7 @@ namespace SyncRADation.Networking
             {
                 WorldId = unchecked((long)id),
                 State = (byte)state,
-                HurtState = (byte)e.staggerType,
+                HurtState = (byte)((int)e.staggerType | (sleepAnim ? SleepAnimBit : 0)),
                 PosX = pos.x,
                 PosY = pos.y,
                 PosZ = pos.z,
@@ -565,6 +568,7 @@ namespace SyncRADation.Networking
                             enemy.burndown();
                             break;
                         case EnemyActionKind.WakeUp: WakeFromFlashlight(enemy, fromPlayer); break;
+                        case EnemyActionKind.Stomp: StompFromPeer(enemy); break;
                     }
                 }
                 finally { NetGate.EndApply(); }
@@ -576,6 +580,35 @@ namespace SyncRADation.Networking
             {
                 ModRuntime.Log?.Warning("[EnemySync] action " + action + ": " + ex.Message);
             }
+        }
+
+        // Host: enemy (local instance id) -> when a remote player's stomp was handed to its coroutine.
+        static readonly Dictionary<int, float> _peerStomps = new Dictionary<int, float>();
+        const float PeerStompWindow = 1f;
+
+        /// <summary>
+        /// A client pressed the stomp prompt. Native has no stomp method: the enemy's own Critical / Fire coroutine
+        /// polls stompInter.triggered and then does the kill itself (HP = 0, prompt off, PlayerState.Stomp, squib,
+        /// StompedSFX; Ghidra EnemyController.c). Only the host runs that coroutine, so the press is handed to it;
+        /// its PlayerState.Stomp is the stomping player's, not the host's (EnemyTargetPatch.PeerStompPatch).
+        /// </summary>
+        static void StompFromPeer(EnemyController enemy)
+        {
+            var si = enemy.stompInter;
+            if (si == null || si.gameObject == null || !si.gameObject.activeInHierarchy) return; // not downed (any more)
+            _peerStomps[enemy.GetInstanceID()] = Time.unscaledTime;
+            si.triggered = true;
+        }
+
+        /// <summary>Host: the stomp this enemy's coroutine is about to run came from a remote player (consumed once).</summary>
+        internal static bool TakePeerStomp(EnemyController enemy)
+        {
+            if (enemy == null || _peerStomps.Count == 0) return false;
+            int key = enemy.GetInstanceID();
+            float at;
+            if (!_peerStomps.TryGetValue(key, out at)) return false;
+            _peerStomps.Remove(key);
+            return Time.unscaledTime - at < PeerStompWindow;
         }
 
         /// <summary>
@@ -697,11 +730,13 @@ namespace SyncRADation.Networking
                     Halt(enemy);
                     p.Halted = true;
                 }
+                int prevHp = p.HasHp ? p.Hp : snap.HP;
+                bool wasDead = enemy.state == EnemyController.enemystate.dead;
                 p.Hp = snap.HP;
                 p.HasHp = true;
 
                 var state = (EnemyController.enemystate)snap.State;
-                var stagger = (EnemyController.hurtState)snap.HurtState;
+                var stagger = (EnemyController.hurtState)(snap.HurtState & ~SleepAnimBit);
                 bool dead = !snap.Alive || state == EnemyController.enemystate.dead;
 
                 // Off-chunk: no pose snap (it would pop through walls), but the dead/downed hurtbox gate still
@@ -718,11 +753,15 @@ namespace SyncRADation.Networking
                 var t = enemy.transform;
                 if (t == null) return;
                 SetPoseTarget(id, p, enemy, t, snap);
+                // Native TakeDamage ends in squibs.TriggerRandomSquib (twice on a kill). It never runs on a puppet
+                // (the host's does), so no hit drew blood on a client, its own shots included: replay it from the
+                // host's HP drop.
+                if (snap.HP < prevHp || (dead && !wasDead)) Squib(enemy, dead && !wasDead ? 2 : 1);
 
                 enemy.state = state;
                 enemy.staggerType = stagger;
                 ApplyHurtboxActive(enemy, state, dead, stagger);
-                ApplyStompPrompt(enemy, dead, stagger);
+                ApplyStompPrompt(id, p, enemy, dead, stagger);
                 if (enemy.hitbox != null) enemy.hitbox.HP = snap.HP;
                 if (p.ShownHp != snap.HP || p.ShownMaxHp != snap.MaxHP)
                 {
@@ -740,6 +779,17 @@ namespace SyncRADation.Networking
                 p.HasPose = false;
                 Guard.Swallow("EnemySync.Apply", ex);
             }
+        }
+
+        static void Squib(EnemyController enemy, int count)
+        {
+            try
+            {
+                var squibs = enemy.squibs;
+                if (squibs == null || !squibs.isActiveAndEnabled) return;
+                for (int i = 0; i < count; i++) squibs.TriggerRandomSquib();
+            }
+            catch (Exception e) { Guard.Swallow("EnemySync.squib", e); }
         }
 
         /// <summary>
@@ -782,6 +832,14 @@ namespace SyncRADation.Networking
         static readonly int AnimHitX = Animator.StringToHash("HitFromX");
         static readonly int AnimHitY = Animator.StringToHash("HitFromY");
         const int ParamForward = 16, ParamTurn = 32, ParamHitX = 64, ParamHitY = 128;
+        // "Sleep" (bool): native sets it only for a customSleep enemy (its authored sleep pose: the first EULR of
+        // LOV / PEN sits against a wall), true when it settles at home, false in CheckStateChange when it wakes
+        // (Ghidra EnemyController.c). A halted puppet never ran either, so its controller kept walking out of the
+        // sleep state and every snapshot forced it back: the sleeping enemy shook. The host's value rides the top bit
+        // of EnemySnapshotNet.HurtState.
+        static readonly int AnimSleep = Animator.StringToHash("Sleep");
+        const int ParamSleep = 256;
+        const int SleepAnimBit = 0x80;
 
         /// <summary>
         /// Which of the synced parameters this animator has, as a mask; -1 while it cannot tell yet (animator not
@@ -803,6 +861,7 @@ namespace SyncRADation.Networking
                 if (HasBool(anim, AnimCritical)) mask |= 2;
                 if (HasBool(anim, AnimFire)) mask |= 4;
                 if (HasBool(anim, AnimPursuit)) mask |= 8;
+                if (HasBool(anim, AnimSleep)) mask |= ParamSleep;
                 if (HasFloat(anim, AnimForward)) mask |= ParamForward;
                 if (HasFloat(anim, AnimTurn)) mask |= ParamTurn;
                 if (HasFloat(anim, AnimHitX)) mask |= ParamHitX;
@@ -842,13 +901,14 @@ namespace SyncRADation.Networking
             // halted puppet, the controller's own transitions walked a dead / downed enemy into Get Up and idle
             // between snapshots, and each snapshot forced it back: the corpse flexed and danced.
             var es = (EnemyController.enemystate)snap.State;
-            var hs = (EnemyController.hurtState)snap.HurtState;
+            var hs = (EnemyController.hurtState)(snap.HurtState & ~SleepAnimBit);
             bool dead = !snap.Alive || es == EnemyController.enemystate.dead;
             if (p.AnimParams < 0) p.AnimParams = ReadAnimParams(anim);
             int prm = p.AnimParams < 0 ? 0 : p.AnimParams; // -1: animator not initialized yet, probe again next snapshot
             if ((prm & 1) != 0) anim.SetBool(AnimDead, dead);
             if ((prm & 2) != 0) anim.SetBool(AnimCritical, !dead && hs == EnemyController.hurtState.critical);
             if ((prm & 4) != 0) anim.SetBool(AnimFire, !dead && hs == EnemyController.hurtState.fire);
+            if ((prm & ParamSleep) != 0) anim.SetBool(AnimSleep, !dead && (snap.HurtState & SleepAnimBit) != 0);
             if ((prm & 8) != 0)
                 anim.SetBool(AnimPursuit, !dead && (es == EnemyController.enemystate.pursuit || es == EnemyController.enemystate.attack));
             // Walk / turn blend and the hurt / fall direction: the halted puppet's own AI never sets them.
@@ -900,9 +960,11 @@ namespace SyncRADation.Networking
         /// <summary>
         /// Puppet clients never run the Critical coroutine that enables the stomp prompt
         /// (EnemyController.Critical -> stompInter.SetActive(true), Ghidra EnemyController.c), so a client
-        /// could never finish a downed enemy. Mirror it from the host's critical stagger state.
+        /// could never finish a downed enemy. Mirror it from the host's critical stagger state. That coroutine is
+        /// also what consumes the press (it polls stompInter.triggered), so a press here went nowhere: it is sent to
+        /// the host (EnemyActionKind.Stomp) and this player stomps (PlayerState.Stomp: the stomp animation and lock).
         /// </summary>
-        static void ApplyStompPrompt(EnemyController enemy, bool dead, EnemyController.hurtState stagger)
+        static void ApplyStompPrompt(ulong id, Puppet p, EnemyController enemy, bool dead, EnemyController.hurtState stagger)
         {
             var si = enemy.stompInter;
             if (si == null) return;
@@ -912,10 +974,26 @@ namespace SyncRADation.Networking
             if (!want)
             {
                 if (go.activeSelf) go.SetActive(false);
+                // The host answered (dead, or back up): the next time it goes down the prompt works again.
+                if (p.StompSent)
+                {
+                    p.StompSent = false;
+                    si.triggered = false;
+                }
                 return;
             }
-            // Never re-arm a prompt this client already triggered (host Kill is on the way).
-            if (si.triggered) return;
+            if (si.triggered)
+            {
+                // Never re-arm a prompt this client already triggered (the host's kill is on the way).
+                if (p.StompSent) return;
+                p.StompSent = true;
+                go.SetActive(false);
+                var net = LanNetworkManager.Instance;
+                if (net != null) net.EnemyHandlers.SendEnemyAction(id, EnemyActionKind.Stomp);
+                PlayerState.Stomp();
+                PlaytestLog.Event("Enemy", "stomp id=" + id.ToString("X16"));
+                return;
+            }
             if (!go.activeSelf) go.SetActive(true);
             // Native keeps the prompt on the enemy's AimPoint (x, y, 0).
             var aim = enemy.AimPoint;
@@ -1046,6 +1124,7 @@ namespace SyncRADation.Networking
             _sendTimer = 0f;
             _snapList.Clear();
             _chase.Clear();
+            _peerStomps.Clear();
             ClearHostCache();
         }
 

@@ -12,9 +12,33 @@ namespace SyncRADation.Networking
         /// <summary>Presentation Text: host is out of the room; only this player id (the requester) counts END effects.</summary>
         public static string PlayerCounted(int playerId) => "p" + playerId;
 
+        /// <summary>
+        /// Presentation Text of an EventZoneFire / MultiConditionFire: the END attribution tag plus the room of the
+        /// player whose trigger fired it ("h@&lt;room&gt;", "p2@&lt;room&gt;"; no room = the tag alone).
+        /// </summary>
+        public static string WithRoom(string tag, string room)
+        {
+            return string.IsNullOrEmpty(room) ? tag ?? "" : (tag ?? "") + RoomSeparator + room;
+        }
+
+        const char RoomSeparator = '@';
+
+        /// <summary>The author's room of a presentation Text built by <see cref="WithRoom"/>, "" without one.</summary>
+        public static string RoomOf(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+            int at = text.IndexOf(RoomSeparator);
+            return at < 0 ? "" : text.Substring(at + 1);
+        }
+
         /// <summary>Client: does a replayed presentation with this attribution tag count its END_Manager writes here?</summary>
         public static bool CountsEndHere(string tag, int localPlayerId)
         {
+            if (!string.IsNullOrEmpty(tag))
+            {
+                int at = tag.IndexOf(RoomSeparator);
+                if (at >= 0) tag = tag.Substring(0, at);
+            }
             if (string.IsNullOrEmpty(tag)) return true; // unattributed (legacy / unknown): count like before
             if (tag == HostCounted) return false;
             if (tag.Length > 1 && tag[0] == 'p')

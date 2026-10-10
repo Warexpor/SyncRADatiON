@@ -65,6 +65,51 @@ namespace SyncRADation.Sync
             catch { return true; }
         }
 
+        /// <summary>
+        /// The local Elster's room as a cross-peer key (the Room's WorldId, hex), "" without one. Room names repeat
+        /// inside a scene (DET "Cell Block", MED "Surgery", RES "STCR Dorm").
+        /// </summary>
+        public static string LocalRoomKey()
+        {
+            try
+            {
+                var here = PlayerState.currentRoom;
+                if (here == null) return "";
+                return WorldId.FromGameObject(here.gameObject).ToString("X16");
+            }
+            catch (System.Exception e) { Guard.Swallow(e); return ""; }
+        }
+
+        /// <summary>
+        /// Does an event another player's trigger fired play for this peer? Yes in that player's room (the author's
+        /// room, a <see cref="LocalRoomKey"/>). The object's own Room ancestor only decides when a side has no room
+        /// (a scene without rooms): cutscenes and some zones / conditions sit outside every Room, where
+        /// <see cref="InLocalRoom"/> says yes to everyone.
+        /// </summary>
+        public static bool InAuthorRoom(GameObject go, string authorRoom)
+        {
+            string here = LocalRoomKey();
+            if (!string.IsNullOrEmpty(authorRoom) && here.Length > 0)
+                return string.Equals(authorRoom, here, System.StringComparison.Ordinal);
+            return InLocalRoom(go);
+        }
+
+        /// <summary>
+        /// <see cref="InLocalRoom"/> for a path that carries no author room (the PuzzleState poll): an object outside
+        /// every Room is nobody's while the local player stands in one.
+        /// </summary>
+        public static bool UnderLocalRoom(GameObject go)
+        {
+            if (go == null) return false;
+            try
+            {
+                var here = PlayerState.currentRoom;
+                if (here == null) return InLocalRoom(go);
+                return go.activeInHierarchy && go.transform.IsChildOf(here.transform);
+            }
+            catch (System.Exception e) { Guard.Swallow(e); return false; }
+        }
+
         public static bool DialoguerFlavor(int id)
         {
             switch (id)

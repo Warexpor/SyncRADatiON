@@ -18,13 +18,25 @@ namespace SyncRADation.Players
         private LineRenderer _laser;
         private SpriteRenderer _laserPoint;
         private float _laserMaxDist = 30f;
-        private string _ricochetPath;
+        private float _ricochetChance = 30f;
+        private bool _flare;
+        // Native HitMissSounds: WeaponHit / WeaponMiss 0.1 s after PlayerAttack's hitEvent / missEvent.
+        private string _hitPath = "event:/Elster/Weapons/WeaponHit";
+        private string _missPath = "event:/Elster/Weapons/WeaponMiss";
+        private const float ImpactSoundDelay = 0.1f;
+        private const int EnemyHitboxLayer = 12; // "Hitbox/Enemy"
+        private string _impactPath;
+        private Vector3 _impactPos;
+        private float _impactTimer;
         private Transform _slide;
         private float _slideRestPos;
         private float _flashTimer;
         private float _ejectStopTimer;
         private float _smokeStopTimer;
         private int _wallMask = ~0;
+        // PlayerAttack.TargetMask (walls + enemy hitboxes: what a shot stops at) and AimLaser.mask (what the laser stops at).
+        private int _targetMask;
+        private int _laserMask;
 
         // Native muzzleCycle is ~1–2 frames; 80ms looked like a stuck flash on the clone.
         private const float FlashDuration = 0.02f;
@@ -74,16 +86,27 @@ namespace SyncRADation.Players
             return t != null;
         }
 
-        /// <summary>Wall mask and ricochet sound of the local Elster's PlayerAttack (same weapons, same walls).</summary>
+        /// <summary>Masks and hit / miss sounds of the local Elster (same weapons, same walls, same enemies).</summary>
         private void ReadLocalAttackSettings()
         {
             var player = PlayerState.player;
             if (player == null) return;
-            var pa = player.GetComponentInChildren<PlayerAttack>(true);
-            if (pa == null) return;
-            _wallMask = pa.WallMask;
-            if (!string.IsNullOrEmpty(pa.ricochetSound))
-                _ricochetPath = pa.ricochetSound;
+            try
+            {
+                var pa = player.GetComponentInChildren<PlayerAttack>(true);
+                if (pa != null)
+                {
+                    _wallMask = pa.WallMask;
+                    _targetMask = pa.TargetMask;
+                }
+                var hms = player.GetComponentInChildren<HitMissSounds>(true);
+                if (hms != null)
+                {
+                    if (!string.IsNullOrEmpty(hms.hitMod)) _hitPath = hms.hitMod;
+                    if (!string.IsNullOrEmpty(hms.missMod)) _missPath = hms.missMod;
+                }
+            }
+            catch (Exception e) { Guard.Swallow("WeaponFx.attack", e); }
         }
 
         private void CacheMuzzle(GameObject source, Transform[] all)
@@ -160,6 +183,9 @@ namespace SyncRADation.Players
                         _ricochet = FindMatchingPs(all, srcAl.ricochet.gameObject.name);
                     if (srcAl.laserMaxDist > 0.5f)
                         _laserMaxDist = srcAl.laserMaxDist;
+                    _laserMask = srcAl.mask;
+                    _ricochetChance = srcAl.ricochetChance;
+                    _flare = srcAl.flare;
                 }
             }
             catch (Exception e) { Guard.Swallow("WeaponFx.laser", e); }
@@ -397,34 +423,53 @@ namespace SyncRADation.Players
             _ejectStopTimer = 0.2f;
         }
 
+        /// <summary>
+        /// What the sender's shot did, replayed from the proxy's muzzle (native PlayerAttack.RaycastShot + its
+        /// hitEvent / missEvent listeners): an enemy hitbox in the way is a hit (HitMissSounds hitMod), anything else a
+        /// miss (missMod, and AimLaser.miss: 6 missedShot particles at the wall, a ricochet spark at ricochetChance %).
+        /// PlayerAttack.ricochetSound is the shield clang (RaycastShot plays it on a "Shield" collider only), not a
+        /// wall impact.
+        /// </summary>
         public void DoImpactRaycast(Vector3 origin, Vector3 direction)
         {
-            if (Physics.Raycast(origin, direction, out RaycastHit hit, 50f, _wallMask))
+            // Melee / thrown: no barrel, nothing to trace.
+            if (_muzzleOrigin == null && _laser == null) return;
+            int mask = _targetMask != 0 ? _targetMask : _wallMask;
+            RaycastHit hit;
+            bool hitSomething = Physics.Raycast(origin, direction, out hit, 50f, mask);
+            if (hitSomething && IsPlayerHit(hit.collider)) return;
+            if (hitSomething && IsEnemyHit(hit.collider))
             {
-                if (IsPlayerHit(hit.collider))
-                {
-                    if (Config.ModConfig.FriendlyFireEnabled)
-                        PlayAt(_ricochet, hit.point, hit.normal);
-                    return;
-                }
-                PlayAt(_ricochet, hit.point, hit.normal);
-                if (!string.IsNullOrEmpty(_ricochetPath))
-                    WorldSfx.Play(_ricochetPath, hit.point, 0.4f, WorldSfx.CombatRange);
+                QueueImpactSound(_hitPath, hit.point);
+                return;
             }
-            else if (_missedShot != null)
+            QueueImpactSound(_missPath, hitSomething ? hit.point : origin);
+            if (!hitSomething || _missedShot == null) return;
+            var mt = _missedShot.transform;
+            mt.position = hit.point;
+            mt.LookAt(hit.point + hit.normal);
+            _missedShot.Emit(6);
+            if (_flare || _ricochet == null || UnityEngine.Random.Range(0f, 100f) >= _ricochetChance) return;
+            if (!_ricochet.transform.IsChildOf(mt))
             {
-                _missedShot.transform.position = origin + direction * 30f;
-                PlayBurst(_missedShot);
+                _ricochet.transform.position = hit.point;
+                _ricochet.transform.LookAt(hit.point + hit.normal);
             }
+            _ricochet.Emit(1);
         }
 
-        private static void PlayAt(ParticleSystem ps, Vector3 point, Vector3 normal)
+        private void QueueImpactSound(string path, Vector3 pos)
         {
-            if (ps == null) return;
-            ps.transform.position = point;
-            if (normal.sqrMagnitude > 0.001f)
-                ps.transform.rotation = Quaternion.LookRotation(normal);
-            PlayBurst(ps);
+            _impactPath = path;
+            _impactPos = pos;
+            _impactTimer = ImpactSoundDelay;
+        }
+
+        private static bool IsEnemyHit(Collider col)
+        {
+            if (col == null) return false;
+            if (col.gameObject.layer == EnemyHitboxLayer) return true;
+            return col.GetComponentInParent<EnemyController>() != null;
         }
 
         private static bool IsPlayerHit(Collider col)
@@ -456,7 +501,7 @@ namespace SyncRADation.Players
                 dir.Normalize();
 
             float dist = _laserMaxDist;
-            if (Physics.Raycast(origin, dir, out RaycastHit hit, _laserMaxDist, _wallMask))
+            if (Physics.Raycast(origin, dir, out RaycastHit hit, _laserMaxDist, _laserMask != 0 ? _laserMask : _wallMask))
             {
                 dist = hit.distance;
                 if (_laserPoint != null) _laserPoint.transform.position = hit.point;
@@ -518,6 +563,12 @@ namespace SyncRADation.Players
 
         public void Tick(float dt)
         {
+            if (_impactTimer > 0f)
+            {
+                _impactTimer -= dt;
+                if (_impactTimer <= 0f && !string.IsNullOrEmpty(_impactPath))
+                    WorldSfx.Play(_impactPath, _impactPos, 0.4f, WorldSfx.CombatRange);
+            }
             if (_flashTimer > 0f)
             {
                 _flashTimer -= dt;

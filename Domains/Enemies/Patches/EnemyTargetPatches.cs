@@ -130,12 +130,16 @@ namespace SyncRADation.Patches
         public static class CriticalPatch
         {
             [HarmonyPrefix]
-            public static void Prefix(EnemyController._Critical_d__166 __instance, out bool __state) =>
-                __state = Begin(__instance.__4__this);
+            public static void Prefix(EnemyController._Critical_d__166 __instance, out bool __state)
+            {
+                _downedStep = __instance.__4__this;
+                __state = Begin(_downedStep);
+            }
 
             [HarmonyFinalizer]
             public static System.Exception Finalizer(bool __state, System.Exception __exception)
             {
+                _downedStep = null;
                 End(__state);
                 return __exception;
             }
@@ -145,14 +149,46 @@ namespace SyncRADation.Patches
         public static class FirePatch
         {
             [HarmonyPrefix]
-            public static void Prefix(EnemyController._Fire_d__169 __instance, out bool __state) =>
-                __state = Begin(__instance.__4__this);
+            public static void Prefix(EnemyController._Fire_d__169 __instance, out bool __state)
+            {
+                _downedStep = __instance.__4__this;
+                __state = Begin(_downedStep);
+            }
 
             [HarmonyFinalizer]
             public static System.Exception Finalizer(bool __state, System.Exception __exception)
             {
+                _downedStep = null;
                 End(__state);
                 return __exception;
+            }
+        }
+
+        // persistent: the enemy whose Critical / Fire coroutine step is running, cleared by that step's finalizer
+        static EnemyController _downedStep;
+
+        /// <summary>
+        /// The Critical / Fire coroutine calls PlayerState.Stomp when its stomp prompt was triggered. For a remote
+        /// player's press (EnemySyncService.StompFromPeer) the host's Elster must not stomp: only the world half of
+        /// native Stomp runs, the stompEvent every enabled enemy listens to (EnemyController.Stomping: attackCool = 1.5).
+        /// </summary>
+        [HarmonyPatch(typeof(PlayerState), nameof(PlayerState.Stomp))]
+        public static class PeerStompPatch
+        {
+            [HarmonyPrefix]
+            public static bool Prefix()
+            {
+                if (!NetGate.Host || _downedStep == null || !EnemySyncService.TakePeerStomp(_downedStep)) return true;
+                try
+                {
+                    foreach (var kvp in WorldRegistry.AllEnemies())
+                    {
+                        var e = kvp.Value;
+                        if (e != null && e.isActiveAndEnabled) e.Stomping();
+                    }
+                }
+                catch (System.Exception ex) { Guard.Swallow(ex); }
+                return false;
             }
         }
     }

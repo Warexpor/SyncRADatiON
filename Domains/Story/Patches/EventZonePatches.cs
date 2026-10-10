@@ -86,7 +86,8 @@ namespace SyncRADation.Patches
                 if (_lastRequest.TryGetValue(id, out last) && Time.unscaledTime - last < 0.25f)
                     return false;
                 _lastRequest[id] = Time.unscaledTime;
-                LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(id, InteractionKind.EventZone);
+                LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(id, InteractionKind.EventZone,
+                    text: LocalInspect.LocalRoomKey());
             }
             catch (System.Exception e) { Guard.Swallow(e); }
             return false;
@@ -103,7 +104,8 @@ namespace SyncRADation.Patches
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             if (!_fired.Add(id)) return;
             // Host ran onInRange natively in its own room: it counted any END effects.
-            LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.EventZoneFire, id, 0, StoryWire.HostCounted);
+            LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.EventZoneFire, id, 0,
+                StoryWire.WithRoom(StoryWire.HostCounted, LocalInspect.LocalRoomKey()));
         }
     }
 }

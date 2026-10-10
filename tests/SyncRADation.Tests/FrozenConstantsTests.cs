@@ -15,10 +15,10 @@ namespace SyncRADation.Tests
     {
         // NetSchema.StructuralHash (Hash minus the module id, which changes with every rebuild) with the test assembly pinned to AssemblyVersion 9.9.9.9 (see the csproj).
         // Moves whenever PluginInfo.ProtocolVersion or any id of the mixed enums changes.
-        private const uint GoldenSchemaHash = 0x49E426EAU;
+        private const uint GoldenSchemaHash = 0xAE580611U;
 
         [Fact]
-        public void ProtocolVersion_is_19() => Assert.Equal(19, PluginInfo.ProtocolVersion);
+        public void ProtocolVersion_is_20() => Assert.Equal(20, PluginInfo.ProtocolVersion);
 
         [Fact]
         public void Channels_and_connection_key_are_frozen()
@@ -127,12 +127,12 @@ namespace SyncRADation.Tests
         public void Story_enemy_and_boss_enums_have_their_expected_maxima()
         {
             Assert.Equal(23, Actual(typeof(StoryCmd)).Values.Max());
-            Assert.Equal(5, Actual(typeof(EnemyActionKind)).Values.Max());
+            Assert.Equal(6, Actual(typeof(EnemyActionKind)).Values.Max());
             Assert.Equal(3, Actual(typeof(BossHitKind)).Values.Max());
-            Assert.Equal(21, Actual(typeof(InteractionKind)).Values.Max());
+            Assert.Equal(22, Actual(typeof(InteractionKind)).Values.Max());
             // StoryCmd 15..19 are intentionally unassigned (Story domain starts at 20): no other gaps below 15.
             Assert.Equal(Enumerable.Range(0, 15), Actual(typeof(StoryCmd)).Values.Where(v => v < 20).OrderBy(v => v));
-            Assert.Equal(Enumerable.Range(0, 6), Actual(typeof(EnemyActionKind)).Values.OrderBy(v => v));
+            Assert.Equal(Enumerable.Range(0, 7), Actual(typeof(EnemyActionKind)).Values.OrderBy(v => v));
             Assert.Equal(Enumerable.Range(0, 4), Actual(typeof(BossHitKind)).Values.OrderBy(v => v));
         }
 
@@ -188,7 +188,7 @@ namespace SyncRADation.Tests
         public void SchemaHash_golden_value()
         {
             Assert.Equal(GoldenSchemaHash, NetSchema.StructuralHash);
-            Assert.Equal(GoldenSchemaHash, Replicate("9.9.9.9", 19));
+            Assert.Equal(GoldenSchemaHash, Replicate("9.9.9.9", 20));
         }
 
         [Fact]

@@ -216,13 +216,13 @@ namespace SyncRADation.Networking
                         + "' local='" + localScene + "'");
                     return;
                 }
-                if (mismatch)
+                if (mismatch && !SceneFollowService.HoldsForCutscene(compareTo))
                 {
                     _net.SetStatusText("Following host scene '" + compareTo + "'");
                     ModRuntime.Log?.Warning("[Scene] MISMATCH local='" + localScene + "' host='" + compareTo
                         + "' — following host");
                 }
-                SceneFollowService.Apply(compareTo);
+                SceneFollowService.FollowHost(compareTo);
             }
             else if (!mismatch)
             {

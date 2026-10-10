@@ -27,7 +27,7 @@ namespace SyncRADation.Tests
             ("CutsceneSkip", 8), ("DialogueContinue", 9), ("DialogueEnd", 10), ("StoragePut", 11),
             ("StorageTake", 12), ("Gunshot", 13), ("MultiCondition", 14), ("SceneFollowRequest", 15),
             ("UseItemMulti", 16), ("CutsceneProceed", 17), ("BookOpen", 18), ("BookMemory", 19),
-            ("DroppedPickup", 20), ("InspectFlag", 21),
+            ("DroppedPickup", 20), ("InspectFlag", 21), ("CutsceneDone", 22),
         };
 
         public static readonly (string Name, int Value)[] T_StoryCmd =
@@ -84,7 +84,7 @@ namespace SyncRADation.Tests
         public static readonly (string Name, int Value)[] T_EnemyActionKind =
         {
             ("Kill", 0), ("KillSilent", 1), ("Knockback", 2), ("GetPushed", 3),
-            ("Burndown", 4), ("WakeUp", 5),
+            ("Burndown", 4), ("WakeUp", 5), ("Stomp", 6),
         };
 
         public static readonly (string Name, int Value)[] T_BossHitKind =

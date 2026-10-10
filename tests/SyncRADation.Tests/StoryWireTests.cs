@@ -61,6 +61,23 @@ namespace SyncRADation.Tests
         }
 
         [Fact]
+        public void WithRoom_keeps_the_attribution_and_carries_the_author_room()
+        {
+            const string room = "0941EAC23D2F387C";
+            string host = StoryWire.WithRoom(StoryWire.HostCounted, room);
+            string player = StoryWire.WithRoom(StoryWire.PlayerCounted(2), room);
+            Assert.Equal(room, StoryWire.RoomOf(host));
+            Assert.Equal(room, StoryWire.RoomOf(player));
+            Assert.False(StoryWire.CountsEndHere(host, 2));
+            Assert.True(StoryWire.CountsEndHere(player, 2));
+            Assert.False(StoryWire.CountsEndHere(player, 3));
+            // No room: the bare tag, and no room read back.
+            Assert.Equal(StoryWire.HostCounted, StoryWire.WithRoom(StoryWire.HostCounted, ""));
+            Assert.Equal("", StoryWire.RoomOf(StoryWire.HostCounted));
+            Assert.Equal("", StoryWire.RoomOf(null));
+        }
+
+        [Fact]
         public void Dialogue_tag_round_trips_and_rejects_garbage()
         {
             Assert.Equal("17:0", StoryWire.DialogueTag(17, 0));

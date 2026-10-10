@@ -6,7 +6,7 @@
 
 | Role | Install | Launch | Prefs |
 |------|---------|--------|-------|
-| **Host** | `~/.local/share/Steam/steamapps/common/SIGNALIS` | Steam (Proton) | `UserData/MelonPreferences.cfg` |
+| **Host** | `~/.local/share/Steam/steamapps/common/SIGNALIS` | Steam (Proton), or `signalis-host` (→ `scripts/launch-host.sh`, `steam -applaunch 1262350`) | `UserData/MelonPreferences.cfg` |
 | **Client** | `~/Work/MyProjects/SIGNALIS` | `secondsignalis` (→ `scripts/launch-client.sh`; own prefix `compatdata/syncradation-client`) | `UserData/MelonPreferences.cfg` |
 
 Proton ignores MelonLoader's `version.dll` unless native wins. Host Steam launch options: `WINEDLLOVERRIDES="version=n,b" %command% -screen-fullscreen 0 -screen-width 1280 -screen-height 720` (also prefix `DllOverrides`); `secondsignalis` uses the same. Hyprland floats both as centered 1280x720 windows: Steam host top (`steam_app_1262350`), Proton client bottom (`SIGNALIS.exe`). The host size also lives in its prefix registry (`Screenmanager Resolution Width/Height`).

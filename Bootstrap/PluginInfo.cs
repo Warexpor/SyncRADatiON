@@ -4,10 +4,13 @@ namespace SyncRADation
     public static class PluginInfo
     {
         public const string Name = "SyncRADation";
-        public const string Version = "0.5.67";
+        public const string Version = "0.5.68";
         public const string Author = "Warexpor";
         public const string Description = "LAN multiplayer mod for SIGNALIS — host-authoritative world/story, native client UX";
-        /// <summary>Protocol v19: v18 - StoryCommit.DialoguerXml (Dialoguer globals are per player), EnemySnapshot animator floats
+        /// <summary>Protocol v20: v19 + CutsceneStart request / presentation Text = the author's room (Room WorldId, hex),
+        /// EventZone / MultiCondition requests and fires carry it too (StoryWire.WithRoom),
+        /// InteractionKind.CutsceneDone (22: a client's copy of a shared cutscene is over).
+        /// v19: v18 - StoryCommit.DialoguerXml (Dialoguer globals are per player), EnemySnapshot animator floats
         /// (Forward, Turn, HitFromX, HitFromY) replace the always-zero velocity, WorldPickupEntry.Count -1 = withheld by the host's
         /// DynamicSupply, PartyLife Wipe Room = the save's RoomName.
         /// v17: v16 + PlayerState velocity is planar (VelX, VelY): SIGNALIS walks XY, Z is height (was VelX/VelZ).
@@ -16,7 +19,7 @@ namespace SyncRADation
         /// v14: v13 + PartyLife.Scene, Handshake GameBuildHash/GameBuild, ItemPickedUp.ClaimerPlayerId, FmodEmitter.Comp, FmodEmitterRequest (67), DropRekey (73),
         /// BonePose clamp 1023, Room as capped string, incremental StoryCommit carrying only dirty keys.
         /// v13: v12 + PuzzleStateEntry Seq/Mask, PuzzleType 78-81, StoryCmd 20-23 and WorldPickupDeny/AvatarOneShot/BossHit/EnemyAction (NetMessageType 60-63).</summary>
-        public const int ProtocolVersion = 19;
+        public const int ProtocolVersion = 20;
         public const int DefaultPort = 7777;
         /// <summary>Session capacity incl. host. Config-driven (2..8, default 4): ModConfig.MaxPlayers.</summary>
         public static int MaxPlayers => Config.ModConfig.MaxPlayersClamped;

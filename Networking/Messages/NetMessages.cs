@@ -84,6 +84,7 @@ namespace SyncRADation.Networking
         BookMemory = 19,
         DroppedPickup = 20,
         InspectFlag = 21,
+        CutsceneDone = 22, // a client's copy of a shared cutscene is over (played out or skipped)
     }
 
     public enum StoryCmd : byte
@@ -1199,6 +1200,7 @@ namespace SyncRADation.Networking
         GetPushed = 3,
         Burndown = 4,
         WakeUp = 5,
+        Stomp = 6, // the client pressed a downed enemy's stomp prompt (the host's Critical / Fire coroutine consumes it)
     }
 
     /// <summary>Client → host: native EnemyController side effect a puppeted client cannot apply itself.</summary>

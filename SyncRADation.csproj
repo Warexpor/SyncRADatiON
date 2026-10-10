@@ -163,9 +163,11 @@
   <Target Name="CopyToMods" AfterTargets="Build" Condition="'$(NoDeploy)' != 'true'">
     <MakeDir Directories="$(SignalisDir)/Mods" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(SignalisDir)/Mods" />
+    <Copy SourceFiles="$(TargetDir)$(TargetName).pdb" DestinationFolder="$(SignalisDir)/Mods" Condition="Exists('$(TargetDir)$(TargetName).pdb')" />
     <Copy SourceFiles="$(TargetDir)LiteNetLib.dll" DestinationFolder="$(SignalisDir)/Mods" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)LiteNetLib.dll')" />
     <MakeDir Directories="$(ClientSignalisDir)/Mods" Condition="Exists('$(ClientSignalisDir)')" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ClientSignalisDir)/Mods" Condition="Exists('$(ClientSignalisDir)/Mods') Or Exists('$(ClientSignalisDir)')" ContinueOnError="true" />
+    <Copy SourceFiles="$(TargetDir)$(TargetName).pdb" DestinationFolder="$(ClientSignalisDir)/Mods" Condition="Exists('$(TargetDir)$(TargetName).pdb') And Exists('$(ClientSignalisDir)')" ContinueOnError="true" />
     <Copy SourceFiles="$(TargetDir)LiteNetLib.dll" DestinationFolder="$(ClientSignalisDir)/Mods" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)LiteNetLib.dll') And Exists('$(ClientSignalisDir)')" ContinueOnError="true" />
   </Target>
 </Project>

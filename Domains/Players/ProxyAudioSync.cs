@@ -15,7 +15,6 @@ namespace SyncRADation.Players
         private bool _lastEmptyClick;
         private float _lastReloadTime;
         private float _lastHurtTime;
-        private WeaponType _lastWeapon;
 
         private string _footstepPath;
         private string _hurtPath;
@@ -171,12 +170,13 @@ namespace SyncRADation.Players
 
             float distToLocal = DistToLocal();
             bool nearby = distToLocal < NearRange;
-            bool farRange = distToLocal < FarRange;
 
             if (nearby && emptyClick && !_lastEmptyClick)
                 PlayEmptySound(state.Weapon);
-            if (nearby && aiming && !_lastAiming)
-                PlayFMODAttached(_drawSound, 0.25f);
+            // Native PlayerAttack.Update: drawSound when the aim starts, holsterSound when it ends (nothing on an
+            // inventory weapon swap). The first pose only sets the baseline.
+            if (nearby && _hasReceivedFirst && aiming != _lastAiming)
+                PlayFMODAttached(aiming ? _drawSound : _holsterSound, 0.25f);
             _lastEmptyClick = emptyClick;
             _lastAiming = aiming;
 
@@ -192,13 +192,6 @@ namespace SyncRADation.Players
                     AudioSource.PlayClipAtPoint(_footstepClip, _proxyTransform.position, vol * (running ? 0.85f : 0.6f));
             }
 
-            // Weapon swap: holster / draw. The first pose only sets the baseline; a swap out of range is not replayed later.
-            if (state.Weapon != _lastWeapon)
-            {
-                if (_hasReceivedFirst && farRange)
-                    PlayFMODAttached(state.Weapon == WeaponType.None ? _holsterSound : _drawSound, 0.3f);
-                _lastWeapon = state.Weapon;
-            }
             _hasReceivedFirst = true;
 
             // Ladder climb start: same 3D falloff pipeline as doors. The cue itself plays from LateTick.

@@ -28,3 +28,9 @@ Current: `Bootstrap/PluginInfo.cs` `ProtocolVersion`. Port default `7777`, conne
   - `WorldPickupEntry.Count = -1`: the host's `DynamicSupply.Entered` withheld that prop (switched off, no onPickup); also in the join dump.
   - `PartyLife` Wipe: `Room` carries the save's `RoomName` for a save reload; clients load with `SaveManager.loading` and start at that `SavePoint` (`Session/WipePlacement`).
   - `InteractionKind.UseItemMulti` (16) is a wire value only: `UseItemMultiInteraction.ready()` is not an item use.
+- v20 (0.5.68):
+  - `InteractionRequest` `CutsceneStart` and the `StoryPresentation` `CutsceneStart` carry the author's room in `Text` (the Room's WorldId, 16 hex digits; empty = no room). A peer starts the cutscene only when it stands in that room, the host included.
+  - `InteractionRequest` `EventZone` / `MultiCondition` carry the author's room in `Text` the same way; the `EventZoneFire` / `MultiConditionFire` presentation `Text` is the END attribution tag plus that room (`h@<room>`, `p2@<room>`; `StoryWire.WithRoom` / `RoomOf`).
+  - `InteractionKind.CutsceneDone` (22): a client's copy of a shared cutscene ended (played out or skipped). A host that did not watch it takes the completed state (`completed` + `onGameLoad`) and the `CutsceneCompleted` poll carries it on.
+  - `EnemyActionKind.Stomp` (6): a client pressed a downed enemy's stomp prompt; the host hands the press to that enemy's native Critical / Fire coroutine.
+  - `EnemySnapshotNet.HurtState` bit 7: the host animator's `Sleep` bool (customSleep enemies); bits 0-6 stay `staggerType`.

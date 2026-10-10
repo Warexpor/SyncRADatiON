@@ -120,14 +120,18 @@ namespace SyncRADation.Networking
                 switch (msg.Cmd)
                 {
                     case StoryCmd.CutsceneStart:
-                        CutsceneSync.ApplyStart(id, msg.Text == "replay");
+                    {
+                        // Text: the author's room (a Room WorldId), or the local "replay" marker of a late join.
+                        bool replay = msg.Text == "replay";
+                        CutsceneSync.ApplyStart(id, replay ? "" : msg.Text ?? "", replay);
                         break;
+                    }
                     case StoryCmd.EventZoneFire:
-                        ApplyEventZoneFire(id);
+                        ApplyEventZoneFire(id, StoryWire.RoomOf(msg.Text));
                         break;
                     case StoryCmd.MultiConditionFire:
                         // Only TryOnce is relayed (Int0 0); a TryTrigger count arrives through the PuzzleState poll.
-                        if (msg.Int0 != 1) ApplyMultiConditionOnce(id);
+                        if (msg.Int0 != 1) ApplyMultiConditionOnce(id, StoryWire.RoomOf(msg.Text));
                         break;
                     case StoryCmd.DetermineEnding:
                         ApplyDetermineEnding(msg.Int0);
@@ -157,7 +161,7 @@ namespace SyncRADation.Networking
             }
         }
 
-        static void ApplyEventZoneFire(ulong id)
+        static void ApplyEventZoneFire(ulong id, string room)
         {
             var z = FindAlive<EventZone>(id);
             if (z == null) return;
@@ -172,9 +176,10 @@ namespace SyncRADation.Networking
                 return;
             }
             z.triggered = true;
-            if (!LocalInspect.InLocalRoom(z.gameObject))
+            if (!LocalInspect.InAuthorRoom(z.gameObject, room))
             {
-                PlaytestLog.Event("Story", "skip other-room EventZoneFire id=" + id.ToString("X16"));
+                PlaytestLog.Event("Story", "skip other-room EventZoneFire id=" + id.ToString("X16") + " room=" + room
+                    + " here=" + LocalInspect.LocalRoomKey());
                 return;
             }
             // The host may be in another room: flag consequences of this Invoke are forwarded to the host (author
@@ -191,10 +196,10 @@ namespace SyncRADation.Networking
         /// ApplyMultiConditionEvent (PuzzleState poll) fires it only when the host's tried crosses tries past the
         /// local count, which this replay already moved.
         /// </summary>
-        static void ApplyMultiConditionOnce(ulong id)
+        static void ApplyMultiConditionOnce(ulong id, string room)
         {
             var m = FindAlive<MultiConditionEvent>(id);
-            if (m == null || !LocalInspect.InLocalRoom(m.gameObject)) return;
+            if (m == null || !LocalInspect.InAuthorRoom(m.gameObject, room)) return;
             BeginAuthorScope();
             try { m.TryOnce(); }
             finally { EndAuthorScope(); }

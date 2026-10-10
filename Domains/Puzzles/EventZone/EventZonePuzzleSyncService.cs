@@ -21,7 +21,9 @@ namespace SyncRADation.Networking
             x.triggered = e.Bool0;
             if (!e.Bool0 || was) return;
             EventZonePatch.MarkFired(unchecked((ulong)e.WorldId));
-            bool inRoom = LocalInspect.InLocalRoom(x.gameObject);
+            // No author room on the poll: the live fire is the EventZoneFire presentation (it carries one and marks the
+            // zone triggered first); a zone outside every Room is not invoked from here.
+            bool inRoom = LocalInspect.UnderLocalRoom(x.gameObject);
             if (!PuzzleSyncService.LiveEdge || !inRoom)
                 PlaytestLog.Verbose("Puzzle", "skip EventZone invoke " + x.gameObject.name);
             PuzzleEdge.Solved("EventZone", was, true, durable: null,
