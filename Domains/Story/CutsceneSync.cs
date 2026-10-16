@@ -21,8 +21,8 @@
 //     still be watching). CutsceneCut.Proceed only sets `proceed` (the cut's events run later in the Cutscene
 //     coroutine), so it needs no hook. A scene-ending cutscene's load waits for the peer still watching
 //     (SceneFollowService: a follow is held while this peer is in a cutscene; the host holds a client's request).
-// Wreck / hole split (AirlockCinematic.ClientSplitFromHost): the host has none of the client's cutscenes, they run
-// locally like solo. PEN_Titles airlock cinematics (LocalInspect.AirlockCinematic) stay local on every path.
+// A client in a scene the host is not in (SceneFollowService.ClientAwayFromHost): the host has none of its cutscenes,
+// they run locally like solo. PEN_Titles airlock cinematics (LocalInspect.AirlockCinematic) stay local on every path.
 using SyncRADation.Patches;
 using SyncRADation.Players;
 using SyncRADation.Sync;
@@ -290,7 +290,7 @@ namespace SyncRADation.Networking
                 if (!c.gameObject.activeInHierarchy) return true;
                 ulong id = WorldId.FromGameObject(c.gameObject);
                 if (_stamps.Skipped(id, Now)) return false;
-                if (AirlockCinematic.ClientSplitFromHost()) return true;
+                if (SceneFollowService.ClientAwayFromHost()) return true;
                 if (NetGate.Host)
                 {
                     // A client request (HostApplyStart) may have started it already; a second native StartCutscene would

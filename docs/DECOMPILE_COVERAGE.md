@@ -49,7 +49,7 @@ PuzzleType 64–72 residency/key/safe/drawer; CentralElevator `targetFloor`; mur
 
 ## Intentional local (design — not deferred)
 
-Books / EventScreen / EventOnlyRoom / lock-flavor Dialoguer (0,6,17,20–27,+13 Airlock) / PEN_Titles airlock / wreck↔hole SceneFollow / Music·Cutscenes·Ambience beds / Elster+radio UI emitters / ConnectedDoors traverse / ladders / radio tuner frequency / flavor `DialoguePlayedOnce` / BookScreen UI / SanctuaryFinale·ShootingScene presentation zones / `Interaction.triggered` poll (teleports) / UncoverDelayed cosmetic fog covers / PatternLock FullRefresh `onSolved` exitEvent (EventScreen local; pad+doors still snap) / `LAB_Waage.content` (independent bags) / FakeWall·continuum·nowhere·Gestalt (no durable bool puzzle state).
+Books / EventScreen / EventOnlyRoom / lock-flavor Dialoguer (0,6,17,20–27,+13 Airlock) / PEN_Titles airlock / level loads (personal; join follow once) / Music·Cutscenes·Ambience beds / Elster+radio UI emitters / ConnectedDoors traverse / ladders / radio tuner frequency / flavor `DialoguePlayedOnce` / BookScreen UI / SanctuaryFinale·ShootingScene presentation zones / `Interaction.triggered` poll (teleports) / UncoverDelayed cosmetic fog covers / PatternLock FullRefresh `onSolved` exitEvent (EventScreen local; pad+doors still snap) / `LAB_Waage.content` (independent bags) / FakeWall·continuum·nowhere·Gestalt (no durable bool puzzle state).
 
 ## How to re-run
 

@@ -38,6 +38,10 @@ namespace SyncRADation.Networking
         // wipe and may send a pre-reload dump before the post-reload one; each is exact, so the last wins).
         private float _authoritativeUntil;
         const float AuthoritativeWindow = 30f;
+        // The first full commit after connecting replaces local SProgress too: a joiner's own save (cutscenes it watched,
+        // doors it opened in its own run) is not the party's story. A stale "intro completed" there left a joiner frozen
+        // in gameState loading when it entered that level (CutsceneManager.Start skips a completed onStart intro).
+        private bool _joinAuthoritative = true;
         // A commit that could not be applied completely asks for one fresh snapshot per scene.
         private bool _healRequested;
 
@@ -79,6 +83,7 @@ namespace SyncRADation.Networking
             _timer = 0f;
             _hasPendingCommit = false;
             _authoritativeUntil = 0f;
+            _joinAuthoritative = true;
             _healRequested = false;
             _outbox.Clear();
             _outboxSentAt.Clear();
@@ -303,15 +308,14 @@ namespace SyncRADation.Networking
         {
             var net = LanNetworkManager.Instance;
             if (net == null || NetGate.HostRole) return;
-            bool loading = SceneFollowService.LocalIsTransient();
-            if (loading || net.SceneMismatch)
+            // Loading: keep the newest commit, merged, and apply it once the scene is up. A client in a scene the host
+            // is not in applies at once: the flags are the party's story, and that scene reads them when it loads.
+            if (SceneFollowService.LocalIsTransient())
             {
-                // Loading or in a scene the host is not in (the wreck / hole split can stay mismatched for a long
-                // time): keep the newest commit, merged, and apply it once the scene is up / matches.
                 MergePending(ref msg);
                 _pendingCommit = msg;
                 _hasPendingCommit = true;
-                PlaytestLog.Verbose("Story", "buffer commit (" + (loading ? "loading" : "scene mismatch") + ")");
+                PlaytestLog.Verbose("Story", "buffer commit (loading)");
                 return;
             }
             // A live commit supersedes the buffered (older) one: fold it in so TickClient never re-applies it on top.
@@ -319,10 +323,12 @@ namespace SyncRADation.Networking
 
             // The host stamps the bit on the full that follows its SaveManager.Load / NewGame (it survives buffering);
             // the window after a PartyLife wipe stays as a fallback for a dump that predates the bit.
-            bool authoritative = msg.FullRefresh && (msg.Authoritative || Time.unscaledTime < _authoritativeUntil);
+            bool join = msg.FullRefresh && _joinAuthoritative;
+            bool authoritative = msg.FullRefresh && (msg.Authoritative || Time.unscaledTime < _authoritativeUntil || join);
+            if (msg.FullRefresh) _joinAuthoritative = false;
             if (authoritative)
                 PlaytestLog.Event("Story", "authoritative full commit: clearing local SProgress"
-                    + (msg.Authoritative ? " (host bit)" : " (wipe window)"));
+                    + (msg.Authoritative ? " (host bit)" : join ? " (join)" : " (wipe window)"));
 
             // Unsent local END contributions survive the overwrite (client increments between commits).
             EndContribution unsent = authoritative ? default : UnsentEnd();
@@ -349,7 +355,8 @@ namespace SyncRADation.Networking
                 + " cmd=" + (StoryCmd)msg.ActiveStoryCmd);
             if (!ok) HealAfterFailedApply(net);
 
-            if (msg.FullRefresh && msg.ActiveStoryCmd != 0)
+            // The host's running presentation belongs to its scene.
+            if (msg.FullRefresh && msg.ActiveStoryCmd != 0 && !net.SceneMismatch)
                 ReplayActivePresentation(msg);
         }
 
@@ -375,7 +382,7 @@ namespace SyncRADation.Networking
             SceneFollowService.TickClient();
             if (SceneFollowService.LocalIsTransient()) return;
 
-            if (_hasPendingCommit && !net.SceneMismatch)
+            if (_hasPendingCommit)
             {
                 var m = _pendingCommit;
                 _hasPendingCommit = false;
@@ -386,8 +393,8 @@ namespace SyncRADation.Networking
             _clientTimer += Mathf.Min(Time.unscaledDeltaTime, 0.1f);
             if (_clientTimer < 0.2f) return;
             _clientTimer = 0f;
-            // Not gated on a pending commit: under a permanent scene mismatch (wreck / hole split) the pending commit
-            // never applies. END deltas are relative to the last *applied* baseline, so flushing stays consistent.
+            // Not gated on a pending commit: END deltas are relative to the last *applied* baseline, so flushing stays
+            // consistent.
             FlushOutbox(net);
             FlushEndDelta(net);
         }

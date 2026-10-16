@@ -1,3 +1,20 @@
+## 0.5.75 — 2026-10-16
+
+Protocol **v21** (unchanged: same messages, the client no longer sends scene requests). From the 0.5.74 session (PEN_Wreck, LOV_Reeducation).
+
+### Changed
+- **Players travel on their own.** One player taking a chapter or area load pulled everyone else into it. Every level load is now personal, host and client alike, F7 included (a client still needs `AllowClientCheats`). A client goes to the host's chapter once when it connects, and a party wipe still reloads everyone.
+- **A client in an area the host is not in plays it like solo**: its enemies, bosses, cutscenes, event zones, doors and gunshots run in its own game. Story flags it writes still go to the host, and the host's story commits now apply to it at once (they used to wait until both were in the same scene), so taken items, opened locks and watched cutscenes are there for whoever loads that area later. When the host walks in, the host's world takes over and the client's enemies become its puppets. Scripted cutscene `goto` / `sethp` and `goToPenny` stay with the player who triggered them when the host is elsewhere.
+- A client that finishes the credits or quits to the title leaves the session (the credits used to wait for the host's). Continue / New Game on a connected client's title screen goes to the host's chapter instead of loading its own slot.
+- The first full story commit after connecting replaces the joiner's shared SProgress: the story from its own save no longer lingers next to the party's.
+
+### Fixed
+- **The client stayed frozen in LOV_Reeducation** (`gs=loading` until quit) after the host's F7 jump pulled it there: that level only leaves the loading state through its intro cutscene, and the client's own save had already marked the intro as seen, so it never played. The joiner's story is now the host's (see above), and any peer still in `gameState` loading 4 s after arriving, with no cutscene running, gets play back (`[Scene] gameState stuck at loading ... play restored`).
+- The F2 menu showed "SCENE MISMATCH — following host chapter" while nothing followed; it now says where the host is.
+
+### Docs / tools
+- `docs/SYNC.md`, README, `docs/PLAYTEST.md` section 5, `docs/PILOT.md`; `scripts/pilot/story-run.sh` and `soak-all.sh` have every peer load each chapter itself.
+
 ## 0.5.74 — 2026-10-16
 
 Protocol **v21** (unchanged). From the first 0.5.73 session (LOV_Reeducation, Surface Access).

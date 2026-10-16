@@ -14,7 +14,7 @@ namespace SyncRADation.Patches
             if (NetGate.IsApplying || !NetGate.Party) return true;
             if (__instance == null) return true;
             if (NetGate.Host) return true;
-            if (AirlockCinematic.ClientSplitFromHost()) return true; // the host has no such object (wreck / hole split)
+            if (SceneFollowService.ClientAwayFromHost()) return true; // the host is in another scene: runs here like solo
             LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(
                 WorldId.FromGameObject(__instance.gameObject), InteractionKind.MultiCondition, 0,
                 text: LocalInspect.LocalRoomKey());
@@ -43,7 +43,7 @@ namespace SyncRADation.Patches
             if (NetGate.IsApplying || !NetGate.Party) return true;
             if (__instance == null) return true;
             if (NetGate.Host) return true;
-            if (AirlockCinematic.ClientSplitFromHost()) return true; // the host has no such object (wreck / hole split)
+            if (SceneFollowService.ClientAwayFromHost()) return true; // the host is in another scene: runs here like solo
             LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(
                 WorldId.FromGameObject(__instance.gameObject), InteractionKind.MultiCondition, 1);
             return false;

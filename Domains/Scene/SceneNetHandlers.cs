@@ -43,6 +43,9 @@ namespace SyncRADation.Networking
             public bool Complete => Parts > 0 && Received >= Parts;
         }
 
+        // Client: "local|host" scene pair last logged as apart (one line per pair).
+        private string _awayLogged = "";
+
         // Host: per client, last divergence seen (dedupe + F2 status).
         private readonly Dictionary<int, PeerDivergence> _peerDivergence = new Dictionary<int, PeerDivergence>();
 
@@ -74,6 +77,7 @@ namespace SyncRADation.Networking
             _diffParts.Clear();
             _diffMask = 0;
             _diffScene = "";
+            _awayLogged = "";
         }
 
         internal void NotePeerGone(int playerId) => _peerDivergence.Remove(playerId);
@@ -112,10 +116,15 @@ namespace SyncRADation.Networking
             if (!_net.HasTransport || !_net.HandshakeComplete) return;
             string scene = SceneManager.GetActiveScene().name ?? "";
             _net.NoteLocalSceneForHello(scene);
-            // A client's own load (the airlock split) changes the comparison too: refreshed only on the host's
+            // A client's own load changes the comparison too: refreshed only on the host's
             // hello, the flag stayed false and every SceneMismatch guard let the other scene's streams through.
             if (NetGate.ClientRole && !string.IsNullOrEmpty(_net.HostSceneName))
-                _net.SetSceneMismatch(ScenesDiffer(_net.HostSceneName, scene));
+            {
+                bool apart = ScenesDiffer(_net.HostSceneName, scene);
+                _net.SetSceneMismatch(apart);
+                if (!apart && !SceneFollowService.IsTransient(scene) && !SceneFollowService.IsTransient(_net.HostSceneName))
+                    SceneFollowService.NoteWithHost();
+            }
 
             var msg = new SceneHelloMessage
             {
@@ -203,28 +212,48 @@ namespace SyncRADation.Networking
             string compareTo = !string.IsNullOrEmpty(_net.HostSceneName) ? _net.HostSceneName : msg.SceneName;
             bool hostTransient = SceneFollowService.IsTransient(compareTo);
             bool localTransient = SceneFollowService.IsTransient(localScene);
+            bool wasMismatch = _net.SceneMismatch;
             bool mismatch = ScenesDiffer(compareTo, localScene);
             _net.SetSceneMismatch(mismatch);
 
-            if (NetGate.ClientRole && !hostTransient && !string.IsNullOrEmpty(compareTo)
-                && (mismatch || localTransient))
+            if (NetGate.ClientRole && !hostTransient && !string.IsNullOrEmpty(compareTo))
             {
-                if (mismatch && AirlockCinematic.ShouldIgnoreHostFollow(compareTo))
+                if (!mismatch && !localTransient)
                 {
-                    _net.ProxyManager.DestroyAll();
-                    PlaytestLog.Event("Scene", "defer airlock follow host='" + compareTo
-                        + "' local='" + localScene + "'");
+                    SceneFollowService.NoteWithHost();
+                    _awayLogged = "";
+                    // The host walked into the scene this player was running alone: its arrival dump follows this
+                    // hello; native enemies become the host's puppets from here.
+                    if (wasMismatch && msg.SenderPlayerId == 0)
+                    {
+                        PlaytestLog.Event("Scene", "host arrived in '" + localScene + "': its world takes over");
+                        _net.SetStatusText("Host joined '" + localScene + "'");
+                        _net.EnemySync.PuppetAllNow();
+                    }
+                }
+                else if (SceneFollowService.MustFollowHost(compareTo))
+                {
+                    if (mismatch && !SceneFollowService.HoldsForCutscene(compareTo))
+                    {
+                        _net.SetStatusText("Going to host scene '" + compareTo + "'");
+                        PlaytestLog.Event("Scene", "join: local='" + localScene + "' host='" + compareTo + "' - going to the host");
+                    }
+                    SceneFollowService.FollowHost(compareTo);
                     return;
                 }
-                if (mismatch && !SceneFollowService.HoldsForCutscene(compareTo))
+                else if (mismatch)
                 {
-                    _net.SetStatusText("Following host scene '" + compareTo + "'");
-                    ModRuntime.Log?.Warning("[Scene] MISMATCH local='" + localScene + "' host='" + compareTo
-                        + "' - following host");
+                    string key = localScene + "|" + compareTo;
+                    if (!string.Equals(_awayLogged, key, StringComparison.Ordinal))
+                    {
+                        _awayLogged = key;
+                        _net.SetStatusText("Host in '" + compareTo + "'");
+                        PlaytestLog.Event("Scene", "host in '" + compareTo + "', this player stays in '" + localScene + "'");
+                    }
+                    return;
                 }
-                SceneFollowService.FollowHost(compareTo);
             }
-            else if (!mismatch)
+            if (!mismatch)
             {
                 ModRuntime.Log?.Msg("[Scene] Peer " + msg.SenderPlayerId + " scene='" + msg.SceneName
                     + "' room='" + msg.RoomName + "' OK");

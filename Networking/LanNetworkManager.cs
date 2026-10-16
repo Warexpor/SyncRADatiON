@@ -487,10 +487,7 @@ namespace SyncRADation.Networking
             try { _pickupSync.TickHost(this); } catch (Exception ex) { TickFailed("pickup", ex); }
             try { _storySync.TickHost(this); } catch (Exception ex) { TickFailed("story", ex); }
             try { _storySync.TickClient(this); } catch (Exception ex) { TickFailed("story-client", ex); }
-            if (_role == NetworkRole.Host)
-            {
-                try { SceneFollowService.Tick(); } catch (Exception ex) { TickFailed("scenefollow", ex); }
-            }
+            try { SceneFollowService.TickLoadingWatch(); } catch (Exception ex) { TickFailed("loadingwatch", ex); }
             try { _storageSync.TickHost(this); } catch (Exception ex) { TickFailed("storage", ex); }
             HitchTrace.End("domainTicks", tTicks);
 
@@ -663,7 +660,7 @@ namespace SyncRADation.Networking
         /// </summary>
         internal void BroadcastState(NetDataWriter writer)
         {
-            // The snapshots describe the host's scene: a peer in another one (the airlock split) has none of
+            // The snapshots describe the host's scene: a peer in another one (players travel on their own) has none of
             // those objects and only logged misses for every one of them.
             if (_unicastPlayerId >= 0)
             {
@@ -1061,8 +1058,8 @@ namespace SyncRADation.Networking
                     if (HasReadyPeers)
                         SessionHandlers.SendFullWorldSnapshot();
                 }
-                else if (AirlockCinematic.ShouldIgnoreHostFollow(_hostSceneName))
-                    PlaytestLog.Event("Scene", "skip wreck dump (airlock split)");
+                else if (_sceneMismatch)
+                    PlaytestLog.Event("Scene", "skip dump (host in '" + _hostSceneName + "', this player plays here alone)");
                 else
                 {
                     SessionHandlers.RequestWorldSnapshot();

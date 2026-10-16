@@ -2,7 +2,7 @@
 
 LAN/VPN co-op for **SIGNALIS**, for **2 to 8 players** (default 4). One player hosts and owns the world and story. Everyone else plays as a real Elster and their actions go through the host.
 
-**Status: 0.5.74, protocol 21, pre-release.** This build is in the playtest phase. Only LOV_Reeducation into DET_Detention has been played with two players so far, so expect bugs. Back up your saves before you try it.
+**Status: 0.5.75, protocol 21, pre-release.** This build is in the playtest phase. Only LOV_Reeducation into DET_Detention has been played with two players so far, so expect bugs. Back up your saves before you try it.
 
 ## Requirements
 
@@ -33,7 +33,7 @@ Set `single-instance=0` in `boot.config` of both installs and use `127.0.0.1` as
 
 ## Hosting and joining
 
-1. Everyone loads the same chapter. (Clients follow the host's chapter automatically if it differs; if it gets stuck, load the same chapter by hand.)
+1. Host and clients load into the game. A client that connects goes to the host's chapter once; after that every player travels on their own.
 2. **Host:** F2, then **Host Game**. The game listens on **UDP 7777**. Forward/allow that port if you are behind a firewall.
 3. **Clients:** F2, type the host address, **Connect**. Or press **F3** to reconnect to the saved address.
 4. The host sends the current world state to each joiner. If doors or pickups look wrong, press **Resync world** in the F2 menu.
@@ -50,7 +50,7 @@ The F2 menu shows a roster of everyone connected. It also has **Other players lo
 | G | Drop the highlighted inventory slot (or DROP in the item command list) |
 | F9 | Free the mouse from the game window (only with `FreeCursor`; first-person scenes keep it until you press F9 or switch windows) |
 | F6 | Item giver (cheat tool). A client can only give itself keys and story objects when the host allows client cheats |
-| F7 | Location teleporter: chapters and rooms in the current level. As a client this loads the chapter on the host and everyone follows (only when the host allows client cheats) |
+| F7 | Location teleporter: chapters and rooms in the current level. Loads the chapter for you only (as a client, only when the host allows client cheats) |
 | F11 | Entity spawner (cheat tool, host-authoritative; clients only when the host allows client cheats) |
 
 To pick up something another player dropped, walk up to it and use the normal TAKE prompt. There is no extra pickup key.
@@ -61,7 +61,6 @@ To pick up something another player dropped, walk up to it and use the normal TA
 
 - Enemies and bosses: one set of enemies, hits from any player count on the same enemy.
 - Story progress, cutscenes, endings.
-- Chapter loads (everyone follows the host).
 - Doors, locks and puzzles. A door or lock solved by one player is open for everyone, including people who join later.
 - Puzzle screens are live: if two players look at the same keypad, pattern lock, dial or board, each sees the other's presses as they happen (one shared code on keypads). Anyone standing near the panel hears the button presses from where the panel is.
 - Elevators, radio, pumps and pipes, storage boxes (box contents are shared).
@@ -74,9 +73,9 @@ To pick up something another player dropped, walk up to it and use the normal TA
 - Your 6-slot inventory, ammo and health items.
 - Books, notes, photos and other pure reading or inspect screens.
 - Dialogue lines: each player reads, skips and answers their own.
-- Cutscenes start together, but each player skips their own; a level change after a cutscene waits until both players are done.
+- Cutscenes start together, but each player skips their own.
+- Chapter and area loads: each player goes to the next area when they get there; nobody is pulled along. Story progress, opened locks and taken items still reach everyone and are there when the others arrive. While you are in an area the host is not in, its enemies, cutscenes and events run only in your game; when the host comes in, the host's world takes over.
 - Walking through room-to-room doors and climbing ladders (each player does their own).
-- Airlock and wreck/hole entry in Penrose: each player loads the next area when they finish it.
 - Cutscenes and event zones in a room you are not in do not play for you.
 - Radio tuner frequency while you turn it.
 
@@ -88,7 +87,7 @@ A solo game (no session running) behaves like vanilla SIGNALIS.
 
 ## Known limitations
 
-- Pre-release: the whole 0.5.57 to 0.5.74 feature set (death/revive, party save, 3+ players, boss and enemy client hits, puzzle merging, personal keys) is compile- and unit-tested; dual-box sessions have been played through LOV_Reeducation into DET_Detention, the rest of the game has not.
+- Pre-release: the whole 0.5.57 to 0.5.75 feature set (death/revive, party save, 3+ players, boss and enemy client hits, puzzle merging, personal keys) is compile- and unit-tested; dual-box sessions have been played through LOV_Reeducation into DET_Detention, the rest of the game has not.
 - A client's "quit to menu" is blocked silently.
 - If a client joins while loading, it may wait up to 6 seconds for the host's state and then start from local defaults. Use **Resync world**.
 - A Falke spear held only by a client may not count as held for the Falke fight.
@@ -138,7 +137,7 @@ The sync toggles (`SyncPuzzles`, `SyncWorldPickups`, `SyncPlayerVitals`, `Friend
 | Cannot connect | Host pressed Host Game? UDP 7777 open on the host? Correct VPN address? |
 | Connect is rejected | Different mod builds or a different SIGNALIS build (the reason is shown in F2). Install the same zip on every machine and update the game on both |
 | Doors or pickups look wrong after joining | Press **Resync world** in the F2 menu |
-| "SCENE MISMATCH" in the menu | Your game is following the host chapter. Wait, or load the same chapter manually |
+| "Host in '...'" in the menu | You and the host are in different areas. That is allowed; walk there yourself to play together |
 | Stuck after a disconnect | The client goes offline and restores play on its own. If input is stuck, open F2 and Disconnect |
 
 ## Building from source

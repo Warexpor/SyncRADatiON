@@ -31,8 +31,8 @@ Authority: `docs/SYNC.md`; reverse-check rule: repo root `AGENTS.md`. Wire in `N
 | Story flags / commits (SProgress) / ending | `Story/StorySyncService` (+ `.End`, `.Presentation`) + `Story/ProgressSlot` + `Story/StorySlotPlan` | Incremental / full / authoritative; per-player keys stay local |
 | MultiCondition / UseItem story side / gunshot | `Story/InteractionSyncService` (+ `.UseItem`) + `Story/Patches/MultiConditionPatches` | |
 | Dialoguer (local only) | `Story/Patches/StoryPatches` (`DialoguerGate`) | Every dialogue line is local flavor; gates only bind key-ring names |
-| Airlock / PEN_Titles / wreck↔hole | `Scene/AirlockCinematic` + `Scene/Patches/` | Never SceneFollow wreck↔hole |
-| Scene follow / F7 chapter | `Scene/SceneFollowService` + `Scene/Patches/SceneLoadPatches` | Host load |
+| Airlock / PEN_Titles / wreck↔hole | `Scene/AirlockCinematic` + `Scene/Patches/` | Personal cinematic; a join follow never crosses wreck↔hole |
+| Scene load / F7 chapter / join follow / stuck in loading | `Scene/SceneFollowService` + `Scene/Patches/SceneLoadPatches` | Every load personal; a client follows once after connecting; `ClientAwayFromHost` = solo scene |
 | World authored pickup claim | `Pickups/WorldPickupSyncService` (one `Take` record per in-flight take) + `WorldPickupNetHandlers` + `Pickups/Patches/ItemPickupPatches` | Host claim/grant; partial take releases the claim with the remainder (`Count` / `Remaining`) |
 | Player-dropped prop (G / TAKE) | `Pickups/DroppedItem*` (Registry, Spawner, NetHandlers) + `Pickups/Patches/DroppedTakePatches` | Peer spawn + host claim |
 | Bag / ring wrong after PEN_Hole → Sierpinski | `Inventory/ChapterWipe` | Mirrors the native PEN_CodeRoomEnd bag clear on every peer, empties the ring |

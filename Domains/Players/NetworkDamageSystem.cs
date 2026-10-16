@@ -356,9 +356,9 @@ namespace SyncRADation.Players
         }
 
         /// <summary>
-        /// The host's LoadLevel already broadcast SceneFollow, which drags clients in a different scene. A client that
-        /// is already in the reload scene would ignore it (Apply: same scene), so it reloads itself: the world it has
-        /// is the pre-wipe one. SceneFollowService.AlreadyGoingTo covers the follow having arrived first.
+        /// The wipe brings every player to the reload scene: one in another scene loads it (level loads are personal
+        /// otherwise, so the host's SceneFollow alone moves nobody), one already there reloads it, since the world it
+        /// has is the pre-wipe one. SceneFollowService.AlreadyGoingTo covers a load already under way.
         /// </summary>
         /// <returns>true while a load of the reload scene is still to arrive (its LoadingManager.Start has not run).</returns>
         private static bool FollowWipeReload(string scene)
@@ -369,11 +369,8 @@ namespace SyncRADation.Players
             if (SceneFollowService.AlreadyGoingTo(scene)) return !SceneMatches(scene);
             if (!SceneMatches(scene))
             {
-                // The wipe is authoritative. The host's SceneFollow normally already dragged us here, but it is not
-                // reliable (airlock wreck<->hole split ignores it, personal chapter loads skip the broadcast, or
-                // loads were suppressed when it arrived), and the host's world is a reverted one: be in its scene.
-                // The wreck<->hole rule (ShouldIgnoreHostFollow) stays in force for ordinary follows only; a wipe
-                // voids the airlock split (everyone is reloaded from one save / new game).
+                // The wipe is authoritative and the host's world is a reverted one: be in its scene, wherever this
+                // player went on its own (everyone is reloaded from one save / new game).
                 PlaytestLog.Event("Damage", "wipe: scene mismatch, following directly '" + scene + "'");
                 SceneFollowService.Apply(scene);
                 return true;

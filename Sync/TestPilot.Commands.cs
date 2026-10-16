@@ -150,7 +150,7 @@ namespace SyncRADation.Sync
 
                 // ---------------------------------------------------------------- scene / session
                 case "scene":
-                    // Host: the F7 chapter load (everyone follows). Client: a follow request (host's AllowClientCheats).
+                    // The F7 chapter load, this peer alone (a client needs the host's AllowClientCheats).
                     Out("  load " + a[1] + " as " + net.Role);
                     Cheats.LocationTeleporter.LoadChapterByName(a[1]);
                     return;

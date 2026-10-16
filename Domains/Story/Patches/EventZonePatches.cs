@@ -75,8 +75,8 @@ namespace SyncRADation.Patches
             // Client skips so airlock titles stay local and are not remoted as a party EventZone.
             if (kind == KindAirlock) return false;
             if (kind == KindLock) return true;
-            // Wreck / hole split: the host has no such zone, so the request would never fire it.
-            if (AirlockCinematic.ClientSplitFromHost()) return true;
+            // The host is in another scene: it has no such zone, so the request would never fire it.
+            if (SceneFollowService.ClientAwayFromHost()) return true;
 
             try
             {

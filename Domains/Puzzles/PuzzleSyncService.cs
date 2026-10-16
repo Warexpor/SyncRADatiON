@@ -75,7 +75,7 @@ namespace SyncRADation.Networking
         // Client seeding gate: the host is the only source of initial state. A client stays silent
         // (no seed, no diffs) until the host's full dump for this scene is applied, then snapshots
         // a baseline and only emits real local changes. Timeout covers scenes the host never dumps
-        // (airlock split, SceneMismatch).
+        // (this client plays a scene the host is not in: SceneMismatch).
         private bool _hostDumpApplied;
         private bool _clientLive;
         private float _clientWaitSince = -1f;
@@ -539,7 +539,7 @@ namespace SyncRADation.Networking
                 if (!_hostDumpApplied && waited < ClientDumpWait)
                 {
                     if (_dumpRetries < ClientDumpMaxRetries && waited >= ClientDumpRetryEvery * (_dumpRetries + 1)
-                        && !net.SceneMismatch && !AirlockCinematic.ShouldIgnoreHostFollow(net.HostSceneName))
+                        && !net.SceneMismatch)
                     {
                         _dumpRetries++;
                         PlaytestLog.Event("Puzzle", "client dump retry " + _dumpRetries + " (waited " + waited.ToString("0.0") + "s)");

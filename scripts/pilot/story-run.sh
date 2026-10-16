@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# story-run.sh [chapters...] : after pilot-run.sh, walk the party through the chapters in story order. Each chapter
-# load alternates between the host (F7 load, everyone follows) and the first client (F7 = a follow request the host
-# runs, AllowClientCheats on). In each chapter: everyone settles and gets out of the opening cutscene, a digest check,
-# then every peer takes a pickup in its own room and each client kills an enemy, and a second check.
-# PEN_Hole is not in the default list: the wreck -> hole step is each player's own load by design (docs/SYNC.md).
+# story-run.sh [chapters...] : after pilot-run.sh, walk the party through the chapters in story order. Level loads are
+# personal (docs/SYNC.md), so every peer loads each chapter itself (F7; clients need AllowClientCheats on), the host
+# first. In each chapter: everyone settles and gets out of the opening cutscene, a digest check, then every peer takes
+# a pickup in its own room and each client kills an enemy, and a second check.
+# PEN_Hole is not in the default list: it is entered through the wreck's airlock.
 # Results: $PILOT_LOG_DIR/story.txt.
 set -u
 cd "$(dirname "$0")"
@@ -26,21 +26,23 @@ check() {
 k=0
 for ch in "${CHAPTERS[@]}"; do
   k=$((k + 1))
-  who=h; [ $((k % 2)) -eq 0 ] && [ ${#CL[@]} -ge 1 ] && who=${CL[0]}
-  note "story $k/${#CHAPTERS[@]}: $ch (load by $who)"
+  note "story $k/${#CHAPTERS[@]}: $ch"
   declare -A from=()
   for n in $(peers); do from[$n]=$(lines "$n"); done
   ok=1
-  # A follow names a scene, so a host reload of the scene everyone is in is not one (a late duplicate follow must not
-  # reload a client that already arrived): the party starts from where it stands.
-  if $P h status | tail -1 | grep -q "scene=$ch "; then
-    say "  already in $ch: no load"
-  else
-    $P "$who" scene "$ch" | tail -1
-    for n in $(peers); do
-      if ! waitfor "$n" "settled $ch" 240 "${from[$n]}"; then say "  $n did not settle in $ch ($(tail -1 "$(pdir "$n")/out.txt"))"; ok=0; fi
-    done
-  fi
+  # A peer already in the chapter starts from where it stands.
+  loaded=()
+  for n in $(peers); do
+    if $P "$n" status | tail -1 | grep -q "scene=$ch "; then
+      say "  $n already in $ch: no load"
+    else
+      $P "$n" scene "$ch" | tail -1
+      loaded+=("$n")
+    fi
+  done
+  for n in "${loaded[@]}"; do
+    if ! waitfor "$n" "settled $ch" 240 "${from[$n]}"; then say "  $n did not settle in $ch ($(tail -1 "$(pdir "$n")/out.txt"))"; ok=0; fi
+  done
   if [ $ok = 0 ]; then fails=$((fails + 1)); continue; fi
   # Opening cutscenes are per player: skip each peer's own once it runs, then wait for play.
   sleep 2

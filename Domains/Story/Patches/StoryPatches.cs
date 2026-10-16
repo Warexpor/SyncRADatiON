@@ -318,6 +318,8 @@ namespace SyncRADation.Patches
                 net.StorySync.BroadcastPresentation(StoryCmd.GoToPenny, 0, 0, "");
                 return true;
             }
+            // Alone in the finale scene: the host has no Finale to run it on, and its relay would be dropped here.
+            if (SceneFollowService.ClientAwayFromHost()) return true;
             net.InteractionHandlers.SendInteractionRequest(0, InteractionKind.InspectFlag, 100 + (int)StoryCmd.GoToPenny);
             return false;
         }

@@ -220,7 +220,7 @@ namespace SyncRADation.Networking
         }
 
         /// <summary>
-        /// The sender is known to be in another scene than this peer (wreck / hole split, a peer mid-follow). Unknown
+        /// The sender is known to be in another scene than this peer (players travel on their own, a peer mid-load). Unknown
         /// or loading scenes count as "same": the pose is applied as before.
         /// </summary>
         bool SenderElsewhere(int senderId)

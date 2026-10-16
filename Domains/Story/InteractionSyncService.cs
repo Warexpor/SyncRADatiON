@@ -67,7 +67,9 @@ namespace SyncRADation.Networking
                         ok = StorageService.HostApply(msg, out reason);
                         break;
                     case InteractionKind.Gunshot:
-                        ApplyGunshot(new Vector3(msg.Float0, msg.Float1, msg.Float2), net);
+                        // A shot from a peer in another scene (sent just before either of them loaded) is not here.
+                        if (net.PeerInHostScene(msg.SenderPlayerId))
+                            ApplyGunshot(new Vector3(msg.Float0, msg.Float1, msg.Float2), net);
                         ok = true;
                         break;
                     case InteractionKind.MultiCondition:

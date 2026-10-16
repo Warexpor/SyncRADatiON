@@ -1,6 +1,6 @@
 # SyncRADation playtest / soak checklist
 
-Target build: **0.5.74, protocol 21**. Everything is compile- and unit-tested, an unattended host+client join into `DET_Detention` / `MED_Medical` is smoke-tested (handshake, dump, matching WorldId checksum), and dual-box sessions have been played through `LOV_Reeducation` into `DET_Detention`; the rest of the game has not, so this list is the gate. Run it on **two instances** first (host + client), then repeat the marked items with **three** (host + two clients, `MaxPlayers` >= 3).
+Target build: **0.5.75, protocol 21**. Everything is compile- and unit-tested, an unattended host+client join into `DET_Detention` / `MED_Medical` is smoke-tested (handshake, dump, matching WorldId checksum), and dual-box sessions have been played through `LOV_Reeducation` into `DET_Detention`; the rest of the game has not, so this list is the gate. Run it on **two instances** first (host + client), then repeat the marked items with **three** (host + two clients, `MaxPlayers` >= 3).
 
 Conventions:
 
@@ -10,12 +10,12 @@ Conventions:
 - Same DLL on every peer. Keep `VerboseLogging=false` unless a failure needs detail.
 - A failure counts even if the game keeps running: grep `[Guard]` and `[Harmony]` at the end of each section and note anything new.
 
-Session info to record: date, build (0.5.74), players, chapter, result notes.
+Session info to record: date, build (0.5.75), players, chapter, result notes.
 
 ## 0. Preflight
 
-- [ ] Both logs show the boot banner with version 0.5.74, `[Harmony] audit: N ok, 0 missing` and `[Harmony] audit (late): shaders ok`; F2 shows the same game build line on both.
-- [ ] After the client follows into a chapter: both logs print `[WorldRegistry] scene='<chapter>' … checksum=X` with the **same X**, and there is no `[Scene] WorldId divergence` line. If there is one, copy the `missing:` / `extra:` lines into the notes.
+- [ ] Both logs show the boot banner with version 0.5.75, `[Harmony] audit: N ok, 0 missing` and `[Harmony] audit (late): shaders ok`; F2 shows the same game build line on both.
+- [ ] After the client joins and goes to the host's chapter: both logs print `[WorldRegistry] scene='<chapter>' … checksum=X` with the **same X**, and there is no `[Scene] WorldId divergence` line. If there is one, copy the `missing:` / `extra:` lines into the notes.
 - [ ] `[Hitch] stall` lines: if `renderGap` ≈ `dt` and `modUpdate`/`gameScripts` are a few ms, the frame was lost in present/compositor (seen with two unfocused Proton windows), not in the mod — note it, don't file it as a mod bug.
 - [ ] Host Game then Connect: `Handshake OK` on both sides, F2 roster lists both players.
 - [ ] Both players see each other's proxy, animation and held weapon.
@@ -60,23 +60,24 @@ Run each row for both H and C; with three players also run it with the second cl
 
 ## 4. All-down wipe and party save restore
 
-- [ ] **Wipe (two players):** H and C both downed. About 3 s after the last one falls, both see the reload: host runs `SaveManager.Load()`, the scene reloads for C too (C follows the host scene), no duplicate loads.
+- [ ] **Wipe (two players):** H and C both downed. About 3 s after the last one falls, both see the reload: host runs `SaveManager.Load()`, the scene reloads for C too (C is brought to the host scene), no duplicate loads.
 - [ ] After the wipe: host state equals the last save (key ring restored from host snapshot); **C's bag is restored** from its bag snapshot (items and keys; note ammo), nothing doubled on floor or bag.
 - [ ] Wipe with three players: only when all three are down; if C2 is revived first there is no wipe.
-- [ ] Wipe while a client is in another scene than the host: client still follows, no softlock.
+- [ ] Wipe while a client is in another scene than the host: the client is brought to the reload scene, no softlock.
 - [ ] Wipe from client-initiated last death (the last player down is C) and from the host being last down: both paths reload.
 - [ ] Manual save at a save room on H then quit and restart the session: `bag_snapshots.txt` and `host_saves.txt` updated; reconnect, token matches; a later wipe restores that save.
 - [ ] Clients without the matching snapshot (fresh install, no `bag_snapshots.txt`): wipe does not crash; the client keeps what it has and logs why.
 
 ## 5. Scene and chapter flow
 
-- [ ] **H loads another chapter** (F7 or story): C follows (both int and string loads), no double load, no loading-screen dump.
-- [ ] **C presses F7 to a chapter**: host loads it and C follows; host is not yanked mid-cutscene.
-- [ ] Third player follows the same way (C2).
-- [ ] A second different scene request during a load queues instead of double loading.
-- [ ] Penrose airlock / wreck<->hole: each player loads `PEN_Hole` independently; host staying in the wreck does not pull C, and vice versa.
-- [ ] Follow loads cover MainMenu / DeadMenu / EndCredits (see sections 14 to 16).
-- [ ] After a follow load, inventory/menu input is not stuck (RestorePlay).
+- [ ] **H loads another chapter** (F7 or story door): H goes alone, C stays where it is (`[Scene] C host in '<chapter>', this player stays in '<scene>'`), C keeps playing (enemies, doors, pickups, cutscenes of its own scene work).
+- [ ] **C loads another chapter** (story door, cutscene, or F7 with AllowClientCheats): C goes alone (`[Scene] C own load`), H is not moved. Then C2 the same way.
+- [ ] **H follows C into C's chapter**: on H's arrival C logs `host arrived in '<scene>': its world takes over`; C's enemies become puppets of H's, doors and pickups match (`[Desync]` clean after a few seconds). C's progress there (taken items, opened locks, watched cutscenes) is already on H.
+- [ ] **C follows H into H's chapter**: C gets the host dump on arrival, nothing doubled.
+- [ ] A level intro on arrival (LOV_Reeducation from PEN_Hole) plays for each player on their own; nobody stays frozen in `gs=loading` (if the intro was already seen, `[Scene] gameState stuck at loading ... play restored` within ~4 s).
+- [ ] **Join from another chapter**: C loads its own save elsewhere, then connects: C goes to H's chapter once (`[Scene] C join: ... going to the host`), its own save's story is replaced (`[Story] authoritative full commit ... (join)`).
+- [ ] Penrose airlock / wreck<->hole: each player loads `PEN_Hole` on their own; a join on the other side of the split does not move C.
+- [ ] After a load, inventory/menu input is not stuck (RestorePlay).
 - [ ] Reload of a scene (leave and come back): held door unlocks stay open; flavor seals stay sealed.
 
 ## 6. Doors and locks
@@ -174,13 +175,13 @@ For each family: (a) H starts/solves part or all, C verifies; (b) C does the sam
 
 ## 14. DeadMenu / MEM_Memory
 
-- [ ] **DeadMenu -> MEM_Memory:** when a game-over path leads to the DeadMenu (solo host, or a real game over), the memory sequence loads for everyone following; C is not stuck on the old scene and the menu is usable.
+- [ ] **DeadMenu -> MEM_Memory:** when a game-over path leads to the DeadMenu (solo host, or a real game over), each player gets the memory sequence when their own run reaches it; the other player is not moved and the menu is usable.
 - [ ] Party (2+ live) does not show the native game-over while players are only downed.
 - [ ] After MEM_Memory the session continues (peers still connected, roster intact).
 
 ## 15. End credits
 
-- [ ] **EndCredits:** when H reaches the credits, C follows to EndCredits; a client cannot cut the host's credits short (skip from C has no effect on H).
+- [ ] **EndCredits:** each player watches their own credits when they reach them. C's credits ending takes only C to the title (offline); H's credits ending ends the session for everyone.
 - [ ] After the credits everyone returns to the menu/next scene without a stuck state; session survives or ends cleanly (note which).
 - [ ] `EndDelta` / `EndGraves` endings trigger once.
 

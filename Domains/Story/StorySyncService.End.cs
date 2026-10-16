@@ -353,6 +353,8 @@ namespace SyncRADation.Networking
             if (!IsPartyCheat(cheat)) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected || !net.HasReadyPeers) return;
+            // A client alone in its scene: the goto / sethp is for that scene, nobody else is in it.
+            if (SceneFollowService.ClientAwayFromHost()) return;
             if (CheatRecently(cheat)) return;
             if (NetGate.HostRole)
             {
@@ -370,6 +372,11 @@ namespace SyncRADation.Networking
             if (!IsPartyCheat(cheat)) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !NetGate.HostRole) return;
+            if (!net.PeerInHostScene(senderId))
+            {
+                PlaytestLog.Event("Story", "drop party cheat '" + cheat + "' from p" + senderId + " (another scene)");
+                return;
+            }
             if (CheatRecently(cheat)) return;
             RunCheat(cheat);
             PlaytestLog.Event("Story", "relay party cheat '" + cheat + "' origin=" + senderId);
