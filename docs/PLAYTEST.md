@@ -83,6 +83,8 @@ Run each row for both H and C; with three players also run it with the second cl
 
 - [ ] **H opens** a double/sliding door -> C sees it open. **C opens** one -> H (and C2) see it. Both directions.
 - [ ] A unique key door: the player without the key gets the native missing-item dialogue; the holder opens it and both walk through (neither is pulled through).
+- [ ] Penrose airlock: H holds the card, H and C each run their own airlock (C without the card in its bag).
+- [ ] Falke: C holds the spear; the boss still gets downed for the stab and C can stab.
 - [ ] Key handover: the holder G-drops a key, the other player picks it up and can now use it; the dropper can't.
 - [ ] A no-key locked link stays red/NO ENTRY for everybody; a client cannot force it open (client door opens are rejected unless a real key/code lock is solved on the host).
 - [ ] ConnectedDoors (room links): traversal is local; H going through does not move C.

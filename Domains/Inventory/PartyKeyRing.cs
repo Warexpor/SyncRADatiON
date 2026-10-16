@@ -15,7 +15,18 @@ namespace SyncRADation.Networking
             _keys.Clear();
             _uiName = null;
             _bagMappingOff = 0;
+            _partyPass = 0;
         }
+
+        // Party pass: while > 0 hasItem answers true for a ring key held by another player. Set inside a per-player
+        // UseItem's StartDialogue (the Penrose airlock card: each Elster runs her own cinematic and loads PEN_Hole alone,
+        // but only one bag ever holds the card) and inside Falke's spear checks (END_Boss: the boss is the party's).
+        // For the airlock, the native onMessageEvent RemoveItem is
+        // a no-op for an item not in the bag (Ghidra InventoryManager.c RemoveItem ContainsKey).
+        static int _partyPass;
+        public static bool PartyPassActive => _partyPass > 0;
+        public static void BeginPartyPass() => _partyPass++;
+        public static void EndPartyPass() { if (_partyPass > 0) _partyPass--; }
 
         // getCount other-instance mapping (PartyKeyRingPatches) is off while > 0: SaveManager.Save writes every
         // hasItem item with its getCount into the saver's bag (Ghidra SaveManager.c Save), it must see the raw bag.

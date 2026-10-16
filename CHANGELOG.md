@@ -4,6 +4,8 @@ Protocol **v21** (unchanged). From the first 0.5.73 session (LOV_Reeducation, Su
 
 ### Changed
 - **Keys and story objects are personal.** A key one player picked up opened locks for everyone, though only that player had it (the host took SurfaceKey, the client opened the Surface Access door with it). Now only the bag that holds a key can use it. Anyone else gets the game's own missing-item dialogue. A door or lock the holder opens still opens for everyone. To hand a key over, drop it (G) and let the other player pick it up. The party key ring only records which uniques the party holds; it no longer answers `hasItem` / `getCount` for other players.
+- What a holder's key unlocks reaches everyone: the lock, the door and the use's own success events (a cutscene, a disk inserted, a follow-up interaction) run on every peer, so the others pass without the key.
+- Two party-wide exceptions where the key still counts for everyone. **The Penrose airlock card** (each Elster plays her own airlock and loads PEN_Hole alone): every player can use it while anyone holds it, so the second player is not stuck on the wreck. **Falke's spear** (`END_Boss` checks `hasItem(SpearItem)` before it can be downed for the stab and for its strike timing): a spear in any player's bag counts.
 - A key pickup now needs a free bag slot, like the native `pickUp` check (it used to land on the ring with a full bag).
 - A downed player keeps their keys in the bag (they used to move onto the ring).
 - Client bag snapshots for party saves include keys (`bagk=` lines). An older keyless snapshot (`bag=`) keeps the keys the bag holds when it is restored.

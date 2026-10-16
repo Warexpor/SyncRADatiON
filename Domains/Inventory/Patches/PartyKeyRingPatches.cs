@@ -275,6 +275,76 @@ namespace SyncRADation.Patches
         }
     }
 
+    // ---- per-player UseItem party pass: the airlock card opens each player's own airlock even when another bag holds it.
+
+    [HarmonyPatch(typeof(UseItemInteraction), nameof(UseItemInteraction.StartDialogue))]
+    public static class UseItemPartyPassPatch
+    {
+        [HarmonyPrefix]
+        public static void Prefix(UseItemInteraction __instance, out bool __state)
+        {
+            __state = false;
+            if (!NetGate.Live || __instance == null) return;
+            try
+            {
+                if (!UseItemWorldSyncService.PerPlayerUse(__instance) || !PartyKeyRing.Has(__instance.key)) return;
+            }
+            catch (System.Exception e) { Guard.Swallow(e); return; }
+            PartyKeyRing.BeginPartyPass();
+            __state = true;
+        }
+
+        [HarmonyFinalizer]
+        public static void Finalizer(bool __state)
+        {
+            if (__state) PartyKeyRing.EndPartyPass();
+        }
+    }
+
+    /// <summary>
+    /// Falke (END_Boss) asks hasItem(SpearItem) to decide whether a stagger downs it for a stab (CheckDowned / CheckState
+    /// show StabInteraction) and how long a strike winds up (CheckStrike) (Ghidra END_Boss.c). The boss is the party's:
+    /// a spear in any player's bag counts, or a client holding the only spear could never get the boss down.
+    /// </summary>
+    [HarmonyPatch]
+    public static class EndBossSpearPartyPassPatch
+    {
+        static System.Collections.Generic.IEnumerable<System.Reflection.MethodBase> TargetMethods()
+        {
+            yield return AccessTools.Method(typeof(END_Boss), "CheckDowned");
+            yield return AccessTools.Method(typeof(END_Boss), "CheckState");
+            yield return AccessTools.Method(typeof(END_Boss), "CheckStrike");
+        }
+
+        [HarmonyPrefix]
+        public static void Prefix(out bool __state)
+        {
+            __state = NetGate.Live;
+            if (__state) PartyKeyRing.BeginPartyPass();
+        }
+
+        [HarmonyFinalizer]
+        public static void Finalizer(bool __state)
+        {
+            if (__state) PartyKeyRing.EndPartyPass();
+        }
+    }
+
+    [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.hasItem), new[] { typeof(AnItem) })]
+    public static class InventoryHasItemPartyPassPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(AnItem item, ref bool __result)
+        {
+            if (__result || item == null || !PartyKeyRing.PartyPassActive) return;
+            if (PartyKeyRing.Has(item))
+            {
+                __result = true;
+                PlaytestLog.Verbose("KeyRing", "party pass " + item._item + " (held by another player)");
+            }
+        }
+    }
+
     // ---- getCount bag instance: native compares AnItem by reference, a grant / drop may be another instance of the
     // same kind in this bag. Off inside native ItemPickup.release (ItemPickupTakeScope: release only adds when
     // getCount < maxNumber) and inside SaveManager.Save / InventoryThumbs.ItemViewHandling (own bag as native sees it).
