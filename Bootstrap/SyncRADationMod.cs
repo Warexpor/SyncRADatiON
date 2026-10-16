@@ -10,6 +10,9 @@ namespace SyncRADation
     public class SyncRADationMod : MelonMod
     {
         private bool _autoActionDone;
+        // --sync-scene <chapter>: once MainMenu is up, load that chapter the F7 way (host-side playtest driver).
+        private string _autoScene;
+        private float _autoSceneAt = -1f;
 
         public override void OnInitializeMelon()
         {
@@ -19,11 +22,25 @@ namespace SyncRADation
         public override void OnUpdate()
         {
             ModRuntime.OnUpdate();
+            long tp = Sync.HitchTrace.Begin();
 
             if (!_autoActionDone)
             {
                 _autoActionDone = true;
                 ProcessCommandLine();
+            }
+
+            Sync.TestPilot.Tick();
+            Players.AvatarSkins.Tick();
+
+            if (_autoSceneAt >= 0f && UnityEngine.Time.realtimeSinceStartup >= _autoSceneAt)
+            {
+                _autoSceneAt = -1f;
+                string scene = _autoScene;
+                _autoScene = null;
+                LoggerInstance.Msg("[Auto] Loading chapter " + scene);
+                try { Cheats.LocationTeleporter.LoadChapterByName(scene); }
+                catch (System.Exception ex) { LoggerInstance.Error("[Auto] --sync-scene failed: " + ex.Message); }
             }
 
             if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F2))
@@ -38,12 +55,13 @@ namespace SyncRADation
                 Cheats.LocationTeleporter.ShowMenu = !Cheats.LocationTeleporter.ShowMenu;
             if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F11))
                 Cheats.EntitySpawner.ShowMenu = !Cheats.EntitySpawner.ShowMenu;
+            Sync.HitchTrace.End("modUpdateTail", tp);
         }
 
         private void QuickConnect()
         {
             var net = Networking.LanNetworkManager.Instance;
-            if (net == null || net.Role != Networking.NetworkRole.Offline)
+            if (net == null || Sync.NetGate.Active)
             {
                 LoggerInstance.Msg("[QuickConnect] Already connected or network offline");
                 return;
@@ -58,6 +76,26 @@ namespace SyncRADation
         private void ProcessCommandLine()
         {
             var args = System.Environment.GetCommandLineArgs();
+            // Parsed first: the host/connect branches below return as soon as they match.
+            string pilotMode = null, pilotDir = null;
+            for (int i = 0; i + 1 < args.Length; i++)
+            {
+                if (args[i] == "--sync-scene")
+                {
+                    _autoScene = args[i + 1];
+                    LoggerInstance.Msg("[Auto] Will load chapter " + _autoScene + " after MainMenu");
+                }
+                else if (args[i] == "--sync-pilot") pilotMode = args[i + 1];
+                else if (args[i] == "--sync-pilot-dir") pilotDir = args[i + 1];
+            }
+            if (pilotMode != null)
+            {
+                // The test pilot hosts / joins and loads the chapter itself (Sync/TestPilot).
+                LoggerInstance.Msg("[Auto] Test pilot '" + pilotMode + "'" + (pilotDir != null ? " dir " + pilotDir : ""));
+                Sync.TestPilot.Configure(pilotMode, pilotDir);
+                _autoScene = null;
+                return;
+            }
             for (int i = 0; i < args.Length; i++)
             {
                 if (args[i] == "--sync-host")
@@ -67,13 +105,25 @@ namespace SyncRADation
                     if (net != null) net.StartHost(PluginInfo.DefaultPort);
                     return;
                 }
-                if (args[i] == "--sync-connect" && i + 2 < args.Length)
+                if (args[i] == "--sync-connect")
                 {
+                    int port;
+                    if (i + 2 >= args.Length || !int.TryParse(args[i + 2], out port) || port < 1 || port > 65535)
+                    {
+                        LoggerInstance.Warning("[Auto] --sync-connect needs <address> <port 1-65535>; ignored");
+                        return;
+                    }
                     string addr = args[i + 1];
-                    int port = int.Parse(args[i + 2]);
                     LoggerInstance.Msg("[Auto] Connecting to " + addr + ":" + port);
-                    var net = Networking.LanNetworkManager.Instance;
-                    if (net != null) net.ConnectToHost(addr, port);
+                    try
+                    {
+                        var net = Networking.LanNetworkManager.Instance;
+                        if (net != null) net.ConnectToHost(addr, port);
+                    }
+                    catch (System.Exception ex)
+                    {
+                        LoggerInstance.Error("[Auto] --sync-connect failed: " + ex.Message);
+                    }
                     return;
                 }
             }
@@ -86,21 +136,32 @@ namespace SyncRADation
 
         public override void OnGUI()
         {
+            long tp = Sync.HitchTrace.Begin();
             UI.MultiplayerMenu.OnGUI();
             Cheats.ItemGiver.OnGUI();
             Cheats.LocationTeleporter.OnGUI();
             Cheats.EntitySpawner.OnGUI();
+            Sync.HitchTrace.End("onGUI", tp);
+            Sync.HitchTrace.GuiEnd(tp);
         }
 
         public override void OnSceneWasLoaded(int buildIndex, string sceneName)
         {
-            if (Cheats.EntitySpawner.OnBankSceneLoaded(sceneName))
-                return;
+            // The Ariane model preload scene (additive, torn down in this call) is not a scene change.
+            if (Players.AvatarSkins.OnSceneLoaded(sceneName)) return;
             ModRuntime.OnSceneChanged();
+            // Give the menu a few seconds to settle before the auto chapter load (a client never loads on its own).
+            if (_autoScene != null && sceneName == "MainMenu" && !Sync.NetGate.Client)
+                _autoSceneAt = UnityEngine.Time.realtimeSinceStartup + 4f;
         }
 
         public override void OnApplicationQuit()
         {
+            // Unity's own teardown blocks the main thread for seconds: without this line the [Stall] warnings that
+            // follow look like a freeze in play.
+            Sync.StallWatch.Quit();
+            ModRuntime.Log?.Msg("[Session] application quit");
+            Sync.LogSink.Summary("quit");
             ModRuntime.Stop();
         }
     }

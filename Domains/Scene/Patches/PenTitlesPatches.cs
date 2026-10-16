@@ -20,7 +20,7 @@ namespace SyncRADation.Patches
                     AirlockCinematic.ArmTitlesSkip(__instance);
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 

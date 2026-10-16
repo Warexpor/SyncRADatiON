@@ -19,17 +19,24 @@ namespace SyncRADation.Networking
         internal void SendPuzzleState(IList<PuzzleStateEntry> entries, bool fullRefresh, int exceptPlayerId = -1)
         {
             if (entries == null || entries.Count == 0) return;
-            var writer = new NetDataWriter();
-            writer.Put((byte)NetMessageType.PuzzleState);
-            writer.Put(_net.LocalPlayerId);
-            writer.Put(fullRefresh);
-            writer.Put(entries.Count);
-            for (int i = 0; i < entries.Count; i++)
-                entries[i].Serialize(writer);
-            if (exceptPlayerId >= 0)
-                _net.BroadcastRawExcept(writer, DeliveryMethod.ReliableOrdered, exceptPlayerId);
-            else
-                _net.BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
+            // Chunk under the reader cap (ReliableOrdered fragments, but the reader rejects > MaxPuzzleEntries).
+            const int chunk = 1024;
+            for (int start = 0; start < entries.Count; start += chunk)
+            {
+                int n = entries.Count - start;
+                if (n > chunk) n = chunk;
+                var writer = new NetDataWriter();
+                writer.Put((byte)NetMessageType.PuzzleState);
+                writer.Put(_net.LocalPlayerId);
+                writer.Put(fullRefresh);
+                writer.Put(n);
+                for (int i = 0; i < n; i++)
+                    entries[start + i].Serialize(writer);
+                if (exceptPlayerId >= 0)
+                    _net.BroadcastRawExcept(writer, DeliveryMethod.ReliableOrdered, exceptPlayerId);
+                else
+                    _net.BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
+            }
         }
 
         internal void HandlePuzzleState(PuzzleStateMessage msg)

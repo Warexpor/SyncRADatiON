@@ -1,4 +1,4 @@
-// SyncRADation � wrapper per remote player: owns AnimDriver, AudioSync, WeaponSync
+// One remote player: body pose, outfit, weapon model / FX and positional sounds on its model-only clone.
 using SyncRADation.Networking;
 using SyncRADation.Sync;
 using UnityEngine;
@@ -8,143 +8,103 @@ namespace SyncRADation.Players
     public sealed class RemotePlayerProxy
     {
         public GameObject GameObject { get; }
-        public RemoteAnimatorDriver AnimDriver { get; }
-        public ProxyAudioSync AudioSync { get; }
-        public RemoteWeaponSync WeaponSync { get; }
         public int PlayerId { get; }
+        public ProxyMotion Motion { get; }
+        public ProxyPose Pose { get; }
 
+        private readonly ProxyAudioSync _audio;
+        private readonly RemoteWeaponSync _weapon;
+        private readonly ProxyRig _rig;
+        private readonly ProxySkin _skin;
         private WeaponType _lastWeapon;
-        private byte _lastModelState = 255;
-        private bool _lastWearHat;
-        private PlayerStateMessage _fxState;
-        private AnimTriggers _fxTriggers;
-        private bool _fxPending;
+        private int _lastOutfit = -1;
+        private bool _aiming;
+        private AvatarCue _pendingFx;
 
         public bool LastDead { get; private set; }
+        /// <summary>The weapon this proxy shows (the sender's last PlayerState).</summary>
+        public WeaponType Weapon => _lastWeapon;
+        /// <summary>Unscaled time of the last PlayerState applied (stale-proxy cleanup).</summary>
+        public float LastStateAt { get; private set; }
 
-        public RemotePlayerProxy(GameObject go, int playerId)
+        public RemotePlayerProxy(GameObject go, int playerId, ProxyRig rig)
         {
             PlayerId = playerId;
             GameObject = go;
-            AnimDriver = new RemoteAnimatorDriver(go);
-            AnimDriver.Initialize(go);
-            AudioSync = new ProxyAudioSync(go);
-            WeaponSync = new RemoteWeaponSync(go);
-            WeaponSync.OnShotFired = (wpn) => AudioSync.OnWeaponShot(wpn);
-            var arms = go.GetComponentsInChildren<SkinnedMeshRenderer>(true);
-            var armList = new System.Collections.Generic.List<string>();
-            for (int i = 0; i < arms.Length; i++)
-            {
-                if (arms[i] != null && arms[i].rootBone != null && arms[i].rootBone.parent != null)
-                    armList.Add(arms[i].rootBone.parent.name);
-            }
-            PlaytestLog.Event("DRV", "proxy p" + playerId + " SMRs=" + arms.Length
-                + " armatures=" + armList.Count
-                + (armList.Count > 0 ? " " + string.Join(",", armList) : "")
-                + " rootY=" + go.transform.eulerAngles.y.ToString("F1"));
-
-            var rends = go.GetComponentsInChildren<Renderer>(true);
-            int smrCount = 0, smrValidMesh = 0, nullMat = 0;
-            for (int ri = 0; ri < rends.Length; ri++)
-            {
-                var r = rends[ri];
-                if (r == null) continue;
-                if (!r.enabled) continue;
-                var rType = r.GetType().Name;
-                if (rType == "SkinnedMeshRenderer")
-                {
-                    smrCount++;
-                    SkinnedMeshRenderer smr = (SkinnedMeshRenderer)r;
-                    if (smr.sharedMesh != null) smrValidMesh++;
-                    if (smr.sharedMaterial == null) nullMat++;
-                }
-            }
-            PlaytestLog.Verbose("DRV", "proxy p" + playerId + " renderers=" + rends.Length
-                + " SMRs=" + smrCount + " mesh=" + smrValidMesh + " nullMat=" + nullMat);
+            _rig = rig;
+            LastStateAt = Time.unscaledTime;
+            Motion = new ProxyMotion(go.transform);
+            Pose = new ProxyPose(rig.Model, rig.Hips);
+            _skin = new ProxySkin(go.transform, rig, Pose);
+            _audio = new ProxyAudioSync(go);
+            _weapon = new RemoteWeaponSync(go);
+            _weapon.OnShotFired = _audio.OnWeaponShot;
         }
 
-        public void Destroy()
-        {
-            WeaponSync?.Cleanup();
-        }
-
+        /// <summary>PlayerVital: the downed flag (the death pose itself arrives with the sender's bones).</summary>
         public void SetVital(bool dead)
         {
-            bool wasDead = LastDead;
             LastDead = dead;
-
-            try
-            {
-                var anim = GameObject != null ? GameObject.GetComponentInChildren<Animator>(true) : null;
-                if (anim != null)
-                {
-                    anim.SetBool("Dead", dead);
-                    if (dead && !wasDead)
-                        anim.SetTrigger("Die");
-                }
-            }
-            catch { }
         }
 
         public void ApplyState(PlayerStateMessage state)
         {
-            // Weapon before FX tick so first-frame Fire after equip still has a clone
+            LastStateAt = Time.unscaledTime;
+            // Weapon before the FX tick so a Fire right after an equip already has a clone.
             if (state.Weapon != _lastWeapon)
             {
                 PlaytestLog.Event("Weapon", "p" + PlayerId + " " + _lastWeapon + " -> " + state.Weapon);
-                WeaponSync.ApplyWeapon(state.Weapon);
+                _weapon.ApplyWeapon(state.Weapon);
                 _lastWeapon = state.Weapon;
             }
 
-            AnimDriver.ApplyState(state);
-            AudioSync.Tick(state, state.AnimBools, state.AnimTriggers);
-            _fxState = state;
-            _fxTriggers |= state.AnimTriggers;
-            _fxPending = true;
+            Motion.OnState(new Vector3(state.PosX, state.PosY, state.PosZ), new Vector3(state.VelX, state.VelY, 0f),
+                state.GetFacingWorld(), (state.Flags & (PoseFlags.Climbing | PoseFlags.Scripted)) != 0);
+            Pose.OnState(state.BoneRotations, (state.Flags & PoseFlags.HasHips) != 0,
+                new Vector3(state.HipsX, state.HipsY, state.HipsZ));
+            _aiming = (state.Flags & PoseFlags.Aiming) != 0;
+            _audio.Tick(state);
 
-            if (state.ModelState != _lastModelState || state.WearHat != _lastWearHat)
+            int outfit = state.ModelState | ((state.Flags & PoseFlags.WearHat) != 0 ? 0x100 : 0);
+            if (outfit != _lastOutfit)
             {
-                ApplyModel(state.ModelState, state.WearHat);
-                _lastModelState = state.ModelState;
-                _lastWearHat = state.WearHat;
+                ApplyOutfit(state.ModelState, (outfit & 0x100) != 0);
+                _lastOutfit = outfit;
             }
         }
 
-        public void LateFxTick()
+        /// <summary>Reliable edge cues (AvatarOneShot): sounds now, weapon FX on the next LateTick.</summary>
+        public void ApplyOneShot(AvatarCue cues)
         {
-            if (WeaponSync == null || GameObject == null) return;
-            Vector3 dir = AnimDriver != null ? AnimDriver.AimDirection : GameObject.transform.forward;
-            AnimTriggers trig = _fxPending ? _fxTriggers : 0;
-            WeaponSync.Tick(_fxState, _fxState.AnimBools, trig, GameObject.transform.position, dir);
-            _fxTriggers = 0;
-            _fxPending = false;
+            if (LastDead) cues &= ~AvatarCue.Hurt; // already down: no hurt cue
+            if (cues == AvatarCue.None) return;
+            _pendingFx |= cues;
+            _audio.OnCues(_lastWeapon, cues);
         }
 
-        private static readonly object _modelApplyLock = new object();
-
-        private void ApplyModel(byte modelState, bool wearHat)
+        /// <summary>Every frame at the delayed render time: root, body pose, the model drawn over it, then weapon FX at the posed hand.</summary>
+        public void LateTick(float renderTime)
         {
-            try
+            Motion.LateTick(renderTime);
+            Pose.LateTick(renderTime);
+            _skin.LateTick();
+            _audio.LateTick();
+            _weapon.Tick(_aiming, _pendingFx, GameObject.transform.position, Pose.AimDirection);
+            _pendingFx = AvatarCue.None;
+        }
+
+        /// <summary>
+        /// The sender's outfit: what native CharacterModelType.ApplyType does for the local Elster (one model object per
+        /// ElsterType active, hat by wearHat), applied to the clone's objects.
+        /// </summary>
+        private void ApplyOutfit(byte modelState, bool wearHat)
+        {
+            var outfits = _rig.Outfits;
+            for (int i = 0; i < outfits.Length; i++)
             {
-                var cmt = GameObject.GetComponentInChildren<CharacterModelType>(true);
-                if (cmt == null) return;
-                cmt.modelState = (CharacterModelType.ElsterType)modelState;
-                lock (_modelApplyLock)
-                {
-                    var prev = CharacterModelType.instance;
-                    var prevHat = CharacterModelType.wearHat;
-                    CharacterModelType.instance = cmt;
-                    CharacterModelType.wearHat = wearHat;
-                    CharacterModelType.ApplyType();
-                    CharacterModelType.instance = prev;
-                    CharacterModelType.wearHat = prevHat;
-                }
+                if (outfits[i] != null) outfits[i].SetActive(i == modelState);
             }
-            catch (System.Exception ex)
-            {
-                ModRuntime.Log?.Warning("[Proxy] ApplyModel failed: " + ex.Message);
-            }
+            if (_rig.Hat != null) _rig.Hat.SetActive(wearHat);
         }
     }
 }
-

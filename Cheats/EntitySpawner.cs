@@ -8,40 +8,42 @@ namespace SyncRADation.Cheats
 {
     public static class EntitySpawner
     {
+        // persistent: F11 window state
         public static bool ShowMenu;
 
         public const string SpawnPrefix = "SR_Spawn_";
         public const string TemplatePrefix = "SR_Template_";
 
+        // AnEnemyType names with an enemy preset in the game (KNCR has none: never bankable).
         private static readonly string[] TypeKeys =
         {
-            "EULR", "STAR", "ARAR", "STCR", "MNHR", "KLBR", "KNCR", "ADLR"
+            "EULR", "STAR", "ARAR", "STCR", "MNHR", "KLBR", "ADLR"
         };
 
+        // persistent: constant lookup table
         private static readonly Dictionary<string, string> HomeHint = new Dictionary<string, string>
         {
             { "EULR", "PEN_Wreck" },
             { "STCR", "PEN_Wreck" },
-            { "STAR", "LOV_Reeducation" },
+            { "STAR", "DET_Detention" },
             { "ARAR", "RES_Residential" },
             { "MNHR", "MED_Medical" },
             { "KLBR", "ROT_Rotfront" },
-            { "KNCR", "BOS_Adler" },
             { "ADLR", "BOS_Adler" },
         };
 
+        // persistent: per-process enemy template cache (banked DontDestroyOnLoad clones, null-checked and re-harvested)
         private static readonly Dictionary<string, EnemyController> Vault = new Dictionary<string, EnemyController>();
+        // persistent: SR_Spawn_* sequence never reused in a process, so names cannot collide with a live spawn
         private static int _nextSeq = 1;
+        // persistent: F11 window state
         private static Vector2 _scrollPos;
+        // persistent: F11 window state
         private static string _statusMessage = "";
+        // persistent: F11 window state
         private static float _statusTimer;
+        // persistent: F11 window state
         private static Rect _windowRect = new Rect(250f, 120f, 450f, 480f);
-
-        public static bool BankLoadActive => false;
-
-        public static void Tick() { }
-
-        public static bool OnBankSceneLoaded(string sceneName) => false;
 
         public static void OnGUI()
         {
@@ -94,11 +96,17 @@ namespace SyncRADation.Cheats
                 if (PlayerState.player != null)
                     rotY = PlayerState.player.transform.eulerAngles.y;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
 
             if (NetGate.Client)
             {
-                LanNetworkManager.Instance?.SendEnemySpawnRequest(typeKey, pos, rotY);
+                // The host rejects it anyway (EnemyNetHandlers.HandleEnemySpawn): say so here.
+                if (!Config.ModConfig.ClientCheatsAllowed)
+                {
+                    SetStatus("Host does not allow client cheats", true);
+                    return;
+                }
+                LanNetworkManager.Instance?.EnemyHandlers.SendEnemySpawnRequest(typeKey, pos, rotY);
                 SetStatus("Requested host spawn: " + typeKey);
                 PlaytestLog.Event("Spawn", "request " + typeKey);
                 return;
@@ -109,12 +117,14 @@ namespace SyncRADation.Cheats
 
         public static void FinishSpawn(string typeKey, Vector3 pos, float rotY, int seq, bool broadcast)
         {
-            HarvestLoaded();
+            // Resources.FindObjectsOfTypeAll walk: only when this type is not banked yet.
+            if (!HasTemplate(typeKey))
+                HarvestLoaded();
             if (!HasTemplate(typeKey))
             {
                 string hint;
                 HomeHint.TryGetValue(typeKey, out hint);
-                SetStatus("No " + typeKey + " in memory ? load " + hint + " once (F7)", true);
+                SetStatus("No " + typeKey + " in memory: load " + hint + " once (F7)", true);
                 PlaytestLog.Event("Spawn", "MISS template " + typeKey);
                 return;
             }
@@ -155,7 +165,7 @@ namespace SyncRADation.Cheats
                 if (PlayerState.currentRoom != null)
                     go.transform.SetParent(PlayerState.currentRoom.transform, true);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
 
             go.transform.position = pos;
             var eul = go.transform.eulerAngles;
@@ -179,18 +189,23 @@ namespace SyncRADation.Cheats
                 if (ec.seeker != null) ec.seeker.enabled = true;
                 ec.enabled = true;
             }
-            catch { }
-            try { ec.WakeUp(); } catch (System.Exception ex) { PlaytestLog.Event("Spawn", "WakeUp: " + ex.Message); }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            // WakeUp shakes the screen / rumbles / plays WakeSFX (Ghidra EnemyController.c): host-side only. A client
+            // copy is a puppet of the host's spawn and gets its state from the snapshots.
+            if (!NetGate.Client)
+            {
+                try { ec.WakeUp(); } catch (System.Exception ex) { PlaytestLog.Event("Spawn", "WakeUp: " + ex.Message); }
+            }
             try
             {
                 if (PlayerState.player != null)
-                {
                     ec.playerPos = PlayerState.player.transform;
-                    ec.AimTarget = PlayerState.player.transform;
-                    ec.IkTarget = PlayerState.player.transform;
-                }
+                // AimTarget / IkTarget are helpers native Update moves (never a player root, see EnemySyncService).
+                // A clone keeps its prefab's; one without gets its own child so Update has something to move.
+                if (ec.AimTarget == null) ec.AimTarget = HelperChild(ec.transform, "SR_AimTarget");
+                if (ec.IkTarget == null) ec.IkTarget = HelperChild(ec.transform, "SR_IkTarget");
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
 
             WorldRegistry.RegisterEnemy(id, ec);
             if (NetGate.Client)
@@ -200,7 +215,7 @@ namespace SyncRADation.Cheats
                     ec.enabled = false;
                     if (ec.agent != null) ec.agent.enabled = false;
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
 
             var net = LanNetworkManager.Instance;
@@ -210,7 +225,7 @@ namespace SyncRADation.Cheats
             SetStatus("Spawned " + typeKey);
 
             if (broadcast && NetGate.Live && NetGate.Host)
-                net?.BroadcastEnemySpawn(new EnemySpawnMessage
+                net?.EnemyHandlers.BroadcastEnemySpawn(new EnemySpawnMessage
                 {
                     Seq = seq,
                     TypeKey = typeKey,
@@ -229,7 +244,7 @@ namespace SyncRADation.Cheats
 
         /// <summary>
         /// Host: promote a native EnemySpawner._Child into SR_Spawn_* identity and
-        /// broadcast EnemySpawn so the client Instantiates a matching puppet (protocol 8).
+        /// broadcast EnemySpawn so the client Instantiates a matching puppet.
         /// Hierarchy WorldIds diverge when both peers spawn; one host-authored name stays stable.
         /// </summary>
         public static void AdoptNativeSpawn(EnemyController ec, bool broadcast)
@@ -237,7 +252,7 @@ namespace SyncRADation.Cheats
             if (ec == null || ec.gameObject == null) return;
 
             string n = "";
-            try { n = ec.gameObject.name ?? ""; } catch { }
+            try { n = ec.gameObject.name ?? ""; } catch (System.Exception e) { Guard.Swallow(e); }
             if (n.StartsWith(SpawnPrefix, System.StringComparison.Ordinal))
             {
                 ulong existingId = WorldId.FromGameObject(ec.gameObject);
@@ -246,26 +261,27 @@ namespace SyncRADation.Cheats
                 return;
             }
 
-            HarvestLoaded();
             string typeKey = TypeKeyOf(ec);
-            if (string.IsNullOrEmpty(typeKey))
+            // Bank THIS live native (and parent EnemySpawner.EnemyType) so peers can
+            // FinishSpawn the same SR_Spawn_* WorldId. Hierarchy-only ids miss when the
+            // Instantiated _Child exists only on the host. The full Resources scan only runs
+            // when neither gave a template (steady state: one dictionary lookup per spawn).
+            if (!string.IsNullOrEmpty(typeKey) && !HasTemplate(typeKey))
             {
-                ulong hierId = WorldId.FromGameObject(ec.gameObject);
-                if (hierId != 0)
-                    WorldRegistry.RegisterEnemy(hierId, ec);
-                PlaytestLog.Event("Spawn", "native adopt: unknown type, hierarchy id="
-                    + hierId.ToString("X16") + " name=" + n);
-                LanNetworkManager.Instance?.EnemySync.RequestFullSend();
-                return;
+                Stash(ec, typeKey);
+                TryStashFromParentSpawner(ec, typeKey);
+                if (!HasTemplate(typeKey))
+                    HarvestLoaded();
             }
 
-            if (!HasTemplate(typeKey))
+            if (string.IsNullOrEmpty(typeKey) || !HasTemplate(typeKey))
             {
                 ulong hierId = WorldId.FromGameObject(ec.gameObject);
                 if (hierId != 0)
                     WorldRegistry.RegisterEnemy(hierId, ec);
-                PlaytestLog.Event("Spawn", "native adopt: no template " + typeKey
-                    + " id=" + hierId.ToString("X16"));
+                PlaytestLog.Event("Spawn", "native adopt: hierarchy fallback"
+                    + (string.IsNullOrEmpty(typeKey) ? " unknown-type" : " no-template " + typeKey)
+                    + " id=" + hierId.ToString("X16") + " name=" + n);
                 LanNetworkManager.Instance?.EnemySync.RequestFullSend();
                 return;
             }
@@ -280,7 +296,7 @@ namespace SyncRADation.Cheats
                 return;
             }
 
-            try { ec.gameObject.name = goName; } catch { }
+            try { ec.gameObject.name = goName; } catch (System.Exception e) { Guard.Swallow(e); }
             WorldRegistry.RegisterEnemy(id, ec);
 
             var net = LanNetworkManager.Instance;
@@ -290,7 +306,7 @@ namespace SyncRADation.Cheats
             if (broadcast && NetGate.Live && NetGate.Host)
             {
                 var p = ec.transform.position;
-                net?.BroadcastEnemySpawn(new EnemySpawnMessage
+                net?.EnemyHandlers.BroadcastEnemySpawn(new EnemySpawnMessage
                 {
                     Seq = seq,
                     TypeKey = typeKey,
@@ -313,7 +329,7 @@ namespace SyncRADation.Cheats
                 string type;
                 if (!TryParseSpawnName(e.gameObject.name, out seq, out type)) continue;
                 var p = e.transform.position;
-                net.BroadcastEnemySpawn(new EnemySpawnMessage
+                net.EnemyHandlers.BroadcastEnemySpawn(new EnemySpawnMessage
                 {
                     Seq = seq,
                     TypeKey = type,
@@ -381,13 +397,13 @@ namespace SyncRADation.Cheats
                 var sp = spawners[i];
                 if (sp == null) continue;
                 GameObject prefab = null;
-                try { prefab = sp.EnemyType; } catch { }
+                try { prefab = sp.EnemyType; } catch (System.Exception e) { Guard.Swallow(e); }
                 if (prefab == null) continue;
                 EnemyController ec = null;
-                try { ec = prefab.GetComponent<EnemyController>(); } catch { }
+                try { ec = prefab.GetComponent<EnemyController>(); } catch (System.Exception e) { Guard.Swallow(e); }
                 if (ec == null)
                 {
-                    try { ec = prefab.GetComponentInChildren<EnemyController>(true); } catch { }
+                    try { ec = prefab.GetComponentInChildren<EnemyController>(true); } catch (System.Exception e) { Guard.Swallow(e); }
                 }
                 Consider(ec);
             }
@@ -405,13 +421,27 @@ namespace SyncRADation.Cheats
             Stash(e, key);
         }
 
+        // persistent: DontDestroyOnLoad root of the banked templates, recreated if a scene change ever destroyed it
+        private static GameObject _holder;
+
+        private static GameObject Holder()
+        {
+            if (_holder != null) return _holder;
+            _holder = new GameObject("SR_Templates");
+            _holder.SetActive(false);
+            Object.DontDestroyOnLoad(_holder);
+            return _holder;
+        }
+
         private static void Stash(EnemyController src, string key)
         {
             try
             {
-                var go = Object.Instantiate(src.gameObject);
+                // Cloned under an inactive holder: no Awake on the template (an active enemy's clone ran
+                // EnemyController.Awake outside its room and threw a NullReferenceException, test pilot LOV STAR).
+                // The template itself is switched off, so a spawn's clone wakes only on its SetActive(true).
+                var go = Object.Instantiate(src.gameObject, Holder().transform, false);
                 if (go == null) return;
-                Object.DontDestroyOnLoad(go);
                 go.name = TemplatePrefix + key;
                 go.SetActive(false);
                 var ec = go.GetComponent<EnemyController>();
@@ -449,21 +479,23 @@ namespace SyncRADation.Cheats
                     && candidate.state != EnemyController.enemystate.dead)
                     return true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
 
         private static string TypeKeyOf(EnemyController e)
         {
+            // Prefer vanilla AnEnemyType string even outside the F11 TypeKeys menu —
+            // AdoptNativeSpawn must key the same SR_Spawn_* name on both peers.
             try
             {
                 if (e.Preset != null)
                 {
                     string t = e.Preset.Type.ToString();
-                    if (IsKnownType(t)) return t;
+                    if (!string.IsNullOrEmpty(t)) return t;
                 }
             }
-            catch { }
+            catch (System.Exception ex) { Guard.Swallow(ex); }
             try
             {
                 string n = e.gameObject.name ?? "";
@@ -476,15 +508,30 @@ namespace SyncRADation.Cheats
                         return k;
                 }
             }
-            catch { }
+            catch (System.Exception ex) { Guard.Swallow(ex); }
             return "";
         }
 
-        private static bool IsKnownType(string t)
+        static void TryStashFromParentSpawner(EnemyController ec, string typeKey)
         {
-            for (int i = 0; i < TypeKeys.Length; i++)
-                if (TypeKeys[i] == t) return true;
-            return false;
+            if (ec == null || string.IsNullOrEmpty(typeKey) || HasTemplate(typeKey)) return;
+            try
+            {
+                var sp = ec.GetComponentInParent<EnemySpawner>();
+                if (sp == null) return;
+                GameObject prefab = null;
+                try { prefab = sp.EnemyType; } catch (System.Exception e) { Guard.Swallow(e); }
+                if (prefab == null) return;
+                EnemyController tmpl = null;
+                try { tmpl = prefab.GetComponent<EnemyController>(); } catch (System.Exception e) { Guard.Swallow(e); }
+                if (tmpl == null)
+                {
+                    try { tmpl = prefab.GetComponentInChildren<EnemyController>(true); } catch (System.Exception e) { Guard.Swallow(e); }
+                }
+                if (tmpl != null)
+                    Stash(tmpl, typeKey);
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         private static Vector3 SpawnPos()
@@ -496,7 +543,7 @@ namespace SyncRADation.Cheats
                         + PlayerState.player.transform.forward * 5f
                         + Vector3.up * 0.1f;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return Vector3.zero;
         }
 
@@ -504,6 +551,13 @@ namespace SyncRADation.Cheats
         {
             _statusMessage = (isError ? "ERROR: " : "") + msg;
             _statusTimer = Time.realtimeSinceStartup + 4f;
+        }
+
+        private static Transform HelperChild(Transform parent, string name)
+        {
+            var go = new GameObject(name);
+            go.transform.SetParent(parent, false);
+            return go.transform;
         }
     }
 }

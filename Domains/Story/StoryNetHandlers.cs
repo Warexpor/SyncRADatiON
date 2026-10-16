@@ -29,6 +29,15 @@ namespace SyncRADation.Networking
             _net.BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
         }
 
+        /// <summary>Host: one presentation for one player (a late requester's own CutsceneStart).</summary>
+        internal void SendStoryPresentationTo(int playerId, StoryPresentationMessage msg)
+        {
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.StoryPresentation);
+            msg.Serialize(writer);
+            _net.SendToPlayer(playerId, writer, DeliveryMethod.ReliableOrdered);
+        }
+
         internal void HandleStoryCommit(StoryCommitMessage msg)
         {
             _net.StorySync.ApplyCommit(msg);

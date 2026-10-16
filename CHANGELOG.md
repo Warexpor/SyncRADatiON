@@ -1,4 +1,1583 @@
+## 0.5.74 — 2026-10-16
+
+Protocol **v21** (unchanged). From the first 0.5.73 session (LOV_Reeducation, Surface Access).
+
+### Changed
+- **Keys and story objects are personal.** A key one player picked up opened locks for everyone, though only that player had it (the host took SurfaceKey, the client opened the Surface Access door with it). Now only the bag that holds a key can use it. Anyone else gets the game's own missing-item dialogue. A door or lock the holder opens still opens for everyone. To hand a key over, drop it (G) and let the other player pick it up. The party key ring only records which uniques the party holds; it no longer answers `hasItem` / `getCount` for other players.
+- What a holder's key unlocks reaches everyone: the lock, the door and the use's own success events (a cutscene, a disk inserted, a follow-up interaction) run on every peer, so the others pass without the key.
+- Two party-wide exceptions where the key still counts for everyone. **The Penrose airlock card** (each Elster plays her own airlock and loads PEN_Hole alone): every player can use it while anyone holds it, so the second player is not stuck on the wreck. **Falke's spear** (`END_Boss` checks `hasItem(SpearItem)` before it can be downed for the stab and for its strike timing): a spear in any player's bag counts.
+- A key pickup now needs a free bag slot, like the native `pickUp` check (it used to land on the ring with a full bag).
+- A downed player keeps their keys in the bag (they used to move onto the ring).
+- Client bag snapshots for party saves include keys (`bagk=` lines). An older keyless snapshot (`bag=`) keeps the keys the bag holds when it is restored.
+
+### Fixed
+- **The client froze for over 100 s after the host quit** (`[Stall] main thread stuck 100144ms phase after=pollEvents`): stopping LiteNetLib joins its socket threads, and under Proton that join hung on the game thread. The socket now closes on a background thread. Hosting again waits up to 3 s for the old port, and quitting waits 1.5 s so the disconnect goes out.
+- **First-person scenes could not be played with `FreeCursor` on**: `EventWalking` locks the mouse for mouse look, and the mod rewrote that lock to "free", so the pointer ran into the window edge or out of the window. The lock now stays while the window has focus. **F9** frees the mouse, and so does switching windows (Alt+Tab or the compositor's focus keys). The lock comes back when the window has focus again. Confined (third-person aim) is still never applied.
+
+### Docs
+- README status and known limitations, `docs/PLAYTEST.md` target build (was 0.5.65) and the played range brought up to date; `docs/DEV_MACHINE.md` covers the dev-box mouse (FreeCursor, F9); a stale path in `docs/SYNC.md`.
+
+## 0.5.73 — 2026-10-10
+
+Protocol **v21** (unchanged). Logging only: the 0.5.72 session had many more bugs on screen than its logs showed.
+
+### Logging
+- **`[Wire]`**: one line per message sent and received, with its decoded fields (`[Wire] C tx WorldPickupClaim 23B ClaimerPlayerId=1 WorldId=... ItemEnum=10 Count=1`). Every message type, also the ones no domain logged (puzzles, locks, bosses, party life, one-shots). The pose / enemy snapshot / vital streams stay in `[Net]`; a burst is capped at 10 lines per type per second with the dropped count. Pref `WireTrace` (default on).
+- **`[Call]`**: every native game method the mod patches (136: interactions, pickups, doors, puzzles, cutscenes, saves, scene loads) writes that it `ran`, that the mod `SKIPPED` it (a prefix returned false) or that it `THREW`, with the object's name. A method called more than 25 times a second is only counted. At session end one line lists every native the mod skipped and how often. Pref `CallTrace` (default on, read at game start).
+- **`[Unity]`**: the game's own errors and exceptions (they only reached Unity's `Player.log`) with the first stack frames; counted in the session summary when they happen in a session.
+- **`[Desync]` also compares views**: every player as its own peer has it against how the others show it (room, down, weapon, position within 3 units, `proxy=missing`), and every awake enemy's mode (sleep / hunt) and position on host against client.
+- **`[Self]`**: the local player's game state, HP, input lock, grapple, cloak and player object edges, with the room and the interaction prompt.
+- **`[Enemy] C puppet`**: a client's line when the host's snapshot changes what an enemy is (asleep / hunting / dead), who it hunts, or whether its room is awake there; and when a puppet jumps to the host's position.
+- `[Bag]` inventory changes are always on (were Diagnostics), with the room.
+
+## 0.5.72 — 2026-10-10
+
+Protocol **v21** (unchanged). From the logs of the first 0.5.71 session (LOV into DET: no warnings, no desync).
+
+### Fixed
+- **The host did not get a cutscene it walked into right after a client started it** (LOV Library, host 3 s behind the client: `host StartCutscene dup`, the host stood in the room without it). A start the host relayed for another room no longer blocks the host's own trigger: it joins.
+- **A cutscene trigger on a switched-off cutscene asked the whole party to start it** (LOV Library before anyone took the pistol: the client's request was stamped and broadcast, and nothing ran anywhere, silently). Native `StartCutscene` does nothing on an inactive manager; such a trigger now stays local, and a party start that does nothing says so (`[Cutscene] start of '<name>' did nothing here`).
+- **The wall safe's saved code was not the one on the wall** (DET): `DET_RadioCodeLock.Start` rolls `WallSafeF0-5` / `WallSafeC0-5` at random on every peer as the scene loads; the client forwarded its roll and replaced the host's in the shared story, while every lock component kept the host's. After a save and reload the safe would have had another code. The host's roll stands: clients no longer forward those keys and the host ignores them.
+- **The host's combat statics blinked off when a client left a room** (DET, host fighting in Mensa while the client walked Kitchen -> corridor: `inCombat` False then True 11 ms later, twice): the emptied room's `CheckIfLeft` clears the statics natively, which are the host's own. They are handed back unless the host is the one who left.
+
+### Logging
+- `[State]` no longer follows the game state: opening the inventory, an event screen or a pickup dialogue wrote a line each (a third of the 150 lines). It changes on rooms, players, enemies, combat, cutscenes and loading.
+- `[Enemy] H state`: a sleeping enemy is not logged (scene load wrote 18 lines for 9 sleeping enemies), `->` marks what changed, and pursuit / attack flips are one line per enemy per 5 s with the count (a 30 s fight with two STAR was 60 lines).
+- `[Cutscene] start ... by=level intro` for intros that start from `CutsceneManager.Start` (they only showed up as a `skip`).
+- The repeat marker names its line: `(x3 in a row: [Pickup] H hide deferred ...)`.
+- `oob rescue held` is a `VerboseLogging` line (one per door transit). `script relock` reads `locked again (script, or its room woke)`: most were a room waking.
+- No `[Stall]` warnings after `[Session] application quit`; no empty second summary at quit.
+
+## 0.5.71 — 2026-10-10
+
+Protocol **v21** (`WorldDigest` 75). Logging rework: `docs/LOGGING.md`.
+
+### Added
+- **Live desync check** (`DesyncCheck`, on by default, every `DesyncCheckSeconds` = 20): the host sends its digest of the shared world (scene, shared story flags, key ring, storage box, enemies, doors, pickups, puzzles, cutscenes: the pilot's digest lines), each client compares it with its own. A key that differs in two checks in a row is logged once on the client as `[Desync] DESYNC <section> <key>: host=... client=...` and on the host as `[Desync] pN DESYNC ...`, and again as `resolved`. A `check #N` line on the first check, every 15th and whenever the open count changes. The compare rules are the pilot's `digest-diff.py`, ported to `DesyncCompare` and unit tested. 2-21 ms and ~6 KB per check in LOV.
+- **`[State]`**: one line with the scene, every player's room / distance / ping / down flag, this player's game state, HP and weapon, the enemy picture (alive, awake, hunting, combat statics) and the running cutscene. Written when that picture changes (at most every 2 s) and every 30 s.
+- **`[Net]`** every 30 s: messages and KB each way, the top five message types by bytes, ping and LiteNetLib's loss counter. First finding: `PlayerState` is ~490 bytes at 30 Hz (~15 KB/s each way), nearly all the traffic.
+- **`[Log] summary`** at session end, when the last player leaves a host, and at quit: line count and every tag that warned or failed.
+- **`[Enemy] H state`**: host, an enemy's state / stagger / target player / awake flag changed. **`[Enemy] C hit`**: a client's hit as sent. **`[Weapon] shot`**: the local player's shots.
+
+### Changed
+- Every mod line goes through one sink (`Sync/LogSink.cs`): lines written straight to `ModRuntime.Log` (about 190 call sites: `[Network]`, `[Drop]`, `[PartySave]`, ...) now carry the `H` / `C` role prefix like `PlaytestLog` lines.
+- `PlaytestLog.Rate` / `RateOk`: per-key throttle whose next line says `(+N suppressed)`. A line repeated back to back is still written once, now followed by `(previous line xN)` instead of vanishing.
+- The handshake line on a client lists its sync toggles.
+
+## 0.5.70 — 2026-10-10
+
+Protocol **v20** (unchanged). From reading the host and client logs of the 0.5.69 session.
+
+### Fixed
+- **A door slammed on a player walking through it when another player came the other way** (LOV West Corridor / Library, both crossing at once: the host's door opened three times in 1.4 s). `ConnectedDoors.End` closes both leaves when a transit ends, and that close was applied on the peer still walking through. A remote close of the open door beside a player in a transit (`gameState traversing`) is held until that transit is over (`[Door] hold remote close`, `held close now`).
+- **The host learned a player's new room up to half a second late** (0.23 to 0.49 s in the log): rooms were reported on a 0.5 s slot, so the host switched a room's enemies on that much after the client walked in, and room-scoped starts judged the old room. `Room.EnterRoom` now reports with the same frame's party tick.
+
+### Logging
+- `[Cutscene] start '<name>' … by=local trigger|party`, `skip`, `end … after N s: completed|stopped, not completed|object gone` on every peer: until now only the wire side of a cutscene was logged, not what ran here or for how long.
+- `[Music] inCombat=… enemyPresence=…` on every flip of the statics that drive the combat music (Diagnostics).
+- `[Room] pN 'old' -> 'new'` for every remote player's room change.
+- Door lines name the door: `id=<WorldId> 'Inter' in <room>` on local, applied, relock, blocked and oob-rescue lines (every door object is called "Inter", so applied lines could not be matched to local ones). `sfx skip far` is gone (a third of the log).
+- `[Enemy] TakeDamage` shows `hp=before->after` and `state=before->after`, and marks a downing hit: native code writes the revive HP there, which read as HP going up between two hits.
+- `InspectFlag` lines carry the key and value (they logged `id=0000000000000000` only); incremental story commits list their keys on both sides.
+- `[Proxy] vis` counts the Ariane model's renderers (a skinned proxy logged `drawn=0 onScreen=True`, the hidden-player signature).
+- `oob rescue` printed `UnityEngine.Vector2` for its direction. Log text is ASCII (the dash and arrow came out as `?` / `�` in `Latest.log`). `[Session] application quit` ahead of Unity's teardown, so the `[Stall]` warnings after it are not read as a freeze.
+
+## 0.5.69 — 2026-10-10
+
+Protocol **v20** (unchanged).
+
+### Added
+- **Other players as Ariane** (F2: "Other players look like" Elster / Ariane dress / Ariane uniform; `RemotePlayerModel` pref). A local display choice, nothing on the wire: each player picks how it sees everyone else. Her rig is the same metarig as Elster's, so the remote Elster's pose is copied onto her bone by bone (world rotations, hips position, shorter legs taken into account) and the gun rides her hand. The game has no prefab of her: the model is banked from the first loaded scene that has it (PEN_Wreck has the dress; MEM_Memory, LAB_Emptiness and BOS_Adler both) and kept for the whole run of the game. With an Ariane model chosen, the main menu loads it once from LAB_Emptiness (additive, its objects are destroyed before they start; "Load now" in F2 does the same by hand, only at the main menu with no session).
+
+### Fixed
+- **An enemy a client was fighting teleported and spun once the host left the room** (LOV West Corridor, host into the Library): native `Room.LeaveRoom` switches the room chunk off 2 s after the local player walks out (`delayedDisabling`), so on the host the floor, walls and colliders vanished under the enemy it simulates for the client, and `CheckIfLeft`'s "Enemy is floating, resetting!" put it back home again and again. The host keeps the chunk of a room a remote player is in (the native "player is back" path) and switches it off the native way 2 s after the last one left; chunks the host woke for a client are released the same way.
+- **The host walking into a client's fight moved the enemy to another patrol point**: native `EnemyManager.Enter` has no "already running" guard (it re-ran the "give elster some space" repositioning and started a second `CheckIfLeft`). The host's entry into a room that already runs for a remote player skips it.
+- **The host kept the combat music of a fight it walked away from** (it played over the Library cutscene): with a client still in the room `CheckIfLeft` keeps running for that player and the host's `inCombat` / `enemyPresence` were handed back as they were, never cleared. They are cleared on the step after the host leaves, as the native "left" branch does.
+- **A client walking into a cutscene the host was already watching did not get it**: its trigger's request was answered `dup` and nothing came back. A requester of a cutscene that is already running gets the start for itself.
+
+## 0.5.68 — 2026-10-10
+
+Protocol **v20** (cutscene starts carry the author's room, `CutsceneDone`).
+
+### Fixed
+- **A cutscene one player triggered played for everyone in the scene, wherever they stood** (LOV_Reeducation: a client walking into the Aula or the Library pulled the host out of the Staff Room / West Corridor into the Star and Isa intros): the "same room" check looked for a `Room` above the `CutsceneManager`, but every cutscene of the game sits under a scene-level `Cutscenes` root outside all rooms, so the check passed on every peer. A start now carries the room of the player whose trigger started it and only peers standing in that room start it, the host included (it relays a client's start without running it). Peers elsewhere get the completed state when a watcher's copy ends; a client reports that to a host that did not watch (`CutsceneDone`).
+- **Event zones and one-shot conditions outside the room hierarchy fired for everyone** (the same broken room check; EXC_Gestade, MEM_Gestade and RES_School zones, the BOS_Adler / MEM_Memory / RES_School / ROT_Rotfront conditions): an `EventZone` fire and a `MultiConditionEvent.TryOnce` carry the room of the player who set them off, and only peers in that room replay them. The host invokes a client's zone only when it stands in that room.
+- **The host skipping a scene-ending cutscene cut the client's copy short** (PEN_Hole to LOV_Reeducation): the client held the host's follow until its own cutscene ended, but the host's scene hello from the new scene, under a second later, loaded straight past the hold. Both follow sources share the hold now (`SceneFollowService.FollowHost`).
+- **Another player's gun lay at their feet, pointing the wrong way**: guns hang in Elster's `Weapons` node, which native `SetWeapon.Start` moves under `hand_R/WeaponMount`; the proxy's copy of that node is removed with the weapon held at clone time, so the gun clone fell back to the proxy root. The mount is rebuilt under the hand bone. The laser, muzzle flash and shot trace of a remote player start from the right place again.
+- **Remote shots played the shield clang on every wall hit and never the hit / miss sound**: `PlayerAttack.ricochetSound` is what native plays on a `Shield` collider only. A remote shot is traced like the native one (`TargetMask`: walls and enemy hitboxes) and plays `WeaponHit` on an enemy or `WeaponMiss` otherwise, 0.1 s later as `HitMissSounds` does, with native `AimLaser.miss` particles (6 at the wall, a ricochet spark at `ricochetChance`). The laser stops on enemies (`AimLaser.mask`).
+- **No blood on a client**: native `TakeDamage` ends in `squibs.TriggerRandomSquib`, and it never runs on a client's enemy copies. Squibs are replayed from the host's HP drop (two on a kill), for the client's own shots and everyone else's.
+- **A client could not stomp a downed enemy**: native has no stomp call, the enemy's own Critical / Fire coroutine polls the prompt (`stompInter.triggered`) and does the kill, and that coroutine only runs on the host, so the client's press went nowhere. The press is sent to the host (`EnemyActionKind.Stomp`), which hands it to the coroutine; the stomping player's Elster stomps, not the host's (the host only runs the world half of `PlayerState.Stomp`: every enemy's 1.5 s attack hold).
+- **No combat music for the host in a room whose enemies the story armed while the host stood in it** (LOV West Corridor: a client took the pistol in the Overlook Office): native `EnemyManager.Enter` only runs on room entry, so that manager never started `CheckIfLeft`, which is what sets `inCombat` / `enemyPresence`. With players connected, the host runs the missed entry for its own room.
+- **A sleeping enemy shook on a client** (the first EULR, sitting against the wall): native drives the animator's `Sleep` bool only for such custom-sleep enemies and only from the AI, which is off on a client's copy, so its controller kept leaving the sleep state and every snapshot forced it back. The host's `Sleep` value rides the snapshot.
+- **Remote aim sounds**: lowering the gun plays `holsterSound` (native `PlayerAttack.Update`), and an inventory weapon swap no longer plays an invented draw / holster sound.
+
+## 0.5.67 — 2026-10-09
+
+Protocol **v19** (unchanged).
+
+### Added
+- **Test pilot** (`docs/PILOT.md`, `scripts/pilot/`): 2 to 4 unattended instances in a headless omabox box (isolated loopback, never the desktop). `--sync-pilot host:<Scene>|join` drives the game through the native entry points from a command file (pickups, kills, doors, death, cutscene skips, dialogue, chapter loads, leave / rejoin) with a timestamped `[Pilot]` transcript; `digest` writes a sorted world snapshot (story, key ring, box, enemies, doors, pickups, puzzles, cutscenes) that `check.sh` takes on every peer at one instant and diffs against the host. `coop-soak.sh` runs every arrow of one chapter with three players, `story-run.sh` walks the chapters in story order. The box and games run in a memory-capped slice (7 GB per instance or available memory less 2 GB, no swap) with a per-instance watchdog, so a runaway instance cannot take the desktop down.
+
+- **Stall watch** (Diagnostics pref): a background thread logs `[Stall]` with the last mod phase, Harmony target and network message when the main thread stops for over a second, and a memory jump over 1 GB; from the second second of a stall (or at once on a memory runaway) the line carries the main thread's native frames (`native GameAssembly.dll+0x… < …`, read in-process: suspend, context, PE unwind), which `scripts/pilot/symbolize.py` names from the decompile's RVAs. Memory is the working set from kernel32 `GetProcessMemoryInfo` (`Process.PrivateMemorySize64` reads 0 under Proton). Every patched game method sets a marker, so a stall names the last one that ran (`lastPatched=`).
+
+### Fixed
+- **Multi-second freezes and memory runaways on cutscene ends and saves** (test pilot clients grew from 5 to 13 GB and were killed: intro skip, RES_School Isa_School, the LAB_Emptiness end, a join's first load): native `FileBasedPrefs.DataScrambler` scrambles the save file one `String.Concat` per char, about 2.2 GB of garbage for a played 47 KB save on every prefs write and read, and `GlobalStats.SaveAchs` writes once per achievement from a cutscene's end event. It now runs in linear time with the same XOR and key (byte-identical file, `PrefsScrambler`).
+- **Bag counts read from the native dictionary were garbage, so a picked-up stack was duplicated** (`ItemBag.Read`): the Il2Cpp `KeyValuePair` enumerator returns junk values in this build, and `CountInBag` counted a junk entry as one unit. A client taking Health25 x2 measured a gain of 1, the host put the "remainder" back on the prop and the next player took it again. Counts are now read per key through the indexer. The same enumerator fed party-save bag snapshots / restores and the death drop (wrong counts dropped and restored); those go through `ItemBag` too.
+- **Enemies in a room only a client stood in never moved on the host, and every client hit there was refused** ("wake REFUSED ... disabled by the level"): native `EnemyManager.Enter` runs only for the local Elster's room and `CheckIfLeft` sleeps the room once `PlayerState.currentRoom` is elsewhere. The host now runs `Enter` for a room a remote player is in, with that player as the reference player, and keeps `CheckIfLeft` from sleeping it while one is still there (`PeerRoomEnemies`, `EnemyManagerPeerPatches`).
+- **An ARAR nest a client set off went back to sleep on the host the next frame** (MED / RES `AraNest`): native `AraNest.Update` clears `activated` once `PlayerState.currentRoom` is not the nest's room and then resets the ARAR, so the host undid every client-triggered nest and refused the client's hits. With a remote player in the nest's room `Update` now runs against that player (`AraNestPeerPatches`).
+- **LOV microfiche**: re-applying the book / interaction state on a client wrote two `PersistentGameObject` keys into the client's save that the host never had; only a real change goes through `setActive` now.
+- **Traverse plates** (`AutoTraverseDoor.blocker`): the sync switched the blocker off when a door closed; native keeps it active at rest (only `traverseAB` toggles it), so a peer could walk through a closed traverse door.
+- **Picking up a key threw `ArgumentOutOfRangeException` every frame of the item view** (`InventoryThumbs.ItemViewHandling`): the party key ring notes the key before native release adds it, so the ring's `hasItem` answer sent the thumbs to `currentItems.IndexOf` = -1. The thumbs show this player's own bag, so the ring answer is off there.
+- **A room whose `EnemyManager` is switched off by the story** (LOV, DET) got the peer-room `Enter` anyway, which only logged "Coroutine couldn't be started ... 'Enemy Manager' is inactive"; such managers are skipped.
+- **Banking the F11 spawn templates on every scene load threw a `NullReferenceException` in `EnemyController.Awake`**: an active enemy's clone ran `Awake` outside its room. Templates are cloned under an inactive holder now and wake only when spawned.
+- **A client's pickup was duplicated when its bag had exactly one free slot**: the mod counted the bag's built-in None (empty-hands) entry as a used slot, so it called the bag full one item early and denied the claim while native release still added the item (the prop stayed on the host). The free-slot check is now native `ItemPickup.pickUp`'s (`maxSlots <= Count - 1`, modules free unless `modulesTakeInventorySpace`), and a claim is no longer denied after the item is already in the bag.
+- **ARAR nests ping-ponged between clients and the host**: a client away from the nest's room reset it locally (native `Update`) and sent "untriggered", or, with that blocked, kept sending "triggered" after the host had reset an empty room. A client now resets a nest out of its room only when the host did.
+- **Enemies in a room with a Kolibri never woke on the host for a client** (LAB Loop Hall: every client hit missed): the peer-room `Enter` skipped Kolibri managers. It runs for them too; the Kolibri's state already rides the boss sync.
+- **One failing `EnemyManager.Enter` left the rest of a room asleep**: an exception in one `EnteredRoomEvent` handler ended the whole call (client `Room.EnterRoom` NullReferenceException, LAB / ROT). It is caught and logged with the manager's enemy list, and the room's other handlers run. The exception itself: native `Enter` repositions a non-idle enemy within 20 of the player to a random `waypoints.Waypoints` point with no null check, and LAB Glass Cage Room has a patrol STCR with no `EnemyPatrol`, so a player (or the host's view of a client) standing near it threw and the enemies after it stayed off. Such an enemy counts as idle for the call.
+- **A cutscene started by another player while you had a pickup open lost the item**: the cutscene replaced the yes/no, so the item never reached the bag, the prop stayed taken in your world but present for everyone else, and your game state stayed stuck on cutscene afterwards (ROT_Rotfront, `Isa_Death` started by a client while the host and the other client were picking up). A shared cutscene now starts for you once your pickup is answered, the same as solo, where nothing can start during a pickup.
+- **Every item a player dropped threw a NullReferenceException on every peer**: native `ItemPickup.Awake` reads the prop's `UniqueId` with no null check, and a drop has its `UniqueId` removed (a copied one would take over the original prop's saved state). A dropped item now skips the saved-state part, which it never had, and binds its interaction as native does.
+- **Test pilot speed and scope**: `soak-all.sh` soaks every chapter in story order in one session (one boot instead of one per chapter), clients boot and join together, and command replies, waits and digests poll faster. Pickups and doors in a Room that is itself switched off (story-gated, BOS_Adler Final Penrose / Falke) are no longer targets (the soak's door falls back to any unlocked one in the chapter), and a kill's wait no longer ends on a late take's "stayed inactive".
+- **A dropped dynamic-supply item threw on every room entry**: drops are cloned from a prop of the same item, and the ammo and heal props of LAB / ROT / MED / RES / EXC carry `DynamicSupply`, which reads the `UniqueId` a drop no longer has. Drops lose that script (a drop offers what was dropped).
+- **A heal or ammo prop the host's dynamic supply took away stayed for clients already in the session** (LAB_Labyrinth Flesh Health50; a client joining later had it right): the host only resent a prop whose on/off changed, and a prop withheld in a room that was asleep on the host was already "off", so the withhold never went out. A withhold is now its own change.
+- **Adler's glitch on a client could stay at the wrong strength** (BOS_Adler, seen on a rejoined client: none while the host's was full): BOS_Adler has two `ADLR Manager`s and the client held one host value for every instance, so the last snap applied, often the asleep manager's 0, drove the live one each frame. Holds are kept per instance now (Kolibri too).
+- **Pilot ARAR kills at a nest** walk in the way a player does (into the nest's trigger range, then out past 3.2, where native `delayedLogic` stops holding the ARAR), and an event screen held at a chapter start counts as in play. The pilot no longer races for a pickup under an `NGP_only` holder (New Game Plus content: native `Start` switches it off on the first wake, so before that it looked takeable), waits for a kill's result from before the command (an older "stayed inactive" no longer counts), checks a client's door on the host's log, and its report no longer counts a join's scene follow as a handshake mismatch.
+- **Enemy animator parameters threw `TypeLoadException` on every read** (`Animator.parameters` returns a stripped array type), so 0.5.66's `Forward` / `Turn` / `HitFrom` puppet fix never ran. Parameters are now probed by name, and an animator that is not initialized yet is asked again later.
+
+## 0.5.66 — 2026-10-06
+
+Protocol **v19** (see `docs/PROTOCOL.md`). Coverage pass against the expanded decompile: Ghidra pseudo-C now covers namespaced game types (DialoguerCore, PlatformManagement), every identical-code-folded class, FMODUnity, A* Pathfinding, Unity.Timeline, UnityEngine.UI and the engine modules, with string literals inlined and the il2cpp runtime helpers named; `06_FMOD_banks/Master.strings.tsv` maps every FMOD GUID to its path.
+
+### Fixed
+- **Enemies chasing a client only attacked when the host could see the client** (`EnemyTargetPatch`): `TrackAndAttack` runs `LOS` against `PlayerState.player` every tracking frame and `Attack` Linecasts to it before charging, on coroutine steps after `Update` returned, so they still checked the host. The chase-target swap now also wraps the `TrackAndAttack`, `Attack`, `Hurt`, `Stagger`, `Critical` and `Fire` coroutine steps, so attack decisions, the 6.4 m range and the hit / fall direction follow the chased player.
+- **Client enemy puppets slid with an idle walk and fell the wrong way**: the halted puppet never got the `Forward` / `Turn` locomotion blend or the `HitFromX` / `HitFromY` hit direction (the snapshot carried an always-zero velocity instead). A puppet halted mid-attack no longer keeps charging (`StopAllCoroutines`).
+- **Combat music and the enemy-presence radio followed the host's room on clients**: the host's `EnemyManager.inCombat` / `enemyPresence` statics overwrote the client's own (native `CheckIfLeft` computes them for the listener's room).
+- **Audio**
+  - Host one-shots: 70 game call sites play by `"{guid}"` string and 183 of 196 at `Vector3.zero` (2D). GUID paths slipped past every Elster / UI / door / bed filter (the host's ladder, storage box and options-menu sounds were relayed), and the zero position put them at the world origin. Paths are resolved first; a 2D one-shot stays with whoever caused it (a client action applied on the host is placed at that client).
+  - **One player tuning the radio switched the other's stations on and off**: `RadioStation` / `MorseCodeGenerator` emitters are driven by each player's own tuner and stay local.
+  - A relayed Play no longer restarts a loop already running here (fans, monitors, Paternoster, every join dump); the host relays a Stop of a loop the game started through `ObjectEnable`; a `TriggerOnce` emitter that already fired, or one with a blank event, is not relayed; mixer snapshots (`Reverb EXC`, `Reverb RES_Overflow`) stay local.
+  - Remote footsteps set four FMOD parameters that exist in no bank (`ElsterStep` runs on the global `RunSpeed`): removed, walk vs run is volume.
+  - Removed the `PlayOneShot(Guid)`, both `PlayOneShotAttached` and `fmod.PlayOneShot` hooks: the game never calls them.
+- **A client quitting to the title from the pause menu sent the host to the main menu and ended everyone's session**: `PauseMenu.quit` loads `MainMenu` through `NewApplication.LoadLevel`, which became a follow request. A client leaving for the title (MainMenu, StartupPC, Profile Select) now goes offline and loads it itself; the host ignores such a request. `EndCredits2` counts as end credits.
+- **After a party wipe that reloads the save, clients started at the level entrance and replayed its intro** while the host stood at the save point: clients now load with `SaveManager.loading` like the host and are placed at the save's `SavePoint` (`LoadingManager.Start` placement, without reading their own slot).
+- **Party save tokens were keyed by slot number only**: slot 1 of another profile, or a solo save over a party slot followed by a restart, reused an old token and rolled bags / the key ring back. Tokens now carry the save's fingerprint (profile, sid, save count).
+- **Story**
+  - The host's Dialoguer variables were pushed to clients with every story commit, including the pickup yes/no answer `ItemPickup.release` reads 0.1 s after the callback (a "no" could become a duplicate add). Dialoguer globals are never sent.
+  - A finished cutscene forgot it had played when its object re-enabled (`CutsceneManager.OnEnable` re-reads SProgress `cut <id>`, written only at a save room) and could start again; peers that never ran it never got its "already happened" state (`onGameLoad`). The host now writes the key when a cutscene completes, peers that did not run it get `onGameLoad`, and a deactivated cutscene object no longer looks live (a later pause skip re-fired its end events).
+  - Removed the `CutsceneCut.Proceed` detour (it only sets a bool; the cut's events run later in the coroutine) and the never-called `Dialoguer.StartDialogue(int)` hook.
+  - `Diagnostics` panel keys (`ElsterFrameStatus`, `Mental_Frag`, `Mental_Panic`) are per player.
+- **Items / puzzles**
+  - **Reading a multi-item prompt (tarot cards, disks, LAB rings, scale dolls) gave the whole party every part key**: `UseItemMultiInteraction.ready()` is just the "dialogue over" flag reset, not a use; the client request and the host revoke are gone (each part's own `UseItemInteraction` is synced).
+  - **A peer could freeze in the cutscene state at the DET service hatch**: a `PuzzleStatus.solved` arriving one frame before the solver's `DoorLockEventInteraction` latched `done` started the native solved coroutine, whose exit only runs from an open lock screen. The DoorLockEvent is latched first.
+  - **Dynamic supply props (39 in ROT / LAB / MED / RES / EXC) were there for one player and gone for the other**: each peer decided from its own bag on first entry. The host decides (withheld props go to every peer and the join dump); BOS_Adler's resupply weapon follows the host's choice.
+  - Remote weapon models: the Taser and the FlakGun (the flare gun loaded with flak) now find their model; dropped items find pickup models not named exactly `Model`.
+- Cheats: F11 no longer lists KNCR (no enemy preset exists), STAR's home hint is DET_Detention; F6 Useful gains Flak shells.
+
+## 0.5.65 — 2026-10-01
+
+Protocol **v18** (`PlayerState` rebuilt for an Animator-less proxy, `PlayerRoster.HostFlags`, pickup counts; see `docs/PROTOCOL.md`). Live shared puzzle screens, then a full code audit (7 reviewers) with about 40 verified bugs fixed and a structural refactor of every domain.
+
+### Added
+- **Live shared puzzles** — two players zoomed into the same puzzle see each other's input as it happens, with the native animation and sound:
+  - **Keypads** (`Keypad3D` safes / radio code lock, `ROT_Keypad`, `PEN_Codepad` six-wheel codepad, `Domains/Puzzles/Locks/KeypadLive.cs`): one shared typed code (Keypad3D/ROT: up to 24 digits in Int0..Int2; codepad: six wheels in Int0) plus the last press (key, per-keypad seq, wrong-code flag in Int3). A press is emitted the frame it happens (`pushButton` / `UpdateDigitDiplay` postfix names it, the `Update` postfix sends the result) and replays on every peer through the native coroutine: button push + click, wheel flip, red blink + Denied / fail on a wrong code, green + chime on the right one. A chunk remount no longer wipes the shared code (native `OnEnable` reset is restored).
+  - **Pattern lock**: lights already synced; a peer's press now clicks (`clickSFX`) and is sent right after the light flips (0.12 s / 0.25 s after `toggleButton`, `EnvEmit.Soon`) instead of on the next 0.5 s poll.
+  - **Tarot**: a peer's card placed / taken runs native `PlaceCard` / `TakeCard` (card on the pivot, slot prompt, card sound); the flip switch eases and clicks from `darkmode` natively.
+  - **Evidence locker**: the pressed button rides with the lights (Int2), so the key push + click replay.
+  - **Fuse board** flip / wrong-voltage reset sound, **mural** dial click, **pump** button + water sound, **card writer** cursor (Int2) + key sound, **elemental plate lock** (LAB) insert sound.
+- **3D press sounds for everyone near** (`Domains/Puzzles/PuzzleFx.cs`): a peer's press plays native 2D for a player zoomed into that same screen, and for anyone else in the panel's room 3D at the room-side panel (`EventScreenInteraction`) with the door falloff; silent in other rooms. Replayed presses are never relayed again (one-shot and emitter host relays skip them).
+- **Merged concurrent input** — pattern lock and key grid merge per light/node, tarot per slot, keypads and the evidence locker whole (no interleaved codes). A merge-type edit is never dropped as stale, the host relays every merge to everyone, and a client skips stale echoes of its own presses (`IsOwnStaleEcho`), so both screens end on the same state.
+
+### Fixed
+- **Other player's model lifting off the floor now and then** (both directions, since the first co-op builds) — Elster's clips are humanoid (muscle curves + `RootT`), so the one position the Animator writes is the hips. Bone sync sent rotations only, and the proxy's hips came from its own Animator, which runs on its own clock and drifts in phase and state from the sender's; the sender's legs on a hips height that was not theirs left the feet floating. `PlayerState` now carries the sender's hips `localPosition`, and the proxy no longer has an Animator at all (see Changed): its pose is exactly the sender's bones + hips.
+- **Combat**
+  - **Client shots and melee did no damage to normal enemies** — native `PlayerAttack` lowers `Hitbox.HP` before `TakeDamage`; the client forwarded only the hit chances and the next snapshot restored the HP, so a client could only kill through a crit stagger + stomp. The client now sends the HP its hit took off (`EnemyDamage.Damage`) and the host applies it before native `TakeDamage`. The 0-arg `TakeDamage` keeps vanilla `noSneak = true`; a failed host apply no longer retries (double damage).
+  - **Enemy torso hits never reached a remote player** (hurtbox test point offset along planar Y; up is −Z). Friendly fire (opt-in) was broken the same way and fired on any trigger press: now one ray per live round, damage clamped.
+  - **Chimera / Mynah fight could run a second local copy on a client** (`startFightSequence` unpatched): blocked on clients. **Kolibri** feedback hit no longer double-staggers / double-hurts.
+  - Downed players are no longer chased; a client copy of a spawned enemy no longer plays the host's wake shake/rumble.
+  - **An enemy aiming at a player dragged that player around** (host jumped ~580 units and 8 up for a second in an EULR fight): the host pointed each enemy's `AimTarget` / `IkTarget` at the targeted player's root, and native `EnemyController.Update` moves those helpers toward the target with `IkTarget.localPosition.y = ikHeight` (8). Only `playerPos` is retargeted now; the helpers stay the enemy's own (spawned clones get their own child if they have none).
+- **Players**: **the prologue hole crawl never showed on the other screen** (the proxy stood aligned in front of the hole): native `PEN_CodeRoom` hides `PlayerState.player` and animates a separate crawl rig in its place, and the sender kept reading the hidden Elster. While a crawl rig is up (PEN_Hole, `DET_Oven`) the sender reads position, facing, bones (mapped by name path, the rigs differ in props) and hips from it.
+- **Enemies (co-op fights)**
+  - **Enemies only ever reacted to the host** (woke, chased, attacked and gave up depending on where the host stood): native `EnemyController.Update` copies `PlayerState.player` into `playerPos` every frame and chases / Linecasts / range-checks against it, so the mod's `playerPos = proxy` only teleported the proxy onto the host. The host now keeps a chase target per enemy (nearest live player, with hysteresis; a gunshot wake chases the shooter) and swaps `PlayerState.player` to that player's proxy around the enemy's `Update` (`EnemyTargetPatch`, restored in a finalizer).
+  - **A downed EULR hurt a client stepping up to stomp it**: the client puppet kept its contact hurtbox live while downed (native turns it off unless `hurtboxWhileDowned`) and could leave the baton box open after an interrupted swing; both gates are mirrored now.
+  - **Dead enemies flexed and danced on the client**: the puppet's controller bools (`Dead`, `Critical`, `Fire`, `Pursuit`) stayed false, so its own transitions walked a corpse into Get Up between snapshots; they are set from each snapshot.
+- **Doors**
+  - **A door flapped open/closed ~20 times a second on the client** (LOV East Corridor → Aula) and **a PEN_Wreck lock ping-ponged every 10 s**: `InteractiveLockSingle` was read from `door.locked`, which native `Update` only mirrors from its master `ConnectedDoors` (stale while the room sleeps), and "no key" counted as a permanent seal, so the host rejected every open of a plain unlocked connection. The single now reads and applies its master's lock, a seal is a missing master or a locked master nothing can unlock (backtrack doors count as unlockable), the host's open authority uses that master, and a `ConnectedDoors` whose `Awake` never ran (PEN_Wreck `DemoOnly`) is no longer wired on one peer only.
+- **Scenes**: during the airlock split the host kept streaming its PEN_Wreck enemy snapshots to the client in PEN_Hole (hundreds of misses every 5 s): state snapshots skip peers in another scene, and a client's own load refreshes its scene-mismatch flag (it only updated on the host's hello).
+- **Cutscenes are per player now**: a skip (or cut proceed) only affects the player who does it, the other keeps watching; previously the first skip skipped everyone. A client's skip events are authored on the host (flags) and the host counts END. A level change after a cutscene waits: a client holds the host's follow until its own cutscene ends (its own end load runs the follow), and the host queues a client's request until its copy ends. The host finishing first no longer marks the client's running copy completed (its skip was refused).
+- **The client could not skip the prologue-end cutscene** (Esc opened the pause menu): the party key ring made `hasItem(book)` true before the client's own pickup released, so `PEN_CodeRoomEnd` started mid-pickup and native `ItemPickup.release` restored the event-screen gameState over the cutscene's (no skip bar, pause allowed). A cutscene that begins during a pickup keeps its gameState.
+- **Cutscenes**: a cutscene a client skipped through the host kept its native skip-hold check running, so a later Cancel hold sent skip requests for long-finished cutscenes; the applied skip now ends that check and finished cutscenes are never skipped again.
+- **Items**
+  - **Dropping an item you had picked up (e.g. the broken keycard) made a floor item only the other players could take**: the game destroys the taken prop, so the drop was cloned from an unrelated pickup with no usable collider. The prop is now copied just before the game destroys it, and a clone without a take collider falls back to a plain pickup. Templates are floor pickups only: an item whose only copy is an event-screen prop (the PEN_PC tape) or that is crafted (the airlock card) used to clone that close-up prop, which floated, came out huge and showed no interact prompt.
+  - **Inventories broke on the way to Sierpinski**: native `PEN_CodeRoomEnd` (PEN_Hole) clears Elster's bag before loading LOV_Reeducation, but it plays on one peer only; the others kept everything (a client arrived holding the King in Yellow) and the party key ring kept every prologue key/object, which masqueraded in everyone's slots (the host's slots hid the new photo). Every peer arriving in LOV_Reeducation from PEN_Hole now runs the same wipe (clear, then the native empty-hands `None` item the inventory UI counts slots from) and empties the ring (`Inventory/ChapterWipe`).
+  - **Dropped items with no floor version in the scene** (catalog model: stun prod, tape) floated upright or sank into the floor with the highlight away from the prompt: the catalog model is laid on its thinnest axis, sized like nearby floor items, centred over the prompt and rested on the floor. Every other renderer of the borrowed template is off (its look is rarely a child named "Model": a stun prod floated beside the dropped item with the prompt on it), and the "Prompt" anchor moves over the visual. `[Drop] spawn` logs the model's z span, size and offset.
+  - **Taking a dropped item left the game in cutscene mode**: every later inspect line refused to open (e.g. the PEN_Wreck cockpit) until a scene load. A confirmed take despawned the floor item at once, which cancelled the native `Invoke("release")` (or the mod skipped release itself), and release is what clears `PlayerState.cutscene` / `paused` / `itemView` and restores `gameState`. Both paths now run that part; it also unblocks the PEN_Wreck airlock card reader.
+  - **A peer leaving brought back every item it picked up in that scene** (duplication) — the "orphan release" could not have a real orphan; removed.
+  - **Picking up a world item could shift other items' ids on that machine** (they then duplicated or hid for one player): object ids are now pinned at scene load (`Sync/WorldId` cache), so a native `Destroy` never shifts another object's id. Same fix for door / boss messages that silently missed.
+  - **Taking a dropped stack of a type you already carried gave nothing** and the drop vanished for everyone; now the bag takes what fits and the rest spills back.
+  - **A partial pickup duplicated the remainder** (prop + floor drop); now the prop keeps the remainder and every peer sees it.
+  - **TarotDeath hold / full-bag veto** left the prop stuck as taken for everyone.
+  - **Party ring keys were saved into the saver's bag** (and physically added near locks): the masquerade is off inside `SaveManager.Save` and ring keys are never added to a bag.
+  - **Storage**: a put in flight at session end was returned to the bag after the host boxed it (duplication); a partial take that could not edit the box stack deleted the rest of the stack. A dropped story object no longer lands in every client's bag.
+- **Puzzles**
+  - **A solved cryo/pattern entry the client could not match snapped the next unrelated pad/lock in the scene to solved** and unlocked the cryo doors for the party.
+  - **After re-entering a scene the client ignored the host's puzzle updates** (an old stored sequence number outranked the host's restarted one).
+  - **Solving a puzzle started its cutscene for players in other rooms** (mural, pump, radio, incinerator, cable car): live consequences now run only in the solver's room (`PuzzleEdge.InRoom`).
+  - **PEN_Wreck cryo override pattern lock: a late joiner never got the solved panel state** (Cryo / Inter on, Pivot off) — the durable form now replays the SetActive part of `onSolved`; **ROT keypad and the MED / LAB elemental locks exited a player's screen when solved in another room**; the library PC success sound played on join dumps.
+  - **Cable car rode the wrong way on the observer** and ping-ponged; **echo damping swallowed a real quick re-toggle**; **storage lid sync never worked** (it now poses the lid only, never opening the other player's box screen); **incinerator replayed its whole shutdown on late join**; **room entry reverted recent puzzle changes**; **EXC elevator late-join pose used the wrong axis**; several `Update` postfixes did full reads every frame.
+- **Story**
+  - **One player skipping a dialogue line closed everyone's dialogue** — dialogues are now local (every shipped dialogue is flavor text).
+  - **Pausing during a cutscene could skip a different, unplayed cutscene and block it** (progression blocker); **the pause menu could not open anywhere in PEN_Hole** in co-op.
+  - **A host reload wiped each client's minimap, radio frequency and selected slot**; **time in the memory scene counted once per player** (ending skew + a commit every 0.75 s); **a client that missed the ending broadcast never got the ending**; **a host pulled to another scene by a client kept stuck input**; full story dumps were sent twice and applied in O(n²).
+  - During the wreck/hole split a client runs its own scene's cutscenes instead of waiting for the host.
+- **Players**: ghost proxies of a peer in another scene (wreck/hole split); the remote outfit and hat never synced; a copy of the local weapon could stay in the proxy's hand; proxy footstep/pump/case sounds played late; the ladder cue was wrong; a re-death right after a revive could leave a player downed forever; a bone-count mismatch scrambled the skeleton. Remote root height: the sender's root z wobbles a few tenths (door spawn points sit above the floor, the 3D rigidbody settles), so the proxy's feet stay on the lowest height of its ~0.25 s buffer (eased) and follow the raw height when the whole buffer travels (elevators, stairs) or the sender is on a ladder, crawling or in a cutscene (the hole jump; new `PoseFlags.Scripted`). Diagnostics `[Proxy] bob` / `[Move] self bob` lines catch a root swing or a hips pop for the intermittent "hopping proxy" report.
+- **Doors / sound**: in solo, a locked door the game opened during traversal froze (and logged every frame); two players toggling the same door at once could end split; a sliding-door apply could jam the door; a client heard its own world one-shots twice; one-shots now obey the room rule.
+- **3+ players**: a join / resync dump to one player made the others miss changes made at that moment; the host stopped relaying a client's movement while it was loading.
+- **Config**: `SyncPuzzles=false` was switched back on every boot by the old `ExperimentalPuzzles` alias (removed); the sync toggles were per-install and silently desynced — they are now the host's (`PlayerRoster.HostFlags`).
+- **Cheats**: any client could spawn enemies (F11), add keys to the shared ring (F6) or force chapter loads (F7) — now only with the host's `AllowClientCheats` (default off).
+- **Solo**: no WorldId adoption / template scans / renames when nobody is connected; a scene load no longer scans the scene twice.
+- **Incinerator peer solve failed** — the apply wrote A/B/C only: the knobs never turned and `StartShutdown` integrated the default 1/1/1 curve, so the peer got the error buzz and the hatch never opened. The curve (`Yspeed/Yacc1/Yacc2 = n/10`) and knob rotations are set like native `plusX/minusX`, and the shutdown runs once.
+- **Tarot slot prompt inverted on peers** — the apply turned the empty-slot placer on for a full slot and never showed the placed card; it now uses native `PlaceCard` / `TakeCard`.
+- **Elemental card locks never redrew on peers** — `MED/LAB_MultiLock` have no `Update`; cards, slot icons and red/green lights are painted like native `OnEnable` (the native insert coroutine runs as a cutscene and cannot be replayed on a player outside the screen).
+- **Pump pressure light stayed red on peers after the solve** — painted from the solved flag.
+- **Library robot jumped between poll samples** — a peer's move glides at the native `movementSpeed` (`LibraryRobotGlide`) and the final cell is sent when the robot stops.
+- **Keypad lockout synced** — the native 0.3 s button-push `blocked` flag was copied to the other player and could leave their keypad deaf; it stays local.
+- **Dead keypad paths** — `Keypad3D.openDoor` / `ROT_Keypad.verify` / `PEN_Codepad.CheckSolution` patches never fired (native `Update` inlines them) and the host `KeypadSubmit` handler built an `openDoor` iterator that never ran; removed (the `KeypadSubmit` kind is retired, solves sync as live puzzle state).
+
+### Changed (structure)
+- **Puzzle spec table**: one `PuzzleTypeSpec` row per puzzle type (`Domains/Puzzles/PuzzleSpecs.cs`) replaces eight parallel tables and switches; every live consequence goes through the room-aware `PuzzleEdge`; a failed apply is retried; Puzzles shrank from 9.4k to 6.8k lines (try/catch sites 556 → 28).
+- **Proxy without an Animator**: every one of Elster's 238 clips only drives humanoid muscles / root / IK goals, so the synced 83 bone rotations + hips replace it fully. The parameter plumbing (~580 lines) is gone; `PlayerState` shrank from 605 to 555 bytes (`PoseFlags`, `AvatarCue`, implied-w facing).
+- **One reset system**: `SessionReset` with `Scene` / `Session` / `Connection` scopes replaces three overlapping mechanisms (registry + explicit stop list + ~10 `OnSceneChanged` chains). `StaticStateGuardTests` fails on any mutable static that is neither reset nor marked `// persistent: <reason>`.
+- **Dump completeness**: `DumpFlush` runs every domain's `FlushDiffNow` before a join / resync dump; full sends inside a unicast never record "already sent".
+- **`Diagnostics` pref** (default off) gates the per-frame traces (Flicker / Move / Bag / EventCam, Harmony phase timing, stall breakdown, full patch audit). `VerboseLogging` is log volume only.
+- **Network send cadence on unscaled time** everywhere: no game pause can stall sync.
+- **Inventory owns storage + key ring** (moved out of Story); one claim record per in-flight pickup replaces eight parallel maps; one FMOD emitter table replaces ~10 caches; Story split into cutscene / commit / ending files with one start + one skip window; enemy/boss/door ids from registry lookups (no per-frame hierarchy hashing).
+- Hundreds of single-field `try/catch` collapsed to one per method; dead code and changelog-style comments removed.
+
+## 0.5.64 — 2026-10-01
+
+Protocol **v17** (no wire change). Fixes from the second human dual-box session (Penrose wreck).
+
+### Fixed
+- **Host frozen in place forever after the client solved the cryo pattern lock** — applying a peer's solve runs the native `onSolved` / `onSuccess` / `onUnlocked`, and those UnityEvents call `EventScreenInteraction.exitEvent` on a zoom-in screen this player never opened. The native `Callback` coroutine sets `PlayerState.suspendInput`, waits 0.6 s and reads `eventCamera.path[0]`; the path list is only filled while the screen is open, so the coroutine threw before clearing `suspendInput` and the player could never move again (Ghidra EventScreenInteraction.c). `EventScreenExitNotOpenPatch` skips `exitEvent` in a party when that screen is not open here (`[Puzzle] exitEvent skipped (screen not open here) …`); a peer who has the same screen open still gets it closed.
+- **Player teleported to the middle of the room when a peer opened the door next to them** — native `OobChecker` (out-of-bounds rescue) sphere-casts from the player along ±x/±y each frame against the walls; a miss for 1 s teleports the player to the room's `gotoSpawn` / camera centre and resets every door (Ghidra OobChecker.c). Alone, a door is only open while you traverse it (not checked). In co-op the peer's open door let the cast leave through the doorway into the next room's unloaded chunk: the host, standing by the Stern Hall→Cryogenics door, was "rescued" exactly 1.1 s after the client opened it. `OobThroughOpenDoorPatch` (party only) treats a miss whose ray runs through an open or still-closing `Doorway_Double` / `EventSlidingDoor` as in bounds (`[Door] oob rescue held: …`).
+- **Peers did not know the host's room** — only clients reported their room (`PartyRoom`), so a client saw `peerRoom=?` for the host and never knew other clients' rooms. Every peer now reports, the host relays client rooms to the other clients, and unchanged rooms are re-sent every 5 s for late joiners (same wire).
+- **Level-disabled enemies force-spawned** — the host enemy tick "woke" any inactive enemy within 30 units of any player by `SetActive(true)` up the whole hierarchy plus `WakeUp()`. In `PEN_Wreck` that switched on the prologue's disabled EULR/STCR managers and their event containers when the host walked in: wake stinger and screen shake, a hostile in an empty room, the client hit for 18 by an enemy it did not have (`[Damage] … from enemy 0`), and the host/enemies flickering on the client. `EnemySyncService.WakeForCombat` now only wakes an enemy whose sole inactive ancestors are its room's `chunk` / `instantChunk` / `Cell` (via native `Room.SetChunkStatus(true)`), only for a **remote** peer standing in that room, and returns false otherwise; client hits, enemy actions, legacy HP and gunshot noise respect it.
+- **Remote player "dance" after a local inventory/menu pause** — the proxy timeline (pose stamps, render time, bone clock, animator update mode) ran on scaled time, which stops at `timeScale 0`; the backlog then replayed at once. All proxy timing is on `Time.unscaledTime`.
+- **Pose stream stalled while the sender's game is paused** — the pose/vital send timers advanced on `Time.deltaTime`, so a player in an item view / inventory (`timeScale 0`) stopped sending (`[Hitch] send gap=1059ms` right after the cryo card pickup) and froze on the other screen. They run on unscaled time, and the sent velocity uses unscaled `dt`.
+- **Pattern locks dead for everyone (PEN_Wreck cryo)** — the solved-overlay guard (`ShouldKillOverlay`, plus the Cryo/Codepad OnEnable disable and rematch) treated any *held* puzzle entry as solved. A `PatternLock` entry is held while unsolved too (the mid-grid button state, `Int3` = cell count), so every button click of a fresh lock was swallowed (`[Puzzle] overlay kill trigger LAB_PatternLockButton N`) on host and client. The Cryo/Codepad host hooks now count a held PatternLock only when its `Bool0` (solved) is set.
+- **Proxy flung around after every room door** — the sender's velocity is the pose delta per send, so a room-to-room traverse (hundreds of units in one frame) went out as a huge velocity and the receiver's Hermite swung the model ~25–100 units back and forth for ~0.1 s after each door (`[Proxy] jump … mode=lerp` bursts after every `mode=hold` teleport, both sides). Velocities above `PluginInfo.MaxProxySpeed` (80 u/s) are dropped on send and on receive.
+- **Unique key vanished on pickup (PEN_Wreck cryo card)** — native `ItemPickup.release` only adds when `getCount(item) < maxNumber` (Ghidra ItemPickup.c). The host's key-ring broadcast for the claim reached the taker before its release ran, and the ring masquerade (`getCount` = 1 / `hasItem` = true for a ring key) made release skip the add: the card went on the ring, was destroyed, and never reached the taker's bag (`[Pickup] native release … gained=0/1`). `ItemPickupTakeScope` turns the masquerade off while native release runs.
+- **Cryo key card takeable before the pod opened** — the join dump lists every unclaimed world pickup as `Triggered=false`, and the client "restored" each one (`SetActive(true)` + interaction on). That switched on props the level keeps off, like `PEN_Cryo.contentLateActivated` (the PEN_Wreck cryo key card), so its TAKE prompt appeared as soon as the pod door moved. A pickup is now only restored when this peer hid it.
+- **"Open cryo" prompt left on the peer who did not open it** — native `PEN_Cryo.Open` removes the prompt by disabling the interaction's `BoxCollider2D` (the Interactor finds prompts by collider). The open snap only disabled the `Interaction` component; it now disables the collider too.
+- **Remote puzzle sounds heard across the ship** — applying a peer's solve runs the native `onSolved`, whose emitters played locally wherever this player stood (the cryo `OverridePanel_Solved` emitter sits on a far-off 3D event-screen stage and plays 2D, so the far-away host heard the client's solve). While a remote action is applied, `StudioEventEmitter.Play` and `PlayOneShotAttached` now play only when the source's Room is the local player's room (outside any Room: the door distance gate). The host still relays the sound to clients, except the one whose packet it is applying (`NetGate.ApplySender`, set by puzzle and interaction apply): that client already played it natively and heard the cryo solve twice.
+- **Bag trace** (`Sync/BagTrace.cs`): `[Bag] start …` and `[Bag] change +Item a->b / -Item a->b | ring=N` whenever the local inventory changes (keys + native `getCount`; the Il2Cpp pair enumerator returns garbage counts), plus `[Pickup] native release id=… gained=n/N inBag=…` when native release hands an item over, to pin items that vanish on pickup.
+- **Door-lock plate ping-pong** — `InteractiveLockSingle` Bool1 (the traverse plate: `AutoTraverseDoor.blocker` / `DoorLockControl.locked`) is set natively from where each player stands, so the two Cryogenics locks bounced host↔client every 0.5–1 s and each side was pushed into the other's blocker. Clients no longer author the plate (they keep the host's last value and send only locked/unlocked), and the host no longer broadcasts a plate-only flip; the plate still rides a real lock change and the full dump.
+- **Lock ping-pong** — a client whose read of a lock never converged on the host's merged state re-sent it every tick (`InteractiveLockSingle` flipping once a second). The client now drops an entry identical to the one it last sent for that key within 10 s and logs `[Puzzle] echo damp <Type> <id>` once.
+
+### Changed
+- **No pause in co-op** (`Domains/Session/Patches/NoPausePatch.cs`) — while a session has a connected peer, native `Time.timeScale = 0` writes (PauseMenu, InventoryBase, ItemPickup item view, Dialogue, BookScreen, EideticModule, NewMainMenu, MakeReport) are dropped. A host in the inventory froze every enemy and boss for the whole party while the client kept moving; a paused client froze its own puppets while the host's world kept hitting it. Menus still block the local player's input via `gameState`; slow-mo values pass; solo / lone host stays vanilla. Logs `[Session] pause ignored` once per session.
+- **No safe menus in co-op** (`Domains/Combat/MenuHit.cs`) — with time running, a menu must not make a player untouchable. Native `HurtElster` drops every hit outside `gameState` play/dialogue, so a hit taken in the inventory / pause menu / a book / an event screen / the photo viewer is held, that screen is closed the way the game closes it (`InventoryBase.ToggleInventory`, `PauseMenu.togglePause`, `BookScreen.Close`, `EventScreenInteraction.exitEvent`, `EideticModule.DisableViewer`; `RestorePlay` if it has not closed after 2.5 s) and the hit is replayed through `HurtElster` / `HurtElsterHug` once the player is back in play: normal hurt reaction, grab, or downed + revive timer (`[Damage] hit in <state> (n) — closing it`). Dialogue and item prompts are already `gameState dialogue`, where the native hit lands and `BlackSleekGuiSubs` ends the dialogue; a cancelled yes/no prompt now reads as "no" (Dialoguer global bool 1 cleared) so a hit can never grant the item. A host going down while a client is alive is still a downed/revive, never a reload, so enemies keep their positions; only an all-down wipe reloads.
+
+### Added
+- **Move trace** (`Sync/MoveTrace.cs`): `[Move] BLOCKED …` dumps every native movement gate and the solid colliders around the player when a held direction does not move them for 1 s; `[Move] free` when it does again.
+- **Flicker trace** (`Sync/FlickerTrace.cs`, always on, one line per change, 25 lines per tag per 5 s then a `flapping:` summary): `[Room] chunk ON|OFF <room> by=game|mod flips=N here=<room>` and `[Room] enter`; `[Proxy] vis pN active/renderers/drawn/onScreen/mode` and `[Proxy] jump pN d=` (> 2 units in one frame); client `[Enemy] client <id> active=… hostAlive=…`, `client snap-jump`, `client unknown <id>` (host enemy this client lacks); host `[Enemy] wake ok|REFUSED <name> <why>` once per enemy.
+- **Event-screen click trace** (`Sync/EventCamTrace.cs`): `[EventCam] screen open|closed` and one `[EventCam] click …` line per click in a zoom-in puzzle (Use/Attack/mouse edge, input device, native cursor + mouse position, screen/scale, cursor lock, focus, `zoom`/`depth`, current interaction, and the interaction under the cursor with `MOD-KILLED` when the mod's solved-overlay guard would eat it). `[Puzzle] overlay kill trigger <name>` when that guard swallows a trigger.
+- `scripts/signalis-volume-watch.sh` + user service `signalis-volume` (this machine): host SIGNALIS stream 60%, client stream muted, keyed by the stream owner's Proton prefix.
+
+Protocol **17**. Product **0.5.64** (not 1.0).
+
+## 0.5.63 — 2026-10-01
+
+Protocol **v17** (player velocity field changed meaning). Fixes from the first human dual-box session.
+
+### Fixed
+- **Remote player stutter and "hops"** — SIGNALIS walks the XY plane and Z is height (up = -Z), but the pose wire sent velocity X/Z and dropped Y. North-south movement was Hermite-interpolated with zero velocity (a speed pulse every packet), and height was extrapolated with a real velocity during send gaps (the host's model hopping on the client after an inventory/drop pause). `PlayerState` now carries planar `VelX/VelY`; interpolation is planar Hermite + linear height, extrapolation never moves height.
+- **Pose timing jitter** — snapshots were stamped with raw arrival time, so 16 ms frame-boundary jitter on the ~25 Hz stream became speed changes, and the 45 ms render delay (about one packet) fell into extrapolation whenever a packet came late. New `Domains/Players/SnapClock.cs` stamps root and bone snapshots on a learned interval pulled gently toward arrival (resyncs on gaps > 150 ms); `PoseInterpDelay` 45 → 100 ms (~2.5 packets).
+- **Dropped item counts doubled on pickup** — drops cloned a native pickup with `firstObserved = false`, so native `pickUp` re-rolled the count through `DynamicDifficulty.calculateCount` (a 1-round drop became 2 for a low-ammo taker, here the host). Drops now set `firstObserved = true`, and the take path uses the registry's dropped count rather than the prop's.
+- **Dropped items floating** — floor placement copied the z of the nearest native pickup (usually on a table or shelf) and `RestOnFloor` lifted the model along +Y (north) instead of height. Drops now keep the dropper's feet z and seat the visible mesh's lowest point (`bounds.max.z`) on it, with a second pass one frame later. The never-registered `DroppedItemAnchor` component (`[Guard] FinishInteractable … TypeInitializationException`) is gone.
+- **Dialogue UI blips relayed as world sounds** — `event:/UI/` emitters (dialogue `Voice` / `VoiceEnd`) stay local like music and ambience beds.
+
+### Added
+- **`FreeCursor`** pref (default off): never confine the mouse to the window (dual-box under Proton/Wayland).
+
+Protocol **17**. Product **0.5.63** (not 1.0).
+
+## 0.5.62 — 2026-10-01
+
+Protocol **v16** (no wire change). First in-level dual-instance run (host + client in `DET_Detention`, driven by the new `--sync-scene`) found a real WorldId bug and a scan cost; both fixed and re-verified in the same run setup. **Gameplay is still untested by a human.**
+
+### Fixed
+- **Enemy WorldId drift after load** — 9 of 13 DET_Detention enemies changed hierarchy path between the host's first scan and a later rebuild (`Room/Enemy Manager/EULR[0]` → `Room/Enemy Manager/Enemy 1 EULR[0]`), so a host rebuild on client join gave them ids the client never computed: `WorldId divergence … enemies 13/13!`, client `[Enemy] map misses=639` against 284 hits, those enemies frozen for the client. `WorldRegistry` now pins the first id computed for each enemy instance in a scene (`StickyEnemyId`); later drift is logged once (`[World] enemy id drift '<path>' now X — keeping Y`) and ignored. Re-run: identical checksum on both peers, no divergence, no misses.
+
+- **Proxy ladder sound never played** — the proxy used `event:/Elster/Ladder/Up|Down`, which do not exist in the banks (`[Guard] WorldSfx.Start: EventNotFoundException`). It now plays the two GUID events native `Ladder.ClimbLadder` uses (bottom / top start), once per climb like native, instead of a made-up path every 0.55 s. Every other `event:/` literal in the mod was checked against the exported asset strings.
+- **Client resolved host enemy snapshots while loading / in the menu** — every id became a miss (`map misses=288 puppets=0` during a follow load). The client now drops the enemy stream while `SceneMismatch` or loading; the post-load snapshot and the join dump carry the state. MED_Medical and DET_Detention re-runs: zero misses.
+
+### Added
+- **`Sync/WorldScan.cs`** — one `FindObjectsOfType<MonoBehaviour>(true)` per scene bucketed by Il2Cpp class (native `il2cpp_class_is_subclass_of` match) instead of one full scene walk per synced type (~85 per load across puzzles, doors, enemies, pickups, emitters). `DET_Detention` (8.4k behaviours, 411 classes): ~17–30 ms once. `WorldLookup.Invalidate<T>()` still forces a direct per-type rescan for runtime-spawned components. Logs `[World] scan objects=N classes=M T ms`.
+- **`--sync-scene <Scene>`** boot argument — host/offline loads that chapter 4 s after MainMenu via the F7 path (`LocationTeleporter.LoadChapterByName`), so a dual-box join into a real level runs unattended. See AGENTS.md "Unattended dual-box run".
+
+### Open risks
+- Pinned enemy ids assume both peers' first scan sees the same paths (true when both load the scene fresh; observed in DET_Detention). A late joiner whose first scan happens after the host's drift would still diverge for those enemies — `[Scene] WorldId divergence` + `SceneDiff` will say so.
+- Join spike: host `pollEvents` ~310 ms while building the full world dump for the joiner, client ~210 ms applying it on arrival (one frame each).
+- Two Proton windows on one desktop drop frames to ~1 s while unfocused: `[Hitch] stall … renderGap≈dt`, mod/game script time a few ms. Environment, not the mod; test with both windows visible or on two machines.
+
+Protocol **16**. Product **0.5.62** (not 1.0).
+
+## 0.5.61 — 2026-10-01
+
+Protocol **v16**. Second-pass review of the 0.5.59 / 0.5.60 fix code: 45 findings fixed across net/session, puzzles/doors/audio, pickups/combat/bosses and story/scene. The first real boot smoke test passed: handshake, join dump and WorldId checksum all OK, patch audit 192 ok / 0 missing, zero `[Guard]` lines. The ~1 s/frame menu stall seen in that run was an environment artifact (compositor / present, not reproducible), so no code change for it; stall diagnostics were added so a recurrence is attributable. **Still not playtested beyond boot and handshake**: compile- and unit-tested only (Release 0 errors / 0 warnings, 511 tests).
+
+### Added
+- **Hitch phase / stall diagnostics** — `Sync/HitchTrace.cs` times every mod update phase (`dropTick`, `guard`, `friendlyFire`, `tickRespawn`, `entitySpawner`, `net.Update`, `proxyPreTick`, `net.LateUpdate`) and prints `[Hitch] phase=<name> Nms` only above 50 ms. A frame >= 400 ms prints one stall line (`modUpdate / gameScripts / modLate / modGui / renderGap / focus / background / vsync`) so a compositor or present stall is distinguishable from mod CPU.
+- **`Sync/HarmonyPhaseTiming.cs`** — wraps every patched `Update` / `LateUpdate` / `FixedUpdate` of the mod's patch classes with the same phase timer (logged once: `[Hitch] phase timing on N Update-family patches`).
+- **`StoryCommit.Authoritative`** (bool, appended last): a full commit after a host `SaveManager.Load` / `NewGame` replaces the client's `SProgress` (absent keys are removed) instead of merging into it.
+- **`Dialogue.CallDialogue` gate** — patched on its unique RVA (0x423F30); it calls `DialoguerDialogueManager.startDialogue` directly and bypassed the `Dialoguer.StartDialogue` gate. `rva_fold_scan.py --check`: 206 targets, 0 unresolved, 8 folded (unchanged list). The StartDialogue gate also logs one line when it blocks.
+- **Deterministic MVID build** — csproj `PathMap=$(MSBuildProjectDirectory)=/src`, `EnableSourceLink=false`, `EnableSourceControlManagerQueries=false`: the same commit built in two directories or worktrees gives a byte-identical dll, so two separately built installs are no longer rejected by `SchemaHash`.
+- F2 status draws the patch-audit and game-build lines; the audit line shows its duration (`T ms`) and a late (first scene load) audit failure.
+- Tests: +18 story / wire tests (`StoryWireTests`), golden schema hash recomputed.
+
+### Fixed
+**Net & session**
+- **Wipe snapshot ordering**: `HostReload.OnSceneArrived` now runs before `Network.OnSceneChanged`, and the dump is deferred (`DeferDump`) while `HostReload.Pending`, so clients receive the post-wipe world, not the pre-wipe one.
+- **Wipe watchdog**: counts non-transient time only and retries instead of giving up after one 45 s window; a wipe-scene mismatch goes through `SceneFollowService.Apply`.
+- **NewGame**: `SaveSlot = -1` and `RestoreBag(empty)`, so a new game no longer inherits the previous bag or slot.
+- Solo-save token built from the in-memory bag keys; join restore is keyed by (stamp, slot); `AckTimeout` 45 s; the handshake game-build tail read is guarded (`AvailableBytes >= 4`) so an old peer gets the readable protocol reject; `GameBuild.Hash = 0` when the build could not be hashed; cached animator hashes; PatchAudit shader check runs in `RunLate`; WorldRegistry checksum is only computed on a live session (solo pays nothing; `HasChecksum` computes lazily if a session starts later).
+
+**Puzzles, doors, audio**
+- Pending (pre-gate) puzzle flush survives a full dump; `_reapplying` flag so held `ReapplyHeld` is not treated as live; authored door holds respected; `ReappliedIds` removed; **a client can no longer lock a door the host has unlocked** (host ignores client `Locked=true`); FMOD rescan bounds; `_okKeys`; HostEmit / puzzle emits / door poll gated on `NetGate.Party`; emitter and env-emit caches invalidated by `WorldRegistry.Generation`.
+
+**Pickups, combat, bosses**
+- **Host inspect pickups** (yes / no prompt) and **drop decline** now work for the host; `_claimedDrops` purge; `DropRekey` mapping kept 60 s; hurtbox list cached with a 0.25 s near refresh, `NoteSpawn` in `BroadcastEnemySpawn`; overflow drop only after the grant and MagFill; release-pending hide uses unscaled time and survives pause; spear ack uses `FindInBag`, `BossSyncService.ResetSession()` registered (first-taker per spear no longer leaks across sessions); `HitFinalizer`; `_lateTxn` is a dictionary; the host rejects an `ItemPickedUp` whose claimer does not match the sender.
+
+**Story & scene**
+- **`HostDetermineEnding` without a Finale** (host elsewhere) and an ending-broadcast finalizer: the finale no longer hangs when the host is in another room; `DetermineEnding` is replayable.
+- **`CloseStickyDialogue` is client-only** (the host no longer closes its own dialogue); dialogue-callback author scope and `_pendingCb` reset (`DialoguerGate.ResetSession` replaces `ClearFlavor` in the session-reset table).
+- **Per-player keys denylisted** (`StoryWire.IsPerPlayerKey`) so one player's local flags are not forced on everybody; bookkeeping runs on `Live`, sends on `Party`; `Il2CppRealType.Is` fails closed; `ResetGame.ResetNow` skipped on clients in EndCredits; absolute 90 s cap on the follow queue.
+
+### Changed
+- Protocol **15 → 16** (`StoryCommit.Authoritative`; the handshake tail guard is read-side only, the bump keeps every 0.5.60 peer out). A 0.5.60 peer is rejected by the handshake.
+- Build: `PathMap` + SourceLink / SCM queries off (see Added); `AGENTS.md` documents the reproducible dll.
+
+### Before → After (player)
+- Party wipe: **before** clients could receive the pre-wipe world snapshot and a stuck reload gave up; **after** the post-wipe snapshot is sent and the reload retries.
+- New game after a session: **before** the old bag and slot could leak; **after** empty bag, no slot.
+- Host picking up a dropped item: **before** the prop could hide on a "no" or the host's own "yes" was denied (suspected, from review); **after** the host claim is recorded, a decline leaves the item.
+- Door the host unlocked: **before** a client could re-lock it; **after** it stays open for everyone.
+- Finale with the host elsewhere: **before** a client could sit at the finale forever (no broadcast went out); **after** the host computes the playstyle and broadcasts the ending.
+- Two separately built installs of the same commit: **before** rejected by the schema hash; **after** accepted.
+
+### Open risks / untested
+- **Not playtested beyond boot and handshake.** The wipe reload path (`HostReload` ordering, retry) is still unverified in a running game; so are the host inspect/decline prompt, the finale-with-host-elsewhere path and `StoryCommit.Authoritative` on a real Load / NewGame.
+- Deterministic MVID holds only for the same SDK and reference set; give both players the same dll when in doubt.
+- The 1 s/frame stall was not reproduced, so its cause is unknown; if it returns, send the `[Hitch] stall` lines.
+
+Protocol **16**. Product **0.5.61** (not 1.0).
+
+
+## 0.5.60 — 2026-10-01
+
+Protocol **v15**. WorldId divergence between peers (different hierarchy order, save-dependent spawns, renamed objects) is now visible and self-reporting instead of scattered `MISS` lines. **Not playtested**: compile- and unit-tested only.
+
+### Added
+- **Registry checksum** — `Sync/WorldChecksum.cs` (pure): FNV-1a64 over the sorted WorldIds per category (enemies, double / connected / sliding doors; F11 `SR_Spawn_*` enemies excluded) plus counts. `WorldRegistry.Rebuild` computes and caches it once; logged as `checksum=` on the `[WorldRegistry]` line.
+- **`SceneHello` / `SceneFollow` carry the checksum** (`Stats`). The host compares a client's hello with its own and logs one `[Scene] WorldId divergence with p<N> in <scene>: enemies 30/31! ...` line; a client compares the host's hello / follow with its own rebuild the same way.
+- **`SceneDiff` (74, host to client)** — the host's WorldIds of the differing categories, chunks of 256, at most 2048 per category (a longer list is flagged truncated). The client logs `[Scene] missing:` (ids it lacks) and `[Scene] extra:` (by hierarchy path), 20 each. A client that detects the mismatch first re-sends its hello to ask for the diff and requests one full dump (rate-limited).
+- F2 shows `World: in sync` / `World: N ids differ` (host: lower bound from counts, worst peer).
+- Tests: `WorldChecksumTests`, frozen tables for id 74, wire caps.
+
+### Changed
+- Protocol **14 → 15**: `SceneHello.Stats`, `SceneFollow.Stats`, `SceneDiff` 74. A 0.5.59 peer is rejected by the handshake. Solo play only pays one sort + hash per registry rebuild.
+
+### Open risks / untested
+- **Not playtested.** Checksums are taken at `Rebuild`; objects that appear later (chunk streaming) are not in them, so a host and client that rebuild at different moments can report a false divergence. Watch the `[Scene] WorldId divergence` lines in a normal session before trusting them.
+- Pickups, puzzles and emitters are not in the WorldRegistry, so they are not covered.
+
+Protocol **15**. Product **0.5.60** (not 1.0).
+
+
+## 0.5.59 — 2026-10-01
+
+Protocol **v14**. Code-review batch: 4 adversarial reviews of 0.5.57/0.5.58 (death and net core, puzzles/doors/audio, pickups/combat/bosses, story/scene) and the fixes for their findings, plus `Guard` logging, a unit-test project, a boot patch audit, a game-build handshake, a session-reset registry and an RVA-folding audit. **Still NOT playtested**: compile-checked (Release, 0 errors, 0 warnings) and unit-tested only; nothing here has run in the game.
+
+### Added
+- **Real party wipe** — `Domains/Session/HostReload.cs`: the host sets the save slot / `SaveManager.loading`, reloads the scene recorded in the save and drags the clients along via scene follow (the 0.5.57 wipe called `SaveManager.Load()` without the loading flag and did nothing). 45 s watchdog; ring/drop resets run only after the load happened.
+- **`Bootstrap/PatchAudit.cs`** — one `[Harmony] audit: N ok, M missing` line at boot plus a line per missing patch target or reflected member (8 checks in the hand table: `openDoors`, `closeDoors`, `cycle`, `m_ForwardAmount`, `m_TurnAmount`, `StorageBox.open`, `ready`, laser-dot shader). Shown in F2. A source-scan test keeps the table complete.
+- **Game build handshake** — `Bootstrap/GameBuild.cs`; `Handshake` gains `GameBuildHash` + `GameBuild`; a different game build is rejected with a reason. F2 shows the game build.
+- **`Sync/SessionReset.cs` + `Bootstrap/SessionResetRegistrations.cs`** — every static that must not leak from one session (or wipe reload) into the next registers a clear; persistent statics carry a one-line reason. Runs at StartHost / ConnectToHost / StopNetwork and after a wipe. Covers the pickup, drop-interact, puzzle apply-scope, key-ring and inventory re-entrancy statics that were unreachable before.
+- **`Sync/Il2CppRealType.Is<T>`** — real-type check for patches on identical-code-folded native methods; `docs/RVA_FOLDING.md`, `scripts/rva_fold_scan.py`, `RvaFoldingTests` (see Engineering).
+- **New messages** — `FmodEmitterRequest` (67, client to host: a world emitter the client triggered, host relays), `DropRekey` (73, host to all: a departed peer's floor drops move into the host key space).
+- **`Networking/LanNetworkManager.SessionEnd.cs`** — `EndSession(reason)`: client quit-to-menu and host to MainMenu end the session cleanly with a reason instead of being blocked / leaving peers hanging.
+- **`Networking/Messages/StoryWire.cs`** — shared caps/helpers for StoryCommit entries (+ `StoryWireTests`). `NetGate.Party` (`Live && HasReadyPeers`).
+
+### Fixed
+**Death & party save**
+- Wipe now reloads the save (see Added); `PartyLife` carries the `Scene` to reload. First-join-only bag restore, per-process `bag_snapshots_<n>` files (two instances on one PC no longer overwrite each other), solo Save/Load does no file IO. `DeathPolicy(ClientDowned)` is relayed. `PartyVitals.AwaitingAck` tracks the pending acknowledgement. Story progress is replaced by the host's next full dump after a wipe (`StorySyncService.OnPartyWipe`).
+
+**Networking**
+- `BonePose` clamp 1023 (matches the reader), `Room` travels as a capped string (`NetWire.PutString`), `SchemaHash` now mixes the dll MVID (a rebuilt dll of the same version is rejected), `ConnectedPeers()` is a cached array, `StopNetwork` restores control only if a session was live, F2 shows the patch audit.
+
+**Puzzles & doors & audio**
+- Puzzle emit gate + `_lastAuthor` + unicast-back; held-door fixes; `Doorway_Double.locked` polled; deferred door open; FMOD emitters keyed by (WorldId, component index) via `FmodEmitterMessage.Comp` (several emitters on one object no longer collide); `WorldLookup.Invalidate<T>()`; `PEN_Reaktor` per-rod merge; struct `PKey` puzzle keys; pre-seed pending solves flushed when the gate arms; late joiners re-request missing state.
+- **Removed the `MultiKeyLock.Update` patch**: it was the empty stub at RVA 0x2CB6B0 shared with ~3,000 methods, so the detour ran for all of them. Partial key packs ride the 0.5 s poll.
+
+**Pickups, combat, bosses**
+- Release-pending prop hide; own hurtbox list ticked per frame; Falke spear consume acks + stab ring retire; `WakeUp` direct state; overflow drop (`DropOverflow`); `ItemPickedUp.ClaimerPlayerId` (host is the only author of a floor-item claim); departed peer's drops re-homed (`DropRekey`); storage txn id rides `InteractionRequest.WorldId`; `EnemyDamage` relayed to the target when friendly fire is on.
+
+**Story & scene**
+- Only the int overloads of `Dialoguer.StartDialogue` are patched (enum overloads share the RVA) + nested-start guard; `determineEnding` postfix broadcast; `_flags.Clear()` before a full dump; buffered commits newest-wins; host `Note` while applying; unload-time savers no longer forward; "MainMenu2" matched with StartsWith; 90 s queue + resend; incremental commits carry only dirty keys; `CutsceneCut.Proceed` guarded against the folded `END_Boss.StartBattle`.
+
+**Engineering**
+- **RVA folding audit** — all 204 `[HarmonyPatch]` targets checked against `script.json`: 8 share a native function with other methods. 1 removed (`MultiKeyLock.Update`), 5 guarded with `Il2CppRealType.Is<T>(__instance)` first (`Interaction.reset`, `Interaction.setInRange`, `ROT_MeatBlocker.pickup`, `ROT_Tarot.flip` (8 targets, one body), `CutsceneCut.Proceed`), 2 static Dialoguer wrappers left as is (same parameters, nested guard). Table: `docs/RVA_FOLDING.md`. `RvaFoldingTests` fails if a patch lands on a listed empty stub or a listed folded method without the guard.
+- Tests: serial execution (shared statics), `SessionResetTests`, `StoryWireTests`, `RvaFoldingTests`, `PatchAuditTableTests`; frozen tables cover ids 67 and 73, golden hash recomputed.
+
+### Changed
+- Protocol **13 → 14**: `PartyLife.Scene`, Handshake `GameBuildHash`/`GameBuild`, `ItemPickedUp.ClaimerPlayerId`, `FmodEmitter.Comp`, `FmodEmitterRequest` 67, `DropRekey` 73, `BonePose` clamp, `Room` capped string, incremental `StoryCommit` dirty keys. A 0.5.58 peer is rejected by the handshake.
+- Version single-sourced from `Bootstrap/PluginInfo.cs` (csproj, `scripts/build.sh`, `scripts/package.sh` read it); `scripts/test.sh` runs the unit tests; `scripts/rva_fold_scan.py` added.
+
+### Before → After (player)
+- **Before:** a party wipe did nothing visible (everyone stood up where they died, bags reverted); two instances on one PC shared bag snapshots; a client's "quit to menu" was blocked; door/puzzle emitters with several sounds per object collided; some emitters fired only for the author; a stale or different game build could join and desync.
+- **After:** a wipe reloads the last save for everyone; each process keeps its own snapshot; quit-to-menu ends the session; emitters are per component; build mismatches are refused with a reason.
+
+### Open risks / untested
+- **Nothing has been run in game.** All of the above is compile- and unit-tested only; run `docs/PLAYTEST.md` on two, then three instances.
+- PatchAudit may flag `m_ForwardAmount` / `m_TurnAmount` / `StorageBox.open` if the Il2Cpp wrappers hide these private members (the code falls back gracefully; the audit line would then be a false alarm or a real dead feature, unknown until a boot log exists).
+- Wipe reload is a new path: 45 s watchdog, save-slot / `SaveManager.loading` replication, scene-follow of clients are unverified.
+- Client END counters are only partly synced (host commits the tally; client-side ending counters are not authoritative).
+- `Il2CppRealType.Is<T>` relies on `TryCast`; a foreign `this` that is not a valid object could still misbehave. The folding table covers only current patch targets (script.json is from the 0.5.x game build).
+- Dropping `MultiKeyLock.Update` adds up to 0.5 s latency to partial key-pack sync.
+- Protocol 14 is incompatible with 0.5.58; every player must update.
+- 0.5.57 / 0.5.58 open risks still stand.
+
+Protocol **14**. Product **0.5.59** (not 1.0).
+
+## 0.5.58 — 2026-10-01
+
+Protocol **v13**. Three parallel workers merged on top of 0.5.57: story/cutscenes/scene flow, puzzles/doors/audio, and pickups/combat/enemies/bosses. **Nothing in this release has been playtested** — compile-checked only (Release, 0 errors, 0 warnings). Each area was finished (resumed after a session-limit interruption) and compile-checked on its own before the merge.
+
+### Added
+- **New messages (NetMessageType 60–63)** — `WorldPickupDeny` (host → claimer, roll back a lost claim), `AvatarOneShot` (peer → all via host relay; Fire/Hurt/Die one-shots on a reliable channel instead of the lossy pose), `BossHit` (client → host boss damage / Falke Stab / TakeSpear; host → clients spear taken / Chimera rifle shot), `EnemyAction` (client → host stomp Kill / KillSilent / Knockback / GetPushed / Burndown / WakeUp). Host handlers take the real `senderId` from dispatch. `NetMessageType._Highest` = 63; `EnemyActionKind` and `BossHitKind` joined the schema hash.
+- **New StoryCmds 20–23** — `GoToPenny`, `PartyCheat`, `EndDelta`, `EndGraves`. No new message type: requests ride `InteractionKind.InspectFlag` with `Int0 = 100 + StoryCmd`.
+- **New PuzzleTypes 78–81** — `ROT_DiskManager` (red/blue disks), `DET_WallCreature` (HP, merged as min), `MapReveal`, `MEM_ChecklistLogic` (checked-item bitmask, host ORs concurrent edits).
+- **`PuzzleStateEntry.Seq` + `Mask`** — host-stamped per-type+WorldId version and a client edit mask; the host merges only the changed cells instead of last-writer-wins.
+- **`ClientDamageService`** — host-side hurtbox/melee checks against remote proxies (proxies have no colliders), replacing the fixed-timer enemy attack loop; downed peers are skipped.
+- **`PuzzleEdge`** — one rule for solved applies: a live rising edge runs the native onSolved, join dump / held re-snap run only the idempotent durable form.
+
+### Fixed
+- **Story / scene** — first Dialoguer Start/Continue per step wins (N players); duplicate cutscene starts/skips dedupe within a time window; client SProgress writes outside an apply scope are coalesced and forwarded to the host; END_Manager counters send deltas and the host commits one tally; scripted `goto`/`sethp` cutscene cheats relay so the party is gathered; follow loads now cover MainMenu/DeadMenu/EndCredits and a second different-scene request queues instead of double-loading; a client cannot cut the host's credits short.
+- **Puzzles / doors / audio** — held door unlocks survive scene reloads (unlock edge held, relock drops); client door opens are rejected unless a real key/code lock is solved on the host; flavor seals stay sealed; Keypad3D/InteractiveLock coroutines that were bare calls now run; late joiners get cryo door / pattern-lock door durably; FMOD emitter cache has a miss negative-cache and throttled rebuild, repeat Stop is dropped, repeat Play is kept (one-shots replay) with a same-frame dedupe. 0.5.57's removal of the `IsApplying` relay gate is kept.
+- **Pickups / combat / bosses** — Falke Stab/spear, Chimera rifle presentation and boss HP hits forward to the host; enemy stomp/push/burn/wake run on the host sim; puppet enemies interpolate between 15 Hz snapshots and stop restarting one-shot clips; personal scenes (wreck/hole, airlock) run enemies natively; inspect-path pickup claims claim on confirm and lost claims are rolled back via `WorldPickupDeny`; drop interact uses the Use action, not Fire1.
+
+### Changed
+- Protocol **12 → 13** (`PuzzleStateEntry` wire gained Seq/Mask; message types 60–63). `GetRemotePlayerIds()` now returns a cached `int[]`.
+- Merge notes: `Register` dedupe (0.5.57) and the `EnemyIds` cache are combined in `WorldRegistry`; story/scene-follow client ticks run inside the per-domain try/catch.
+
+### Before → After (player)
+- **Before:** a client could not finish a downed enemy, hit a boss, take a Falke spear or see the Chimera shoot; two players on one dialogue/cutscene/ending doubled it; solved doors re-sealed after a reload; concurrent puzzle edits overwrote each other; fast snapshot streams stuttered enemies.
+- **After:** those actions go through the host; duplicates collapse to one; solved doors stay open for the party; puzzle cells merge per edit; enemies move smoothly.
+
+### Open risks / untested
+- **No dual-instance playtest.** Tuning (timeouts, radii, throttles) is untested in game.
+- Late dump during client load: client waits up to 6 s, then seeds from local defaults.
+- Falke `CheckDowned` checks the host bag for the spear; a spear held only by a client may not count.
+- A client's "quit to menu" (`SceneHelper.resetGame`) is still blocked silently.
+- Client-authored puzzle `Mask`/`Seq` merge, `EnemyAction`/`BossHit` semantics, and hurtbox overlap tuning (radius slack, pulse timing) are unproven in game.
+- Client hits on Falke rely on rolling back `Hitbox.HP` after a local drop (no method to hook).
+- Native-to-native Harmony detours added on `EnemyController.Hit`, `END_Graves`, `SceneHelper`/`CreditsEnd` are unverified.
+- 0.5.57 open risks (HurtElster/Load detours, bag snapshots without ammo, etc.) still stand.
+
+Protocol **13**. Product **0.5.58** (not 1.0).
+
+## 0.5.57 — 2026-10-01
+
+Protocol **v12**. Party death/revive/wipe + party save, and a network-core hardening / N-player pass (merged from two parallel workers). **Nothing in this release has been playtested** — compile-checked only (Release, 0 errors).
+
+### Added
+- **Party life (PartyLife/PartySave/PartyRoom = NetMessageType 40–42)** — `Networking/Messages/PartyMessages.cs`, dispatched from `TryDispatchPlayers`. `ModConfig.DownedRespawnDelay` (default 20 s).
+- **Downed / revive for everyone, host included** — `HurtElster` patches + hp poll detect death; native game-over is suppressed while a party (2+ live session players) exists. Downed = input off, dead charState, `cloaked` (enemies lose sight). Host timers revive at the nearest living teammate's position/room with `InjectorReviveHP` + brief invincibility. A solo host stays vanilla.
+- **Party wipe only when all are down** — 3 s after the last player falls the host broadcasts Wipe, clears drops/claims and calls `SaveManager.Load()`; clients restore their bag and follow the scene reload. Last player down skips the death bag.
+- **Party save** — `SaveManager.Save/Load` hooks: token (slot + counter + host stamp); host snapshots the key ring, clients snapshot their bag (Key/Object excluded). Persisted in `UserData/SyncRADation/host_saves.txt` and `bag_snapshots.txt`; join unicasts the token.
+- **Downed targeting filter** — enemies/bosses, enemy attack damage and friendly fire skip downed peers.
+- **Net core** — new `NetWire.cs` (`NetChannels`, size caps, guarded strings, `NetSchema` handshake hash). Handshake carries `SchemaHash` + `ModVersion`. `MaxPlayers` is a config entry (default 4, 2–8). F2 menu shows a per-player roster and a host Resync button.
+
+### Fixed
+- **One bad peer no longer tears down the session** — mismatch disconnects only that peer with a reason string shown in the client menu; every inbound dispatch and Tick is try/catch-wrapped; 12 s connect timeout; host drops peers that miss the handshake within 10 s.
+- **Client-spoofable sender ids** — `SenderPlayerId` / `ClaimerPlayerId` / `AttackerPlayerId` / drop `SenderID` stamped from the peer map; host-only message types from a client are dropped; client damage to players rejected unless friendly fire is on.
+- **Snapshot spam / late-join** — one snapshot request per 2 s per peer (coalesced), dump retries with backoff, dumps go to the requester only; sends/relays/dispatch are handshake-gated; repeated handshake ignored.
+- **Enemy/boss snapshots** — Sequenced on channel 1, chunked to one packet; discrete events stay ReliableOrdered on channel 0.
+- **Reader/writer cap mismatch** — writers clamp/chunk to reader caps; readers throw instead of misparsing.
+- **Duplicate WorldIds** logged once per id with a deterministic winner.
+- **Audit fixes** — host emit of FMOD no longer gated by `IsApplying` (host-applied client actions reach all clients); storage-box late-join dump now resets its signature; client ids assigned round-robin.
+
+### Changed
+- Protocol **11 → 12** (handshake wire gained SchemaHash/ModVersion). The schema hash includes the assembly version, so **any** patch-version mismatch is now rejected.
+- Sync ticks run only with ready peers (solo host stays vanilla).
+- Peer disconnect requests a stop after `PollEvents`; `DeathKind.HostWipeReload` is now a logged no-op; `NetMessageType._Highest` raised to 42.
+
+### Before → After (player)
+- **Before:** one death (client downed or host) resets/kicks the run for the party; a bad or mismatched peer can break the host; a client could forge ids; snapshot requests can flood; 3+ players were loosely supported.
+- **After:** a dead player is downed and revives near a teammate after ~20 s; only a full wipe reloads the party save; bag/key ring restore from snapshots; bad peers are dropped individually; up to 8 players by config (default 4).
+
+### Open risks / untested
+- **No dual-instance playtest.** Everything above is unverified in-game.
+- Native-to-native Harmony detours on `HurtElster`, `GameOverHandler.hurt`, `SaveManager.Load` are unproven; whether a direct `Load()` reloads the scene like the native game-over path is unverified.
+- Revive falls back to in-place if no teammate is in the same scene.
+- Bag snapshots cover items only (no per-weapon ammo).
+- `ItemPickedUp` has no owner field, so a client can still despawn other players' drops; dropped-item index allocation is not reseeded per session (recycled id collision possible); client-local world FMOD is still not relayed to other clients; enemy snapshots have no distance/change filtering.
+
+Protocol **12**. Product **0.5.57** (not 1.0).
+
+## 0.5.56 — 2026-09-30
+
+Protocol **v11**. Batch 61 ship (Dig AK): close the three Dig AJ residuals that were durable after re-reading the decompile, plus biodome/MultiCondition mid-hold and PEN_Reaktor client Tick emit.
+
+### Fixed
+- **MED_Adler_EVdoors unsynced** — Melon has no open/solved bool, but `DoorL`/`DoorR` localPosition is durable (OpenDoors/CloseDoors lerp X by ±`Distance`; dump.cs TypeDef 9811; RES_School closed 0 → open ±20). PuzzleType **77** packs Bool0 + Float0/Float1; Open/Close postfix projects end pose (lerp has not moved yet) via `EmitEntry`; Apply `StopAllCoroutines` + snap X. IsProgressed holds pose. Protocol **11**.
+- **AdoptNativeSpawn hierarchy-only miss** — Unknown/no-template path registered hierarchy WorldId only; host Instantiated `_Child` never existed on client → ApplyEnemyState map miss. Now `TypeKeyOf` uses vanilla `Preset.Type` (not F11 TypeKeys-only), Stash live + parent `EnemySpawner.EnemyType`, then SR_Spawn_* rename + `EnemySpawn` broadcast when template exists. Hierarchy fallback only when type/template still missing (shared scene instances).
+- **Death bag unique Key/Object not on ring** — Skip-floor gated on `Has(ring)` so bag-only uniques still floored + DetachDroppedKey race. All Key/Object now `Note`/`OfferToHost` then bag-strip only — never floor on death (both host wipe + client downed).
+- **BiodomeDoorLock KeyLevel mid dropped** — TryRead already packed Int0; IsProgressed was Bool0-only; Update used ReadOnce. IsProgressed Bool0\|\|Int0; Update emits Read/Progressed every change.
+- **MultiConditionEvent tried mid dropped** — Apply wrote Int0; IsProgressed Bool0-only. Hold Bool0\|\|Int0.
+- **PEN_Reaktor missing from ClientEmitTypes** — Client rod mid relied on Update patch alone; add type to client Tick emit set.
+
+### Before → After (player)
+- **Before:** Adler EV doors stay shut for the peer / late joiner; native EnemySpawner children can miss on the client; dying with a bag-only unique can ghost-floor it off the ring; biodome partial keys and multi-condition try counts reset on remount; client reactor rods may not poll-emit.
+- **After:** Adler door X pose syncs (protocol 11); native spawns share SR_Spawn WorldIds when a template can be banked; death never floors uniques; biodome/MultiCondition mid-hold survives remount; client PEN_Reaktor Tick emit matches Dig AG.
+
+### Dig AK residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| Adler EV DoorL/R pose; AdoptNativeSpawn; death bag-not-on-ring; biodome KeyLevel; MultiCondition tried; PEN_Reaktor client emit | Dig AK: Melon DoorL/R/Distance; EnemySpawner._Child; PartyKeyRing SoT; Biodome KeyLevel; MultiCondition tried; ClientEmitTypes | **SHIPPED** (protocol 11) |
+| PatternLock FullRefresh skips onSolved | exitEvent → EventScreen | **INTENTIONAL LOCAL** |
+
+Protocol **11**. Product **0.5.56** (not 1.0). Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.55 — 2026-09-30
+
+Protocol **v10**. Batch 60 ship (Dig AJ): late-join / remount softlocks that Dig J skipped (mural Blocker, power OnSuccess), Dig L's deferred Door reveal, LibraryPC mid-maze robot, SafeDoor dimPOI, SceneFollow mid-inventory sticky, and Dig H chunk-wake onPickup.
+
+### Fixed
+- **ROT_Mural FullRefresh skipped onSolved and useRing** — Live MutateWorld Invoked onSolved (Blocker Entry SetActive false + StartCutscene). FullRefresh / remount latched finished only → Blocker stayed, ring prop wrong. Fix: live keeps onSolved; FullRefresh snaps GameObject named `Blocker Entry` under mural parent + always `useRing` (no StartCutscene replay). Protocol 10 unchanged.
+- **RES_Power FullRefresh skipped OnSuccess** — Live Invoked SetSpeed/setPower×3/dimPOI. Late-join left paternoster / power targets cold. Both-path OnSuccess like PEN_Reaktor Dig Q. Protocol 10 unchanged.
+- **DoorLockEvent Door.SetActive(true) deferred** — Dig L Invoked onSolved (hides lock GO) but never revealed Melon `Door`. Rising-edge Door.SetActive(true) + UnlockDoorObject + TryUnlockDoors. Protocol 10 unchanged.
+- **RES_LibraryPC robotPos unsynced** — TryRead Bool0 solved only. Pack robotPos → Float0/Float1 + Bool1 pack-valid; Apply writes mid; IsProgressed Bool0\|\|Bool1; moveRight/Left/Up/Down EnvEmit; rising-edge onSuccess (Play). Protocol 10 unchanged.
+- **SafeDoorSmall Snap never Invoked onSolved** — Asset onSolved → dimPOI. Rising-edge both-path like MusicBox Dig R. Protocol 10 unchanged.
+- **SceneFollow mid-inventory sticky** — Apply only LoadLevel; RestorePlay skipped inventory/menu. RestorePlay now clears inventoryOpen/intMenu + inventory/menu gameStates; SceneFollow.Apply calls it before load.
+- **HideClaimed never EnsurePartyOnPickup** — Chunk wake hid claimed props without Dig H party onPickup (takeSpear / StartOutro / MeatBlocker). HideClaimed now Ensures; Ensure marks fired only after successful Invoke.
+
+### Before → After (player)
+- **Before:** Late joiner / remount keeps mural Blocker Entry, cold residency power, closed DoorLockEvent door, LibraryPC robot at spawn, bright safe POI; SceneFollow mid-bag can stick; chunk wake misses train outro / Falke spear listeners.
+- **After:** Those final poses and mid states apply on live + FullRefresh / remount; SceneFollow restores play; chunk-wake onPickup fires once.
+
+### Dig AJ residual (superseded by 0.5.56)
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| Mural/Power FullRefresh skips; Door SetActive deferred; LibraryPC robotPos; SafeDoor onSolved; SceneFollow RestorePlay; HideClaimed no Ensure | Dig AJ | **SHIPPED** (0.5.55 / protocol 10) |
+| PatternLock FullRefresh skips onSolved | exitEvent → EventScreen | **INTENTIONAL LOCAL** |
+| MED_Adler_EVdoors Open/CloseDoors | DoorL/DoorR local X durable | **SHIPPED** in 0.5.56 (protocol 11) — prior “no durable field” claim was wrong |
+
+Protocol stays **10** for this tag. Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.54 — 2026-09-30
+
+Protocol **v10**. Batch 59 ship (Dig AI): pattern-lock button grid and tarot card slots travel with the existing puzzle entry so the other peer and a late joiner see the same board before the final flag.
+
+### Fixed
+- **LAB_PatternLock only synced `solved`** — `states` is a rank-2 bool array (Melon `Il2CppObjectBase`, dump `bool[,]`). `toggleButton` / `setButtonState` (RVA 0x59D2D0 / 0x59D0B0) mutate it with no LoadState. Peers kept their own lights, so two people on one pad diverged until Bool0. TryRead now packs up to 8×8 into Int0/Int1, dims in Int2, cell count in Int3. IsProgressed holds Int3 != 0 (all-off included). Apply calls `setButtonState` only for cells that differ, and only while unsolved. `setButtonState` emits immediately. Protocol 10 unchanged.
+- **ROT_Tarot cards[] were not on the wire** — darkmode and FlipSwitchPos were. The six `AnItem` slots (Buyan…Rotfront) are the puzzle. Item enums are 0..115 (`None` = 102); empty is 0xFF because `AirlockKey` is 0. Int0 = slots 0–3, Int1 = slots 4–5, Int3 = slot count. Apply writes `cards[]`, shows `Placers`, and calls `SetMoons` (no inventory remove). `flip` / `PlaceCard*` / `TakeCard` emit. IsProgressed holds darkmode or Int3. Protocol 10 unchanged.
+
+### Before → After (player)
+- **Before:** One player lights pattern-lock buttons; the other pad stays dark and can be solved differently. Tarot cards placed on one board are missing on the other after a room change.
+- **After:** Button lights and the six card slots match on live peers and after remount / late join.
+
+### Dig AI residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| PatternLock states unsynced; Tarot cards unsynced | Dig AI: dump states bool[,]; setButtonState RVA 0x59D0B0; ROT_Tarot.cards AnItem[]; itemlist max 115; UseItem PlaceCard does not cover TakeCard or remount | **SHIPPED** (Int0–Int3 reuse; protocol 10) |
+
+Protocol stays **10**. Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.53 — 2026-09-30
+
+Protocol **v10**. Batch 58 ship (Dig AH): hold mid-state that was already on the wire for MultiKeyLock, RES_MusicBox, ROT_MeatBlocker, and DET_RadioCodeLock, and stop a peer's locally rolled radio code from replacing the host's.
+
+### Fixed
+- **MultiKeyLock / RES_MusicBox / ROT_MeatBlocker IsProgressed Bool0-only** — TryRead already packed `keys[]` → Int0, `hasCassette` → Bool1, and `pickups` → Int0. Apply already wrote those fields before the solved/opened/unblocked snap. IsProgressed fell through ProgressedBool0, so Room.EnterRoom / late-join dropped partial keys, an inserted cassette, and a mid pickup count. Fix: IsProgressed holds those fields (MultiKeyLock Bool0\|\|Int0!=0, MusicBox Bool0\|\|Bool1, MeatBlocker Bool0\|\|Int0!=0). MultiKeyLock.Update and RES_MusicBox.LoadCassette emit immediately. MeatBlocker.pickup already emitted. Protocol 10 unchanged.
+- **DET_RadioCodeLock peer Start() clobber** — Each instance rolls `frequency` / `code` / `hintStation` in Start (RVA 0x84C1C0 / generateFiveCode 0x84CA80). Those ints were already on the wire, but IsProgressed ignored them until the keypad solved, and a client's unsolved emit was applied and relayed onto the host. Host now drops unsolved peer radio-code entries (no apply, no relay). A peer solve still snaps the keypad without replacing the host roll. Peers copy the host ints and `keypad.solution`. Host Start emits the roll; client Start queues reapply so the local roll does not stick. IsProgressed holds Int0–2. Protocol 10 unchanged.
+
+### Before → After (player)
+- **Before:** Host inserts some but not all multi-keys, loads the music-box cassette, or picks up part of a meat-blocker set. Live peers may see the poll, but leaving the room and coming back (or a late joiner) snaps back to empty until the final flag. A client entering the detention radio room can overwrite the host's rolled code.
+- **After:** Those mid states stay held and reapply. The detention keypad and frequency stay on the host's roll for every peer.
+
+### Dig AH residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| MultiKeyLock / MusicBox / MeatBlocker / RadioCode IsProgressed Bool0-only; peer radio Start clobber | Dig AH: TryRead Int0/Bool1 already; Apply writes them pre-return; ProgressedBool0 fallthrough; DET_RadioCodeLock Start RVA 0x84C1C0; ClientEmit includes the type | **SHIPPED** (IsProgressed mid-hold; host drops unsolved peer radio; solution string on peer apply; protocol 10) |
+
+Protocol stays **10**. Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.52 — 2026-09-27
+
+Protocol **v10**. Batch 57 ship (Dig AG): PEN_Reaktor sync mid-rod positions via Int0 4×3-bit pack so N-peer remount / late-join keep unsolved rod moves, not only final Bool0 solved.
+
+### Fixed
+- **PEN_Reaktor TryRead/Apply mid-fidelity is derived-only — durable state is positions[4]** — Prior TryRead packed current/Dvalue/Dtemp/total → Int0–3 + Bool0=solved + Bool1=valid; ApplyReaktor wrote those ints then early-returned if !Bool0 (Dig Q onSuccess only on Bool0); IsProgressed ProgressedBool0 only; EnvEmit only on win. Native Update RVA 0x537C80 mutates `positions[current]` Clamp 0..4 then derives `values`/`Dvalue`/`Dtemp`/`total` from positions every frame — Apply of derived ints alone cannot stick. AssetStudio positions initial **[0,4,3,1]**. Softlock: host moves reactor rods mid-solve → peers / remount / late-join snap rods back to spawn (or ignore mid) until Bool0 solved fires Dig Q. Dig Q (0.5.36) Bool0 onSuccess+SnapReaktor rising-edge BOTH-PATH must stay intact. Fix (Dig AG, mirror DET_ServiceLock / FloodControls bitpack + DialLock 0.5.46 / Mural 0.5.51 mid-hold): Pack `positions[0..3]` → Int0 as 4×3-bit (0..4); Int1=`current`; Bool0/Bool1 retained; Int2/Int3 unused/0; Apply when !Bool0 unpack positions + current (+valid), Dig Q Bool0 path unchanged; IsProgressed = Bool0 || Bool1 || Int0!=0 || Int1!=0 (remove PEN_Reaktor from ProgressedBool0; initial pack 736≠0 holds from load); EnvEmit Postfix `PEN_Reaktor.Update` (Read mid / Progressed solved; keep win Progressed). Prefer letting Update lerp Rods from positions (no Rods snap). Protocol 10 unchanged (reuse PEN_Reaktor Bool0/Bool1/Int0–1 wire meaning of Ints changes — both boxes dual-deploy together; no new ushort).
+
+### Before → After (player)
+- **Before:** Host moves reactor rods mid-solve. Peers receive derived current/Dvalue/Dtemp/total that native Update overwrites from local positions every frame — remount / late-join mid rods do not stick; only Bool0 solved fires Dig Q onSuccess / door markers.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh keep the Int0 positions pack + Int1 current. IsProgressed holds mid rods (Bool0 || Bool1 || Int0!=0 || Int1!=0) across remount; Update EnvEmit pushes mid moves; Apply unpacks positions and lets native Update derive/lerp Rods; Dig Q Bool0 onSuccess+SnapReaktor rising-edge BOTH-PATH retained as before.
+
+### Dig AG residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| TryRead/Apply packed derived Dvalue/Dtemp/total; IsProgressed Bool0-only; EnvEmit win-only → mid rods cannot stick | Dig AG: Melon PEN_Reaktor positions/current/values/Dvalue/Dtemp/total/Rods/valid/solved; Update RVA 0x537C80 Clamp positions[current] 0..4 then derive; AssetStudio [0,4,3,1]→Int0=736; Dig Q Bool0 onSuccess+SnapReaktor; ProgressedBool0 fallthrough | **SHIPPED** (Int0 4×3-bit positions + Int1 current; IsProgressed Bool0\|\|Bool1\|\|Int0!=0\|\|Int1!=0; remove ProgressedBool0; Update EnvEmit; Apply unpack + Dig Q Bool0 retained; protocol 10) |
+
+Protocol stays **10** (reuse PEN_Reaktor Bool0 solved + Bool1 valid + Int0 positions pack + Int1 current; wire meaning of Ints changes — dual-deploy together; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.51 — 2026-09-27
+
+Protocol **v10**. Batch 56 ship (Dig AF): ROT_Mural IsProgressed holds mid-moon Pos pack (Int0–Int3) so N-peer remount / late-join keep unsolved moon turns, not only final Bool0 finished.
+
+### Fixed
+- **ROT_Mural IsProgressed Bool0-only — remount / late-join drop mid-moon Pos** — TryRead already packs up to 8 moons → Int0–Int3 (Pos8|State4|Desired4 ×2) + Bool0=finished + Bool1=busy; ApplyMural already UnpackMuralMoons then early-returns if !Bool0 for Dig J onSolved; IsProgressed fell through ProgressedBool0 (Bool0 only) so unsolved moon turns were sent live but never held across remount. EnvironmentPatches had no Next/Last EnvEmit. Native durable state: 6 moons (AssetStudio / Melon), mutated by `Next(string)` / `Last(string)` (RVA 0x4BB540 / 0x4BB3B0) then Update (0x4BBB70) lerps Rot; Dig J (0.5.26) onSolved rising-edge only on Bool0. Softlock: host turns mural moons mid-solve → remount / late-join snap back to spawn Pos until Bool0 finished — mid-moon pose resets. Note: DesiredPos bits make Int≠0 from load — IsProgressed with Int0–3!=0 holds moon pack from spawn (intentional so FullRefresh always carries pack). Fix (Dig AF, mirror DialLock 0.5.46 / EvidenceLocker 0.5.49 / Shrine 0.5.50 mid-hold): IsProgressed = Bool0 || Bool1 || Int0!=0 || Int1!=0 || Int2!=0 || Int3!=0 (remove ROT_Mural from ProgressedBool0); EnvEmit Postfix `ROT_Mural.Next(string)` / `Last(string)` (Read mid / Progressed finished); Apply Unpack + Dig J Bool0 onSolved path retained (no Apply change). Protocol 10 unchanged (reuse ROT_Mural Bool0/Bool1/Int0–3; no new ushort).
+
+### Before → After (player)
+- **Before:** Host turns mural moons mid-solve. Live peers may see Int0–3 leave the host, but remount / late-join FullRefresh never re-holds unsolved mid-moon Pos — moons snap back to spawn until Bool0 finished fires Dig J onSolved.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh keep the Int0–3 moon pack. IsProgressed holds mid-moon Pos (Bool0 || Bool1 || Int0–3!=0) across remount; Next/Last EnvEmit pushes mid-turns; Apply Unpack + Dig J Bool0 onSolved/doors retained as before.
+
+### Dig AF residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| IsProgressed Bool0-only; no Next/Last EnvEmit → remount / late-join drop mid-moon Pos | Dig AF: Melon ROT_Mural moons/finished/busy/MoonTurnSpeed; Next RVA 0x4BB540; Last RVA 0x4BB3B0; Update RVA 0x4BBB70; 6 moons; Dig J Bool0 onSolved; DesiredPos → Int≠0 from load; ProgressedBool0 fallthrough | **SHIPPED** (IsProgressed Bool0\|\|Bool1\|\|Int0–3!=0; remove ProgressedBool0; Next/Last EnvEmit; Apply Unpack + Dig J Bool0 retained; protocol 10) |
+
+Protocol stays **10** (reuse ROT_Mural Bool0 finished + Bool1 busy + Int0–3 moon pack; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.50 — 2026-09-27
+
+Protocol **v10**. Batch 55 ship (Dig AE): RES_Shrine IsProgressed holds mid-dial big/mid/small (Int0–Int2) so N-peer remount / late-join keep unsolved plate turns, not only final Bool0 solved.
+
+### Fixed
+- **RES_Shrine IsProgressed Bool0-only — remount / late-join drop mid-dials** — TryRead already packs `big`/`mid`/`small` → Int0/Int1/Int2 + Bool0=solved; ApplyShrine already writes Ints then early-returns if !Bool0 for Dig P final-pose; IsProgressed fell through ProgressedBool0 (Bool0 only) so unsolved plate turns were sent live but never held across remount. EnvironmentPatches had no TurnLeft/TurnRight EnvEmit. Native durable state: `big`/`mid`/`small` ints (AssetStudio / Melon initial **0/0/0**, answers **4/5/2**), mutated by `TurnLeft(int)` / `TurnRight(int)` (RVA 0x4B6DB0 / 0x4B6E80) then CheckSolve; Update (0x4B6F50) lerps via setWheel(pos×60°). Softlock: host turns shrine plates mid-solve → remount / late-join snap back to 0/0/0 until Bool0 solve — mid plate pose resets. Fix (Dig AE, mirror DialLock 0.5.46 / Incinerator 0.5.42 / EvidenceLocker 0.5.49 mid-hold): IsProgressed = Bool0 || Int0!=0 || Int1!=0 || Int2!=0 (remove RES_Shrine from ProgressedBool0); EnvEmit Postfix `RES_Shrine.TurnLeft(int)` / `TurnRight(int)` (Read mid / Progressed solved); ApplyShrine when !Bool0 snaps setWheel under NetGate (bigX/midX/smallX = pos×60); Dig P Bool0 onSuccess / SnapShrineFinalPose / doors retained. Protocol 10 unchanged (reuse RES_Shrine Bool0/Bool1/Int0–2; no new ushort).
+
+### Before → After (player)
+- **Before:** Host turns shrine plates mid-solve. Live peers may see Int0–2 leave the host, but remount / late-join FullRefresh never re-holds unsolved mid-dials — plates snap back to 0/0/0 until Bool0 solve opens doors/content.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh keep the Int0–2 plate pack. IsProgressed holds mid-dials (Bool0 || Int0!=0 || Int1!=0 || Int2!=0) across remount; TurnLeft/TurnRight EnvEmit pushes mid-turns; Apply snaps setWheel visuals; Bool0 solved still final-poses onSuccess/doors/content as before (Dig P).
+
+### Dig AE residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| IsProgressed Bool0-only; no TurnLeft/TurnRight EnvEmit; Apply mid ints without setWheel snap → remount / late-join drop mid-dials | Dig AE: Melon RES_Shrine big/mid/small/bigX/midX/smallX/outside/middle/inside/setWheel; TurnLeft RVA 0x4B6DB0; TurnRight RVA 0x4B6E80; Update RVA 0x4B6F50 → setWheel pos×60; answers 4/5/2; initial 0/0/0; ProgressedBool0 fallthrough; Dig P Bool0 final-pose intact | **SHIPPED** (IsProgressed Bool0\|\|Int0!=0\|\|Int1!=0\|\|Int2!=0; remove ProgressedBool0; TurnLeft/TurnRight EnvEmit; Apply mid setWheel snap under NetGate; Dig P Bool0 path retained; protocol 10) |
+
+Protocol stays **10** (reuse RES_Shrine Bool0 solved + Bool1 busy + Int0–2 plates; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.49 — 2026-09-27
+
+Protocol **v10**. Batch 54 ship (Dig AD): EvidenceLocker IsProgressed holds mid-button `states` pack (Int0/Int1) so N-peer remount / late-join keep unsolved button presses, not only final Bool0 solved.
+
+### Fixed
+- **EvidenceLocker IsProgressed Bool0-only — remount / late-join drop mid-states** — TryRead already packs `states` → Int0/Int1 + Bool0=solved; ApplyEvidenceLocker already UnpackBoolBits64 mid and door-snaps only on Bool0; IsProgressed fell through ProgressedBool0 (Bool0 only) so unsolved button presses were sent live but never held across remount. EnvironmentPatches had no `logic(int)` EnvEmit. Native durable state: `states` bool[8] (AssetStudio), mutated by private `logic(int)` from Update button poll (RVA Update 0xB2F7D0 / logic 0xB2F9A0); lights follow states when !solved. Softlock: host presses evidence-locker buttons mid-solve → remount / late-join snap back to all-off until Bool0 solve — mid-light pattern resets. Fix (Dig AD, mirror RES_Power 0.5.45 / FloodControls / DialLock 0.5.46 mid-hold): IsProgressed = Bool0 || Int0!=0 || Int1!=0 (remove EvidenceLocker from ProgressedBool0); EnvEmit Postfix `EvidenceLockerLogicPuzzle.logic(int)` (Read mid / Progressed solved); ApplyEvidenceLocker after unpack snaps `lights[i].SetActive(states[i])` under NetGate (null-safe); door snap on Bool0 retained. Protocol 10 unchanged (reuse EvidenceLocker Bool0 solved + Int0/Int1 states pack; no new ushort).
+
+### Before → After (player)
+- **Before:** Host presses evidence-locker buttons mid-solve. Live peers may see Int0 leave the host, but remount / late-join FullRefresh never re-holds unsolved mid-button packs — lights snap back to all-off until Bool0 solve unlocks doors.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh keep the Int0/Int1 states pack. IsProgressed holds mid-states (Bool0 || Int0!=0 || Int1!=0) across remount; logic(int) EnvEmit pushes mid-press; Apply snaps lights to unpacked states; Bool0 solved still door-snaps as before.
+
+### Dig AD residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| IsProgressed Bool0-only; no logic(int) EnvEmit; Apply unpack without lights snap → remount / late-join drop mid-button states | Dig AD: Melon EvidenceLockerLogicPuzzle states/lights/solved; logic Private→Public Melon Int32; Update RVA 0xB2F7D0; logic RVA 0xB2F9A0; 8 states bits; ProgressedBool0 fallthrough | **SHIPPED** (IsProgressed Bool0\|\|Int0!=0\|\|Int1!=0; remove ProgressedBool0; logic EnvEmit; Apply lights snap under NetGate; door snap Bool0 retained; protocol 10) |
+
+Protocol stays **10** (reuse EvidenceLocker Bool0 solved + Int0/Int1 states pack; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.48 — 2026-09-27
+
+Protocol **v10**. Batch 53 ship (Dig AC): RES_Shutters ApplyShutters dims minimap POI via `poi.dimPOI()` so N-peer live unlock and late-join FullRefresh clear the shutter marker, not only shutter/handle pose.
+
+### Fixed
+- **RES_Shutters Apply/Snap unlocked pose — peers miss minimap POI dim** — SnapShutters latched `unlocked`, hid Shutter/Handle, and unlocked ConnectedDoors, but never called `RES_Shutters.poi.dimPOI()`. Native `Update` (~0x4B73C0) dims POI exactly once when `_lock.locked` becomes false while `unlocked` is still false, then latches `unlocked`. Remote Apply sets `unlocked=true` first so that edge never fires; peers / late-join keep a lit minimap shutter marker after the physical shutters open. Melon fields `unlocked` / `poi` / `_lock` / `Handle` / `Shutter` verified; scene RES_Residential wires shutter `poi`. Fix (Dig AC, mirror MusicBox / Shrine dimPOI ships): when Bool0=true, SnapShutters then rising-edge `poi.dimPOI()` under NetGate (null-safe, idempotent; live + FullRefresh). Protocol 10 unchanged (reuse RES_Shutters Bool0 unlocked; no new ushort).
+
+### Before → After (player)
+- **Before:** Host unlocks residential shutters. Peers / late-join FullRefresh see open shutters and unlocked doors, but the minimap shutter POI stays lit — native dim never runs after remote Apply latches `unlocked` first.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh ApplyShutters dims the shutter minimap POI when Bool0 unlocked; remount converges; host local Unlock path unchanged.
+
+### Dig AC residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| Apply/SnapShutters no poi.dimPOI; native Update edge skipped after remote unlocked=true | Dig AC: Melon RES_Shutters unlocked/poi; Update RVA 0x4B73C0; dimPOI 0x640E70; AssetStudio poi wired; SnapShutters pose-only | **SHIPPED** (rising-edge poi.dimPOI under NetGate on Bool0; SnapShutters retained; protocol 10) |
+
+Protocol stays **10** (reuse RES_Shutters Bool0 unlocked; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.47 — 2026-09-27
+
+Protocol **v10**. Batch 52 ship (Dig AB): MED_CardWriter sync partial `nodes[i].connected` + `remainingSteps` via Int0/Int1 so N-peer mid-trace / inserted card and late-join FullRefresh keep graph state, not only final Bool0 solved.
+
+### Fixed
+- **MED_CardWriter Read/Apply solved/hasCard-only — peers miss mid-trace connected / remainingSteps** — TryRead emitted only `solved`/`hasCard` Bool0/Bool1 (Int0–Int3=0); Apply/SnapCardWriter never transferred `nodes[i].connected` or `remainingSteps`. Client Update emit was solved-only via ReadOnce; IsProgressed fell through ProgressedBool0 (Bool0 only) so inserted/in-progress cards vanished on remount/late-join. Native durable state: 17 `MED_KeyNodeConnection.connected` bits (AssetStudio MED_CardWriter nodes list; same SO type as KeyGrid), `remainingSteps`/`maxSteps` (initial **8**), `writeMode`/`hasCard`/`solved`. Softlock: host inserts blank + burns mid-trace → peers / late-join lose card + graph until Bool0 solve snap. Melon fields `nodes`/`remainingSteps`/`maxSteps`/`writeMode`/`hasCard`/`solved` and `MED_KeyNodeConnection.connected` verified. Fix (Dig AB, mirror MED_KeyGrid 0.5.41 / LAB_Rings 0.5.34 Int pack): pack connected bits → Int0; remainingSteps → Int1; node-count/valid marker → Int3 (preserve all-zero partial); Bool0=solved Bool1=hasCard retained; Apply unpacks connected + sets remainingSteps/remainingText then SnapCardWriter (mid-insert Card pose without pickup/tinyCard cinematic until solved); IsProgressed = Bool0 || Bool1 || Int3!=0; EnvEmit on Update (card/writeMode/mid-trace) + eatCard (Read mid / Progressed solved). Protocol 10 unchanged (reuse MED_CardWriter Bool0/Bool1 + Int0 connected + Int1 steps + Int3 count; no new ushort).
+
+### Before → After (player)
+- **Before:** Host inserts blank card and burns mid-trace on MED card writer. Peers / late-join FullRefresh see only an empty / unsolved writer — mid-node `connected` + remainingSteps + inserted card never leave the host until final Bool0 solve snap; remount drops in-progress cards.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh apply the Int0 connected pack + Int1 remainingSteps + Bool1 hasCard pose. IsProgressed holds mid-trace Int3 count (including all-zero Int0) and hasCard across remount; Bool0 solved still SnapCardWriter pickup/tinyCard as before.
+
+### Dig AB residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| Read/Apply Bool0/Bool1 only; Update emit solved-only; IsProgressed Bool0-only → peers + remount / late-join miss mid-trace connected / remainingSteps / inserted card | Dig AB: Melon MED_CardWriter nodes/remainingSteps/maxSteps/writeMode/hasCard/solved; MED_KeyNodeConnection.connected; AssetStudio 17 nodes + maxSteps=8 remainingSteps=8; ProgressedBool0 fallthrough | **SHIPPED** (Int0 connected pack; Int1 remainingSteps; Int3 count marker; Apply nodes+steps+mid-insert pose; IsProgressed Bool0\|\|Bool1\|\|Int3; Update/eatCard EnvEmit; protocol 10) |
+
+Protocol stays **10** (reuse MED_CardWriter Bool0 solved + Bool1 hasCard + Int0 connected pack + Int1 remainingSteps + Int3 count; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.46 — 2026-09-27
+
+Protocol **v10**. Batch 51 ship (Dig AA): ROT_DialLock hold mid-dial A/B/C/D via IsProgressed so N-peer remount / late-join keep unsolved dial state, not only final Bool0 solved.
+
+### Fixed
+- **DialLock IsProgressed Bool0-only — remount / late-join drop mid-dial** — TryRead serializes `solved` + `A`/`B`/`C`/`D` (Bool0, Int0–Int3); ApplyDial already writes Int0–3 + euler even unsolved; IsProgressed fell through ProgressedBool0 (Bool0 only) so unsolved dial turns were sent live but never held across remount. Native durable state: `A`/`B`/`C`/`D` ints (AssetStudio / Melon initial **0/0/0/5**), mutated by `TurnUp(int)` / `TurnDown(int)` then `Check`. Softlock: host turns ROT dials mid-solve → remount / late-join snap back to 0/0/0/5 until Bool0 solve. Fix (Dig AA, mirror Incinerator 0.5.42 / MED_Pump 0.5.44 / RES_Power 0.5.45 mid-hold): IsProgressed = Bool0 || Int0!=0 || Int1!=0 || Int2!=0 || Int3!=5; EnvEmit on TurnUp/TurnDown (Read mid / Progressed solved). Existing ApplyDial / ProgressedBool0 solved polling stay. Protocol 10 unchanged (reuse DialLock Bool0 solved + Int0–Int3 A/B/C/D; no new ushort).
+
+### Before → After (player)
+- **Before:** Host turns ROT dial lock mid-solve. Peers may see live Int0–Int3 briefly, but remount / late-join FullRefresh re-snap to initial A=B=C=0 D=5 — mid-dial state is not held until final Bool0 solve snap.
+- **After:** IsProgressed holds mid-dial (departure from 0/0/0/5) across remount; TurnUp/TurnDown emit so Progressed/Read latch immediately. Bool0 solved still ApplyDial unlock / door as before.
+
+### Dig AA residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| IsProgressed Bool0-only; no TurnUp/TurnDown emit → remount / late-join drop mid-dial Int0–Int3 | Dig AA: TryRead/Apply already Bool0+Int0–3; Melon TurnUp/TurnDown(int)+Check; AssetStudio A/B/C/D=0/0/0/5; ProgressedBool0 fallthrough | **SHIPPED** (IsProgressed Bool0\|\|A!=0\|\|B!=0\|\|C!=0\|\|D!=5; TurnUp/TurnDown EnvEmit; ApplyDial retained; protocol 10) |
+
+Protocol stays **10** (reuse DialLock Bool0 solved + Int0–Int3 A/B/C/D; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.45 — 2026-09-27
+
+Protocol **v10**. Batch 50 ship (Dig Z): RES_Power hold mid-fuse states via IsProgressed so N-peer remount / late-join keep unsolved fuse config, not only final Bool0 solved.
+
+### Fixed
+- **RES_Power IsProgressed Bool0-only — remount / late-join drop mid-fuse** — TryRead serializes `solved`/`powered` + fuse `states` (Bool0/Bool1, Int0 PackBoolBits); ApplyPower already UnpackBoolBits even unsolved (OnSuccess rising-edge from 0.5.27); IsProgressed fell through ProgressedBool0 (Bool0 only) so unsolved fuse flips were sent live but never held across remount. Native durable state: `states` bool[7] (AssetStudio all **false** → Int0=0), mutated by `Flip(int)` then `TryMasterFlip`. Softlock: host flips fuses mid-solve → remount / late-join snap back to all-off until Bool0 solve — final power gate can reset. Fix (Dig Z, mirror MultiLock 0.5.43 / MED_Pump 0.5.44 mid-hold): IsProgressed = Bool0 || Int0!=0; EnvEmit on Flip(int) (Read mid / Progressed solved). Existing ApplyPower OnSuccess path stays. Protocol 10 unchanged (reuse RES_Power Bool0 solved + Bool1 powered + Int0 states; no new ushort).
+
+### Before → After (player)
+- **Before:** Host flips RES power fuses mid-solve. Peers may see live Int0 briefly, but remount / late-join FullRefresh re-snap to all-off states — mid-fuse config is not held until final Bool0 solve snap; final power gate can reset.
+- **After:** IsProgressed holds mid-fuse (Int0!=0) across remount; Flip emit so Progressed/Read latch immediately. Bool0 solved still OnSuccess / setPower / Paternoster as before.
+
+### Dig Z residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| IsProgressed Bool0-only; no Flip emit → remount / late-join drop mid-fuse Int0 | Dig Z: TryRead/Apply already Bool0+Bool1+Int0; Melon Flip(int)+TryMasterFlip; AssetStudio states all false; ProgressedBool0 fallthrough | **SHIPPED** (IsProgressed Bool0\|\|Int0!=0; Flip EnvEmit; ApplyPower OnSuccess retained; protocol 10) |
+
+Protocol stays **10** (reuse RES_Power Bool0 solved + Bool1 powered + Int0 states; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.44 — 2026-09-27
+
+Protocol **v10**. Batch 49 ship (Dig Y): MED_Pump hold mid-water a/b/c via IsProgressed so N-peer remount / late-join keep unsolved water state, not only final Bool0 solved.
+
+### Fixed
+- **MED_Pump IsProgressed Bool0-only — remount / late-join drop mid-water** — TryRead serializes `solved` + `a`/`b`/`c` (Bool0, Int0–Int2); ApplyPump already writes Int0–2 even unsolved (onSolved rising-edge from 0.5.28); IsProgressed fell through ProgressedBool0 (Bool0 only) so unsolved water transfers were sent live but never held across remount. Native durable state: `a`/`b`/`c` ints (AssetStudio / Melon initial **12/0/0**), mutated by six transfers `AB`/`AC`/`BA`/`BC`/`CA`/`CB` then `checkSolved`. Softlock: host moves water mid-solve → remount / late-join snap back to 12/0/0 until Bool0 solve. Fix (Dig Y, mirror Incinerator 0.5.42 / MultiLock 0.5.43 mid-hold): IsProgressed = Bool0 || Int0!=12 || Int1!=0 || Int2!=0; EnvEmit on AB/AC/BA/BC/CA/CB (Read mid / Progressed solved). Existing ApplyPump / SnapMedPump / checkSolved Progressed stay. Protocol 10 unchanged (reuse MED_Pump Bool0 solved + Int0–Int2 a/b/c; no new ushort).
+
+### Before → After (player)
+- **Before:** Host transfers water mid-solve on MED pump. Peers may see live Int0–Int2 briefly, but remount / late-join FullRefresh re-snap to initial a=12,b=0,c=0 — mid-water state is not held until final Bool0 solve snap.
+- **After:** IsProgressed holds mid-water (any a/b/c ≠ 12/0/0) across remount; transfer emit so Progressed/Read latch immediately. Bool0 solved still onSolved / SnapMedPump / flood drain as before.
+
+### Dig Y residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| IsProgressed Bool0-only; no transfer emit → remount / late-join drop mid-water a/b/c | Dig Y: TryRead/Apply already Bool0+Int0–2; Melon AB/AC/BA/BC/CA/CB + checkSolved; AssetStudio a=12 b=0 c=0; ProgressedBool0 fallthrough | **SHIPPED** (IsProgressed Bool0\|\|Int!=12/0/0; AB–CB EnvEmit; ApplyPump/SnapMedPump retained; protocol 10) |
+
+Protocol stays **10** (reuse MED_Pump Bool0 solved + Int0–Int2 a/b/c; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.43 — 2026-09-27
+
+Protocol **v10**. Batch 48 ship (Dig X): MultiLock hold mid-key element bits via IsProgressed so N-peer remount / late-join keep inserted keys, not only final Bool0 unlocked.
+
+### Fixed
+- **MultiLock IsProgressed Bool0-only — remount / late-join drop mid-key** — TryRead/Apply already sync `unlocked` + Fire/Earth/Water/Air/Gold(/Star) via Int0 bits (protocol 8 reuse; ApplyMulti onUnlocked from 0.5.29); IsProgressed fell through ProgressedBool0 (Bool0 only) so unsolved key inserts were sent live but never held across remount. Softlock: host inserts one elemental key mid-solve → remount / late-join lose inserted keys / can strand door gate until Bool0 unlock. Fix (Dig X, mirror Incinerator 0.5.42 / ServiceLock 0.5.39 mid-hold): IsProgressed = Bool0 || Int0!=0; EnvEmit on MED/LAB `UnlockKey` (Read mid / Progressed unlocked). Existing Int0 pack/unpack + onUnlocked Apply stay. Protocol 10 unchanged (reuse MultiLock Bool0 unlocked + Int0 bits; no new ushort).
+
+### Before → After (player)
+- **Before:** Host inserts mid-key(s) on MultiLock. Peers may see live Int0 briefly, but remount / late-join FullRefresh drop inserted keys — mid-key state is not held until final Bool0 unlock snap; door gate can strand.
+- **After:** IsProgressed holds mid-key (Int0!=0) across remount; UnlockKey emit so Progressed/Read latch immediately. Bool0 unlocked still onUnlocked / TryUnlockDoors as before.
+
+### Dig X residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| IsProgressed Bool0-only; no UnlockKey emit → remount / late-join drop mid-key Int0 | Dig X: TryRead/Apply already Bool0+Int0; Melon UnlockKey; Fire=1 Earth=2 Water=4 Air=8 Gold=16 Star=32; ProgressedBool0 fallthrough | **SHIPPED** (IsProgressed Bool0\|\|Int0!=0; UnlockKey EnvEmit; ApplyMulti retained; protocol 10) |
+
+Protocol stays **10** (reuse MultiLock Bool0 unlocked + Int0 bits; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.42 — 2026-09-27
+
+Protocol **v10**. Batch 47 ship (Dig W): MED_Incinerator hold mid-dial A/B/C via IsProgressed so N-peer remount / late-join keep unsolved dial state, not only final Bool0 solved.
+
+### Fixed
+- **MED_Incinerator IsProgressed Bool0-only — remount / late-join drop mid-dial** — TryRead/Apply already sync `solved` + `A`/`B`/`C` (Bool0, Int0–Int2); IsProgressed fell through ProgressedBool0 (Bool0 only) so unsolved dial changes were sent live but never held across remount. Native durable dial state: `A`/`B`/`C` ints (AssetStudio / Melon initial **10/10/10**), mutated by `plusA`/`plusB`/`plusC`/`minusA`/`minusB`/`minusC` then `SetGuide`; solve via `StartShutdown`. Softlock: host turns incinerator dials mid-solve → remount / late-join snap back to 10/10/10 until Bool0 solve. Fix (Dig W, mirror ServiceLock 0.5.39 / FloodControls 0.5.40 / KeyGrid 0.5.41 mid-hold): IsProgressed = Bool0 || Int0!=10 || Int1!=10 || Int2!=10; EnvEmit on plus/minus/StartShutdown (Read mid / Progressed solved). Existing ApplyIncinerator paths stay. Protocol 10 unchanged (reuse MED_Incinerator Bool0 solved + Int0–Int2 dials; no new ushort).
+
+### Before → After (player)
+- **Before:** Host turns incinerator dials mid-solve. Peers may see live Int0–Int2 briefly, but remount / late-join FullRefresh re-snap to initial A=B=C=10 — mid-dial state is not held until final Bool0 solve snap.
+- **After:** IsProgressed holds mid-dial (any A/B/C ≠ 10) across remount; plus/minus emit so Progressed/Read latch immediately. Bool0 solved still StartShutdown / unlock doors as before.
+
+### Dig W residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| IsProgressed Bool0-only; no dial emit → remount / late-join drop mid-dial A/B/C | Dig W: TryRead/Apply already Bool0+Int0–2; Melon plus/minus/StartShutdown; AssetStudio A=B=C=10; ProgressedBool0 fallthrough | **SHIPPED** (IsProgressed Bool0\|\|Int!=10; plus/minus/StartShutdown EnvEmit; Apply retained; protocol 10) |
+
+Protocol stays **10** (reuse MED_Incinerator Bool0 solved + Int0–Int2 A/B/C; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.41 — 2026-09-27
+
+Protocol **v10**. Batch 46 ship (Dig V): MED_KeyGrid sync partial `nodes[i].connected` via Int0 so N-peer mid-node draws and late-join FullRefresh see GridSprite line state, not only final static solved.
+
+### Fixed
+- **MED_KeyGrid Read/Apply solved-only — peers miss mid-node connected / nodesObjects** — ReadKeyGridGlobal / TryRead emitted only static `MED_KeyGrid.solved` Bool0 (Int0–Int3=0); ApplyKeyGrid only wrote `solved`. Native durable state is 17 `MED_KeyNodeConnection.connected` bits (ScriptableObject list) plus parallel `nodesObjects` GameObject actives (AssetStudio MED_Medical: 17 GridSprite nodes). Softlock: host draws mid-key-grid → peers / late-join stay blank until Bool0 solve snap; in-progress lines stay local. Melon fields `nodes` / `nodesObjects` / `solved` and `MED_KeyNodeConnection.connected` verified. Same missing-coverage class as LAB_Rings / DET_ServiceLock / FloodControls. Fix (Dig V, mirror LAB_Rings 0.5.34 / ServiceLock 0.5.39 / FloodControls 0.5.40 Int pack): pack 17 connected bits → Int0; Bool0=solved; Int1=node count valid marker so all-zero partial preserved; Apply unpacks connected + SetActive nodesObjects under NetGate; IsProgressed = Bool0 || Int1!=0. Keep WorldId 0 global poll / client emission; protocol 10 unchanged (reuse MED_KeyGrid Bool0 solved + Int0 connected pack + Int1 count; no new ushort).
+
+### Before → After (player)
+- **Before:** Host connects MED key-grid nodes mid-solve. Peers / late-join FullRefresh see only a blank / unsolved grid — mid-node `connected` + GridSprite visuals never leave the host until final Bool0 solve snap.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh apply the Int0 connected pack (nodesObjects active). IsProgressed holds mid-node Int1 count (including all-zero Int0) across remount; Bool0 solved still latches static solved as before.
+
+### Dig V residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| Read/Apply Bool0 solved-only → peers + late-join miss mid-node connected / nodesObjects | Dig V: Melon MED_KeyGrid nodes/nodesObjects/solved; MED_KeyNodeConnection.connected; AssetStudio 17 GridSprite nodes in MED_Medical; IsProgressed was Bool0-only | **SHIPPED** (Int0 connected pack; Int1 count marker; Apply nodesObjects under NetGate; IsProgressed Bool0\|\|Int1; WorldId 0 poll retained; protocol 10) |
+
+Protocol stays **10** (reuse MED_KeyGrid Bool0 solved + Int0 connected pack + Int1 count; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.40 — 2026-09-27
+
+Protocol **v10**. Batch 45 ship (Dig U): FloodControls sync `input[]` via Int1 so N-peer switch flips and late-join FullRefresh keep authoritative input for `checkSolution`, not only switch poses / final done.
+
+### Fixed
+- **FloodControls TryRead/Apply omit input[]; ApplyFloodSwitch pose-only — peers miss switch input** — TryRead packed `code`→Int0 but left Int1=0; ApplyFloodControls restored `done`/`locked`/`code` never `input`; ApplyFloodSwitch set only `state` and never wrote `fc.input[index]`. Native durable state: `FloodControls.input` + `code` (Melon `input`/`code`/`done`/`locked`/`dlc`; `checkSolution(input,code)`); `FloodControlSwitch.Update` writes `fc.input[index]` from `state` (Melon `fc`/`index`/`state`). Softlock: host flips flood switches → peers/late-join show correct switch poses while authoritative `input[]` stays stale → native `checkSolution` fails → flood-door gate unsolved; partial state not retained unless `done`. Fix (Dig U): TryRead packs `x.input`→Int1 (≤32 via PackBoolArray); Apply unpacks Int1→`x.input`; ApplyFloodSwitch also writes `x.fc.input[x.index]` with bounds checks; IsProgressed = Bool0 || Int1!=0. Keep Int0=`code`; protocol 10 unchanged (reuse FloodControls Bool0 done + Bool1 locked + Int0 code + Int1 input; no new ushort).
+
+### Before → After (player)
+- **Before:** Host flips flood-control switches. Peers / late-join FullRefresh see matching switch poses, but `FloodControls.input[]` stays stale — `checkSolution` fails and the flood-door gate stays unsolved until a final Bool0 done snap (partial progress not held).
+- **After:** Live MutateWorld peer **and** late-join FullRefresh apply Int1 `input[]` (and ApplyFloodSwitch mirrors native `fc.input[index]`). IsProgressed holds mid-switch Int1 across remount; Bool0 done still unlocks dlc/doors as before.
+
+### Dig U residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| TryRead Int1=0; Apply omits input; ApplyFloodSwitch state-only → peers + late-join stale input / unsolved gate | Dig U: Melon FloodControls input/code/done/locked; FloodControlSwitch fc/index/state; Update→fc.input[index]; checkSolution(input,code); IsProgressed was Bool0-only | **SHIPPED** (Int1 input pack/unpack; ApplyFloodSwitch fc.input write; IsProgressed Bool0\|\|Int1; Int0 code retained; protocol 10) |
+
+Protocol stays **10** (reuse FloodControls Bool0 done + Bool1 locked + Int0 code + Int1 input pack; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.39 — 2026-09-27
+
+Protocol **v10**. Batch 44 ship (Dig T): DET_ServiceLock sync partial pinning via Int0 (4×3-bit) so N-peer pin changes and late-join FullRefresh see in-progress lock pins, not only final solve.
+
+### Fixed
+- **DET_ServiceLock TryRead/Apply solved-only — peers miss mid-pin** — TryRead emitted only `solved` Bool0 (Int0–Int3=0); ApplyServiceLock ignored every unsolved entry (`if (e.Bool0) SnapServiceLock`). Native durable state is four `pinning[]` ints (0..`precision`, live precision=6) plus `input[]`, updated by `FlipButton` → `SetPins` / `AdjustCrown`, solved by `TestKey` → `PuzzleStatus.solved`. Softlock: host sets pins mid-solve → peers / late-join stay at initial lock until Bool0 snap; in-progress pin changes stay local. Melon fields `pinning`/`precision`/`input`/`Buttons`/`CounterButtons`/`TestButton`/`SetPins`/`AdjustCrown`/`FlipButton`/`TestKey`/`solved` verified (AssetStudio pinning=[0,0,0,0] precision=6). Fix (Dig T, mirror LAB_Rings 0.5.34 Int0 pack): TryRead packs four pinning values into Int0 as 4×3-bit; Apply sanitizes + assigns pinning then native-equivalent `SetPins`/`AdjustCrown` (no FlipButton coroutine); Bool0 still SnapServiceLock; IsProgressed = Bool0 || Int0!=0; SetPins postfix EnvEmit (Read mid / Progressed solved). Protocol 10 unchanged (reuse DET_ServiceLock Bool0 solved + Int0 pin pack; no new ushort).
+
+### Before → After (player)
+- **Before:** Host adjusts DET service-lock pins (`FlipButton` → SetPins). Peers / late-join FullRefresh see only the initial lock — mid-pin state never leaves the host until final Bool0 solve snap.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh apply the Int0 pinning pack (SetPins/AdjustCrown visuals). Host SetPins emits so Progressed holds mid-state across remount; Bool0 solved still SnapServiceLock (disable buttons / unlock doors) as before.
+
+### Dig T residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| TryRead/Apply solved-only; no SetPins emit → peers + late-join miss mid-pin until Bool0 | Dig T: TryRead Int0=0; ApplyServiceLock Bool0-only Snap; Melon pinning/precision/SetPins/AdjustCrown/FlipButton; AssetStudio precision=6 4 pins; LAB_Rings Int0 pack pattern | **SHIPPED** (Int0 4×3-bit pack; SetPins emit; Apply SetPins/AdjustCrown; Bool0 Snap retained; protocol 10) |
+
+Protocol stays **10** (reuse DET_ServiceLock Bool0 solved + Int0 pinning pack; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.38 — 2026-09-27
+
+Protocol **v10**. Batch 43 ship (Dig S): LAB_Waage sync MultiInteraction gate via Bool0 so peers + late-join FullRefresh get the gameplay gate, not only weight pose.
+
+### Fixed
+- **LAB_Waage TryRead/Apply weight-only — peers miss MultiInteraction gate** — TryRead always emitted Bool0=false and ApplyWaage only wrote `weight`. Native `placeItem` → `delayedMulti` → `MultiInteraction.SetActive(true)` (Melon `MultiInteraction` GameObject @0x100; scene starts inactive). Softlock: host places item → scale weight pose syncs, but peer/late-join MultiInteraction stays inactive → gameplay gate stuck. `content` (AnItem @0x108) correctly stays unsynced (independent inventories). Fix (Dig S): TryRead Bool0 = `MultiInteraction != null && activeSelf`; Apply sets weight then idempotently `SetActive(true)` when Bool0; IsProgressed = Bool0 || weight!=0 (latch survives remount even if solved weight is 0); `placeItem` postfix `EnvEmit.Progressed` forces Bool0 (delayedMulti coroutine still pending locally). Protocol 10 unchanged (reuse LAB_Waage Bool0 gate + Float0 weight; no new ushort).
+
+### Before → After (player)
+- **Before:** Host places an item on the LAB scale (`placeItem` → delayedMulti activates MultiInteraction). Peers / late-join FullRefresh get the weight pose only — MultiInteraction stays inactive, so the next gameplay gate never opens.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh apply weight and, when Bool0, idempotently `MultiInteraction.SetActive(true)`. Host `placeItem` emits Progressed (Bool0 forced) so peers unlock the gate without waiting for the host coroutine.
+
+### Dig S residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| TryRead Bool0 always false; Apply weight-only; no placeItem emit → peers miss MultiInteraction gate | Dig S: Melon weight@0xD0 / MultiInteraction@0x100 / content@0x108; placeItem→delayedMulti→SetActive(true); scene starts inactive; IsProgressed was weight-only | **SHIPPED** (Bool0 gate read/apply; IsProgressed Bool0\|\|weight; placeItem Progressed; content unsynced; protocol 10 Bool0/Float0 reuse) |
+
+Protocol stays **10** (reuse LAB_Waage Bool0 gate-active + Float0 weight; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.37 — 2026-09-27
+
+Protocol **v10**. Batch 42 ship (Dig R): RES_MusicBox ApplyMusicBox rising-edge `onSuccess` so peers + late-join FullRefresh get minimap `dimPOI`, not only SnapMusicBox opened pose.
+
+### Fixed
+- **ApplyMusicBox SnapMusicBox-only — peers miss onSuccess dimPOI** — ApplyMusicBox set `hasCassette` from Bool1 then `SnapMusicBox` (latch `opened`, force `hasCassette=true`, pose lid/CardPickup/BoxObs/tapeInteraction). Never Invoked `onSuccess`. Native Update (~0x4B4ED0) only fires `onSuccess` on `opened` false→true; after Apply latches, native retry permanently skipped. Asset `onSuccess` → `MinimapPOIObject.dimPOI`. Softlock: host opens music box → peers latch opened + pose but minimap POI stays bright. Late-join FullRefresh same. `LoadState` does not invoke. Melon fields `opened` / `hasCassette` / `onSuccess` verified (`onSuccess` camelCase). Fix (Dig R, mirror PEN_Reaktor 0.5.36 / RES_Shrine 0.5.35 rising-edge both-path): capture `was=opened`; preserve Bool1 `hasCassette`; if `!e.Bool0` return; if `!was` → BeginApply + `onSuccess.Invoke()` once + SnapMusicBox pose for both MutateWorld and FullRefresh (idempotent dimPOI; no separate onLoad). SnapMusicBox no longer overwrites wire cassette. Protocol 10 unchanged (reuse RES_MusicBox Bool0=opened + Bool1=hasCassette; no new ushort).
+
+### Before → After (player)
+- **Before:** Host opens the RES music box (`Update` → onSuccess dimPOI + opened pose). Peers / late-join FullRefresh SnapMusicBox pose the opened box, but never Invoke `onSuccess` — minimap POI stays bright.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh on false→true `opened` edge BeginApply-Invokes `onSuccess` (dimPOI) then SnapMusicBox (opened pose / pickups / interactions) as before; Bool1 hasCassette preserved from wire.
+
+### Dig R residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| ApplyMusicBox SnapMusicBox-only; never Invokes onSuccess → peers miss dimPOI; Snap forced hasCassette=true | Dig R: ApplyMusicBox Snap-only; Melon opened/hasCassette/onSuccess; Update ~0x4B4ED0 rising-edge only; Asset onSuccess=dimPOI; LoadState no invoke; PEN_Reaktor/RES_Shrine rising-edge | **SHIPPED** (!was onSuccess+SnapMusicBox both paths; Snap no longer overwrites Bool1; protocol 10 Bool0/Bool1 reuse) |
+
+Protocol stays **10** (reuse RES_MusicBox Bool0 opened + Bool1 hasCassette; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.36 — 2026-09-27
+
+Protocol **v10**. Batch 41 ship (Dig Q): PEN_Reaktor ApplyReaktor rising-edge `onSuccess` so peers + late-join FullRefresh get Popup / door-spot markers (red blocked → green success), not only SnapReaktor door unlock.
+
+### Fixed
+- **ApplyReaktor SnapReaktor-only — peers miss onSuccess Popup / door-spot markers** — ApplyReaktor applied mid fields (`valid`/`current`/`Dvalue`/`Dtemp`/`total`) then `SnapReaktor` (latch `solved`, unlock `doorLock` / InteractiveLockSingle plates, disable `_event`). Never Invoked `onSuccess`. Native Update sets `solved` then starts `win`; `win.MoveNext` Invokes `onSuccess` then unlocks. Asset `onSuccess` → `Popup.SetActive(true)`; `E Door Spot Blocked.SetActive(false)`; `E Door Spot.SetActive(true)`. Softlock: host solves → peers latch solved + unlock doors but red blocked marker stays, green success marker / popup missing. Late-join FullRefresh same. Melon fields `solved` / `doorLock` / `onSuccess` / `_event` verified (`onSuccess` camelCase). Fix (Dig Q, mirror RES_Shrine 0.5.35 / DoorLockEvent 0.5.31 rising-edge both-path): capture `was=solved`; apply mid fields; if `!e.Bool0` return; if `!was` → BeginApply + `onSuccess.Invoke()` once + `SnapReaktor` for both MutateWorld and FullRefresh (idempotent SetActive final-pose; no separate onLoad). Existing SnapReaktor lock/plates/`_event` unlock logic retained. Protocol 10 unchanged (reuse PEN_Reaktor Bool0 solved + Bool1 valid + Int0..3; no new ushort).
+
+### Before → After (player)
+- **Before:** Host solves the PEN reactor (`win` → onSuccess popup + green door spot, unlock). Peers / late-join FullRefresh SnapReaktor unlock doors and disable `_event`, but never Invoke `onSuccess` — red blocked marker stays, green success marker / Popup missing.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh on false→true `solved` edge BeginApply-Invokes `onSuccess` (Popup on, blocked spot off, success spot on) then SnapReaktor (door unlock / plates / `_event` disable) as before.
+
+### Dig Q residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| ApplyReaktor fields+SnapReaktor only; never Invokes onSuccess → peers miss Popup / E Door Spot markers | Dig Q: ApplyReaktor Snap-only; Melon solved/doorLock/onSuccess/_event; native Update→win.MoveNext onSuccess then unlock; Asset onSuccess=Popup+door spots; RES_Shrine/DoorLockEvent rising-edge | **SHIPPED** (!was onSuccess+SnapReaktor both paths; Snap unlock retained; protocol 10 Bool0 reuse) |
+
+Protocol stays **10** (reuse PEN_Reaktor Bool0 solved + Bool1 valid + Int0..3 mid-fidelity; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.35 — 2026-09-27
+
+Protocol **v10**. Batch 40 ship (Dig P): RES_Shrine ApplyShrine final-pose (doors / content / onSuccess) so peers + late-join FullRefresh latch the released shrine pose instead of sticky-solved softlock.
+
+### Fixed
+- **ApplyShrine latches solved then CheckSolve — peers miss delayedReactionToSolve final pose** — ApplyShrine set `solved`/`busy`/`big`/`mid`/`small` then called native `CheckSolve()`. Native CheckSolve (~0x4B6AF0) immediately exits when `solved` is already true → never starts `delayedReactionToSolve`. MoveNext (~0x6EEAA0) does solved transition, `content.SetActive(true)`, MoveTowards `doorPos`→1 (Update applies LeftDoor Z=`-OpenAngle*doorPos` / RightDoor Z=`+OpenAngle*doorPos`), `onSuccess.Invoke`, StartCoroutine(`release`). Asset `onSuccess` → `MinimapPOIObject.dimPOI` ×2. Softlock: live peers + late-join FullRefresh latch shrine solved but miss final door/release pose, content activation, minimap dimming; native re-check cannot recover (solved sticky). Melon fields `solved`/`busy`/`big`/`mid`/`small`/`onSuccess`/`LeftDoor`/`RightDoor`/`OpenAngle`/`doorPos`/`content` verified; LoadState when solved snaps `doorPos=1` + content (no onSuccess). Fix (Dig P, mirror RadioStationTutorial/Magpie final-pose + DoorLockEvent rising-edge Invoke): capture `was=solved`; latch fields; **never** CheckSolve after latching solved; if `!e.Bool0` return; if `!was` → BeginApply + `onSuccess.Invoke()` once + SnapShrineFinalPose (`doorPos=1`, LeftDoor Z=`-OpenAngle`, RightDoor Z=`+OpenAngle`, content active) for both MutateWorld and FullRefresh (dimPOI safe). Bool1 busy + Int0..2 plate apply preserved. Protocol 10 unchanged (reuse RES_Shrine Bool0/Bool1/Int0..2; no new ushort).
+
+### Before → After (player)
+- **Before:** Host solves the RES shrine (plates align → CheckSolve → delayedReaction opens doors, activates content, dims minimap POIs). Peers latch `solved=true` then call CheckSolve which no-ops — doors stay closed, content stays inactive, minimap POIs stay bright. Late joiner FullRefresh same. Sticky solved cannot recover.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh on false→true `solved` edge BeginApply-Invokes `onSuccess` (dimPOI ×2) and snaps doors open (`doorPos=1`, Left/Right ±OpenAngle) + content active. Plate Int0..2 + busy Bool1 still apply as before.
+
+### Dig P residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| ApplyShrine latched solved then CheckSolve; CheckSolve early-out skips delayedReaction → peers miss doors/content/onSuccess | Dig P: ApplyShrine CheckSolve-after-latch; Melon solved/busy/big/mid/small/onSuccess/LeftDoor/RightDoor/OpenAngle/doorPos/content; CheckSolve ~0x4B6AF0 early-out; delayedReaction ~0x6EEAA0 doorPos→1 + content + onSuccess; Asset onSuccess=dimPOI×2; LoadState doorPos=1 when solved | **SHIPPED** (!was onSuccess+SnapShrineFinalPose both paths; no CheckSolve after latch; protocol 10 Bool0/Bool1/Int0..2 reuse) |
+
+Protocol stays **10** (reuse RES_Shrine Bool0 solved + Bool1 busy + Int0..2 plates; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.34 — 2026-09-27
+
+Protocol **v10**. Batch 39 ship (Dig O): LAB_Rings sync partial finger states via `PuzzleStateEntry.Int0` (4×2-bit) so N-peer place/take and late-join FullRefresh see in-progress rings, not only final solve.
+
+### Fixed
+- **LAB_Rings TryRead/Apply solved-only — peers diverge on partial finger place/take** — TryRead emitted only `solved` (Int0=0); ApplyLabRings ignored every unsolved entry; LabRingsPatch emitted only on `checkSolution` when solved. Native durable state is four `LAB_Rings_Finger.state` values (`empty/regent/serpent/bride` = 0..3) on Zeige/Mittel/Ring/Klein, with `placeRing` / `takeRing` / `setStates` / `LoadState`→`loadFinger`, plus expected `S_*`. Softlock: P1 places one ring, P2 places another → local fingers diverge; host receives no partial state; late joiner stays empty until final Bool0 solve. Melon fields `Zeige`/`Mittel`/`Ring`/`Klein`/`state`/`S_*`/`setStates`/`solved`/`solvedState`/`PlatePickup`/`FakePlate` verified; AssetStudio `S_Zeige=regent,S_Mittel=empty,S_Ring=bride,S_Klein=serpent`. Fix (Dig O, protocol 10 reuse): pack 4×2-bit into Int0 (Zeige|Mittel|Ring|Klein); TryRead emits pack + Bool0; placeRing/takeRing postfix EnvEmit.Read (Progressed when solved); Apply sanitizes nibbles 0..3, applies finger.state + `setStates` (idempotent / FullRefresh force), snaps plate path when Bool0 **or** pack matches `S_*`. IsProgressed holds Int0!=0 for remount. No new wire/type/protocol bump.
+
+### Before → After (player)
+- **Before:** P1 places a ring; P2 places another. Local finger states diverge; host never sees partial state; late joiner / host stay empty until someone fully solves — P2 cannot reliably continue an in-progress LAB rings puzzle.
+- **After:** Each place/take emits packed Int0 finger states; host validates 0..3 and applies native-equivalent `setStates` visuals; peers + late-join FullRefresh see the same mid-puzzle fingers; Bool0 solved still snaps plate / solvedState as before.
+
+### Dig O residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| TryRead/Apply solved-only; place/take never emit partial fingers → N-peer diverge + late-join empty until solve | Dig O: TryRead Int0=0; ApplyLabRings Bool0-only Snap; LabRingsPatch solved-only; Melon finger.state/S_*/setStates/loadFinger; AssetStudio S_* | **SHIPPED** (Int0 4×2-bit pack; place/take Read; Apply setStates + S_* validate; Bool0 plate snap retained; protocol 10) |
+
+Protocol stays **10** (reuse LAB_Rings Bool0 solved + Int0 finger pack; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.33 — 2026-09-27
+
+Protocol **v10**. Batch 38 ship (Dig N): RadioStationTutorial ApplyTutorial final-pose snap (Door Z=20 / returnStations / TutorialStation) + live EndCutscene.trigger so DET radio bunker tutorial peers exit softlock.
+
+### Fixed
+- **ApplyTutorial latch-only — peer skips OpenDoor final pose + EndCutscene** — ApplyTutorial only did `x.solved = e.Bool0`. Native Update (~0x4C3D70) when `completionTimer >= completionTime` → `EndCutscene.trigger` + latch `solved` + `StartCoroutine(OpenDoor)`. OpenDoor.MoveNext (~0x6EB910): `PlayOneShot(unlockedSFX)`, lerp Door localRotation Z **180→20** via `Quaternion.Euler(0,0,angle)`, `SetActive(returnStations,true)` / `SetActive(TutorialStation,false)`. Door pathId is NOT a Doorway_* — no DoorSync cover. OnEnable always `returnStations=false`, `TutorialStation=true` (unsolved pose) — no solved snap. Softlock: Host solves → peers Apply set `solved=true` only; local `completionTimer` stays 0 → Update never re-enters solve block; Door Transform stays closed; TutorialStation stays active. Late-join FullRefresh same. Melon fields `solved` / `Door` / `returnStations` / `TutorialStation` / `EndCutscene` / `unlockedSFX` verified. Fix (Dig N, mirror GunCase/Magpie final-pose class — NOT UnityEvent.Invoke): capture `was=solved`; latch solved; if `!e.Bool0` return; if `!was` → BeginApply; LIVE `MutateWorld` → `EndCutscene.trigger()` + optional `unlockedSFX` PlayOneShot + pose snap; FullRefresh → pose snap ONLY (skip cutscene remount / skip EndCutscene.trigger). Protocol 10 unchanged (reuse RadioStationTutorial Bool0 solved; no new ushort).
+
+### Before → After (player)
+- **Before:** Host completes the DET radio bunker tutorial (holds freq → timer done). Peers latch `solved=true` but Door stays closed and TutorialStation stays active — softlock stuck in the bunker tutorial pose. Late joiner FullRefresh same.
+- **After:** Live MutateWorld peer on false→true `solved` edge BeginApply-triggers EndCutscene + plays unlockedSFX + snaps Door open (Z=20) / returnStations on / TutorialStation off. Late-join FullRefresh snaps the same final pose without remounting EndCutscene.
+
+### Dig N residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| ApplyTutorial latch-only; peer skips OpenDoor final pose + EndCutscene → bunker Door closed / TutorialStation stuck | Dig N: ApplyTutorial solved-only; Melon Door/returnStations/TutorialStation/EndCutscene/unlockedSFX; OpenDoor.MoveNext Z 180→20 + SetActives; Update EndCutscene.trigger; OnEnable unsolved pose; Door not Doorway_* | **SHIPPED** (MutateWorld&&!was EndCutscene+SFX+pose; FullRefresh pose-only; protocol 10 Bool0 reuse) |
+
+Protocol stays **10** (reuse RadioStationTutorial Bool0 solved; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.32 — 2026-09-27
+
+Protocol **v10**. Batch 37 ship (Dig M): MultiConditionEvent ApplyMultiConditionEvent rising-edge `OnTryDone` so Proceed / ProceedDelayed / delayedEvent / SetTrigger fire for late-join FullRefresh (and live MutateWorld if StoryCmd missed); live StoryCmd path stays sole fire via rising-edge.
+
+### Fixed
+- **ApplyMultiConditionEvent latch-only — late-join skips OnTryDone** — ApplyMultiConditionEvent (~675–680) only latched `triedOnce` + `tried`. Never Invoked `OnTryDone`. Live `StoryCmd.MultiConditionFire` calls `TryOnce`/`TryTrigger` AND `OnTryDone.Invoke` — OK. Late-join FullRefresh latched `triedOnce=true` with no Invoke; native `TryOnce` early-outs on `triedOnce` → consequence never recoverable (cutscene/story softlock). Melon fields `triedOnce` / `tried` / `OnTryDone` verified (`OnTryDone` PascalCase UnityEvent). Assets: `OnTryDone` → Proceed / ProceedDelayed / delayedEvent / SetTrigger. Fix (Dig M, mirror ApplyDoorLockEvent 0.5.31 both-path): capture `was=triedOnce`; latch triedOnce+tried; if `!e.Bool0` return; if `!was` → BeginApply + `OnTryDone.Invoke()`. Live StoryCmd sets triedOnce first → Apply sees `was=true` → no double-fire. Protocol 10 unchanged (no new ushort).
+
+### Before → After (player)
+- **Before:** Host fires a MultiConditionEvent. Live peers get OnTryDone via StoryCmd (OK). Late joiner FullRefresh latches `triedOnce=true` but never Invokes OnTryDone — Proceed/ProceedDelayed/delayedEvent/SetTrigger never run; native TryOnce early-outs forever — cutscene/story softlock.
+- **After:** Late-join FullRefresh **and** live MutateWorld Apply on false→true `triedOnce` edge BeginApply-Invokes `OnTryDone`. Live StoryCmd path still fires once; rising-edge skips Apply re-Invoke when StoryCmd already latched triedOnce.
+
+### Dig M residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| ApplyMultiConditionEvent latch-only; late-join skips OnTryDone → Proceed/delayedEvent softlock | Dig M: ApplyMultiConditionEvent ~675–680; Melon triedOnce/tried/OnTryDone; live StoryCmd MultiConditionFire already Invokes; native TryOnce early-out on triedOnce; DoorLockEvent 0.5.31 both-path rising-edge | **SHIPPED** (!was OnTryDone for both MutateWorld and FullRefresh; live StoryCmd double-fire avoided via rising-edge) |
+
+Protocol stays **10** (reuse MultiConditionEvent Bool0 triedOnce + Int0 tried; no new ushort). Host-authoritative; N-peer late-join Apply path.
+
+## 0.5.31 — 2026-09-27
+
+Protocol **v10**. Batch 36 ship (Dig L): DoorLockEventInteraction ApplyDoorLockEvent rising-edge `onSolved` so DoorLockEvent GO SetActive(false) fires for live peers **and** late-join FullRefresh (LoadState ≡ onSolved; no onLoad).
+
+### Fixed
+- **ApplyDoorLockEvent only latches done — never Invokes onSolved** — ApplyDoorLockEvent (~406–409) only latched `done`. Melon fields `done` / `onSolved` verified (camelCase); **no** `onLoad` UnityEvent. Native LoadState and solved path both Invoke `onSolved`. Asset DET: `onSolved` → `SetActive(false)` on DoorLockEvent GO. Softlock: Host solves → peer `done=true` but DoorLockEvent GO stays active. Fix (Dig L): capture `was=done`; latch done; if `!e.Bool0` return; if `!was` → BeginApply + `onSolved.Invoke()`. Both live MutateWorld and FullRefresh use `onSolved` (LoadState ≡ onSolved). Optional `Door.SetActive(true)` deferred (Dig L optional soak). Protocol 10 unchanged (no new ushort).
+
+### Before → After (player)
+- **Before:** Host solves a DoorLockEvent. Live peer latches `done=true`, but the DoorLockEvent GO stays active (onSolved never Invoked) — softlock stuck on the lock UI / interaction.
+- **After:** Live MutateWorld peer **and** late-join FullRefresh on false→true `done` edge BeginApply-Invokes `onSolved` (DoorLockEvent GO SetActive(false)).
+
+### Dig L residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| ApplyDoorLockEvent latch-only; peer skips onSolved → DoorLockEvent GO stays active | Dig L: ApplyDoorLockEvent ~406–409; Melon done/onSolved (no onLoad); native LoadState + solved both Invoke onSolved; Asset DET onSolved = SetActive(false); LoadState ≡ onSolved so FullRefresh also Invokes | **SHIPPED** (!was onSolved for both MutateWorld and FullRefresh; Door.SetActive optional soak deferred) |
+
+Protocol stays **10** (reuse DoorLockEvent Bool0 done; no new ushort). Host-authoritative; N-peer live + late-join Apply path.
+
+## 0.5.30 — 2026-09-27
+
+Protocol **v10**. Batch 35 ship (Dig K #2 / Dig J #5): LAB_PatternLock ApplyPatternLock rising-edge `onSolved` so exitEvent + Play/SetActive fire for live peers (EventScreen dismiss).
+
+### Fixed
+- **LAB_PatternLock ApplyPatternLock Disable+doors only — never Invokes onSolved** — ApplyPatternLock (~159–166) only latched `solved` + `DisablePatternLock` + `TryUnlockDoors`. Native `delayed.MoveNext` (after `checkSolution` latches `solved` @ +0xA0, RVA 0x59CF80) loads `onSolved` @ +0xB0 and calls `UnityEvent$$Invoke` (RVA 0xDD7BF0). AssetStudio `LAB_PatternLock.onSolved` → `exitEvent` (EventScreen / DoorLockEvent) + `Play` + `SetActive` (PEN_CryoOverride / LAB ponds). Peer Apply disabled the pad + unlocked doors but EventScreen never exitEvents — softlock class Dig flagged. Melon fields `solved` / `onSolved` verified (camelCase); **no** `onLoad` UnityEvent. Fix (mirror ApplyMulti 0.5.29 live path / ApplyMural 0.5.26): capture `was=solved`; latch solved; if `!e.Bool0` return; keep `DisablePatternLock`; if `MutateWorld && !was` → BeginApply + `onSolved.Invoke()`; keep `TryUnlockDoors`. FullRefresh (`!MutateWorld`): keep skip (no onLoad soak; exitEvent remount unwanted unless soak asks). Do **not** ship DoorLockEvent yet (0.5.31 Dig L candidate). Protocol 10 unchanged (no new ushort).
+
+### Before → After (player)
+- **Before:** Host solves a LAB PatternLock (PEN cryo override / LAB pond). Live peer sees pad disabled + doors unlocked, but EventScreen never exitEvents — softlock stuck on the pattern UI / overlay.
+- **After:** Live MutateWorld peer on false→true `solved` edge BeginApply-Invokes `onSolved` (exitEvent + Play/SetActive) after DisablePatternLock. Late-join FullRefresh still skips onSolved (no exitEvent remount) until soak asks for an onLoad-equivalent.
+
+### Dig K #2 residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| ApplyPatternLock latch+Disable+doors only; peer skips onSolved → EventScreen exitEvent softlock | Dig K #2 / Dig J #5: ApplyPatternLock ~159–166; Melon solved/onSolved (no onLoad); AssetStudio onSolved = exitEvent+Play+SetActive; native delayed.MoveNext Invoke @ UnityEvent$$Invoke after checkSolution; MultiLock/Mural rising-edge pattern | **SHIPPED** (MutateWorld&&!was onSolved; FullRefresh skip retained; DoorLockEvent deferred) |
+
+Protocol stays **10** (reuse PatternLock Bool0 solved; no new ushort). Host-authoritative; N-peer live cinematic Apply path. DoorLockEvent deferred.
+
+## 0.5.29 — 2026-09-27
+
+Protocol **v10**. Batch 34 ship (Dig K #1): MED/LAB MultiLock ApplyMulti rising-edge `onUnlocked` (+ `onUnlockedLate`) so exitEvent + Inter SetActive fire for live peers; late-join uses `onLoadUnlocked`.
+
+### Fixed
+- **MED/LAB MultiLock ApplyMulti latch-only — never Invokes Melon UnityEvents** — ApplyMulti (~270–288) only latched `unlocked` + element bits + `TryUnlockDoors`. Native `UnlockKey` Invokes `onUnlocked` then `onUnlockedLate`; `OnEnable` (load) Invokes `onLoadUnlocked` when already unlocked. AssetStudio MED Elemental: `onUnlocked` → dimPOI + exitEvent (EventInter); `onUnlockedLate`/`onLoadUnlocked` → SetActive Inter/EventInter. LAB TreeLock: `onUnlocked` → exitEvent + Play; late/load → SetActive Inter/Event. Peer Apply unlocked+doors OK but EventScreen never exitEvents and Inter stayed stuck; late joiner same. Melon fields `unlocked` / `onUnlocked` / `onUnlockedLate` / `onLoadUnlocked` verified (camelCase); MED also has `onEarthKeyUnlocked` (mid-key dimPOI only — skipped). Inter SetActive is **only** on Late/Load — live path must Invoke both `onUnlocked` and `onUnlockedLate`. Fix (mirror ApplyRotKeypad 0.5.25 / ApplyPower 0.5.27 / ApplyPump 0.5.28): capture `was=unlocked`; latch unlocked+bits; if `!e.Bool0` return; if `MutateWorld && !was` → BeginApply + `onUnlocked.Invoke()` + `onUnlockedLate.Invoke()`; else if `!MutateWorld && !was` → BeginApply + `onLoadUnlocked.Invoke()`; keep `TryUnlockDoors`. Do **not** ship PatternLock (0.5.30). Protocol 10 unchanged (no new ushort).
+
+### Before → After (player)
+- **Before:** Host finishes MED Elemental / LAB TreeLock. Live peer sees unlocked + element bits + doors, but EventScreen never exitEvents and Inter stays active — softlock at the lock UI. Late joiner FullRefresh same Inter stuck.
+- **After:** Live MutateWorld peer on false→true `unlocked` edge BeginApply-Invokes `onUnlocked` (exitEvent + dimPOI/Play) then `onUnlockedLate` (Inter/EventInter SetActive). Late-join FullRefresh Invokes `onLoadUnlocked` (same SetActive as Late; no exitEvent remount).
+
+### Dig K #1 residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| ApplyMulti latch-only; peer skips onUnlocked/onUnlockedLate → exitEvent + Inter softlock; late-join skips onLoadUnlocked | Dig K #1: ApplyMulti ~270–288; Melon onUnlocked/Late/onLoadUnlocked; AssetStudio MED/LAB wiring; Inter SetActive only on Late/Load; UnlockKey live / OnEnable load; RotKeypad/Power/Pump rising-edge pattern | **SHIPPED** (MutateWorld&&!was onUnlocked+onUnlockedLate; FullRefresh onLoadUnlocked; onEarthKeyUnlocked skipped) |
+
+Protocol stays **10** (reuse MultiLock Bool0 unlocked + Int0 bits; no new ushort). Host-authoritative; N-peer live cinematic Apply path. PatternLock deferred.
+
+## 0.5.28 — 2026-09-27
+
+Protocol **v10**. Batch 33 ship (Dig J #3): MED_Pump ApplyPump rising-edge `onSolved` so StartCutscene + dimPOI + RecordSplit fire for live peers; late-join uses `onLoad` (dimPOI only).
+
+### Fixed
+- **MED_Pump SnapMedPump Drain only — never Invokes onSolved** — SnapMedPump (~94–105) only latched `solved` + `SnapFlood` + `TryUnlockDoors`. Native `checkSolved` Invokes `onSolved` + transfers/drain. AssetStudio `MED_Pump.onSolved` → `dimPOI` + `StartCutscene` + `RecordSplit`. Peer Apply drained flood but skipped cutscene/onSolved consequences. Melon fields `solved` / `onSolved` / `onLoad` verified (camelCase). `onLoad` → `dimPOI` only (no StartCutscene). Fix (mirror ApplyMural live path + ApplyRotKeypad late-join onLoad): capture `was=solved`; snap a/b/c; if `!e.Bool0` return; keep `SnapMedPump` drain; if `MutateWorld && !was` → BeginApply + `onSolved.Invoke()`; else if `!MutateWorld && !was` → BeginApply + `onLoad.Invoke()` (dimPOI soak, skip remount StartCutscene). Protocol 10 unchanged (no new ushort).
+
+### Before → After (player)
+- **Before:** Host solves the MED pump. Live peer sees water levels + flood drain, but dimPOI never dims, StartCutscene never runs, RecordSplit never records — story beat softlock after the pump.
+- **After:** Live MutateWorld peer on false→true `solved` edge BeginApply-Invokes `onSolved` (dimPOI + StartCutscene + RecordSplit) after SnapMedPump drain. Late-join FullRefresh Invokes `onLoad` (dimPOI only) — no StartCutscene remount.
+
+### Dig J #3 residual
+
+| Hole | Evidence | Status |
+|------|----------|--------|
+| SnapMedPump drain-only; peer skips onSolved → StartCutscene/dimPOI/RecordSplit softlock | Dig J #3: SnapMedPump ~94–105; Melon solved/onSolved/onLoad; AssetStudio onSolved = dimPOI+StartCutscene+RecordSplit; onLoad = dimPOI only; ApplyMural/ApplyRotKeypad rising-edge pattern | **SHIPPED** (MutateWorld&&!was onSolved; FullRefresh onLoad) |
+
+Protocol stays **10** (reuse MED_Pump Bool0 solved; no new ushort). Host-authoritative; N-peer live cinematic Apply path.
+
+## 0.5.27 — 2026-09-27
+
+Protocol **v10**. Batch 32 ship (Dig J #2): RES_Power ApplyPower rising-edge `OnSuccess` so residency setPower + Paternoster SetSpeed fire for live peers.
+
+### Fixed
+- **RES_Power ApplyPower flags-only — never Invokes OnSuccess** — ApplyPower (~119–125) only snapped `solved`/`powered`/fuse `states`. Native `TryMasterFlip` (RVA 0x4B5FB0) Invokes `OnSuccess` @ ~0x4B60D4 when TopVolt==800 && BotVolt==230, then latches `solved=1` @ +0x91. AssetStudio `RES_Power.OnSuccess` → `SetSpeed` (Paternoster) + `setPower`×3 + SetActive + dimPOI + Play. Peer Apply skipped the UnityEvent → residency power softlock / paternoster not driven. Fix (mirror ApplyMural / ApplyRotKeypad live path): capture `was=solved`; latch solved/powered/states; if `!e.Bool0` return; if `MutateWorld && !was` → BeginApply + `OnSuccess.Invoke()`; keep flag snaps. Melon field `OnSuccess` (PascalCase) verified — no `onLoad`. FullRefresh (`!MutateWorld`): rising-edge only for MutateWorld (thin; Dig J #2 — no onLoad soak; setPower/SetSpeed remount unwanted unless soak asks). Do **not** ship MED_Pump (0.5.28). Protocol 10 unchanged (no new ushort).
+
+### Before → After (player)
+- **Before:** Host solves the residency fuse puzzle (master flip). Live peer sees solved/powered/fuse flags latch, but setPower targets stay unpowered and the Paternoster never gets SetSpeed — softlock at residency power / elevator.
+- **After:** Live MutateWorld peer on false→true `solved` edge BeginApply-Invokes `OnSuccess` (setPower×3 + Paternoster SetSpeed + SetActive/dimPOI/Play). Late-join FullRefresh still skips OnSuccess (no remount) until soak asks for an onLoad-equivalent.
+
+### Dig notes (Batch 32)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| ApplyPower flags-only; peer skips OnSuccess → setPower/SetSpeed softlock | Dig J #2: ApplyPower ~119–125; TryMasterFlip RVA 0x4B5FB0 Invoke @ 0x4B60D4 then solved=1 @ +0x91; AssetStudio OnSuccess = SetSpeed+setPower×3+SetActive+dimPOI+Play; Melon OnSuccess Pascal; no onLoad | **SHIPPED** (MutateWorld&&!was OnSuccess; FullRefresh skip retained) |
+
+Protocol stays **10** (reuse RES_Power Bool0 solved; no new ushort). Host-authoritative; N-peer live cinematic Apply path. MED_Pump deferred.
+
+## 0.5.26 — 2026-09-27
+
+Protocol **v10**. Batch 31 ship (Dig J #1): ApplyMural rising-edge `onSolved` so Blocker Entry + cutscene fire for live peers.
+
+### Fixed
+- **ROT_Mural Apply never Invokes onSolved** — ApplyMural latched `finished=true` then called `useRing()` only. Native Update Invokes `onSolved` only when finished was false, then finished=1. Asset `onSolved` → goBack / SetActive(false) Blocker Entry / setUnleavable / StartCutscene / FMOD. `useRing` only toggles RingInter/MissingRing — **no** onSolved. Peer Update rising-edge skipped after latch → no cutscene, Blocker Entry stayed. Fix (mirror ApplyRotKeypad live path): capture `was=finished`; latch finished/busy/moons; if `!e.Bool0` return; if `MutateWorld && !was` → BeginApply + `onSolved.Invoke()` then `useRing()` (ring prop pose); keep `TryUnlockDoors`. FullRefresh (`!MutateWorld`): keep skip for now (Dig J — no mural onLoad soak; cutscene replay unwanted unless soak asks). Prior park claiming useRing covers Blocker was wrong. Protocol 10 unchanged (no new ushort).
+
+### Before → After (player)
+- **Before:** Host solves the mural. Live peer sees moons/finished latch + ring prop via useRing, but Blocker Entry stays active and the mural cutscene never starts (onSolved never Invoked; native rising-edge already skipped).
+- **After:** Live MutateWorld peer on false→true edge BeginApply-Invokes `onSolved` (Blocker Entry SetActive(false) + cutscene/FMOD/goBack) then `useRing` for ring prop. Late-join FullRefresh still skips onSolved (no cutscene replay) until soak asks for an onLoad-equivalent.
+
+### Dig notes (Batch 31)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| ApplyMural latches finished + useRing only; peer Update rising-edge skipped; Blocker Entry + cutscene softlock | Dig J: native Update onSolved only when !finished then finished=1; asset onSolved → Blocker/cutscene; useRing ≠ onSolved; ApplyRotKeypad live MutateWorld&&!was BeginApply+Invoke pattern | **SHIPPED** (MutateWorld&&!was onSolved + useRing; FullRefresh skip retained) |
+
+Protocol stays **10** (reuse ROT_Mural Bool0; no new ushort). Host-authoritative; N-peer live cinematic Apply path.
+
+## 0.5.25 — 2026-09-27
+
+Protocol **v10**. Batch 30 ship (Dig I): ApplyRotKeypad late-join FullRefresh `onLoad` mirror.
+
+### Fixed
+- **ApplyRotKeypad late-join FullRefresh skips onSuccess/onLoad** — 0.5.22 only Invokes `onSuccess` when `mutateWorld && !was`. FullRefresh sets `_mutateWorld=false`, latches `solved=true`, skips Invoke. Later `ReapplyHeld` has `was` already true → rising-edge skip. `TryUnlockDoors` FindInParents misses ConnectedDoors Unlock peel under DoorConnections. AssetStudio ROT_Keypad: `onSuccess` AND `onLoad` → Unlock (`onLoad` omits exitEvent — native LoadState path). Softlock: late joiner sees keypad solved but Door Connection locked. Fix (Dig I preferred — LoadState mirror): latch solved/opening/blocked; if `!e.Bool0` return; if `mutateWorld && !was` → BeginApply + `onSuccess.Invoke()` (live 0.5.22); else if `!mutateWorld && !was` → BeginApply + `onLoad.Invoke()` (FullRefresh / late-join); keep `TryUnlockDoors` backup. Do **not** UseItem-style don't-latch solved (worse UX). Melon field `onLoad` verified. Protocol 10 unchanged (no new ushort).
+
+### Before → After (player)
+- **Before:** Peer solves a ROT_Keypad while another player is mid-chapter. Late joiner FullRefresh shows keypad solved but Door Connection under DoorConnections stays locked — softlock at the door (ReapplyHeld rising-edge already skipped).
+- **After:** Late-join FullRefresh Invokes Melon `onLoad` (Unlock + SetActive + dimPOI; no exitEvent) on the false→true edge before latch sticks for ReapplyHeld, so Door Connection unlocks for every joiner. Live cinematic peers still get `onSuccess` (with exitEvent) unchanged.
+
+### Dig notes (Batch 30)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| FullRefresh ApplyRotKeypad latches solved + skips onSuccess; ReapplyHeld rising-edge skip; TryUnlockDoors misses DoorConnections peel | Dig I: ApplyRotKeypad mutateWorld&&!was onSuccess only (0.5.22); ApplyPuzzleState FullRefresh ⇒ `_mutateWorld=false`; ReapplyHeld was already true; Melon `onLoad` + native LoadState; AssetStudio onSuccess/onLoad → Unlock | **SHIPPED** (LoadState mirror: onLoad on !mutateWorld&&!was; keep latch) |
+
+Protocol stays **10** (reuse ROT_Keypad Bool0; no new ushort). Live rising-edge onSuccess preserved.
+
+## 0.5.24 — 2026-09-27
+
+Protocol **v10**. Batch 29 ship (Dig H): ItemPickup.onPickup party Ensure for non-claimers.
+
+### Fixed
+- **ItemPickup.onPickup never fires for non-claimer peers (and not for host on client-claim)** — `ApplyGrant` Invoked claimer-only (~702–705). `ApplyHide` hide-only; `BroadcastTriggered` state-only. Comment “Host already Invoked” was false when a client claimed: Peer2 grant Invokes; Host+Peer3/4 hide-only → `ROT_Tarot.TakeCard` / `LAB_Rings.takeRing` / `END_Boss.takeSpear` (unparks Falke empty-slot) / `ROT_TrainLogic.StartOutro`+`UnJam` / MeatBlocker `pickup` never ran party-wide. AssetStudio `ItemPickup_#*` bind those methods on `onPickup` (dump.cs ~484299). Fix (Dig H): idempotent `EnsurePartyOnPickup(worldId, p)` (`HashSet` once-per-id); call from `ApplyHide` (Triggered) **and** host `BroadcastTriggered`; host-native `Postfix`/`NoteTaken` `NoteOnPickupFired(id)` after native `pickUp` so Broadcast does not double-fire; `ApplyGrant` switches to same Ensure (claimer de-duped vs State); `BeginApply` around Invoke; clear set on scene refresh / claim release. Protocol 10 unchanged. Presentation `OpenBook`/`StartCutscene`/`dimPOI` — same acceptance as UseItem remount; soak late-join book flash on FullRefresh remount.
+
+### Before → After (player)
+- **Before:** Peer2 picks a tarot card / ring / Falke spear / train key / MeatBlocker item. Peer2 sees TakeCard/takeRing/takeSpear/StartOutro/MeatBlocker. Host and Peer3/4 only hide the prop — empty tarot board, rings still present, Falke empty-slot parked, train outro jammed, MeatBlocker pickups counter stuck (host misses when client claims).
+- **After:** Every peer applying Triggered hide (and host BroadcastTriggered on client-claim) runs the same `onPickup` bindings once — TakeCard/takeRing/takeSpear/Train StartOutro+UnJam/MeatBlocker pickup apply for the whole party. Host-native take Notes first so Broadcast does not double-fire.
+
+### Dig notes (Batch 29)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| ApplyGrant claimer-only Invoke; ApplyHide/BroadcastTriggered no onPickup; host miss on client-claim | Dig H: ApplyGrant ~702–705; ApplyHide ~611–630; BroadcastTriggered ~523–555; false “Host already Invoked”; AssetStudio TakeCard/takeRing/takeSpear/StartOutro+UnJam; MeatBlocker pickup | **SHIPPED** (HashSet Ensure + NoteOnPickupFired) |
+
+Protocol stays **10** (no new ushort). Late-join FullRefresh may flash OpenBook/StartCutscene once per claimed story pickup — same class of remount acceptance as UseItem 0.5.21/0.5.23; soak if noisy.
+
+## 0.5.23 — 2026-09-27
+
+Protocol **v10**. Batch 28 ship (Dig G #2): UseItem late-join / FullRefresh rising-edge preserve.
+
+### Fixed
+- **UseItem FullRefresh latches unlocked before ReapplyHeld can Invoke onSuccessful** — Late joiner FullRefresh PuzzleState Apply sets `_mutateWorld=false`. `SnapUseItemWorld` (0.5.21) latched `unlocked=true` + disabled inter, then early-returned before `onSuccessful.Invoke()`. Held UseItems (Disk/Tarot/Graves/Dissolve/Jam) survived in `_held`; later `ReapplyHeld` set `_mutateWorld=true` but `wasUnlocked` was already true → rising-edge skip. Joiners kept `ROT_DiskManager.red/blue` false, empty tarot board, unfired graves/dissolve/jam UnityEvents — softlock. Live MutateWorld path (host InteractionSync Apply + cinematic peer Apply) was fine. Fix (Dig G thinner): on `!MutateWorld` snap inter disable only — do **not** latch `unlocked=true` (PerPlayerUse still `NoteRemoteUnlock`). ReapplyHeld / cinematic MutateWorld path still latches + rising-edge Invokes. Host who already ran native Dialoguer keeps rising-edge skip (unlocked already true). Protocol 10 unchanged (no new ushort). ItemPickup onPickup is 0.5.24 — not this batch.
+
+### Before → After (player)
+- **Before:** Peer inserts Disk / places Tarot / solves Graves while others are mid-chapter. Late joiner FullRefresh shows UseItem unlocked flags but Disk content / tarot cards / graves consequences never appear — story gates stay closed for the joiner.
+- **After:** Late-join FullRefresh keeps `unlocked=false` (inter disabled only); ReapplyHeld rising-edge fires the same `onSuccessful` bindings (InsertDisk*/PlaceCard*/etc.) so Disk, Tarot, Graves, Dissolve, Jam apply for every joiner.
+
+### Dig notes (Batch 28)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| FullRefresh SnapUseItemWorld latches unlocked then returns; ReapplyHeld rising-edge skipped | Dig G #2: SnapUseItemWorld ~58–145 latch-then-early-return on !MutateWorld; ApplyPuzzleState ~408–411 FullRefresh ⇒ `_mutateWorld=false`; ReapplyHeld ~498–518 `_mutateWorld=true` but wasUnlocked already true | **SHIPPED** (thinner: inter-only on !MutateWorld; no sticky consequencesApplied set) |
+
+Protocol stays **10** (reuse UseItemInteraction Bool0; no new ushort). ItemPickup onPickup deferred to 0.5.24.
+
+## 0.5.22 — 2026-09-27
+
+Protocol **v10**. Batch 27 ship (Dig G #1): ROT_Keypad Apply rising-edge `onSuccess`.
+
+### Fixed
+- **ApplyRotKeypad never Invokes onSuccess — peer door softlock** — Host Interaction `ApplyKeypad` (0.5.19) Invokes `onSuccess` for the host when a ROT_Keypad solves. Live peers + late-join remount take PuzzleState `ApplyRotKeypad`, which only latched `solved`/`opening`/`blocked` + `TryUnlockDoors(keypad.GO)`. `TryUnlockDoors` = FindInParents `ConnectedDoors` only — but ROT_Keypad `onSuccess` peels to `ConnectedDoors.Unlock` on Door Connection (35) under DoorConnections (separate tree from KeypadLogic) + Event.SetActive + exitEvent + dimPOI. Peers kept ConnectedDoors locked. Contrast: `ApplyKeypad3D` already rising-edge `openDoor` when `mutateWorld && !was`; Dispatch dropped `_mutateWorld` for the ROT path. Now pass `_mutateWorld` into `ApplyRotKeypad`; on `e.Bool0 && mutateWorld && !was` → BeginApply + `onSuccess.Invoke()`; keep `TryUnlockDoors` as backup. Protocol 10 unchanged (no new ushort).
+
+### Before → After (player)
+- **Before:** Peer or host solves a ROT_Keypad. Host door unlocks (ApplyKeypad onSuccess). Live peers see solved flags but ConnectedDoors stay locked — softlock at the door.
+- **After:** Every peer applying the ROT_Keypad PuzzleState (cinematic / remount mutateWorld) runs the same `onSuccess` peel — ConnectedDoors unlock and exitEvent/SetActive/dimPOI fire for the whole party.
+
+### Dig notes (Batch 27)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| ApplyRotKeypad flags+TryUnlockDoors only; misses onSuccess peel | Dig G #1: ApplyRotKeypad ~167–171; ApplyKeypad3D rising-edge openDoor; Dispatch ~128–129 drops _mutateWorld; host ApplyKeypad Invokes onSuccess; TryUnlockDoors ≠ DoorConnections peel | **SHIPPED** |
+
+Protocol stays **10** (reuse ROT_Keypad Bool0; no new ushort). Late-join UseItem FullRefresh shipped in 0.5.23.
+
+## 0.5.21 — 2026-09-27
+
+Protocol **v10**. Batch 26 ship (Dig B+F): UseItemInteraction Apply rising-edge `onSuccessful`.
+
+### Fixed
+- **UseItemInteraction.onSuccessful never fired on remote Apply** — `InteractionSyncService.ApplyUseItem` / `UseItemWorldSyncService.SnapUseItemWorld` latched `unlocked` + doors/flags only and Emit'd PuzzleState. Peer-side Disk / Tarot assets bind `InsertDiskRed|Blue` and `PlaceCardHeimat|Buyan|Kitezh|Vineta|Leng|Rotfront` on Melon `onSuccessful` (UnityEvent) — that Invoke ran natively only on the peer who used the item. Host + other peers kept `ROT_DiskManager.red/blue` false, `Disk*Content` / MultiInter inactive, `ROT_Tarot.cards[]` empty → story softlock / desync. Magpie `opened` already synced (untouched; Disk≠Magpie). No new `PuzzleType.ROT_DiskManager`. Now `SnapUseItemWorld` (single host-auth path: InteractionSync Apply + PuzzleState Apply / remount) captures `wasUnlocked` before latch; when `MutateWorld` and false→true and not PerPlayerUse, `BeginApply` + `onSuccessful.Invoke()`. Host-local Dialoguer already Invoked natively and Emitting with unlocked latched → rising-edge skip (no double-fire). Acting client re-Apply same. Protocol 10 unchanged.
+
+### Before → After (player)
+- **Before:** Peer inserts the Red/Blue Disk or places a tarot card. That peer sees Disk content / board cards; host and other peers keep empty Disk / empty tarot board — story gates stay closed.
+- **After:** Every peer applying the UseItem unlock (host Apply + PuzzleState Snap, including remount when first unlocked) runs the same `onSuccessful` bindings — Disk inserts and tarot cards appear for the whole party.
+
+### Dig notes (Batch 26)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| UseItem onSuccessful skipped on Apply | Dig B+F: ApplyUseItem ~172–220 unlocked+Snap+Emit no Invoke; SnapUseItemWorld ~58–120 flags/doors only; ApplyTarot darkmode+FlipSwitchPos only; assets bind InsertDisk*/PlaceCard* on onSuccessful; Magpie opened already synced | **SHIPPED** |
+
+Protocol stays **10** (reuse UseItemInteraction Bool0; no new ushort / PuzzleType).
+
+## 0.5.20 — 2026-09-27
+
+Protocol **v10**. Batch 25 ship (Dig D): ElevatorCallButton Apply rising-edge CallElevator.
+
+### Fixed
+- **ElevatorCallButton Apply sets `called` without `CallElevator()`** — `ElevatorSyncService.ApplyCallButton` only wrote `called=e.Bool0`. Peer lobby press runs native `CallElevator` locally (sets called + `StartCoroutine(elevatorMove|elevatorBroken)` @ RVA 0x7EDF60) and emits Bool0; host Apply latched `called=true` with **no** coroutine → host cabin never moves; later presses early-out (`if called ret`); late-join dump same dead latch. No Update on type — coroutine is the only mover. Contrast: `ApplyCentral` field snap OK; EXC already `startRide` on rising edge. Now false→true invokes Melon-exposed `CallElevator()` (sets called itself — do **not** pre-set called); true→false clears `called` only. Protocol 10 unchanged.
+
+### Before → After (player)
+- **Before:** Peer presses a lobby elevator call. Peer's cabin moves; host cabin stays put with `called` latched true — further presses do nothing; late joiners inherit the dead latch.
+- **After:** Host ApplyCallButton rising edge runs the same `CallElevator` coroutine peers already started natively — host cabin moves with the party.
+
+### Dig notes (Batch 25)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| ApplyCallButton flag-only skips CallElevator | Dig D: ApplyCallButton ~53–56 flag only; CallElevator @ 0x7EDF60 if called ret else called=1 + StartCoroutine; no Update; EXC/Central contrast | **SHIPPED** |
+
+Protocol stays **10** (reuse ElevatorCallButton Bool0; no new ushort).
+
+## 0.5.19 — 2026-09-27
+
+Protocol **v10**. Batch 24 ship (Dig E): host KeypadSubmit self-Applies door consequences.
+
+### Fixed
+- **Host KeypadSubmit sealed doors** — `InteractionSyncService.ApplyKeypad` only set `solved`/`opening` on `Keypad3D` / `ROT_Keypad`. Host poll then Emit → peers ran `LockSyncService.ApplyKeypad3D` / `ApplyRotKeypad` (`openDoor` + `TryUnlockDoors`). Host never self-Applied Emit path → host `ConnectedDoors` / door mesh stayed sealed. Now mirrors puzzle Apply inside `ApplyKeypad`: BeginApply/`openDoor`+`TryUnlockDoors` for newly solved Keypad3D; BeginApply/`onSuccess.Invoke` (peel: `ConnectedDoors.Unlock` + exitEvent/SetActive/dimPOI) + `TryUnlockDoors` for newly solved ROT_Keypad; Emit Keypad PuzzleState after for late joiners. `PEN_Codepad` → `ApplyCodepadConsequences` unchanged. Protocol 10 unchanged.
+
+### Before → After (player)
+- **Before:** Client solves a Keypad3D / ROT_Keypad. Peers see the door unlock; host still sees a sealed ConnectedDoors / door mesh and cannot pass.
+- **After:** Host ApplyKeypad runs the same openDoor / onSuccess / TryUnlockDoors consequences peers already got from PuzzleState — host door opens with the party.
+
+### Dig notes (Batch 24)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| ApplyKeypad thinner than ApplyKeypad3D | Dig E: ApplyKeypad flags-only (~455–477); Puzzle Apply openDoor+TryUnlockDoors (~157–171); host Emit/poll no self-Apply; ROT onSuccess peel → ConnectedDoors.Unlock | **SHIPPED** |
+
+Protocol stays **10** (no new ushort).
+
+## 0.5.18 — 2026-09-27
+
+Protocol **v10**. Batch 23 ship (Dig C): dead puppet hurtbox stays active on peers.
+
+### Fixed
+- **Dead puppet keeps living hurtbox GO** — Peer `Puppet` disables `EnemyController` so host-side `UpdateDataBlock` never runs locally. `ApplyEnemyState` wrote `state`/`HP`/`anim`/`staggerType` but never toggled `hurtbox` / `downedHitbox`. GameAssembly `UpdateDataBlock`: `state==dead` → `hurtbox.SetActive(false)`; `downedHitbox` only when `staggerType` in `{critical,fire}` and not dead. `Hurtbox.OnTriggerEnter` has **no** dead-state gate → peer walks into corpse and takes damage. Now `ApplyEnemyState` (full + off-chunk early path) mirrors those SetActive toggles gated on `!snap.Alive` / `State==dead` and wired `HurtState`. N-peer join dump (`RequestFullSend` → `Apply`) covered. **No** `KillSilent`. Protocol 10 unchanged (`Alive` already on wire).
+
+### Before → After (player)
+- **Before:** Host kills an enemy the peer is puppeting. Host corpse is inert; peer corpse still has an active hurtbox child → walking over it damages the peer.
+- **After:** Peer apply deactivates the living hurtbox when the snapshot says dead (and only enables `downedHitbox` for critical/fire while alive), matching host UpdateDataBlock — corpse is safe to walk over.
+
+### Dig notes (Batch 23)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| Dead puppet living hurtbox | Dig C: Puppet disables AI; Apply never toggles hurtbox/downedHitbox; UpdateDataBlock + Hurtbox.OnTriggerEnter no dead gate; Alive on wire unread for hitboxes | **SHIPPED** |
+
+Protocol stays **10** (reuse `EnemySnapshotNet.Alive` / `HurtState`; no new ushort).
+
+## Dig — Batch 22 (no 0.5.18) — 2026-09-27
+
+Protocol **v10** / tip `7501bc0` / **0.5.17**. Continuous dig for a **non-revoke** CAN-FIX + missing-coverage invent→prove. **No ship** — plateau.
+
+### Goal
+Stretch beyond the ConsumesKey / EnsureInBag strip family (0.5.13–0.5.17). Prefer host-local Apply* skips of a different class, durable story/elevator/join holes, or systems with **zero** Domain/Harmony.
+
+### Dig notes (Batch 22)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| Host-local InteractionRequest twins (Pickup/Storage/Drop/Puzzle/Door/Keypad/EventZone/MultiCondition/Cutscene/Dialoguer) | Keypad Host Prefix `return true` + poll Emit; EventZone/MultiCondition Host Postfix `BroadcastPresentation`; Cutscene Host Broadcast; Dialoguer Host Broadcast + Finalizers on all Start/Continue/End overloads; Storage Host `RequestSend`+Postfix blob; WorldPickup Host TryClaim+BroadcastTriggered+PartyKeyRing.Note | **OK** — no UseItem-class skip of Apply side-effects beyond 0.5.17 |
+| FreeDoorController / ConnectedDoorLockController ConsumesKey residual | OnEnable/Awake copy onto IL/CD only (Batch 21 OK); UnlockInteractiveLocks + CD path 0.5.14–0.5.16 | **OK** — not a new hole |
+| Elevator boarding N-peer (`NewElevator` / `ElevatorController`) | Dump fields `playerIsInElevator` / `going`; **0 scene/prefab hits** outside `path_id_map.json`; CentralElevator/CallButton/EXC already PuzzleType 23/24/46 | **OK** — dead/unused stubs; live elevators covered |
+| `PenroseAirlockNew.unlocked` missing PuzzleType | Only FMOD skip parent-walk in `FmodEmitterSync`; **0 level hits**; airlock remains PEN_Titles personal (wreck↔hole never SceneFollow) | **OK** — unused / intentional local |
+| `InventoryHelper` Add/Remove* — **no Harmony** | Cutscene UnityEvents in LOV/MED/RES/PEN + CutsceneManager JSON; **all 10 bindings** are `ArianePhoto` / `AlinaPhoto` only; AlinaPhoto asset `type=0` (AnItemType.None) — photos/docs stay flavor local (AGENTS + prior park) | **OK** — missing patch, but **no Key/Object softlock**; do not party-sync photos |
+| Wiki Key Items off PartyKeyRing | Ring = Key/Object only; no new missable unique proven not Key/Object | **OK** / prior |
+| HasPeer-without-apply beyond DroppedPickup/StorageTake | UseItem/door/Put party-benefit by design (0.5.12) | **OK** |
+| Dialoguer Finalizer gaps | All 4 Start + 2 Continue + End Finalizers present; End always `ClearFlavor` | **OK** |
+| MorseReceiver / EideticModule / DarknessInteraction / AirlockInside / DET_ServiceHatch | path_id_map or Pregame/UI only; no durable co-op softlock proven | **OK** — not Batch 22 ship |
+| SceneFollow RestorePlay / Adler EV / KillSilent / Mural late-join / Alarm latch / ending-flag merge / MeatBlocker non-Death / Falke empty-slot | parked list; no **new** hard proof | **park** |
+
+### Missing-coverage list for Batch 23+ (not proven softlock)
+- `InventoryHelper` string API — watch if future content passes Key/Object names (today photos only).
+- `NewElevator` / `ElevatorController` / `PenroseAirlockNew` — re-check if a DLC/patch reintroduces scene refs.
+- CutsceneHelper `HoleDrop` / `MoveElsterTo` / `Cheat` — presentation-local; soak if N=3–4 desync mid-cinematic without SceneFollow.
+- Residual ConsumesKey twins exhausted for FreeDoor/CDLC/IL/CD/UseItem host-local.
+
+### Plateau
+Revoke/strip class exhausted for known entry points. No thin non-revoke CAN-FIX with hard code proof this dig. Version stays **0.5.17**; protocol **10**. Dig peers (story/combat/join/Domains) may still surface Batch 23 candidates.
+
+## 0.5.17 — 2026-09-27
+
+Protocol **v10**. Continuous Batch 21 dig → ship (host-local UseItem ConsumesKey ring revoke).
+
+### Fixed
+- **Host-local UseItem / UseItemMulti ConsumesKey PartyKeyRing revoke** — `UseItemInteractionPatch.OnLocalUnlocked` only `SendInteractionRequest` when `NetGate.Client`. Host unlocks via native Dialoguer (`onMessageEvent` RemoveItem + `dialogueOver`) and returned after `_sent.Add` with **no** `ApplyUseItem` → no `UnlockInteractiveLocks` / `RevokeConsumed`. Puzzle poll still Emited `unlocked`, so N=3–4 peers kept ring + `EnsureInBag` bag ghosts / `InLocalBag` after the host spent a unique. Same hole for host `UseItemMulti.ready` (Prefix allows Host, never `ApplyUseItemMulti`). Now host calls `HostRevokeIfConsumed` / `HostRevokeUseItemMulti` (same ConsumesKey detect + CraftRevokeSentinel fan-out as 0.5.14–0.5.16). `ApplyUseItem` early-out on already-unlocked also `TryRevokeUseItemKey` (idempotent).
+
+### Before → After (player)
+- **Before:** Host uses AirlockKey (or other ConsumesKey unique) on a door/lock. Host bag loses the key (native RemoveItem), door unlocks for the party, but ring never drops → Peer2–Peer4 keep `EnsureInBag` mirrors and can still UseItem a consumed unique.
+- **After:** Host-local unlock runs the same `RevokeConsumed` path as client→host `ApplyUseItem`; sentinel strips bag mirrors on every peer (protocol 10, no new message).
+
+### Dig notes (Batch 21)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| Host UseItem ConsumesKey never RevokeConsumed | `OnLocalUnlocked`: `_sent.Add` then `if (!NetGate.Client) return` — no ApplyUseItem; `RemoveItem` unpatched; Puzzle Emit is unlocked-bool only | **SHIPPED** |
+| Host UseItemMulti.ready same hole | Prefix `if (NetGate.Host) return true` runs native ready; no consume loop | **SHIPPED** (Postfix) |
+| FreeDoorController.ConsumesKey | Awake @ RVA 0x899520 copies key→IL+0x38, ConsumesKey→IL+0x48; UnlockInteractiveLocks already reads IL | **OK** — setup helper |
+| ConnectedDoorLockController.ConsumesKey | OnEnable-only setup onto CD/ILS; CD covered 0.5.16 | **OK** |
+| ApplyUseItem already-unlocked skip revoke | `if (u.unlocked && !u.repeatable) return true` before UnlockInteractiveLocks — host-first then client request skipped revoke | **SHIPPED** (early-out TryRevoke) |
+| Remaining EnsureInBag outside craft/use/drop/CD | death / storage / Offer-after-floor covered prior | **OK** |
+| InteractionRequest apply-when-gone beyond DroppedPickup/StorageTake | UseItem/door/Put party-benefit (0.5.12) | **OK** |
+| Sticky Dialoguer / EventZone / airlock / Boss / DoorNative unload / join dump / Radio FMOD / wiki off-ring / Domains HasPeer-without-apply | no new hard proof this dig | **park** |
+| SceneFollow RestorePlay / Adler EV / KillSilent / Mural Blocker late-join / Alarm / ending merge / MeatBlocker / Falke empty-slot | parked list | **park** |
+
+Protocol stays **10** (reuse CraftRevokeSentinel / `RevokeConsumed`; no new ushort).
+
+## 0.5.16 — 2026-09-27
+
+Protocol **v10**. Continuous Batch 20 dig → ship (ConnectedDoors.ConsumesKey ring revoke).
+
+### Fixed
+- **ConnectedDoors.ConsumesKey PartyKeyRing revoke** — `UnlockInteractiveLocks` (host `ApplyUseItem` / `ApplyUseItemMulti`) now also reads parent `ConnectedDoors.ConsumesKey` + matching-key `InteractiveLockSingle` under that door. Native `ConnectedDoors.Unlock` (via `DoorNative.ApplyConnectedDoors`) only copies ConsumesKey onto AutoTraverseDoor ILS siblings and never `RemoveItem`; UseItem's GetComponentInParent/Children cannot see those siblings → door unlocked while ring + EnsureInBag bag ghosts stayed (same class as InteractiveLock.ConsumesKey 0.5.14). Existing `RevokeConsumed` / CraftRevokeSentinel fan-out strips mirrors (protocol 10, no new message).
+
+### Before → After (player)
+- **Before:** Host (or peer) uses a unique on a ConnectedDoors that ConsumesKey. Door unlocks for the party, but ring never drops → N=3–4 peers keep `EnsureInBag` bag ghosts / `InLocalBag` / can still UseItem a consumed unique.
+- **After:** Host ApplyUseItem detects CD/ILS ConsumesKey (key-enum matched), `RevokeConsumed` removes ring + strips bag mirrors on every peer.
+
+### Dig notes (Batch 20)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| ConnectedDoors.ConsumesKey missed by UnlockInteractiveLocks | GameAssembly `Unlock` @ RVA 0x2D24C0: `locked=false` + copy ConsumesKey/key onto ILS; no RemoveItem. Assets: 42 CD with ConsumesKey+key. ApplyUseItem TryUnlockDoors→Unlock then only IL/ILS on UseItem tree | **SHIPPED** |
+| Remaining EnsureInBag strip: death / storage TAKE / Offer-after-floor | Death skip-floor intentional; storage put/take party-share (0.5.15); floor TAKE Offer after Detach strip correct | **OK** |
+| InteractionRequest apply-when-gone beyond DroppedPickup/StorageTake | UseItem/door/Put party-benefit (0.5.12) | **OK** |
+| Sticky Dialoguer/EventZone/airlock beyond SceneFollow | no new durable field | **park** |
+| Boss/PuzzleState / DoorNative unload / elevators / Radio FMOD / join dump N=3–4 / wiki Key Items off ring / Domains HasPeer-without-apply | no new hard proof this dig | **park** |
+| SceneFollow RestorePlay / Adler EV / KillSilent / Mural Blocker / Alarm / ending merge / MeatBlocker / Falke empty-slot | parked list | **park** |
+
+Protocol stays **10** (reuse CraftRevokeSentinel fan-out).
+
+## 0.5.15 — 2026-09-27
+
+Protocol **v10**. Continuous Batch 19 dig → ship (G-drop EnsureInBag bag-mirror strip).
+
+### Fixed
+- **G-drop PartyKeyRing bag-mirror strip** — `DetachDroppedKey` (local G-drop, remote `DropItemSpawn`, join dump) now `Remove` + `StripBagMirrors` so peers who `EnsureInBag`-mirrored a unique clear their bag ghosts while the unique sits on the floor. Same class as craft/UseItem 0.5.14; fan-out is existing `DropItemSpawn` BroadcastRaw (no new message / protocol stays 10).
+
+### Before → After (player)
+- **Before:** Host (or peer) G-drops AirlockKey. Ring clears, floor prop appears, but Peer2/Peer3 who `EnsureInBag`-mirrored the key still hold bag ghosts → `InLocalBag` / UseItem while the key is claimable on the floor → dual-claim softlock. Claim by Peer2 then leaves Peer3 with a leftover ghost until craft/consume revoke.
+- **After:** Every peer that sees the drop spawn strips those bag mirrors. Floor prop is the sole holder until TAKE Notes the ring again.
+
+### Dig notes (Batch 19)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| G-drop unique while N=3–4 peers hold EnsureInBag mirrors | `DetachDroppedKey` only `PartyKeyRing.Remove` + Broadcast; snapshot `ApplyMessage` never `RemoveItem`; `InLocalBag` stays true on non-droppers (craft 0.5.14 comment: “Snapshot Broadcast alone leaves peer bag ghosts”) | **SHIPPED** |
+| Non-Key craft ingredients / multi-combine / offer-before-revoke | Batch 18 table | **OK** — unchanged |
+| Storage put unique while peers hold mirrors | Put does not `Remove` ring (box + ring both shared); UseItem via ring while boxed is intentional party share | **OK** — not dual floor claim |
+| Death-bag unique on ring | Already skip-floor + clear local mirror only; ring stays (0.5.8+) | **OK** |
+| InteractionRequest apply-when-gone beyond DroppedPickup/StorageTake | UseItem/door/Put party-benefit design (0.5.12) | **OK** |
+| Sticky gameState/dialoguer/SceneFollow new durable field | no new field found beyond parked SceneFollow RestorePlay | **park** |
+| Boss / PuzzleState / DoorNative / elevator / airlock / Radio FMOD / dump mid-handshake / wiki Key Items off ring / Domains HasPeer-without-apply | no new hard proof this dig | **park** |
+| SceneFollow RestorePlay / Adler EV / KillSilent / Mural Blocker late-join / Alarm / ending merge / MeatBlocker / Falke empty-slot | parked list | **park** |
+
+Protocol stays **10** (reuse drop spawn + `StripBagMirrors`; no new ushort sentinel).
+
+## 0.5.14 — 2026-09-27
+
+Protocol **v10**. Continuous Batch 18 dig → ship (craft/UseItem EnsureInBag mirror strip).
+
+### Fixed
+- **Craft / UseItem PartyKeyRing bag-mirror strip** — `CraftRevokeSentinel` now applies on **every** peer (not only host): `Remove` + `StripBagMirrors` clears `EnsureInBag` bag ghosts. Host fans the sentinel out to clients, then Broadcasts the ring snapshot. `ConsumeCraftIngredients` strips locally before send; `ConsumeKey` (UseItem ConsumesKey) uses new `RevokeConsumed` so the same fan-out covers non-sender peers who mirrored the unique into their bag.
+
+### Before → After (player)
+- **Before:** Host (or peer) combines Tape + BrokenKey → AirlockKey. Ring ingredients drop (0.5.13), but a peer who `EnsureInBag`-mirrored Tape/BrokenKey still holds them in inventory → `InLocalBag` ghosts → can still UseItem / softlock with consumed uniques. Same hole when UseItem ConsumesKey while another peer holds an EnsureInBag mirror.
+- **After:** Craft revoke and UseItem consume strip those bag mirrors on all peers via host-fanned `CraftRevokeSentinel` (protocol 10, same ushort[] prefix).
+
+### Dig notes (Batch 18)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| Host craft while peer holds ingredient in hand | `EnsureInBag` AddItem mirrors; 0.5.13 only `PartyKeyRing.Remove` + snapshot Broadcast; client `ApplyMessage` never `RemoveItem`; `InLocalBag` stays true | **SHIPPED** |
+| UseItem ConsumesKey + peer EnsureInBag mirror | `ConsumeKey` stripped host bag only; `consume:` ack only to sender; other peers kept mirrors | **SHIPPED** (same sentinel fan-out) |
+| Non-Key/Object craft ingredients | `CollectCraftRevoke` / `IsKeyOrObject` skip; ammo/tools never on ring | **OK** — not a ring hole |
+| Multi-step recipes | each `combine` Postfix fires revoke per step | **OK** |
+| Client craft race / Offer before Revoke | AddItem Postfix during combine Notes result before combine Postfix revoke; ReliableOrdered; host offer-then-revoke | **OK** |
+| Interaction orphans beyond DroppedPickup/StorageTake | UseItem/door unlock when peer-gone still party-benefit; StoragePut keeps item | **OK** — prior design |
+| Dialoguer late-join / Elevator / EventZone other-room / Boss ForceFull / death-bag vs ring / wiki missables / PathID | prior coverage or parked soak | **park** — no new hard proof |
+| SceneFollow RestorePlay / Adler EV / KillSilent / Mural Blocker late-join / Alarm / ending merge / MeatBlocker / Falke empty-slot | parked list | **park** — no new durable field |
+
+Protocol stays **10** (reuse `PartyKeyRing` `0xFFFF` revoke; host fan-out is the same message type).
+
 # Changelog
+
+## 0.5.13 — 2026-09-27
+
+Protocol **v10**. Continuous Batch 17 dig → ship (craft Remove-on-combine).
+
+### Fixed
+- **Craft PartyKeyRing Remove-on-combine** — successful `CombineRecipes.combine` now drops Key/Object **ingredients** from the party ring (host Broadcast; client sends `CraftRevokeSentinel`/`0xFFFF` + enums on existing `PartyKeyRing` message so host drops + Broadcast). `NoteCraftedKey` still Offers the **result** only. Example: Tape + BrokenKey → AirlockKey no longer leaves Tape/BrokenKey as phantom `hasItem` OR-true for peers.
+
+### Before → After (player)
+- **Before:** Host (or peer) combines Tape + BrokenKey into AirlockKey. Result appears on the party ring, but Tape and BrokenKey stay on the ring. Peers still `hasItem` those ghosts → EnsureInBag can re-materialize consumed uniques → softlock / dual-claim risk.
+- **After:** Successful combine removes Key/Object ingredients from the ring for everyone (host-authoritative Broadcast). Result still shared via Offer as before.
+
+### Dig notes (Batch 17)
+| Candidate | Prove | Verdict |
+|-----------|-------|---------|
+| Craft Remove-on-combine | `NoteCraftedKey` Offers result only; `PartyKeyRing.Remove` only ConsumeKey / death-bag / drop; no Harmony on `combine`; Tape/BrokenKey are Object (type 6), AirlockKey Key (5) — all `IsKeyOrObject` | **SHIPPED** |
+| SceneFollow RestorePlay | `SceneFollowService.Apply` → `AsyncLoader.LoadLevel` only; no `RestorePlay` / inventory close | **park** — soak mid-inventory freeze |
+| Adler EV doors | UnityEvent Open/CloseDoors only; not PuzzleState | **park** — no durable field for snap-on-join |
+| Enemy KillSilent / Mural Blocker late-join / Alarm / ending merge / MeatBlocker / Falke empty-slot | prior soak list | **park** — no new hard proof |
+
+Protocol stays **10** (reuse `PartyKeyRing` ushort[] with leading `0xFFFF` revoke; not a new message type).
+
+
+## 0.5.12 — 2026-09-26
+
+Protocol **v10**. Continuous Batch 12 dig (scenario-first).
+
+### Fixed
+- **DroppedPickup peer-gone** — host rejects `InteractionKind.DroppedPickup` when claimer `!HasPeer` (mirrors WorldPickup 0.5.11). Prevents `TryClaimDropped` despawn when grant/ack cannot land → floor prop stays for remaining peers.
+- **StorageTake peer-gone** — host rejects `StorageTake` when taker `!HasPeer` before `unboxItem`. Prevents shared-box stock loss with nobody receiving `grant:` ack. **StoragePut still applies** when putter is gone (boxing preserves the item for the party).
+
+### Dig report (scenarios → verdict) — parked Batch 13 unless proven CAN-fix
+
+| Rank | Scenario | Prove path | Verdict |
+|------|----------|------------|---------|
+| CRITICAL→FIXED | Peer claims dropped floor item then disconnects before host `TryClaimDropped` | `InteractionSyncService.HandleRequest` DroppedPickup + `DroppedItemNetHandlers.TryClaimDropped` despawn w/o remote AddItem | Was item loss; now reject |
+| CRITICAL→FIXED | Peer `StorageTake` then disconnect before `grant:` ack | `ApplyStorage` unbox + `InteractionNetHandlers.ApplyBagAck` | Was box loss; now reject |
+| — | Peer `StoragePut` then disconnect before `consume:` ack | same ApplyStorage put | **OK by design** — box keeps item; putter bag leaves session |
+| — | Peer UseItem/door unlock then gone | `ApplyUseItem` unlocks + PuzzleState snap | OK — party benefits; consume ack irrelevant |
+| MED | Host SceneFollow while client in `inventory`/`menu`/`paused` | `SceneFollowService.Apply` → `AsyncLoader.LoadLevel`; `DroppedItemRegistry` ClearInspectLocks skips `inventory` | Likely scene-unload clears UI; no proven sticky. Defer until dual-box freeze repro |
+| MED | Enemy puppet mid-death / mid-hurt | `EnemySyncService.ApplyEnemyState` snaps state+AnimHash+HP; no native `Die`/`deadFire` | Anim snap usually enough; no clear zombie without soak |
+| — | One peer triggers cutscene; other mid-walk other-room | `LocalInspect.InLocalRoom` skip Start/Invoke; `CutsceneCompleted` PuzzleState | Intentional; flags via Story dump |
+| — | One peer triggers EventZone; other other-room | `triggered=true` w/o Invoke; doors/puzzles via poll | Intentional (AGENTS) |
+| — | Peer opens book/note (local UI) while other needs that read for a gate | `SProgressPatches.IsInspectOrigin` → `InspectFlag` syncs SetBool/Int/… during book/eventScreen | Flags sync; UI stays local (AGENTS). Not softlock |
+| — | Books/notes as softlock vs PartyKeyRing | wiki Key Items (80) are Key/Object → `PartyKeyRing.IsKeyOrObject`; Death/Sacrifice already 0.5.8 | No new unique softlock proven |
+| — | Penrose wreck↔hole / cryo / airlock personal | `AirlockCinematic` + CryoSyncService | Covered; intentional personal loads |
+| — | Mid-dialogue + mid-cutscene + mid-pickup race | Dialoguer Finalizers; RememberStart/Skip; keyed `_awaitingDrops` | Covered 0.5.x |
+| — | Early cutscene flag breaks later co-op door | StoryCommit dump + PuzzleState; other-room skips presentation only | No clear hole without named flag |
+| — | N-peer (3–4) drop/storage double-claim | keyed `_awaitingDrops`; host serial HandleRequest | Covered |
+| — | Alarm / ending-flag merge / MeatBlocker tarot siblings / Harmony sticky / photo flavor / ladder-continuum-nowhere | prior parked | unchanged |
+| — | Weak Domains: camera/aim/prompts local; heal=personal Injector; SaveRoomEvent synced; elevators synced; FakeWall/Continuum/Gestalt not typed | DECOMPILE_COVERAGE intentional locals | no invent sync |
+
+### Parked (Batch 13)
+- Alarm `GlobalAlertStatus.triggerAlarm` / `EnemyManagerState` client latch-emit — MelonLoader `CallerCount(0)`.
+- Ending-flag peer merge — host-authoritative `END_Manager` by design.
+- MeatBlocker tarot siblings — only Death seals NG+ `KeyOfSacrifice`.
+- Throw-mid-Harmony sticky beyond Dialoguer Finalizers — Cutscene Remember* intentional; Keypad `_sent` clears on scene/StopNetwork.
+- Photo/document/eidetic unique story gates — flavor local; ArianePhotoCode / Microfiche PuzzleState.
+- Ladder / continuum / nowhere / fake wall co-op — traverse local (proxy SFX only).
+- SceneFollow mid-inventory/menu sticky — needs dual-box freeze repro before CloseInventory yank.
+- Enemy mid-death native Die/deadFire beyond AnimHash snap — needs soak zombie repro.
+
+### Batch 16 dig (no-ship) — 2026-09-26 — parked Batch 17
+
+Protocol **v10** / `e5d5754` / 0.5.12. PathID dig on AssetStudio `DelayedCutsceneEvent*` + `CutsceneCut*` UnityEvent `SetActive`/`set_enabled` vs AssetRipper scene YAML (same-file `!u!1 &PathID` names). Tool: `04_AssetRipper_UnityProject/AuxiliaryFiles/path_id_map.json` has **no GameObjects** (Mesh/MonoScript/Texture only) — resolve PathIDs via scene YAML fileIDs (AssetStudio `m_PathID` == ripper `&fid`).
+
+#### Primary — cutscene SetActive gates
+
+| Target | PathID / scene | Owner event | Co-op scenario | Verdict |
+|--------|----------------|-------------|----------------|---------|
+| `Door Connection (31)` (`ConnectedDoors`, unlocked) | 32250 / `MED_Medical` | `CutsceneCut@Enter` onCutStart `SetActive(false)`; `CutsceneManager@MED Intro` onCutsceneEnd `SetActive(true)` (`unskippable:1`, scenes=[Enter]) | Host plays MED intro; client other-room or late-join | **harmless** — cinematic temp disable then restore; default `m_IsActive=1`; skip cannot leave disabled; PuzzleState tracks `locked` not GO active (not needed here) |
+| `ButterflyBoxEvent` (`Interaction` + `EventScreenInteraction`) | 1226 / `DET_Detention` | `CutsceneCut@DET_Radio_1 Meat` + RadioStation* UnityEvents `SetActive(false)` | Peer misses meat cutscene; still sees butterfly EventScreen | **intentional / harmless** — EventScreen flavor local (`DECOMPILE_COVERAGE`); not a story collider gate |
+| Presentation-only (Ambience_*, LocalSpace, Photo, Type, Muzzle, BloodSpray, Chunk/Cell stream, Ellie_Repair, Crippled/Armored, IsaRemains, CombatMusic, ImposterFog `set_enabled`, …) | 40/47 named cutscene calls | DelayedCutsceneEvent / CutsceneCut | Visual/audio/fog | **harmless** |
+
+#### Primary — similar UnityEvent SetActive (non-cutscene) gate-like
+
+| Target | Owner | Sync today | Verdict |
+|--------|-------|------------|---------|
+| `Blocker Entry` (BoxCollider L22) | `MuralLogic` / `ROT_Mural.onSolved` → `SetActive(false)` | `ApplyMural` sets `finished` + `useRing()` only when `MutateWorld`; FullRefresh skips `useRing` | **soak** — live peers get blocker off via `useRing`; late-join may keep collider until soak proves softlock. Do **not** invent GO-active PuzzleState without repro |
+| `E Door Spot Blocked` / `E Door Spot` | `PEN_Reaktor` / Reaktor Logic | `SnapReaktor` unlocks `doorLock` ConnectedDoors + plates; spots are presentation SetActive | **harmless / covered** — real gate is `doorLock` |
+| `DET_DoorS`, `DoorLockEvent`, `Event`/`EventInter` (TreeLock/Elemental/Keypad) | Memo / Interaction / puzzle logics | PuzzleType snaps + door flags | **intentional** — already PuzzleState |
+
+No cutscene SetActive → MeatBlocker / ladder / elevator / story seal **without** existing PuzzleState path proven. No CAN-FIX softlock this dig.
+
+#### Secondary (document only)
+
+**Craft `PartyKeyRing.Remove` gap**
+- `NoteCraftedKey` (`ItemPickupPatches`) notes craft **result** on `InventoryManager.AddItem` / overload Postfix (`OfferToHost` if Key/Object).
+- `CombineRecipes.combine` has **no** Harmony patch; ingredients (e.g. Tape + BrokenKey → AirlockKey) leave the bag via native `RemoveItem` but **never** `PartyKeyRing.Remove`.
+- `PartyKeyRing.Remove` call sites only: `InteractionSyncService.ConsumeKey` (UseItem consume), `NetworkDamageSystem` (death-bag), `DroppedItemNetHandlers.DetachDroppedKey` / `ConsumeDropped`.
+- Phantom ring entries for consumed ingredients are stale `hasItem` OR-true — soak before Remove-on-combine.
+
+**Wiki missable unique vs ring**
+- Ring rule: `AnItemType.Key` / `Object` only (`IsKeyOrObject`).
+- Wiki: Gold Key (cassette cutscene AddItem → NoteCraftedKey), elemental keys, Blank Key, ending Love/Eternity/Sacrifice, KeyOfSacrifice (0.5.8 hold). Docs/photos/eidetic remain flavor local (prior parked).
+- No new missable unique **not** Key/Object proven as softlock.
+
+**HasPeer-class InteractionKind orphans**
+- Already gated (0.5.11–0.5.12): WorldPickup claim, `DroppedPickup`, `StorageTake`.
+- `StoragePut` — apply when gone by design (box keeps item).
+- `UseItem` / `UseItemMulti` — apply when gone unlocks world for party; reject would softlock door. Not orphan-loss class.
+- Presentation kinds (Cutscene*/Dialogue*/Book*/EventScreen*/Gunshot/InspectFlag) + puzzle emits (Keypad/MultiCondition/EventZone) — no shared-stock orphan pattern.
+- **No new HasPeer-class CAN-FIX** → no 0.5.13 ship.
+
+#### Parked (Batch 17)
+- Adler EV / SceneFollow RestorePlay / KillSilent — prior soak gates (mission).
+- Craft `PartyKeyRing.Remove` on `CombineRecipes.combine` ingredients — document-only until soak.
+- `ROT_Mural` FullRefresh `Blocker Entry` GO active (useRing skipped) — soak late-join wall.
+- SceneFollow mid-inventory / Alarm / MeatBlocker tarot siblings / photo flavor / ladder-continuum — unchanged prior park.
+- Cutscene GO-active inventory (Door Connection pattern) only if dual-box leaves a link permanently disabled.
+
+Sources: `03_AssetStudio_export/MonoBehaviour/DelayedCutsceneEvent*.json`, `CutsceneCut*.json`; `04_AssetRipper_UnityProject/ExportedProject/Assets/Scenes/Levels/*.unity`; `path_id_map.json`; `Domains/Puzzles/Machines/ChapterMachineSyncService.cs` ApplyMural/SnapReaktor; `Domains/Story/InteractionSyncService.cs`; `Domains/Inventory/PartyKeyRing.cs`; `Domains/Pickups/Patches/ItemPickupPatches.cs` NoteCraftedKey; signalis.fandom / wiki.gg Gold Key / Key Items.
+
+## 0.5.11 — 2026-09-26
+
+Protocol **v10**. Continuous Batch 11 dig.
+
+### Fixed
+- **Kolibri / ADLR Hold Postfix** — client `Update` recomputes intensity/progress/frequency from local radio after Prefix; Postfix re-applies the last host PuzzleState snap so phase cannot drift (0.5.9 Prefix alone lost the race).
+- **Falke presentation mid-apply** — `SnapFalkePresentation` takes stage/corrupt from the BossState snap (not re-read fields), reclamps stage, rewrites field mirror, and calls `SetBodySpearStates` so stage regress / corrupt toggle cannot leave arenas/shields/meshes/BodySpears on a stale combo.
+- **World pickup peer-gone mid-claim** — host ignores claims from disconnected peers; non-Key/Object orphan claims release + restore prop + broadcast untriggered on `NotePeerGone` (grant softlock when claimer drops after TryClaimOnHost). Client `ApplyHide` now restores on `Triggered=false` (was hide-only).
+
+### Parked (Batch 12)
+- Alarm `GlobalAlertStatus.triggerAlarm` / `EnemyManagerState` client latch-emit — MelonLoader `CallerCount(0)`, no UnityEvent bindings; alert stays host-poll only.
+- Ending-flag peer merge (client `healedTime`/`doors`/`memoryTime` → host) — host-authoritative `END_Manager` by design; no safe merge without new wire.
+- MeatBlocker tarot siblings (Lovers/Moon/Sun/Star/Tower) — assets `required=1/2/6`; only Death seals NG+ `KeyOfSacrifice` (wiki Artifact); no parallel softlock pair proven.
+- Throw-mid-Harmony sticky beyond Dialoguer Finalizers — Cutscene `RememberStart`/`RememberSkip` intentional; Keypad `_sent` clears on scene/StopNetwork via `EventZonePatch`.
+- Photo/document/eidetic unique story gates — flavor local by design; `ArianePhotoCode` / Microfiche already PuzzleState.
+- Ladder / continuum / nowhere / fake wall co-op — traverse local by design (proxy SFX only).
+- Domains code smell (double Broadcast / WorldId 0 dumps) — PartyKeyRing Broadcast is if/else once; KeyGrid/Ariane/RadioManager WorldId 0 are intentional statics.
+
+## 0.5.10 — 2026-09-26
+
+Protocol **v10**. Continuous Batch 10 dig.
+
+### Fixed
+- **Falke arena / invuln / corrupt mesh** — client `ApplyEND` now snaps `Arenas[i]` (`i == stage`), `HeadSpears[i]` (`i < stage`), `FloatShields` (`stage >= 3`, wiki phase 4), `FloatShields2` (`stage >= 5`, phase 6), and `CorruptedMesh`/`NormalMesh` from synced `corrupt`. Decompile: `END_Boss.Start`, `<Stabbed>d__129.MoveNext` (`stage++` then presentation), `Update` mesh gate. Stage was already on BossState wire since 0.5.x; disabled AI meant arenas/shields never followed.
+- **Boss AI-disable coroutines** — `DisableLocalAI` now `StopAllCoroutines` before `enabled = false` on END/Chimera/Mynah so mid-fight `Bossfight`/`Stabbed`/`Airstrike` cannot keep running on the client (Kolibri/Adler stay enabled + Hold patches).
+
+### Parked (Batch 11)
+- Alarm `GlobalAlertStatus.triggerAlarm` / `EnemyManagerState` client latch-emit — MelonLoader `CallerCount(0)`, no UnityEvent bindings; alert stays host-poll only.
+- Ending-flag peer merge (client `healedTime`/`doors`/`memoryTime` → host) — host-authoritative `END_Manager` by design; no safe merge without new wire.
+- MeatBlocker tarot siblings (Lovers/Moon/Sun/Star/Tower) — assets `required=1/2/6`; only Death seals NG+ `KeyOfSacrifice` (wiki Artifact); no parallel softlock pair proven.
+- Throw-mid-Harmony sticky beyond Dialoguer Finalizers — Cutscene `RememberStart`/`RememberSkip` intentional; Keypad `_sent` clears on scene/StopNetwork via `EventZonePatch`.
+- Net reconnect mid-puzzle/storage/dialogue — ForceFull + sticky Reset chain covered 0.5.1–0.5.9; no new hole proven this dig.
+- Photo/document/eidetic unique story gates — flavor local by design; `ArianePhotoCode` / Microfiche already PuzzleState.
+- Ladder / continuum / nowhere / fake wall co-op — traverse local by design (proxy SFX only).
+- Domains code smell (double Broadcast / WorldId 0 dumps) — PartyKeyRing Broadcast is if/else once; KeyGrid/Ariane/RadioManager WorldId 0 are intentional statics.
+
+## 0.5.9 — 2026-09-26
+
+Protocol **v10**. Continuous Batch 9 dig.
+
+### Fixed
+- **Kolibri / ADLR host-auth** — client `KolibriManager`/`BOS_Adler` Update no longer clobbers host PuzzleState intensity/progress/frequency/dead (glitch presentation still runs). END/Chimera/Mynah remain fully AI-disabled.
+- **World pickup bag-full softlock** — no Prefix reservation / claim wire when the 6-slot bag has no room for non-Key/Object; host Prefix reservation released if native nospace/cancel; Postfix/NoteTaken gate Broadcast on successful claim. Key/Object still claim onto the party ring when full.
+
+### Parked (Batch 10)
+- Alarm `GlobalAlertStatus.triggerAlarm` / `EnemyManagerState` client latch-emit — MelonLoader `CallerCount(0)`, no UnityEvent `m_MethodName: triggerAlarm` in exported scenes/prefabs; alert stays host-poll only (unlike radio `moduleInstalled`).
+- Ending-flag peer merge (client `healedTime`/`doors`/`memoryTime` → host) — host-authoritative END_Manager by design; no safe merge without new wire.
+- MeatBlocker tarot siblings (Lovers/Moon/Sun/Star/Tower) — only Death seals NG+ KeyOfSacrifice (wiki); others required=1/2/6 with no parallel Artifact softlock proven.
+- Falke arena-door / invuln beyond 0.5.7 join-transient BossState cache; ammo/heal/plate/thermite remain personal inventory; corpse loot no vanilla drop path; elevator/airlock/continuum no new hole beyond current snaps.
+
+## 0.5.8 — 2026-09-26
+
+Protocol **v10**. Continuous Batch 8 dig.
+
+### Fixed
+- **Death tarot / Key of Sacrifice softlock (NG+ Artifact)** — scene `ROT_MeatBlocker` ID `Death` seals the bookstore wing that holds `KeyOfSacrifice` (under `NGP_only`). Hold TarotDeath world take/claim + Death MeatBlocker emit/apply while a live unclaimed KeyOfSacrifice still exists; first playthrough (NGP off) unchanged. Wiki: get Sacrifice before Death.
+- **MeatBlocker snap** — seal direction now activates Blockers / deactivates UnBlockers / locks ConnectedDoors (was unblock-only).
+- **Host drop claim** — removed `_awaitingDrops.Clear()` on host-local FinishDroppedNative (host never stages awaiting-ack; Clear was a latent wipe).
+
+### Parked (Batch 9)
+- Alarm `GlobalAlertStatus` / `EnemyManagerState` client latch-emit — still host-only; no proven client raise path (unlike radio moduleInstalled).
+- Broader adversarial soak: chapter load / Penrose / Falke / Kolibri / ADLR / inventory overflow / ammo-heal / corpse / elevator-airlock / ending-flag merge / N-peer late-join boss — no new clear CAN-fix beyond 0.5.7 transient cache.
+
 
 ## 0.5.1 — 2026-09-20
 

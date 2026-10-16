@@ -9,17 +9,36 @@ namespace SyncRADation.Sync
 {
     public static class WorldLookup
     {
+        // persistent: scene-keyed cache, invalidated on every scene load (ModRuntime.OnSceneChanged) and scene name change
         static string _sceneName = "";
+        // persistent: scene-keyed cache (see _sceneName)
         static readonly Dictionary<Type, UnityEngine.Object[]> _allByType
             = new Dictionary<Type, UnityEngine.Object[]>();
+        // persistent: scene-keyed cache (see _sceneName)
         static readonly Dictionary<Type, Dictionary<ulong, Component>> _idByType
             = new Dictionary<Type, Dictionary<ulong, Component>>();
+
+        // Types whose cache was dropped mid-scene (runtime-instantiated components): the next All<T> walks the
+        // scene for that one type instead of re-reading the shared WorldScan buckets, which predate the spawn.
+        // persistent: scene-keyed cache (see _sceneName)
+        static readonly HashSet<Type> _directRescan = new HashSet<Type>();
 
         public static void Invalidate()
         {
             _allByType.Clear();
             _idByType.Clear();
+            _directRescan.Clear();
+            WorldScan.Invalidate();
             _sceneName = "";
+        }
+
+        /// <summary>Drop the cached scan of one type (a component was instantiated after the scene scan).</summary>
+        public static void Invalidate<T>() where T : UnityEngine.Object
+        {
+            Type t = typeof(T);
+            _allByType.Remove(t);
+            _idByType.Remove(t);
+            _directRescan.Add(t);
         }
 
         static void EnsureScene()
@@ -30,6 +49,8 @@ namespace SyncRADation.Sync
             if (name == _sceneName) return;
             _allByType.Clear();
             _idByType.Clear();
+            _directRescan.Clear();
+            WorldScan.Invalidate();
             _sceneName = name;
         }
 
@@ -41,11 +62,12 @@ namespace SyncRADation.Sync
             if (_allByType.TryGetValue(t, out cached))
                 return (T[])cached;
 
-            T[] found = ScanAll<T>();
+            T[] found = (!_directRescan.Contains(t) && WorldScan.Supports<T>()) ? WorldScan.All<T>() : ScanAll<T>();
             _allByType[t] = found ?? Array.Empty<T>();
             return (T[])_allByType[t];
         }
 
+        /// <summary>Direct per-type scene walk (non-MonoBehaviour types and post-spawn rescans).</summary>
         static T[] ScanAll<T>() where T : UnityEngine.Object
         {
             try { return UnityEngine.Object.FindObjectsOfType<T>(true); }
@@ -98,12 +120,85 @@ namespace SyncRADation.Sync
                     var c = all[i];
                     if (c == null) continue;
                     ulong id = WorldId.FromGameObject(c.gameObject);
-                    if (id == 0 || map.ContainsKey(id)) continue;
+                    if (id == 0) continue;
+                    Component existing;
+                    if (map.TryGetValue(id, out existing) && existing != null)
+                    {
+                        NoteDuplicate(id, typeof(T).Name, c, existing);
+                        if (!PreferOver(c, existing)) continue;
+                    }
                     map[id] = c;
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[WorldLookup] BuildIdMap<" + typeof(T).Name + "> failed: " + ex.Message);
+            }
             return map;
+        }
+
+        // persistent: warn-once set (bounded at 1024)
+        static readonly HashSet<ulong> _loggedDuplicateIds = new HashSet<ulong>();
+
+        /// <summary>Log a WorldId collision once per id (Rebuild runs several times per scene load).</summary>
+        public static void NoteDuplicate(ulong id, string what, Component candidate, Component existing)
+        {
+            if (_loggedDuplicateIds.Count > 1024) _loggedDuplicateIds.Clear();
+            if (!_loggedDuplicateIds.Add(id)) return;
+            string a = "?", b = "?";
+            try { a = WorldId.GetHierarchyPath(candidate.transform); } catch (Exception e) { Guard.Swallow(e); }
+            try { b = WorldId.GetHierarchyPath(existing.transform); } catch (Exception e) { Guard.Swallow(e); }
+            ModRuntime.Log?.Warning("[WorldLookup] duplicate WorldId " + id.ToString("X16") + " (" + what
+                + "): '" + a + "' vs '" + b + "' - keeping the stable-order winner");
+        }
+
+        // PreferOver runs per registration (several rebuilds per scene load): one tie line per path.
+        // persistent: warn-once set
+        static readonly HashSet<string> _loggedTies = new HashSet<string>();
+
+        /// <summary>
+        /// Deterministic duplicate resolution so host and clients bind the same object no matter what
+        /// order FindObjectsOfType returns: lower hierarchy path, then lower component index, then lower position.
+        /// </summary>
+        public static bool PreferOver(Component candidate, Component current)
+        {
+            if (candidate == null) return false;
+            if (current == null) return true;
+            try
+            {
+                int c = string.CompareOrdinal(WorldId.GetHierarchyPath(candidate.transform),
+                    WorldId.GetHierarchyPath(current.transform));
+                if (c != 0) return c < 0;
+
+                if (candidate.gameObject == current.gameObject)
+                {
+                    var all = candidate.GetComponents<Component>(); // serialized order is identical on every peer
+                    int ci = -1, ei = -1;
+                    for (int i = 0; i < all.Length; i++)
+                    {
+                        if (all[i] == candidate) ci = i;
+                        if (all[i] == current) ei = i;
+                    }
+                    if (ci != ei) return ci >= 0 && (ei < 0 || ci < ei);
+                }
+
+                string sa = candidate.gameObject.scene.name ?? "";
+                string sb = current.gameObject.scene.name ?? "";
+                c = string.CompareOrdinal(sa, sb);
+                if (c != 0) return c < 0;
+
+                // Same scene, path and component slot: nothing stable separates them (position can differ per
+                // peer once things move), so keep the incumbent and say so.
+                string tiePath = WorldId.GetHierarchyPath(candidate.transform);
+                if (_loggedTies.Count > 256) _loggedTies.Clear();
+                if (_loggedTies.Add(tiePath))
+                    PlaytestLog.Warn("World", "PreferOver tie on '" + tiePath + "' - keeping the first registered");
+            }
+            catch (Exception ex)
+            {
+                ModRuntime.Log?.Warning("[WorldLookup] PreferOver failed: " + ex.Message);
+            }
+            return false;
         }
     }
 }

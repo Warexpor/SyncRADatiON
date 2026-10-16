@@ -1,8 +1,8 @@
-# Domains — where to fix what (0.5.1)
+# Domains — where to fix what
 
 Composed `*SyncService` / `*NetHandlers` / `Patches/`. Namespaces stay `SyncRADation.Networking` / `.Patches` / `.Players` / `.ItemSystem`.
 
-Authority + reverse-check: repo root `AGENTS.md`. Protocol **10** wire in `Networking/Messages/NetMessages.cs` (+ PluginInfo).
+Authority: `docs/SYNC.md`; reverse-check rule: repo root `AGENTS.md`. Wire in `Networking/Messages/NetMessages.cs` + `PartyMessages.cs` + `NetWire.cs` (schema hash). Version/protocol constants: `Bootstrap/PluginInfo.cs` (version is single-sourced from there).
 
 ## Symptom → path
 
@@ -19,27 +19,52 @@ Authority + reverse-check: repo root `AGENTS.md`. Protocol **10** wire in `Netwo
 | Chapter machines (card writer, shutters, magpie, …) | `Puzzles/Machines/ChapterMachineSyncService` | |
 | Residency / key grid / photo / safe / drawer (64–72) | `Puzzles/Residency/ResidencyPuzzleSyncService` | |
 | GunCase / AraNest / RifleQuest / Microfiche (73–76) | `Puzzles/ChapterExtras/ChapterExtraPuzzleSyncService` | Protocol 10 |
-| Chapter extras GunCase / AraNest / RifleQuest / Microfiche (73–76) | `Puzzles/ChapterExtras/ChapterExtraPuzzleSyncService` | Protocol 10 |
+| World-object puzzles (ROT_DiskManager, DET_WallCreature, MapReveal, MEM_ChecklistLogic; 78–81) | `Puzzles/ChapterExtras/WorldObjectPuzzleSyncService` | Protocol 13; `Seq`/`Mask` cell merge |
+| Adding / changing a puzzle type (reader, applier, scan, emit/durable/merge/progressed rules) | `Puzzles/PuzzleSpecs.cs` (one `PuzzleTypeSpec` row per type) | `PuzzleSpecTests` fails if an enum value has no row; merge logic in `Puzzles/PuzzleMerge` |
+| Solved-edge rule (live rising edge vs join dump / held re-snap) | `Puzzles/PuzzleEdge` (`Solved`, `InRoom`, `ReplayDurable`) | Live onSolved only for a player in that room; everyone else gets the durable form |
+| MultiCondition / SaveRoom / CutsceneCompleted / Dialogue playedOnce state | `Puzzles/StoryFlags/StoryFlagPuzzleSyncService` | On the PuzzleState poll |
 | Storage **lid** open | `Puzzles/Storage/StorageLidSyncService` | Host poll + client emit |
-| Storage **box items** blob | `Inventory/StorageBoxSyncService` | Shared box |
-| UseItem world unlock / airlock card | `Puzzles/UseItem/` + `Inventory/Patches/UseItem*` | Party ring + PerPlayerUse |
-| EventZone fire (in-room) | `Story/Patches/EventZonePatches` + `Puzzles/EventZone/` | Other-room must not Invoke |
-| Cutscene / MultiCondition / Dialoguer | `Story/` (`StorySyncService`, `InteractionSyncService`, patches) | Host presentation |
+| Storage **box items** (put/take, blob) | `Inventory/StorageService` (host put/take, `StorageTxn`, acks) + `Inventory/StorageBoxSyncService` (blob) + `Inventory/Patches/StorageBoxPatches` | Shared box; bag/box walks in `Inventory/ItemBag` |
+| UseItem world unlock / airlock card | `Puzzles/UseItem/` + `Inventory/Patches/UseItem*` | Holder's bag + PerPlayerUse |
+| EventZone fire (in-room) | `Story/Patches/EventZonePatches` + `Puzzles/EventZone/` | Other-room must not Invoke: the fire carries the author's room (`StoryWire.WithRoom`, `LocalInspect.InAuthorRoom`) |
+| Cutscene start / skip / proceed | `Story/CutsceneSync` + `Story/CutsceneStamps` (4 s start, 30 s local skip windows) + `Story/Patches/CutscenePatches` | Start: host presentation, played only in the author's room (`LocalInspect.LocalRoomKey`); `CutsceneDone` settles a host that did not watch; skip / proceed per player; scene-ending cutscene loads wait (`Scene/SceneFollowService` hold / queue); wreck/hole split runs locally |
+| Story flags / commits (SProgress) / ending | `Story/StorySyncService` (+ `.End`, `.Presentation`) + `Story/ProgressSlot` + `Story/StorySlotPlan` | Incremental / full / authoritative; per-player keys stay local |
+| MultiCondition / UseItem story side / gunshot | `Story/InteractionSyncService` (+ `.UseItem`) + `Story/Patches/MultiConditionPatches` | |
+| Dialoguer (local only) | `Story/Patches/StoryPatches` (`DialoguerGate`) | Every dialogue line is local flavor; gates only bind key-ring names |
 | Airlock / PEN_Titles / wreck↔hole | `Scene/AirlockCinematic` + `Scene/Patches/` | Never SceneFollow wreck↔hole |
 | Scene follow / F7 chapter | `Scene/SceneFollowService` + `Scene/Patches/SceneLoadPatches` | Host load |
-| World authored pickup claim | `Pickups/WorldPickupSyncService` + `WorldPickupNetHandlers` | Host claim/grant; WorldId |
-| Player-dropped prop (G / TAKE) | `Pickups/DroppedItem*` (Registry, Spawner, NetHandlers; Manager = call-site façade) | Peer spawn + host claim |
-| Party key ring names / hasItem | `Inventory/PartyKeyRing` + `Inventory/Patches/PartyKeyRingPatches` | Key/Object only |
+| World authored pickup claim | `Pickups/WorldPickupSyncService` (one `Take` record per in-flight take) + `WorldPickupNetHandlers` + `Pickups/Patches/ItemPickupPatches` | Host claim/grant; partial take releases the claim with the remainder (`Count` / `Remaining`) |
+| Player-dropped prop (G / TAKE) | `Pickups/DroppedItem*` (Registry, Spawner, NetHandlers) + `Pickups/Patches/DroppedTakePatches` | Peer spawn + host claim |
+| Bag / ring wrong after PEN_Hole → Sierpinski | `Inventory/ChapterWipe` | Mirrors the native PEN_CodeRoomEnd bag clear on every peer, empties the ring |
+| Party key ring record / item names / getCount bag instance | `Inventory/PartyKeyRing` + `Inventory/Patches/PartyKeyRingPatches` | Key/Object only; records, never grants (keys are personal); mapping off inside `SaveManager.Save` and `ItemPickup.release` |
+| Client enemy actions (Stomp, Kill/KillSilent, Knockback, GetPushed, Burndown, WakeUp) | `Enemies/Patches/EnemyActionPatches` + `Enemies/EnemyNetHandlers` | `EnemyAction` (63); host sim applies |
 | Enemies / alert bits | `Enemies/` (+ `Patches/EnemySpawnerPatches`) | WorldId; wake sleeping chunks; **client never EnemySpawner.FixedUpdate**; host adopts `_Child` → `SR_Spawn_*` + `EnemySpawn` |
-| Bosses (END/Chimera/Mynah/Kolibri/Adler) | `Bosses/` | Kolibri/Adler also on PuzzleState wire |
-| Avatar / bones / weapons | `Players/` + `AvatarNetHandlers` | Peer-authored |
+| Bosses (END/Chimera/Mynah/Kolibri/Adler) | `Bosses/` (+ `Patches/KolibriAdlerAuthPatches`) | Kolibri/Adler Prefix+Postfix Hold; Falke snap stage/corrupt + SetBodySpearStates; HaltBossController StopAllCoroutines |
+| Client boss hits (Falke Stab / TakeSpear, boss HP, Chimera rifle shot) | `Bosses/Patches/BossActionPatches` + `Bosses/BossNetHandlers` | `BossHit` (62) |
+| Avatar / bones / weapons | `Players/` (`PlayerProxyBuilder` → `ProxyRig`, `ProxyPose` bones+hips, `ProxyMotion` root, `SnapshotRing`, `SnapClock`) + `AvatarNetHandlers` + `SourceAnimReader` | Peer-authored; the proxy has no Animator; per-sender scene check |
+| Other players drawn as Ariane (F2) | `Players/AvatarSkins` (templates, harvest, main-menu preload) + `Players/ProxySkin` (bone copy, mounts on her hands) | local only |
+| Party vitals: downed / revive / wipe, party-life state | `Players/PartyVitals` + `Combat/PartyNetHandlers` + `Combat/Patches/DeathPatches` | `PartyLife`/`PartyRoom` (40, 42); `DownedRespawnDelay` |
+| Party save token / key-ring + bag snapshots (host_saves.txt, bag_snapshots.txt) | `Session/PartySaveService` + `Combat/PartyNetHandlers` | `PartySave` (41); `SaveManager.Save/Load` hooks |
+| Client → player/enemy damage checks (hurtbox / melee vs proxies) | `Combat/ClientDamageService` | Host-side; skips downed peers; friendly fire opt-in |
 | Friendly fire / death bag | `Combat/CombatNetHandlers` + `Combat/Patches` | Opt-in FF |
 | FMOD world emitters | `Audio/` | Skip Music/Cutscenes/Ambience beds |
 | Gunshot wake | `Combat/Patches/GunshotWakePatch` | Host wakes near shot |
+| Swallowed exceptions / `[Guard]` log lines | `Sync/Guard.cs` | Throttled per tag (first hit, then one line / 30 s with count) |
+| Party wipe host reload (scene + save reload, watchdog, peers follow) | `Session/HostReload` + `Combat/PartyNetHandlers` | `PartyLife.Scene`; watchdog 45 s |
+| Boot patch audit / reflected-member table (`[Harmony] audit:` line, F2 status) | `Bootstrap/PatchAudit` | Add every new `GetField/GetMethod/GetProperty/Find("...")` literal to its table |
+| Game build hash in handshake (other game build → rejected) | `Bootstrap/GameBuild` + `Networking/LanNetworkManager` | `Handshake.GameBuildHash`/`GameBuild` |
+| Session state that must not leak between scenes / sessions / wipe reloads | `Sync/SessionReset` (scopes `Scene` / `Session` / `Connection`; `RunScene`, `RunAll("stop"/"wipe")`) + `Bootstrap/SessionResetRegistrations` | Register a clear, or `// persistent: <reason>` directly above the field; `StaticStateGuardTests` enforces it |
+| Sync toggles agreed with the host (puzzles, pickups, vitals, FF, client cheats) | `Config/ModConfig` (`*Enabled`, `ClientCheatsAllowed`) | `PlayerRoster.HostFlags` |
+| Developer traces on/off | `Config/ModConfig.DiagnosticsOn` (`Diagnostics` pref) | Gated inside each trace class |
+| Client quit-to-menu / host→MainMenu ends the session | `Networking/LanNetworkManager.SessionEnd` (`EndSession`) | Uses `RejectPeer` / `RequestStop` / `_stopReason` |
+| Shared-RVA (folded) patch firing for a foreign `this` | `Sync/Il2CppRealType` (`Is<T>`) + `docs/RVA_FOLDING.md` | Guard first statement; `RvaFoldingTests` pins the list |
+| `[Hitch] phase=` / stall lines (per-phase ms, frame stall breakdown; Diagnostics only) | `Sync/HitchTrace` (`Begin`/`End`/`FrameBegin`) + `Sync/HarmonyPhaseTiming` | Phase markers in `ModRuntime.Update`/`LateUpdate`; `HarmonyPhaseTiming.Install` wraps every patched Update/LateUpdate/FixedUpdate when Diagnostics is on |
+| Scene scan cost / `[World] scan` / `WorldId divergence` | `Sync/WorldScan` (one bucketed scene walk, warms the WorldId cache) + `Sync/WorldId` (scene cache: `FromGameObject` returns the load-time id; `Pin` / `Forget`) + `Sync/WorldLookup` + `Sync/WorldRegistry` | Ids are pinned at scene load, so a destroyed sibling never shifts them; `Invalidate<T>` forces a direct rescan |
+| Story wire helpers (dirty-key commit entries, caps) | `Networking/Messages/StoryWire` | `StoryWireTests` |
 | Handshake / roster | `Networking/LanNetworkManager` + `Dispatch/` | Peer map |
-| Join / resync dump | `Session/SessionNetHandlers` | `_unicastPlayerId` via BeginUnicast/EndUnicast |
+| Join / resync dump | `Session/SessionNetHandlers` + `Sync/DumpFlush` + `Bootstrap/DumpFlushRegistrations` | Every domain's `FlushDiffNow` runs first (pending diffs reach everyone), then BeginUnicast/EndUnicast; inside `UnicastActive` full sends never record "already sent" |
 | SceneHello / SceneFollow | `Scene/SceneNetHandlers` + `SceneFollowService` | |
-| PartyKeyRing / Storage blob wire | `Inventory/InventoryNetHandlers` | |
+| PartyKeyRing / Storage blob wire | `Inventory/InventoryNetHandlers` (+ `Inventory/StorageService` acks) | |
 | PuzzleState send/apply | `Puzzles/PuzzleNetHandlers` + coordinator | |
 
 ## Layers (do not conflate)
@@ -48,11 +73,15 @@ Authority + reverse-check: repo root `AGENTS.md`. Protocol **10** wire in `Netwo
 2. **SyncService** — scan/tick/apply world state (often WorldId-keyed).
 3. **Patches** — Harmony emit/block; apply usually goes through SyncService/NetHandlers.
 
-**Dropped items:** `DroppedItemManager` = legacy static façade → Registry (lookup/lifecycle) + Spawner (clone/floor) + NetHandlers (drop/claim wire). New code should call Registry/Spawner/NetHandlers directly when practical.
+**Dropped items:** Registry (lookup/lifecycle) + Spawner (clone/floor) + NetHandlers (drop/claim wire), called directly.
 
-**Puzzles:** `PuzzleSyncService` = coordinator (scan, tick, held, `_mutateWorld`, host relay). Domain SyncServices own family TryRead/Apply/snap. Call sites may still use `PuzzleSyncService.Snap*` forwards.
+**Role checks:** domain code asks `Sync/NetGate` (`Host`/`Client`/`Party`/`Live` need the handshake; `HostRole`/`ClientRole`/`Active`/`WorldOwner` are the raw transport role for packet handlers and teardown). Only `LanNetworkManager` reads `_role` itself.
+
+**Sending:** call the owning handler (`net.DoorHandlers.SendDoorState(...)`, `net.PuzzleHandlers.SendPuzzleState(...)`, `net.SessionHandlers.RequestWorldSnapshot()`); `LanNetworkManager` has no forwarding façade.
+
+**Puzzles:** `PuzzleSyncService` = coordinator (scan, tick, held, `_mutateWorld`, host relay), driven by the `PuzzleSpecs` table. Domain SyncServices own family TryRead/Apply/snap; patches emit through `EnvEmit.Edge`.
 
 ## Empty / incomplete (do not assume)
 
 - No empty `Networking/Session` or `Transport` dirs — session dump lives in `Domains/Session/SessionNetHandlers`.
-- Wire ownership: check `Networking/LanNetworkManager.HandlerRegistry.cs` for the full handler list (Door, Avatar, Enemy, Boss, Fmod, Story, Interaction, Dropped, WorldPickup, Puzzle, Combat, Scene, Inventory, Session).
+- Wire ownership: check `Networking/LanNetworkManager.HandlerRegistry.cs` for the full handler list (Door, Avatar, Enemy, Boss, Fmod, Story, Interaction, Dropped, WorldPickup, Puzzle, Combat, Party, Scene, Inventory, Session).

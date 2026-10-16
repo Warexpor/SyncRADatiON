@@ -1,4 +1,4 @@
-// SyncRADation — IMGUI debug window: add any game item to inventory
+// F6 IMGUI debug window: add any game item to the inventory (keys / story objects are also noted on the party ring).
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -6,13 +6,20 @@ namespace SyncRADation.Cheats
 {
     public static class ItemGiver
     {
+        // persistent: F6 window state
         public static bool ShowMenu;
 
+        // persistent: F6 window state
         private static Vector2 _scrollPos;
+        // persistent: F6 window state
         private static string _statusMessage = "";
+        // persistent: F6 window state
         private static float _statusTimer;
+        // persistent: F6 window state
         private static int _activeTab;
+        private static readonly string[] Tabs = { "Useful", "Weapons", "Keys/Story" };
 
+        // persistent: constant item table
         private static readonly List<ItemEntry> UsefulItems = new List<ItemEntry>
         {
             new ItemEntry("Pistol Ammo",   "PistolAmmo"),
@@ -21,6 +28,7 @@ namespace SyncRADation.Cheats
             new ItemEntry("Rifle Ammo",    "RifleAmmo"),
             new ItemEntry("SMG Ammo",      "SmgAmmo"),
             new ItemEntry("Flare Ammo",    "FlareGunAmmo"),
+            new ItemEntry("Flak Shells",   "FlakGunAmmo"),
             new ItemEntry("Health 25",     "Health25"),
             new ItemEntry("Health 50",     "Health50"),
             new ItemEntry("Health 100",    "Health100"),
@@ -32,6 +40,7 @@ namespace SyncRADation.Cheats
             new ItemEntry("Medication",    "Medication"),
         };
 
+        // persistent: constant item table
         private static readonly List<ItemEntry> WeaponItems = new List<ItemEntry>
         {
             new ItemEntry("Pistol",       "Pistol"),
@@ -45,6 +54,7 @@ namespace SyncRADation.Cheats
             new ItemEntry("Taser",        "Taser"),
         };
 
+        // persistent: constant item table
         private static readonly List<ItemEntry> StoryItems = new List<ItemEntry>
         {
             new ItemEntry("Bone Key",         "BoneKey"),
@@ -92,6 +102,7 @@ namespace SyncRADation.Cheats
             new ItemEntry("Photo QR",         "PhotoQR"),
         };
 
+        // persistent: F6 window state
         private static Rect _windowRect = new Rect(200f, 100f, 420f, 520f);
 
         public static void OnGUI()
@@ -107,12 +118,11 @@ namespace SyncRADation.Cheats
             GUI.Label(new Rect(10, y, 400, 20), "Click an item to add it to your inventory");
             y += 24;
 
-            var tabs = new[] { "Useful", "Weapons", "Keys/Story" };
-            for (int i = 0; i < tabs.Length; i++)
+            for (int i = 0; i < Tabs.Length; i++)
             {
                 var r = new Rect(10 + i * 135, y, 130, 22);
                 var was = _activeTab == i;
-                var now = GUI.Toggle(r, was, tabs[i], GUI.skin.button);
+                var now = GUI.Toggle(r, was, Tabs[i], GUI.skin.button);
                 if (now && !was) _activeTab = i;
             }
             y += 28;
@@ -156,28 +166,42 @@ namespace SyncRADation.Cheats
         {
             try
             {
-                var target = FindAnItem(item.ItemId);
-                if (target == null) { SetStatus("Can't find '" + item.ItemId + "'", true); return; }
-
-                InventoryManager.AddItem(target, 1);
-                try
-                {
-                    if (Sync.NetGate.Live
-                        && (target.type == AnItem.AnItemType.Object || target.type == AnItem.AnItemType.Key))
-                    {
-                        SyncRADation.Networking.PartyKeyRing.Note(target);
-                        if (Sync.NetGate.Host)
-                            SyncRADation.Networking.PartyKeyRing.Broadcast();
-                    }
-                }
-                catch { }
-                SetStatus("Added: " + item.DisplayName);
+                string err = Give(item.ItemId, 1);
+                if (err != null) SetStatus(err, true);
+                else SetStatus("Added: " + item.DisplayName);
             }
             catch (System.Exception ex)
             {
                 ModRuntime.Log?.Error("ItemGiver: " + ex.Message);
                 SetStatus("Error: " + ex.Message, true);
             }
+        }
+
+        /// <summary>The F6 grant (also the test pilot's "give"): null on success, else why it was refused.</summary>
+        internal static string Give(string itemId, int count)
+        {
+            var target = FindAnItem(itemId);
+            if (target == null) return "Can't find '" + itemId + "'";
+
+            // Keys / story objects open shared doors and locks (synced for everyone): a client needs the host's
+            // AllowClientCheats for those. The key itself is personal like any other item.
+            if (Sync.NetGate.Client && !Config.ModConfig.ClientCheatsAllowed
+                && (target.type == AnItem.AnItemType.Object || target.type == AnItem.AnItemType.Key))
+                return "Host does not allow client cheats (keys)";
+
+            InventoryManager.AddItem(target, count < 1 ? 1 : count);
+            try
+            {
+                if (Sync.NetGate.Live
+                    && (target.type == AnItem.AnItemType.Object || target.type == AnItem.AnItemType.Key))
+                {
+                    SyncRADation.Networking.PartyKeyRing.Note(target);
+                    if (Sync.NetGate.Host)
+                        SyncRADation.Networking.PartyKeyRing.Broadcast();
+                }
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            return null;
         }
 
         private static AnItem FindAnItem(string name)
@@ -191,7 +215,7 @@ namespace SyncRADation.Cheats
                     if (fromMgr != null) return fromMgr;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
 
             try
             {
@@ -202,7 +226,7 @@ namespace SyncRADation.Cheats
                         return anItem;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return null;
         }
 

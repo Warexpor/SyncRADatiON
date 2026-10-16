@@ -1,13 +1,12 @@
 using System;
 using LiteNetLib;
 using LiteNetLib.Utils;
-using SyncRADation.ItemSystem;
 using SyncRADation.Patches;
 using SyncRADation.Sync;
 
 namespace SyncRADation.Networking
 {
-    /// <summary>Interaction request/ack send + thin host apply / bag ack.</summary>
+    /// <summary>Interaction request/ack send + thin host apply / bag ack. Storage acks go to Inventory/StorageService.</summary>
     internal sealed class InteractionNetHandlers
     {
         private readonly LanNetworkManager _net;
@@ -33,8 +32,9 @@ namespace SyncRADation.Networking
                 Text = text ?? ""
             };
             if (kind != InteractionKind.Gunshot)
-                PlaytestLog.Event("Interact", "request " + kind + " id=" + worldId.ToString("X16"));
-            if (_net.Role == NetworkRole.Host)
+                PlaytestLog.Event("Interact", "request " + kind + " id=" + worldId.ToString("X16")
+                    + (kind == InteractionKind.InspectFlag ? InteractionSyncService.FlagLabel(int0, int1, f0, text) : ""));
+            if (NetGate.HostRole)
             {
                 InteractionSyncService.HandleRequest(msg);
                 return;
@@ -43,7 +43,7 @@ namespace SyncRADation.Networking
             writer.Put((byte)NetMessageType.InteractionRequest);
             msg.Serialize(writer);
             if (_net.TryGetPeer(0, out var peer) && peer.ConnectionState == ConnectionState.Connected)
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+                SyncRADation.Sync.NetStats.Send(peer, writer, DeliveryMethod.ReliableOrdered);
         }
 
         internal void SendInteractionAck(int targetPlayerId, long worldId, InteractionKind kind, bool ok, string reason)
@@ -61,12 +61,12 @@ namespace SyncRADation.Networking
             msg.Serialize(writer);
             if (targetPlayerId == _net.LocalPlayerId) return;
             if (_net.TryGetPeer(targetPlayerId, out var peer) && peer.ConnectionState == ConnectionState.Connected)
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+                SyncRADation.Sync.NetStats.Send(peer, writer, DeliveryMethod.ReliableOrdered);
         }
 
         internal void HandleInteractionRequest(InteractionRequestMessage msg)
         {
-            if (_net.Role == NetworkRole.Host)
+            if (NetGate.HostRole)
                 InteractionSyncService.HandleRequest(msg);
         }
 
@@ -74,19 +74,28 @@ namespace SyncRADation.Networking
         {
             if (ack.TargetPlayerId != _net.LocalPlayerId) return;
 
+            if (ack.Kind == InteractionKind.StoragePut || ack.Kind == InteractionKind.StorageTake)
+            {
+                StorageService.HandleAck(ack);
+                return;
+            }
+            if (ack.Kind == InteractionKind.DroppedPickup)
+                ItemPickupPatches.NoteDropClaimAck(ack.Ok, ack.WorldId);
+
             if (!ack.Ok)
             {
-                if (ack.Kind == InteractionKind.DroppedPickup)
-                    ItemPickupPatches.RevertPendingNativeGrant();
                 PlaytestLog.Warn("Interact", "rejected " + ack.Kind
                     + (string.IsNullOrEmpty(ack.Reason) ? "" : ": " + ack.Reason));
                 return;
             }
 
-            if (string.IsNullOrEmpty(ack.Reason)) return;
+            if (string.IsNullOrEmpty(ack.Reason) || !ack.Reason.StartsWith(ConsumePrefix)) return;
             try
             {
-                ApplyBagAck(ack.Reason);
+                // UseItem / UseItemMulti consumed a key the host did not hold: "consume:enum[:n]|enum[:n]".
+                string[] groups = ack.Reason.Substring(ConsumePrefix.Length).Split('|');
+                for (int g = 0; g < groups.Length; g++)
+                    ConsumeFromBag(groups[g]);
             }
             catch (Exception ex)
             {
@@ -94,35 +103,21 @@ namespace SyncRADation.Networking
             }
         }
 
-        static void ApplyBagAck(string reason)
-        {
-            bool consume = reason.StartsWith("consume:");
-            bool grant = reason.StartsWith("grant:");
-            if (!consume && !grant) return;
-            string rest = reason.Substring(consume ? 8 : 6);
-            string[] groups = rest.Split('|');
-            for (int g = 0; g < groups.Length; g++)
-                ApplyBagAckPart(consume, groups[g]);
-        }
+        const string ConsumePrefix = "consume:";
 
-        static void ApplyBagAckPart(bool consume, string rest)
+        static void ConsumeFromBag(string part)
         {
-            string[] parts = rest.Split(':');
-            if (parts.Length < 1) return;
+            string[] parts = part.Split(':');
             int enumVal;
-            if (!int.TryParse(parts[0], out enumVal)) return;
+            if (parts.Length < 1 || !int.TryParse(parts[0], out enumVal)) return;
             int count = 1;
             if (parts.Length >= 2)
                 int.TryParse(parts[1], out count);
             if (count < 1) count = 1;
             var item = InventoryManager.getItem((Items.itemlist)enumVal);
             if (item == null) return;
-            if (consume) InventoryManager.RemoveItem(item, count);
-            else
-            {
-                InventoryManager.AddItem(item, count);
-                PartyKeyRing.OfferToHost(item);
-            }
+            // Bag entries can be a different AnItem instance than the catalog one: remove the one the bag holds.
+            InventoryManager.RemoveItem(PartyKeyRing.FindInBag(item) ?? item, count);
         }
     }
 }

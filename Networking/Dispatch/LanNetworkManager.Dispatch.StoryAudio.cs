@@ -9,8 +9,12 @@ namespace SyncRADation.Networking
             switch (type)
             {
             case NetMessageType.InteractionRequest:
-                InteractionHandlers.HandleInteractionRequest(InteractionRequestMessage.Deserialize(reader));
+            {
+                var req = InteractionRequestMessage.Deserialize(reader);
+                if (_role == NetworkRole.Host) req.SenderPlayerId = senderId;
+                InteractionHandlers.HandleInteractionRequest(req);
                 return true;
+            }
             case NetMessageType.InteractionAck:
                 InteractionHandlers.HandleInteractionAck(InteractionAckMessage.Deserialize(reader));
                 return true;
@@ -22,6 +26,9 @@ namespace SyncRADation.Networking
                 return true;
             case NetMessageType.FmodEmitter:
                 FmodHandlers.HandleFmodEmitter(FmodEmitterMessage.Deserialize(reader));
+                return true;
+            case NetMessageType.FmodEmitterRequest:
+                FmodHandlers.HandleFmodEmitterRequest(FmodEmitterRequestMessage.Deserialize(reader), senderId);
                 return true;
             default:
                 return false;

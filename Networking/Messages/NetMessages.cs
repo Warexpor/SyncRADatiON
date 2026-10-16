@@ -38,7 +38,28 @@ namespace SyncRADation.Networking
         PlayerRoster = 33,
         BonePose = 34,
         EnemySpawn = 35,
-        _Highest = 36
+        PartyLife = 40,
+        PartySave = 41,
+        PartyRoom = 42,
+        /// <summary>Host → client: world pickup claim refused (another player got it first).</summary>
+        WorldPickupDeny = 60,
+        /// <summary>Peer → all (host relays): reliable avatar one-shot triggers (Fire/Hurt/Die/...).</summary>
+        AvatarOneShot = 61,
+        /// <summary>Client → host: boss hitbox damage / Falke stab request.</summary>
+        BossHit = 62,
+        /// <summary>Client → host: authoritative enemy side effect (stomp Kill, push, burn, wake).</summary>
+        EnemyAction = 63,
+        // 67-69: Puzzles / Doors / Audio domain.
+        /// <summary>Client → host: a world StudioEventEmitter the client triggered locally (host relays to the other clients).</summary>
+        FmodEmitterRequest = 67,
+        // 64-66, 68-72: reserved for other domains. 73-75: pickups / inventory / combat.
+        /// <summary>Host → all: a departed peer's floor drop moved into the host key namespace.</summary>
+        DropRekey = 73,
+        /// <summary>Host → one client: the host's WorldIds of the categories whose registry checksum differs (chunked).</summary>
+        SceneDiff = 74,
+        /// <summary>Host → all: the host's shared-world digest (chunked). Client → host: what it found different (log lines).</summary>
+        WorldDigest = 75,
+        _Highest = 75
     }
 
     public enum InteractionKind : byte
@@ -51,7 +72,7 @@ namespace SyncRADation.Networking
         CutsceneStart = 5,
         EventScreenStart = 6,
         EventScreenExit = 7,
-        CutsceneSkip = 8,
+        CutsceneSkip = 8, // wire value only since 0.5.65: skips are per player
         DialogueContinue = 9,
         DialogueEnd = 10,
         StoragePut = 11,
@@ -59,12 +80,13 @@ namespace SyncRADation.Networking
         Gunshot = 13,
         MultiCondition = 14,
         SceneFollowRequest = 15,
-        UseItemMulti = 16,
-        CutsceneProceed = 17,
+        UseItemMulti = 16, // wire value only since 0.5.66: ready() is not an item use (each part's UseItem is)
+        CutsceneProceed = 17, // wire value only since 0.5.65: proceeds are per player
         BookOpen = 18,
         BookMemory = 19,
         DroppedPickup = 20,
         InspectFlag = 21,
+        CutsceneDone = 22, // a client's copy of a shared cutscene is over (played out or skipped)
     }
 
     public enum StoryCmd : byte
@@ -74,8 +96,8 @@ namespace SyncRADation.Networking
         DialogueContinue = 2,
         DialogueEnd = 3,
         CutsceneStart = 4,
-        CutsceneSkip = 5,
-        CutsceneProceed = 6,
+        CutsceneSkip = 5, // wire value only since 0.5.65 (per-player skips)
+        CutsceneProceed = 6, // wire value only since 0.5.65 (per-player proceeds)
         EventScreenStart = 7,
         EventScreenExit = 8,
         OpenBookMemory = 9,
@@ -84,6 +106,11 @@ namespace SyncRADation.Networking
         EventZoneFire = 12,
         MultiConditionFire = 13,
         BookOpen = 14,
+        // 20-39: Story domain. Requests reuse InteractionKind.InspectFlag with Int0 = 100 + StoryCmd.
+        GoToPenny = 20,
+        PartyCheat = 21,
+        EndDelta = 22,
+        EndGraves = 23,
     }
 
     public enum DeathKind : byte
@@ -92,27 +119,34 @@ namespace SyncRADation.Networking
         HostWipeReload = 2,
     }
 
-    /// <summary>Host → all: full session id list (includes 0). Leave is an omission; clients prune proxies.</summary>
+    /// <summary>
+    /// Host → all: full session id list (includes 0). Leave is an omission; clients prune proxies.
+    /// HostFlags: the host's sync toggles (ModConfig.Flag*); clients use them instead of their own prefs while connected.
+    /// </summary>
     public struct PlayerRosterMessage
     {
         public int[] PlayerIds;
+        public byte HostFlags;
 
         public void Serialize(NetDataWriter w)
         {
             int n = PlayerIds != null ? PlayerIds.Length : 0;
-            if (n > 32) n = 32;
+            n = NetWire.ClampCount(n, NetWire.MaxRoster, "PlayerRoster");
             w.Put((byte)n);
             for (int i = 0; i < n; i++)
                 w.Put(PlayerIds[i]);
+            w.Put(HostFlags);
         }
 
         public static PlayerRosterMessage Deserialize(NetDataReader r)
         {
             int n = r.GetByte();
+            if (n > NetWire.MaxRoster)
+                throw new System.IO.InvalidDataException("PlayerRoster count " + n);
             var ids = n > 0 ? new int[n] : Array.Empty<int>();
             for (int i = 0; i < n; i++)
                 ids[i] = r.GetInt();
-            return new PlayerRosterMessage { PlayerIds = ids };
+            return new PlayerRosterMessage { PlayerIds = ids, HostFlags = r.GetByte() };
         }
     }
 
@@ -131,12 +165,18 @@ namespace SyncRADation.Networking
         public long WorldId;
         public bool Triggered;
         public bool Active;
+        /// <summary>
+        /// Untriggered only: units a partial take left on the prop (0 = count unchanged); -1 = the host's DynamicSupply
+        /// withheld it (prop off, WorldPickupSyncService.WithheldCount).
+        /// </summary>
+        public int Count;
 
         public void Serialize(NetDataWriter w)
         {
             w.Put(WorldId);
             w.Put(Triggered);
             w.Put(Active);
+            w.Put(Count);
         }
 
         public static WorldPickupEntry Deserialize(NetDataReader r) =>
@@ -144,7 +184,8 @@ namespace SyncRADation.Networking
             {
                 WorldId = r.GetLong(),
                 Triggered = r.GetBool(),
-                Active = r.GetBool()
+                Active = r.GetBool(),
+                Count = r.GetInt()
             };
     }
 
@@ -159,6 +200,7 @@ namespace SyncRADation.Networking
             w.Put(SenderPlayerId);
             w.Put(FullRefresh);
             int n = Entries != null ? Entries.Length : 0;
+            n = NetWire.ClampCount(n, NetWire.MaxPickupEntries, "WorldPickupState");
             w.Put(n);
             for (int i = 0; i < n; i++)
                 Entries[i].Serialize(w);
@@ -171,8 +213,8 @@ namespace SyncRADation.Networking
                 SenderPlayerId = r.GetInt(),
                 FullRefresh = r.GetBool()
             };
-            int n = r.GetInt();
-            if (n > 0 && n < 8192)
+            int n = NetWire.ReadCount(r, NetWire.MaxPickupEntries, "WorldPickupState");
+            if (n > 0)
             {
                 msg.Entries = new WorldPickupEntry[n];
                 for (int i = 0; i < n; i++)
@@ -217,20 +259,46 @@ namespace SyncRADation.Networking
     {
         public int ProtocolVersion;
         public int AssignedPlayerId;
+        /// <summary>Build/schema fingerprint (assembly version + message/enum id lists). See NetSchema.</summary>
+        public uint SchemaHash;
+        public string ModVersion;
+        /// <summary>Hash of the game build (Application.version + Unity version + GameAssembly.dll head/tail). See GameBuild.</summary>
+        public uint GameBuildHash;
+        /// <summary>Human-readable game build label for reject messages / F2 (e.g. "1.0.3 / Unity 2021.3.x").</summary>
+        public string GameBuild;
 
         public void Serialize(NetDataWriter w)
         {
             w.Put(ProtocolVersion);
             w.Put(AssignedPlayerId);
+            w.Put(SchemaHash);
+            NetWire.PutString(w, ModVersion);
+            w.Put(GameBuildHash);
+            NetWire.PutString(w, GameBuild);
         }
 
         public static HandshakeMessage Deserialize(NetDataReader r)
         {
-            return new HandshakeMessage
+            var h = new HandshakeMessage
             {
                 ProtocolVersion = r.GetInt(),
-                AssignedPlayerId = r.GetInt()
+                AssignedPlayerId = r.GetInt(),
+                SchemaHash = r.GetUInt(),
+                ModVersion = r.GetString()
             };
+            // The game-build tail is new in protocol 14: an older peer's handshake ends after ModVersion. Reading
+            // past it would throw (dispatch swallows it, the peer only sees a timeout) instead of reaching the
+            // protocol-version reject with a readable reason.
+            if (r.AvailableBytes >= 4)
+            {
+                h.GameBuildHash = r.GetUInt();
+                h.GameBuild = r.AvailableBytes >= 2 ? r.GetString() : "";
+            }
+            else
+            {
+                h.GameBuild = "";
+            }
+            return h;
         }
     }
 
@@ -248,107 +316,102 @@ namespace SyncRADation.Networking
         CAR = 9,
     }
 
+    /// <summary>PlayerState state bits: exactly what the proxy's sounds, laser and outfit read.</summary>
     [System.Flags]
-    public enum AnimBools : uint
-    {
-        Aiming = 1 << 0,
-        Shooting = 1 << 1,
-        Running = 1 << 2,
-        Grounded = 1 << 3,
-        Crouch = 1 << 4,
-        Blocked = 1 << 5,
-        Dead = 1 << 6,
-        Inventory = 1 << 7,
-        Attack = 1 << 8,
-        Injured = 1 << 9,
-        Stomp = 1 << 10,
-        Push = 1 << 11,
-        Melee = 1 << 12,
-        Snap = 1 << 13,
-        Reload = 1 << 14,
-        Swap = 1 << 15,
-        Burst = 1 << 16,
-        Taser = 1 << 17,
-        Random = 1 << 18,
-        Hugged = 1 << 19,
-        ReloadRounds = 1 << 20,
-        ReloadChamber = 1 << 21,
-        EmptyClick = 1 << 22,
-    }
-
-    [System.Flags]
-    public enum AnimTriggers : ushort
+    public enum PoseFlags : byte
     {
         None = 0,
-        Hurt = 1 << 0,
-        Die = 1 << 1,
-        Fire = 1 << 2,
-        Pickup = 1 << 3,
-        Radio = 1 << 4,
-        Drop = 1 << 5,
-        Sleep = 1 << 6,
-        Injector = 1 << 7,
-        InjectorCancel = 1 << 8,
-        ReloadTrigger = 1 << 9,
-        AttackTrigger = 1 << 10,
-        SwapTrigger = 1 << 11,
-        BurstTrigger = 1 << 12,
-        StompTrigger = 1 << 13,
-        PushTrigger = 1 << 14,
-        SnapTrigger = 1 << 15,
+        /// <summary>Aiming (AimingTime past half, or PlayerState.aiming): laser on, draw cue on the rising edge.</summary>
+        Aiming = 1 << 0,
+        /// <summary>Run gait: footstep loudness and the FMOD run parameter.</summary>
+        Running = 1 << 1,
+        /// <summary>Trigger pressed on an empty magazine while able to fire: dry-fire click on the rising edge.</summary>
+        EmptyClick = 1 << 2,
+        /// <summary>A footstep landed since the previous pose (base-layer loop crossed its half or wrapped).</summary>
+        Step = 1 << 3,
+        /// <summary>Traversing (ladder) or crawling: ladder cue on the rising edge.</summary>
+        Climbing = 1 << 4,
+        /// <summary>CharacterModelType.wearHat.</summary>
+        WearHat = 1 << 5,
+        /// <summary>HipsX/Y/Z carry the sender's humanoid hips localPosition.</summary>
+        HasHips = 1 << 6,
+        /// <summary>PlayerState.gameState is cutscene: scripted motion (the hole jump), so the proxy height is not floor-locked.</summary>
+        Scripted = 1 << 7,
     }
 
+    /// <summary>Edge events sent reliably (AvatarOneShot), never on the lossy sequenced pose.</summary>
+    [System.Flags]
+    public enum AvatarCue : byte
+    {
+        None = 0,
+        /// <summary>A live round left the equipped weapon (magAmmo dropped): shot sound, muzzle FX, impact.</summary>
+        Fire = 1 << 0,
+        /// <summary>Reload started (or the magazine refilled): reload sound and FX.</summary>
+        Reload = 1 << 1,
+        /// <summary>Hit taken (Hurt pulse) or became Injured: hurt sound.</summary>
+        Hurt = 1 << 2,
+    }
+
+    /// <summary>
+    /// Sequenced ~30 Hz avatar pose (protocol 18). Root motion + the sender's full bone rotations + humanoid hips
+    /// position: the proxy has no Animator, these fields are the whole visible body. 57 bytes before the bones
+    /// (type byte included), 6 per bone.
+    /// </summary>
     public struct PlayerStateMessage
     {
         public int SenderPlayerId;
         public float PosX;
         public float PosY;
         public float PosZ;
-        public float RotY;   // facing-pivot world quat.w (was fAngle)
-        public float RootY;  // quat.y
+        /// <summary>Planar velocity (SIGNALIS walks XY; Z is height and never extrapolated).</summary>
         public float VelX;
-        public float VelZ;
-        public float Forward;
-        public float Turn;
-        public float AimingTime;
-        public float Stamina;
-        public float Blend;
-        public float IKwalk;
-        public float InputX;
-        public float InputY;
-        public float HurtTime;
-        public byte CharState;
-        public byte Facing;
+        public float VelY;
+        /// <summary>Facing-pivot world rotation x/y/z; w is implied (canonical w >= 0, see SetFacingWorld).</summary>
+        public float FacingX;
+        public float FacingY;
+        public float FacingZ;
         public WeaponType Weapon;
-        public AnimBools AnimBools;
-        public AnimTriggers AnimTriggers;
-        public bool StepHappened;
-        public bool Climbing;
-        public byte ModelState;   // CharacterModelType.ElsterType
-        public bool WearHat;
-        public float RootX;  // quat.x
-        public float RootZ;  // quat.z
+        public PoseFlags Flags;
+        /// <summary>CharacterModelType.ElsterType (outfit).</summary>
+        public byte ModelState;
+        /// <summary>|Animator Forward| quantized to 0..255 (footstep loudness).</summary>
+        public byte Forward;
+        /// <summary>Humanoid hips localPosition (valid with PoseFlags.HasHips): bone sync is rotation-only.</summary>
+        public float HipsX;
+        public float HipsY;
+        public float HipsZ;
+        /// <summary>Local euler angles of every armature bone (BoneSyncManager order), 3 per bone.</summary>
         public float[] BoneRotations;
 
         public void SetFacingWorld(Quaternion q)
         {
             if (q.w < 0f)
                 q = new Quaternion(-q.x, -q.y, -q.z, -q.w);
-            RootX = q.x;
-            RootY = q.y;
-            RootZ = q.z;
-            RotY = q.w;
+            FacingX = q.x;
+            FacingY = q.y;
+            FacingZ = q.z;
         }
 
         public Quaternion GetFacingWorld()
         {
-            var q = new Quaternion(RootX, RootY, RootZ, RotY);
-            float mag = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
-            if (mag < 0.0001f)
+            float xyz = FacingX * FacingX + FacingY * FacingY + FacingZ * FacingZ;
+            if (float.IsNaN(xyz) || float.IsInfinity(xyz))
                 return Quaternion.identity;
-            mag = Mathf.Sqrt(mag);
-            return new Quaternion(q.x / mag, q.y / mag, q.z / mag, q.w / mag);
+            if (xyz > 1f)
+            {
+                float inv = 1f / Mathf.Sqrt(xyz);
+                return new Quaternion(FacingX * inv, FacingY * inv, FacingZ * inv, 0f);
+            }
+            return new Quaternion(FacingX, FacingY, FacingZ, Mathf.Sqrt(1f - xyz));
         }
+
+        public void SetForward(float animatorForward)
+        {
+            float f = animatorForward < 0f ? -animatorForward : animatorForward;
+            Forward = (byte)(Mathf.Clamp(f, 0f, 1f) * 255f + 0.5f);
+        }
+
+        public float ForwardAmount => Forward / 255f;
 
         public void Serialize(NetDataWriter w)
         {
@@ -356,31 +419,20 @@ namespace SyncRADation.Networking
             w.Put(PosX);
             w.Put(PosY);
             w.Put(PosZ);
-            w.Put(RotY);
-            w.Put(RootY);
             w.Put(VelX);
-            w.Put(VelZ);
-            w.Put(Forward);
-            w.Put(Turn);
-            w.Put(AimingTime);
-            w.Put(Stamina);
-            w.Put(Blend);
-            w.Put(IKwalk);
-            w.Put(InputX);
-            w.Put(InputY);
-            w.Put(HurtTime);
-            w.Put(CharState);
-            w.Put(Facing);
+            w.Put(VelY);
+            w.Put(FacingX);
+            w.Put(FacingY);
+            w.Put(FacingZ);
             w.Put((byte)Weapon);
-            w.Put((uint)AnimBools);
-            w.Put((ushort)AnimTriggers);
-            w.Put(StepHappened);
-            w.Put(Climbing);
+            w.Put((byte)Flags);
             w.Put(ModelState);
-            w.Put(WearHat);
-            w.Put(RootX);
-            w.Put(RootZ);
+            w.Put(Forward);
+            w.Put(HipsX);
+            w.Put(HipsY);
+            w.Put(HipsZ);
             int bc = (BoneRotations != null) ? BoneRotations.Length : 0;
+            bc = NetWire.ClampCount(bc, NetWire.MaxBones, "PlayerState bones");
             w.Put(bc);
             for (int i = 0; i < bc; i++)
                 w.Put(EncodeAngle(BoneRotations[i]));
@@ -394,33 +446,21 @@ namespace SyncRADation.Networking
                 PosX = r.GetFloat(),
                 PosY = r.GetFloat(),
                 PosZ = r.GetFloat(),
-                RotY = r.GetFloat(),
-                RootY = r.GetFloat(),
                 VelX = r.GetFloat(),
-                VelZ = r.GetFloat(),
-                Forward = r.GetFloat(),
-                Turn = r.GetFloat(),
-                AimingTime = r.GetFloat(),
-                Stamina = r.GetFloat(),
-                Blend = r.GetFloat(),
-                IKwalk = r.GetFloat(),
-                InputX = r.GetFloat(),
-                InputY = r.GetFloat(),
-                HurtTime = r.GetFloat(),
-                CharState = r.GetByte(),
-                Facing = r.GetByte(),
+                VelY = r.GetFloat(),
+                FacingX = r.GetFloat(),
+                FacingY = r.GetFloat(),
+                FacingZ = r.GetFloat(),
                 Weapon = (WeaponType)r.GetByte(),
-                AnimBools = (AnimBools)r.GetUInt(),
-                AnimTriggers = (AnimTriggers)r.GetUShort(),
-                StepHappened = r.GetBool(),
-                Climbing = r.GetBool(),
+                Flags = (PoseFlags)r.GetByte(),
                 ModelState = r.GetByte(),
-                WearHat = r.GetBool(),
-                RootX = r.GetFloat(),
-                RootZ = r.GetFloat()
+                Forward = r.GetByte(),
+                HipsX = r.GetFloat(),
+                HipsY = r.GetFloat(),
+                HipsZ = r.GetFloat()
             };
-            int bc = r.GetInt();
-            if (bc > 0 && bc < 4096)
+            int bc = NetWire.ReadCount(r, NetWire.MaxBones, "PlayerState bones");
+            if (bc > 0)
             {
                 msg.BoneRotations = new float[bc];
                 for (int i = 0; i < bc; i++)
@@ -448,17 +488,33 @@ namespace SyncRADation.Networking
         public ushort StartBone;
         public float[] Eulers; // Count * 3, Count = Eulers.Length / 3
 
+        /// <summary>Largest bone count Deserialize accepts in one chunk.</summary>
+        public const int MaxChunkBones = 1023;
+
         public int Count => Eulers != null ? Eulers.Length / 3 : 0;
 
-        public void Serialize(NetDataWriter w)
+        public void Serialize(NetDataWriter w) => Write(w, SenderPlayerId, TotalBones, StartBone, Eulers, 0, Count);
+
+        /// <summary>
+        /// Writes bones [startBone, startBone + count) straight from the full euler buffer (offset in bones), so the
+        /// sender's chunking needs no per-chunk array.
+        /// </summary>
+        public static void Write(NetDataWriter w, int senderPlayerId, ushort totalBones, ushort startBone,
+            float[] eulers, int offsetBones, int count)
         {
-            w.Put(SenderPlayerId);
-            w.Put(TotalBones);
-            w.Put(StartBone);
-            int count = Count;
+            w.Put(senderPlayerId);
+            w.Put(totalBones);
+            w.Put(startBone);
+            // Reader accepts 1..MaxChunkBones; a longer chunk would leave count*3 ushorts unread and desync the stream.
+            if (count > MaxChunkBones)
+            {
+                NetWire.WarnOnce("bonepose", "BonePose chunk of " + count + " bones clamped to " + MaxChunkBones);
+                count = MaxChunkBones;
+            }
             w.Put((ushort)count);
+            int from = offsetBones * 3;
             for (int i = 0; i < count * 3; i++)
-                w.Put(PlayerStateMessage.EncodeAngle(Eulers[i]));
+                w.Put(PlayerStateMessage.EncodeAngle(eulers[from + i]));
         }
 
         public static BonePoseMessage Deserialize(NetDataReader r)
@@ -470,7 +526,7 @@ namespace SyncRADation.Networking
                 StartBone = r.GetUShort()
             };
             int count = r.GetUShort();
-            if (count > 0 && count < 1024)
+            if (count > 0 && count <= MaxChunkBones)
             {
                 msg.Eulers = new float[count * 3];
                 for (int i = 0; i < msg.Eulers.Length; i++)
@@ -487,7 +543,9 @@ namespace SyncRADation.Networking
         public byte HurtState;
         public float PosX, PosY, PosZ;
         public float RotY;
-        public float VelX, VelY, VelZ;
+        /// <summary>Animator floats the host's AI drives (ThirdPersonCharacter.UpdateAnimator Forward / Turn,
+        /// EnemyController hit direction HitFromX / HitFromY); a halted puppet never sets them.</summary>
+        public float AnimForward, AnimTurn, AnimHitX, AnimHitY;
         public int AnimHash;
         public float AnimTime;
         public int HP;
@@ -502,7 +560,7 @@ namespace SyncRADation.Networking
             w.Put(HurtState);
             w.Put(PosX); w.Put(PosY); w.Put(PosZ);
             w.Put(RotY);
-            w.Put(VelX); w.Put(VelY); w.Put(VelZ);
+            w.Put(AnimForward); w.Put(AnimTurn); w.Put(AnimHitX); w.Put(AnimHitY);
             w.Put(AnimHash);
             w.Put(AnimTime);
             w.Put(HP);
@@ -520,7 +578,7 @@ namespace SyncRADation.Networking
                 HurtState = r.GetByte(),
                 PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
                 RotY = r.GetFloat(),
-                VelX = r.GetFloat(), VelY = r.GetFloat(), VelZ = r.GetFloat(),
+                AnimForward = r.GetFloat(), AnimTurn = r.GetFloat(), AnimHitX = r.GetFloat(), AnimHitY = r.GetFloat(),
                 AnimHash = r.GetInt(),
                 AnimTime = r.GetFloat(),
                 HP = r.GetInt(),
@@ -538,6 +596,7 @@ namespace SyncRADation.Networking
         public void Serialize(NetDataWriter w)
         {
             int cnt = Enemies != null ? Enemies.Length : 0;
+            cnt = NetWire.ClampCount(cnt, NetWire.MaxEnemies, "EnemyState");
             w.Put(cnt);
             for (int i = 0; i < cnt; i++)
                 Enemies[i].Serialize(w);
@@ -545,8 +604,7 @@ namespace SyncRADation.Networking
 
         public static EnemyStateMessage Deserialize(NetDataReader r)
         {
-            int cnt = r.GetInt();
-            if (cnt < 0 || cnt > 512) cnt = 0;
+            int cnt = NetWire.ReadCount(r, NetWire.MaxEnemies, "EnemyState");
             var arr = cnt > 0 ? new EnemySnapshotNet[cnt] : System.Array.Empty<EnemySnapshotNet>();
             for (int i = 0; i < arr.Length; i++)
                 arr[i] = EnemySnapshotNet.Deserialize(r);
@@ -567,7 +625,7 @@ namespace SyncRADation.Networking
         public void Serialize(NetDataWriter w)
         {
             w.Put(Seq);
-            w.Put(TypeKey ?? "");
+            NetWire.PutString(w, TypeKey);
             w.Put(PosX);
             w.Put(PosY);
             w.Put(PosZ);
@@ -632,17 +690,56 @@ namespace SyncRADation.Networking
         }
     }
 
+    /// <summary>One WorldRegistry category: how many ids it holds and the FNV-1a64 checksum of the sorted ids (Sync/WorldChecksum).</summary>
+    public struct WorldCategoryStat
+    {
+        public int Count;
+        public ulong Sum;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(Count);
+            w.Put(Sum);
+        }
+
+        public static WorldCategoryStat Deserialize(NetDataReader r) =>
+            new WorldCategoryStat { Count = r.GetInt(), Sum = r.GetULong() };
+
+        internal static void PutAll(NetDataWriter w, WorldCategoryStat[] stats)
+        {
+            int n = stats != null ? stats.Length : 0;
+            n = NetWire.ClampCount(n, NetWire.MaxWorldCategories, "WorldCategoryStat");
+            w.Put((byte)n);
+            for (int i = 0; i < n; i++)
+                stats[i].Serialize(w);
+        }
+
+        internal static WorldCategoryStat[] GetAll(NetDataReader r)
+        {
+            int n = r.GetByte();
+            if (n > NetWire.MaxWorldCategories)
+                throw new System.IO.InvalidDataException("WorldCategoryStat count " + n);
+            var arr = n > 0 ? new WorldCategoryStat[n] : Array.Empty<WorldCategoryStat>();
+            for (int i = 0; i < n; i++)
+                arr[i] = Deserialize(r);
+            return arr;
+        }
+    }
+
     public struct SceneHelloMessage
     {
         public int SenderPlayerId;
         public string SceneName;
         public string RoomName;
+        /// <summary>Sender's WorldRegistry checksum for <see cref="SceneName"/> (empty = none yet). Client → host: diff request; host → client: self-check.</summary>
+        public WorldCategoryStat[] Stats;
 
         public void Serialize(NetDataWriter w)
         {
             w.Put(SenderPlayerId);
-            w.Put(SceneName ?? "");
-            w.Put(RoomName ?? "");
+            NetWire.PutString(w, SceneName);
+            NetWire.PutString(w, RoomName);
+            WorldCategoryStat.PutAll(w, Stats);
         }
 
         public static SceneHelloMessage Deserialize(NetDataReader r)
@@ -651,8 +748,104 @@ namespace SyncRADation.Networking
             {
                 SenderPlayerId = r.GetInt(),
                 SceneName = r.GetString(),
-                RoomName = r.GetString()
+                RoomName = r.GetString(),
+                Stats = WorldCategoryStat.GetAll(r)
             };
+        }
+    }
+
+    /// <summary>
+    /// Host → one client: the host's WorldIds (sorted) for one category whose checksum differs from the client's.
+    /// Chunked: <see cref="Part"/> of <see cref="Parts"/>; <see cref="HostCount"/> is the host's full id count for the
+    /// category (more than the ids sent = truncated at NetWire.MaxSceneDiffTotalIds). <see cref="CategoryMask"/> lists
+    /// every category of this diff so the client knows when it has all of them.
+    /// </summary>
+    public struct WorldDigestMessage
+    {
+        /// <summary>0: digest lines from the host. 1: a client's report for the host's log.</summary>
+        public byte Kind;
+        public int Seq;
+        public byte Part;
+        public byte Parts;
+        public string Scene;
+        public string[] Lines;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(Kind);
+            w.Put(Seq);
+            w.Put(Part);
+            w.Put(Parts);
+            NetWire.PutString(w, Scene);
+            int n = Lines != null ? Lines.Length : 0;
+            n = NetWire.ClampCount(n, NetWire.MaxDigestLines, "WorldDigest");
+            w.Put(n);
+            for (int i = 0; i < n; i++)
+                NetWire.PutString(w, Lines[i]);
+        }
+
+        public static WorldDigestMessage Deserialize(NetDataReader r)
+        {
+            var msg = new WorldDigestMessage
+            {
+                Kind = r.GetByte(),
+                Seq = r.GetInt(),
+                Part = r.GetByte(),
+                Parts = r.GetByte(),
+                Scene = r.GetString()
+            };
+            int n = NetWire.ReadCount(r, NetWire.MaxDigestLines, "WorldDigest");
+            msg.Lines = n > 0 ? new string[n] : Array.Empty<string>();
+            for (int i = 0; i < n; i++)
+                msg.Lines[i] = r.GetString();
+            return msg;
+        }
+    }
+
+    public struct SceneDiffMessage
+    {
+        public int SenderPlayerId;
+        public string SceneName;
+        public byte Category;
+        public byte CategoryMask;
+        public byte Part;
+        public byte Parts;
+        public int HostCount;
+        public ulong[] Ids;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(SenderPlayerId);
+            NetWire.PutString(w, SceneName);
+            w.Put(Category);
+            w.Put(CategoryMask);
+            w.Put(Part);
+            w.Put(Parts);
+            w.Put(HostCount);
+            int n = Ids != null ? Ids.Length : 0;
+            n = NetWire.ClampCount(n, NetWire.MaxSceneDiffIds, "SceneDiff");
+            w.Put(n);
+            for (int i = 0; i < n; i++)
+                w.Put(Ids[i]);
+        }
+
+        public static SceneDiffMessage Deserialize(NetDataReader r)
+        {
+            var msg = new SceneDiffMessage
+            {
+                SenderPlayerId = r.GetInt(),
+                SceneName = r.GetString(),
+                Category = r.GetByte(),
+                CategoryMask = r.GetByte(),
+                Part = r.GetByte(),
+                Parts = r.GetByte(),
+                HostCount = r.GetInt()
+            };
+            int n = NetWire.ReadCount(r, NetWire.MaxSceneDiffIds, "SceneDiff");
+            msg.Ids = n > 0 ? new ulong[n] : Array.Empty<ulong>();
+            for (int i = 0; i < n; i++)
+                msg.Ids[i] = r.GetULong();
+            return msg;
         }
     }
 
@@ -746,6 +939,8 @@ namespace SyncRADation.Networking
         public ushort ItemEnum;
         public int Count;
         public bool GrantToReceiver;
+        /// <summary>Player who took the drop (host-stamped for client-originated copies).</summary>
+        public byte ClaimerPlayerId;
 
         public void Serialize(NetDataWriter w)
         {
@@ -754,6 +949,7 @@ namespace SyncRADation.Networking
             w.Put(ItemEnum);
             w.Put(Count);
             w.Put(GrantToReceiver);
+            w.Put(ClaimerPlayerId);
         }
 
         public static ItemPickedUpMessage Deserialize(NetDataReader r)
@@ -764,9 +960,36 @@ namespace SyncRADation.Networking
                 LocalIndex = r.GetUShort(),
                 ItemEnum = r.GetUShort(),
                 Count = r.GetInt(),
-                GrantToReceiver = r.GetBool()
+                GrantToReceiver = r.GetBool(),
+                ClaimerPlayerId = r.GetByte()
             };
         }
+    }
+
+    /// <summary>Host → all: drop key (OldOwner,OldIndex) is now (NewOwner,NewIndex).</summary>
+    public struct DropRekeyMessage
+    {
+        public byte OldOwner;
+        public ushort OldIndex;
+        public byte NewOwner;
+        public ushort NewIndex;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(OldOwner);
+            w.Put(OldIndex);
+            w.Put(NewOwner);
+            w.Put(NewIndex);
+        }
+
+        public static DropRekeyMessage Deserialize(NetDataReader r) =>
+            new DropRekeyMessage
+            {
+                OldOwner = r.GetByte(),
+                OldIndex = r.GetUShort(),
+                NewOwner = r.GetByte(),
+                NewIndex = r.GetUShort()
+            };
     }
 
     public struct FriendlyFireMessage
@@ -884,6 +1107,14 @@ namespace SyncRADation.Networking
         AraNest = 74,
         LAB_RifleQuest = 75,
         LOV_Microfiche = 76,
+        // v11 — MED_Adler_EVdoors DoorL/DoorR local X pose
+        MED_Adler_EVdoors = 77,
+        // uncovered durable world objects (puzzle worker)
+        ROT_DiskManager = 78,
+        DET_WallCreature = 79,
+        MapReveal = 80,
+        // MEM_ChecklistLogic: Int0 = checked-item bitmask (monotonic, host ORs concurrent edits), Bool0 = complete
+        MEM_ChecklistLogic = 81,
     }
 
     public struct PuzzleStateEntry
@@ -901,6 +1132,17 @@ namespace SyncRADation.Networking
         public float Float0;
         /// <summary>v9: Kolibri radioIntensity / Adler progress.</summary>
         public float Float1;
+        /// <summary>
+        /// Host-stamped version of the resulting state (monotonic per type+WorldId). 0 = unversioned.
+        /// Client-authored entries carry the last host Seq the client had applied (its base version).
+        /// </summary>
+        public int Seq;
+        /// <summary>
+        /// Client-authored edit mask vs the sender's previous state: bits 0..8 = Bool0,Bool1,Bool2,Int0..Int3,Float0,Float1
+        /// changed; bits 16..23 = 16-bit half of Int0..Int3 changed (lo,hi per int). The host merges only those
+        /// cells onto its current state. 0 = no merge info (whole entry, arrival order).
+        /// </summary>
+        public int Mask;
 
         public void Serialize(NetDataWriter w)
         {
@@ -915,6 +1157,8 @@ namespace SyncRADation.Networking
             w.Put(Int3);
             w.Put(Float0);
             w.Put(Float1);
+            w.Put(Seq);
+            w.Put(Mask);
         }
 
         public static PuzzleStateEntry Deserialize(NetDataReader r)
@@ -931,7 +1175,9 @@ namespace SyncRADation.Networking
                 Int2 = r.GetInt(),
                 Int3 = r.GetInt(),
                 Float0 = r.GetFloat(),
-                Float1 = r.GetFloat()
+                Float1 = r.GetFloat(),
+                Seq = r.GetInt(),
+                Mask = r.GetInt()
             };
         }
     }
@@ -942,6 +1188,8 @@ namespace SyncRADation.Networking
         public long WorldId;
         public ushort ItemEnum;
         public int Count;
+        /// <summary>0 = a claim. &gt;0 = the claimer's native take left this many on the prop: release its claim.</summary>
+        public int Remaining;
 
         public void Serialize(NetDataWriter w)
         {
@@ -949,6 +1197,7 @@ namespace SyncRADation.Networking
             w.Put(WorldId);
             w.Put(ItemEnum);
             w.Put(Count);
+            w.Put(Remaining);
         }
 
         public static WorldPickupClaimMessage Deserialize(NetDataReader r) =>
@@ -957,7 +1206,8 @@ namespace SyncRADation.Networking
                 ClaimerPlayerId = r.GetInt(),
                 WorldId = r.GetLong(),
                 ItemEnum = r.GetUShort(),
-                Count = r.GetInt()
+                Count = r.GetInt(),
+                Remaining = r.GetInt()
             };
     }
 
@@ -986,6 +1236,122 @@ namespace SyncRADation.Networking
             };
     }
 
+    public enum EnemyActionKind : byte
+    {
+        Kill = 0,
+        KillSilent = 1,
+        Knockback = 2,
+        GetPushed = 3,
+        Burndown = 4,
+        WakeUp = 5,
+        Stomp = 6, // the client pressed a downed enemy's stomp prompt (the host's Critical / Fire coroutine consumes it)
+    }
+
+    /// <summary>Client → host: native EnemyController side effect a puppeted client cannot apply itself.</summary>
+    public struct EnemyActionMessage
+    {
+        public int SenderPlayerId;
+        public long EnemyWorldId;
+        public EnemyActionKind Action;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(SenderPlayerId);
+            w.Put(EnemyWorldId);
+            w.Put((byte)Action);
+        }
+
+        public static EnemyActionMessage Deserialize(NetDataReader r) =>
+            new EnemyActionMessage
+            {
+                SenderPlayerId = r.GetInt(),
+                EnemyWorldId = r.GetLong(),
+                Action = (EnemyActionKind)r.GetByte()
+            };
+    }
+
+    /// <summary>Host → claimer: pickup was already claimed — roll back any native bag add.</summary>
+    public struct WorldPickupDenyMessage
+    {
+        public int TargetPlayerId;
+        public long WorldId;
+        public ushort ItemEnum;
+        public int Count;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(TargetPlayerId);
+            w.Put(WorldId);
+            w.Put(ItemEnum);
+            w.Put(Count);
+        }
+
+        public static WorldPickupDenyMessage Deserialize(NetDataReader r) =>
+            new WorldPickupDenyMessage
+            {
+                TargetPlayerId = r.GetInt(),
+                WorldId = r.GetLong(),
+                ItemEnum = r.GetUShort(),
+                Count = r.GetInt()
+            };
+    }
+
+    /// <summary>Reliable avatar edge cues (shot / reload / hurt) so they never ride the lossy sequenced pose.</summary>
+    public struct AvatarOneShotMessage
+    {
+        public int SenderPlayerId;
+        public AvatarCue Cues;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(SenderPlayerId);
+            w.Put((byte)Cues);
+        }
+
+        public static AvatarOneShotMessage Deserialize(NetDataReader r) =>
+            new AvatarOneShotMessage
+            {
+                SenderPlayerId = r.GetInt(),
+                Cues = (AvatarCue)r.GetByte()
+            };
+    }
+
+    public enum BossHitKind : byte
+    {
+        Damage = 0,
+        Stab = 1,
+        /// <summary>Falke PickupSpears[Amount] taken (client request; host relays to all as presentation).</summary>
+        TakeSpear = 2,
+        /// <summary>Host → clients: LAB Chimera Isa rifle fired (LateUpdate presentation on clients).</summary>
+        ChimeraShot = 3,
+    }
+
+    /// <summary>Client → host: boss HP delta (Hitbox.HP is mutated directly by PlayerAttack), Falke Stab/takeSpear. Host → clients: spear taken, Chimera shot.</summary>
+    public struct BossHitMessage
+    {
+        public int SenderPlayerId;
+        public long WorldId;
+        public BossHitKind Kind;
+        public int Amount;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(SenderPlayerId);
+            w.Put(WorldId);
+            w.Put((byte)Kind);
+            w.Put(Amount);
+        }
+
+        public static BossHitMessage Deserialize(NetDataReader r) =>
+            new BossHitMessage
+            {
+                SenderPlayerId = r.GetInt(),
+                WorldId = r.GetLong(),
+                Kind = (BossHitKind)r.GetByte(),
+                Amount = r.GetInt()
+            };
+    }
+
     public struct PuzzleStateMessage
     {
         public int SenderPlayerId;
@@ -997,6 +1363,7 @@ namespace SyncRADation.Networking
             w.Put(SenderPlayerId);
             w.Put(FullRefresh);
             int cnt = Entries != null ? Entries.Length : 0;
+            cnt = NetWire.ClampCount(cnt, NetWire.MaxPuzzleEntries, "PuzzleState");
             w.Put(cnt);
             for (int i = 0; i < cnt; i++)
                 Entries[i].Serialize(w);
@@ -1009,8 +1376,8 @@ namespace SyncRADation.Networking
                 SenderPlayerId = r.GetInt(),
                 FullRefresh = r.GetBool()
             };
-            int cnt = r.GetInt();
-            if (cnt > 0 && cnt < 8192)
+            int cnt = NetWire.ReadCount(r, NetWire.MaxPuzzleEntries, "PuzzleState");
+            if (cnt > 0)
             {
                 msg.Entries = new PuzzleStateEntry[cnt];
                 for (int i = 0; i < cnt; i++)
@@ -1093,6 +1460,7 @@ namespace SyncRADation.Networking
         public void Serialize(NetDataWriter w)
         {
             int cnt = Bosses != null ? Bosses.Length : 0;
+            cnt = NetWire.ClampCount(cnt, NetWire.MaxBosses, "BossState");
             w.Put(cnt);
             for (int i = 0; i < cnt; i++)
                 Bosses[i].Serialize(w);
@@ -1100,8 +1468,7 @@ namespace SyncRADation.Networking
 
         public static BossStateMessage Deserialize(NetDataReader r)
         {
-            int cnt = r.GetInt();
-            if (cnt < 0 || cnt > 64) cnt = 0;
+            int cnt = NetWire.ReadCount(r, NetWire.MaxBosses, "BossState");
             var arr = cnt > 0 ? new BossSnapshotNet[cnt] : System.Array.Empty<BossSnapshotNet>();
             for (int i = 0; i < arr.Length; i++)
                 arr[i] = BossSnapshotNet.Deserialize(r);
@@ -1114,12 +1481,15 @@ namespace SyncRADation.Networking
         public int SenderPlayerId;
         public string SceneName;
         public bool IsRequest;
+        /// <summary>Host's WorldRegistry checksum for <see cref="SceneName"/> when its registry is already built for that scene (empty otherwise, and on requests).</summary>
+        public WorldCategoryStat[] Stats;
 
         public void Serialize(NetDataWriter w)
         {
             w.Put(SenderPlayerId);
-            w.Put(SceneName ?? "");
+            NetWire.PutString(w, SceneName);
             w.Put(IsRequest);
+            WorldCategoryStat.PutAll(w, Stats);
         }
 
         public static SceneFollowMessage Deserialize(NetDataReader r) =>
@@ -1127,7 +1497,8 @@ namespace SyncRADation.Networking
             {
                 SenderPlayerId = r.GetInt(),
                 SceneName = r.GetString(),
-                IsRequest = r.GetBool()
+                IsRequest = r.GetBool(),
+                Stats = WorldCategoryStat.GetAll(r)
             };
     }
 
@@ -1153,7 +1524,7 @@ namespace SyncRADation.Networking
             w.Put(Float0);
             w.Put(Float1);
             w.Put(Float2);
-            w.Put(Text ?? "");
+            NetWire.PutString(w, Text);
         }
 
         public static InteractionRequestMessage Deserialize(NetDataReader r) =>
@@ -1185,7 +1556,7 @@ namespace SyncRADation.Networking
             w.Put(WorldId);
             w.Put((byte)Kind);
             w.Put(Ok);
-            w.Put(Reason ?? "");
+            NetWire.PutString(w, Reason);
         }
 
         public static InteractionAckMessage Deserialize(NetDataReader r) =>
@@ -1213,11 +1584,11 @@ namespace SyncRADation.Networking
         public void Serialize(NetDataWriter w)
         {
             w.Put(Kind);
-            w.Put(Key ?? "");
+            NetWire.PutString(w, Key);
             w.Put(BoolVal);
             w.Put(IntVal);
             w.Put(FloatVal);
-            w.Put(StringVal ?? "");
+            NetWire.PutString(w, StringVal);
             w.Put(VecY);
             w.Put(VecZ);
         }
@@ -1239,7 +1610,6 @@ namespace SyncRADation.Networking
     public struct StoryCommitMessage
     {
         public bool FullRefresh;
-        public string DialoguerXml;
         public int EndCircle;
         public int EndDeath;
         public int EndGraves;
@@ -1252,14 +1622,14 @@ namespace SyncRADation.Networking
         public float EndMemoryTime;
         public int EndDoors;
         public StoryFlagEntry[] Flags;
-        public byte ActiveGameState;
         public long ActiveWorldId;
         public byte ActiveStoryCmd;
+        /// <summary>Full commit after a host SaveManager.Load / NewGame: the table replaces the client's SProgress (absent keys are removed).</summary>
+        public bool Authoritative;
 
         public void Serialize(NetDataWriter w)
         {
             w.Put(FullRefresh);
-            w.Put(DialoguerXml ?? "");
             w.Put(EndCircle);
             w.Put(EndDeath);
             w.Put(EndGraves);
@@ -1271,12 +1641,13 @@ namespace SyncRADation.Networking
             w.Put(EndMemoryTime);
             w.Put(EndDoors);
             int n = Flags != null ? Flags.Length : 0;
+            n = NetWire.ClampCount(n, NetWire.MaxStoryFlags, "StoryCommit flags");
             w.Put(n);
             for (int i = 0; i < n; i++)
                 Flags[i].Serialize(w);
-            w.Put(ActiveGameState);
             w.Put(ActiveWorldId);
             w.Put(ActiveStoryCmd);
+            w.Put(Authoritative);
         }
 
         public static StoryCommitMessage Deserialize(NetDataReader r)
@@ -1284,7 +1655,6 @@ namespace SyncRADation.Networking
             var msg = new StoryCommitMessage
             {
                 FullRefresh = r.GetBool(),
-                DialoguerXml = r.GetString(),
                 EndCircle = r.GetInt(),
                 EndDeath = r.GetInt(),
                 EndGraves = r.GetInt(),
@@ -1296,16 +1666,16 @@ namespace SyncRADation.Networking
                 EndMemoryTime = r.GetFloat(),
                 EndDoors = r.GetInt()
             };
-            int n = r.GetInt();
-            if (n > 0 && n < 8192)
+            int n = NetWire.ReadCount(r, NetWire.MaxStoryFlags, "StoryCommit flags");
+            if (n > 0)
             {
                 msg.Flags = new StoryFlagEntry[n];
                 for (int i = 0; i < n; i++)
                     msg.Flags[i] = StoryFlagEntry.Deserialize(r);
             }
-            msg.ActiveGameState = r.GetByte();
             msg.ActiveWorldId = r.GetLong();
             msg.ActiveStoryCmd = r.GetByte();
+            msg.Authoritative = r.GetBool();
             return msg;
         }
     }
@@ -1322,7 +1692,7 @@ namespace SyncRADation.Networking
             w.Put(WorldId);
             w.Put((byte)Cmd);
             w.Put(Int0);
-            w.Put(Text ?? "");
+            NetWire.PutString(w, Text);
         }
 
         public static StoryPresentationMessage Deserialize(NetDataReader r) =>
@@ -1357,6 +1727,7 @@ namespace SyncRADation.Networking
         public void Serialize(NetDataWriter w)
         {
             int n = Items != null ? Items.Length : 0;
+            n = NetWire.ClampCount(n, NetWire.MaxStorageItems, "StorageBoxBlob");
             w.Put(n);
             for (int i = 0; i < n; i++)
                 Items[i].Serialize(w);
@@ -1364,8 +1735,8 @@ namespace SyncRADation.Networking
 
         public static StorageBoxBlobMessage Deserialize(NetDataReader r)
         {
-            int n = r.GetInt();
-            var items = n > 0 && n < 512 ? new StorageBoxItem[n] : new StorageBoxItem[0];
+            int n = NetWire.ReadCount(r, NetWire.MaxStorageItems, "StorageBoxBlob");
+            var items = n > 0 ? new StorageBoxItem[n] : new StorageBoxItem[0];
             for (int i = 0; i < items.Length; i++)
                 items[i] = StorageBoxItem.Deserialize(r);
             return new StorageBoxBlobMessage { Items = items };
@@ -1379,6 +1750,7 @@ namespace SyncRADation.Networking
         public void Serialize(NetDataWriter w)
         {
             int n = ItemEnums != null ? ItemEnums.Length : 0;
+            n = NetWire.ClampCount(n, NetWire.MaxKeyRing, "PartyKeyRing");
             w.Put(n);
             for (int i = 0; i < n; i++)
                 w.Put(ItemEnums[i]);
@@ -1386,8 +1758,8 @@ namespace SyncRADation.Networking
 
         public static PartyKeyRingMessage Deserialize(NetDataReader r)
         {
-            int n = r.GetInt();
-            var arr = n > 0 && n < 512 ? new ushort[n] : new ushort[0];
+            int n = NetWire.ReadCount(r, NetWire.MaxKeyRing, "PartyKeyRing");
+            var arr = n > 0 ? new ushort[n] : new ushort[0];
             for (int i = 0; i < arr.Length; i++)
                 arr[i] = r.GetUShort();
             return new PartyKeyRingMessage { ItemEnums = arr };
@@ -1420,6 +1792,8 @@ namespace SyncRADation.Networking
         public byte Kind; // 0 = StudioEventEmitter, 1 = PlayOneShot path
         public float PosX, PosY, PosZ;
         public string Path;
+        /// <summary>Index of the StudioEventEmitter among the GameObject's StudioEventEmitters (serialized order, identical on every peer).</summary>
+        public byte Comp;
 
         public void Serialize(NetDataWriter w)
         {
@@ -1429,7 +1803,8 @@ namespace SyncRADation.Networking
             w.Put(PosX);
             w.Put(PosY);
             w.Put(PosZ);
-            w.Put(Path ?? "");
+            NetWire.PutString(w, Path);
+            w.Put(Comp);
         }
 
         public static FmodEmitterMessage Deserialize(NetDataReader r) =>
@@ -1441,7 +1816,31 @@ namespace SyncRADation.Networking
                 PosX = r.GetFloat(),
                 PosY = r.GetFloat(),
                 PosZ = r.GetFloat(),
-                Path = r.GetString()
+                Path = r.GetString(),
+                Comp = r.GetByte()
+            };
+    }
+
+    /// <summary>Client → host: world emitter Play/Stop the client triggered itself. The host plays it and relays it as FmodEmitter to everyone but the sender.</summary>
+    public struct FmodEmitterRequestMessage
+    {
+        public long WorldId;
+        public bool Play;
+        public byte Comp;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(WorldId);
+            w.Put(Play);
+            w.Put(Comp);
+        }
+
+        public static FmodEmitterRequestMessage Deserialize(NetDataReader r) =>
+            new FmodEmitterRequestMessage
+            {
+                WorldId = r.GetLong(),
+                Play = r.GetBool(),
+                Comp = r.GetByte()
             };
     }
 }

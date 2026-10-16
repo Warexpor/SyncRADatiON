@@ -1,105 +1,78 @@
+using SyncRADation.Sync;
 using UnityEngine;
+using static SyncRADation.Networking.PuzzleDomainUtil;
 
 namespace SyncRADation.Networking
 {
-    /// <summary>CentralElevator / call button / EXC_Elevator snap/read/apply.</summary>
+    /// <summary>CentralElevator / call button / EXC_Elevator read/apply.</summary>
     public sealed class ElevatorSyncService
     {
-        public static bool TryRead(PuzzleType type, Component c, long wid, out PuzzleStateEntry entry)
+        /// <summary>Int0 = floor, Int1 = state, Int2 = targetFloor (cabin authority).</summary>
+        internal static PuzzleStateEntry ReadCentral(CentralElevatorControl x, long wid)
+            => Mk(PuzzleType.CentralElevator, wid, false, false, false, x.floor, (int)x.state, x.targetFloor, 0, 0);
+
+        internal static PuzzleStateEntry ReadCallButton(ElevatorCallButton x, long wid)
+            => Mk(PuzzleType.ElevatorCallButton, wid, x.called, false, false, 0, 0, 0, 0, 0);
+
+        /// <summary>
+        /// Native Update scrolls pos.z (Repeat over distance) and writes mover.localPosition = pos every frame (Ghidra
+        /// EXC_Elevator.c); mover Y never changes. Bool0 = riding, Bool1 = stopped, Float0 = pos.z where the cabin
+        /// stopped. While riding it stays 0: each peer scrolls its own shaft, and a moving float would resend every
+        /// poll and snap the shaft backwards by the latency.
+        /// </summary>
+        internal static PuzzleStateEntry ReadExc(EXC_Elevator x, long wid)
         {
-            entry = default;
-            switch (type)
-            {
-                case PuzzleType.CentralElevator:
-                {
-                    var x = (CentralElevatorControl)c;
-                    // Int0=floor Int1=state Int2=targetFloor (cabin authority).
-                    entry = PuzzleDomainUtil.Mk(type, wid, false, false, false, x.floor, (int)x.state, x.targetFloor, 0, 0);
-                    return true;
-                }
-                case PuzzleType.ElevatorCallButton:
-                {
-                    var x = (ElevatorCallButton)c;
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.called, false, false, 0, 0, 0, 0, 0);
-                    return true;
-                }
-                case PuzzleType.EXC_Elevator:
-                {
-                    var x = (EXC_Elevator)c;
-                    float moverY = 0f;
-                    try
-                    {
-                        if (x.mover != null)
-                            moverY = x.mover.localPosition.y;
-                    }
-                    catch { }
-                    // Bool0=riding Bool1=stopped Float0=mover Y (late-join / mid-ride pose).
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.riding, x.stopped, false, 0, 0, 0, 0, moverY);
-                    return true;
-                }
-                default:
-                    return false;
-            }
+            bool riding = x.riding, stopped = x.stopped;
+            float stopZ = stopped && !riding ? x.pos.z : 0f;
+            return Mk(PuzzleType.EXC_Elevator, wid, riding, stopped, false, 0, 0, 0, 0, stopZ);
         }
 
-        public static void ApplyCentral(CentralElevatorControl x, PuzzleStateEntry e)
+        internal static void ApplyCentral(CentralElevatorControl x, PuzzleStateEntry e)
         {
             if (x == null) return;
             x.floor = e.Int0;
             x.state = (CentralElevatorControl.evState)e.Int1;
-            try { x.targetFloor = e.Int2; } catch { }
+            x.targetFloor = e.Int2;
         }
 
-        public static void ApplyCallButton(ElevatorCallButton x, PuzzleStateEntry e)
-        {
-            if (x != null) x.called = e.Bool0;
-        }
-
-        public static void ApplyExc(EXC_Elevator x, PuzzleStateEntry e)
+        /// <summary>
+        /// A rising edge runs native CallElevator (starts elevatorMove / elevatorBroken): a bare called=true skips the
+        /// coroutine, the host cabin never moves and later presses early-out.
+        /// </summary>
+        internal static void ApplyCallButton(ElevatorCallButton x, PuzzleStateEntry e)
         {
             if (x == null) return;
-            bool wasRiding = false;
-            try { wasRiding = x.riding; } catch { }
+            bool wasCalled = x.called;
+            if (e.Bool0 && !wasCalled)
+                PuzzleDomainUtil.Native("elevator-call", x.CallElevator);
+            else if (!e.Bool0 && wasCalled)
+                x.called = false;
+        }
+
+        /// <summary>Stopped: the host's pos.z, then native stopInstant re-reads it from the mover. Riding: start the native ride once.</summary>
+        internal static void ApplyExc(EXC_Elevator x, PuzzleStateEntry e)
+        {
+            if (x == null) return;
+            bool wasRiding = x.riding;
             x.riding = e.Bool0;
             x.stopped = e.Bool1;
-            // Prefer final stopped pose; when riding, start native ride once.
-            if (e.Bool1)
+            if (e.Bool1 && !e.Bool0)
             {
+                // pos.z drives the mover (Update: mover.localPosition = pos); write both so the pose holds.
+                var p = x.pos;
+                p.z = e.Float0;
+                x.pos = p;
+                if (x.mover != null) x.mover.localPosition = p;
                 try { x.stopInstant(); }
-                catch
+                catch (System.Exception ex)
                 {
-                    try
-                    {
-                        if (x.mover != null)
-                        {
-                            var p = x.mover.localPosition;
-                            p.y = x.distance;
-                            x.mover.localPosition = p;
-                        }
-                    }
-                    catch { }
+                    Guard.Swallow("Puzzle.elevator-stop", ex);
+                    x.acc = 0f;
                 }
                 return;
             }
             if (e.Bool0 && !wasRiding)
-            {
-                try { x.startRide(); }
-                catch { }
-            }
-            // Late-join / mid-ride: snap mover Y when provided.
-            if (e.Float0 != 0f || e.Bool0)
-            {
-                try
-                {
-                    if (x.mover != null)
-                    {
-                        var p = x.mover.localPosition;
-                        p.y = e.Float0;
-                        x.mover.localPosition = p;
-                    }
-                }
-                catch { }
-            }
+                PuzzleDomainUtil.Native("elevator-ride", x.startRide);
         }
     }
 }

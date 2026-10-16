@@ -1,328 +1,273 @@
+using System;
+using SyncRADation.Sync;
 using UnhollowerBaseLib;
 using UnityEngine;
+using static SyncRADation.Networking.PuzzleDomainUtil;
 
 namespace SyncRADation.Networking
 {
     /// <summary>
-    /// Protocol-9 residency / key / drawer puzzles (RES_MusicBox..OpenableDrawer).
-    /// Magpie-style final-pose snaps; MED_KeyGrid / ArianePhotoCode are static globals.
+    /// Residency / key / drawer puzzles (RES_MusicBox..OpenableDrawer): final-pose snaps. MED_KeyGrid and
+    /// ArianePhotoCode are static globals (WorldId 0).
     /// </summary>
     public sealed class ResidencyPuzzleSyncService
     {
-        public static bool TryRead(PuzzleType type, Component c, long wid, out PuzzleStateEntry entry)
+        internal static PuzzleStateEntry ReadMusicBox(RES_MusicBox x, long wid)
+            => Mk(PuzzleType.RES_MusicBox, wid, x.opened, x.hasCassette, false, 0, 0, 0, 0, 0);
+
+        /// <summary>Float0/Float1 = robotPos (spawn 9,5; victory 10,1). Bool1 = pack valid, so the spawn cell still holds.</summary>
+        internal static PuzzleStateEntry ReadLibraryPc(RES_LibraryPC x, long wid)
         {
-            entry = default;
-            switch (type)
+            var p = x.robotPos;
+            return Mk(PuzzleType.RES_LibraryPC, wid, x.solved, true, false, 0, 0, 0, 0, p.x, p.y);
+        }
+
+        internal static PuzzleStateEntry ReadPaternoster(RES_Paternoster x, long wid)
+            => Mk(PuzzleType.RES_Paternoster, wid, x.powered, false, false, 0, 0, 0, 0, 0);
+
+        internal static PuzzleStateEntry ReadServiceLockKey(DET_ServiceLock_Key x, long wid)
+            => Mk(PuzzleType.DET_ServiceLock_Key, wid, x.Open, false, false, 0, 0, 0, 0, 0);
+
+        internal static PuzzleStateEntry ReadSafeDoor(SafeDoorSmall x, long wid)
+            => Mk(PuzzleType.SafeDoorSmall, wid, x.open, false, false, 0, 0, 0, 0, 0);
+
+        /// <summary>Unlocked = every keys[] slot set (what native checkLock() computes); Int0 = keys pack.</summary>
+        internal static PuzzleStateEntry ReadMultiKeyLock(MultiKeyLock x, long wid)
+        {
+            var keys = x.keys;
+            bool unlocked = keys != null && keys.Length > 0;
+            if (unlocked)
+                for (int i = 0; i < keys.Length; i++)
+                    if (!keys[i]) { unlocked = false; break; }
+            return Mk(PuzzleType.MultiKeyLock, wid, unlocked, false, false, PackBoolArray(keys), 0, 0, 0, 0);
+        }
+
+        internal static PuzzleStateEntry ReadDrawer(OpenableDrawer x, long wid)
+            => Mk(PuzzleType.OpenableDrawer, wid, x.open, false, false, 0, 0, 0, 0, 0);
+
+        /// <summary>Bool0 = static MED_KeyGrid.solved; Int0 = nodes connected (first grid with nodes), Int1 = node count.</summary>
+        internal static PuzzleStateEntry ReadKeyGridGlobal()
+        {
+            int bits = 0, count = 0;
+            var grids = WorldLookup.All<MED_KeyGrid>();
+            if (grids != null)
             {
-                case PuzzleType.RES_MusicBox:
+                for (int g = 0; g < grids.Length; g++)
                 {
-                    var x = (RES_MusicBox)c;
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.opened, x.hasCassette, false, 0, 0, 0, 0, 0);
-                    return true;
+                    if (grids[g] == null) continue;
+                    ChapterMachineSyncService.PackNodes(grids[g].nodes, out bits, out count);
+                    if (count > 0) break;
                 }
-                case PuzzleType.RES_LibraryPC:
-                {
-                    var x = (RES_LibraryPC)c;
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.solved, false, false, 0, 0, 0, 0, 0);
-                    return true;
-                }
-                case PuzzleType.RES_Paternoster:
-                {
-                    var x = (RES_Paternoster)c;
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.powered, false, false, 0, 0, 0, 0, 0);
-                    return true;
-                }
-                case PuzzleType.DET_ServiceLock_Key:
-                {
-                    var x = (DET_ServiceLock_Key)c;
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.Open, false, false, 0, 0, 0, 0, 0);
-                    return true;
-                }
-                case PuzzleType.SafeDoorSmall:
-                {
-                    var x = (SafeDoorSmall)c;
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.open, false, false, 0, 0, 0, 0, 0);
-                    return true;
-                }
-                case PuzzleType.MultiKeyLock:
-                {
-                    var x = (MultiKeyLock)c;
-                    // Derive unlocked from keys[] — never call checkLock() on the poll path
-                    // (Apply calls it when unlocking).
-                    bool unlocked = false;
-                    try
-                    {
-                        var keys = x.keys;
-                        if (keys != null && keys.Length > 0)
-                        {
-                            unlocked = true;
-                            for (int i = 0; i < keys.Length; i++)
-                            {
-                                if (!keys[i]) { unlocked = false; break; }
-                            }
-                        }
-                    }
-                    catch { }
-                    entry = PuzzleDomainUtil.Mk(type, wid, unlocked, false, false, PackBoolArray(x.keys), 0, 0, 0, 0);
-                    return true;
-                }
-                case PuzzleType.OpenableDrawer:
-                {
-                    var x = (OpenableDrawer)c;
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.open, false, false, 0, 0, 0, 0, 0);
-                    return true;
-                }
-                case PuzzleType.MED_KeyGrid:
-                {
-                    // Instance registered for scan; static solved is the authority.
-                    entry = PuzzleDomainUtil.Mk(type, wid, MED_KeyGrid.solved, false, false, 0, 0, 0, 0, 0);
-                    return true;
-                }
-                case PuzzleType.ArianePhotoCode:
-                {
-                    entry = PuzzleDomainUtil.Mk(type, wid, ArianePhotoCode.code != 0, false, false, ArianePhotoCode.code, 0, 0, 0, 0);
-                    return true;
-                }
-                default:
-                    return false;
             }
+            return Mk(PuzzleType.MED_KeyGrid, 0, MED_KeyGrid.solved, false, false, bits, count, 0, 0, 0f);
         }
 
-        /// <summary>Host-only global (WorldId 0) — mirrors RadioManagerState.</summary>
-        public static PuzzleStateEntry ReadKeyGridGlobal()
+        internal static PuzzleStateEntry ReadArianePhotoCodeGlobal()
         {
-            bool solved = false;
-            try { solved = MED_KeyGrid.solved; } catch { }
-            return PuzzleDomainUtil.Mk(PuzzleType.MED_KeyGrid, 0, solved, false, false, 0, 0, 0, 0, 0f);
+            int code = ArianePhotoCode.code;
+            return Mk(PuzzleType.ArianePhotoCode, 0, code != 0, false, false, code, 0, 0, 0, 0f);
         }
 
-        /// <summary>Host-only global (WorldId 0) — static ArianePhotoCode.code.</summary>
-        public static PuzzleStateEntry ReadArianePhotoCodeGlobal()
-        {
-            int code = 0;
-            try { code = ArianePhotoCode.code; } catch { }
-            return PuzzleDomainUtil.Mk(PuzzleType.ArianePhotoCode, 0, code != 0, false, false, code, 0, 0, 0, 0f);
-        }
-
-        public static void ApplyMusicBox(RES_MusicBox x, PuzzleStateEntry e)
+        /// <summary>
+        /// Native Update fires onSuccess only on opened false → true, so a remote latch would skip it forever. Scene
+        /// data onSuccess = dimPOI (the durable form replays it). hasCassette is the wire's Bool1, never forced.
+        /// </summary>
+        internal static void ApplyMusicBox(RES_MusicBox x, PuzzleStateEntry e)
         {
             if (x == null) return;
-            try { x.hasCassette = e.Bool1; } catch { }
-            if (e.Bool0)
-                SnapMusicBox(x);
+            bool was = x.opened;
+            x.hasCassette = e.Bool1;
+            if (!e.Bool0) return;
+            PuzzleEdge.Solved("RES_MusicBox", was, true,
+                durable: () =>
+                {
+                    if (was) return;
+                    PuzzleEdge.ReplayDurable(x.onSuccess);
+                    SnapMusicBox(x);
+                },
+                onLive: () =>
+                {
+                    PuzzleEdge.Invoke(x.onSuccess);
+                    SnapMusicBox(x);
+                }, at: x);
         }
 
-        public static void ApplyLibraryPc(RES_LibraryPC x, PuzzleStateEntry e)
+        static void SnapMusicBox(RES_MusicBox x)
         {
-            if (x != null && e.Bool0)
-                SnapLibraryPc(x);
+            x.opened = true;
+            if (x.CardPickup != null) x.CardPickup.SetActive(true);
+            if (x.BoxObs != null) x.BoxObs.SetActive(false);
+            if (x.euleLid != null)
+            {
+                var r = x.euleLid.localEulerAngles;
+                r.z = x.lidOpen;
+                x.euleLid.localEulerAngles = r;
+            }
+            PuzzleSyncService.RevealPickups(x.CardPickup);
+            PuzzleSyncService.RevealPickups(x.gameObject);
+            PuzzleSyncService.DisableInteractions(x);
+            if (x.tapeInteraction != null) x.tapeInteraction.SetActive(false);
         }
 
-        public static void ApplyPaternoster(RES_Paternoster x, PuzzleStateEntry e)
+        /// <summary>
+        /// robotPos applies always (live + dump). A peer's live move glides at the native movementSpeed (the native
+        /// Move* coroutines set gameState 4/7, so they cannot be replayed on a player outside the screen); native Update
+        /// draws RobotX/RobotY from robotPos. onSuccess (scene data: Play only) is the live in-room edge.
+        /// </summary>
+        internal static void ApplyLibraryPc(RES_LibraryPC x, PuzzleStateEntry e)
+        {
+            if (x == null) return;
+            if (e.Bool1)
+            {
+                var to = new Vector2(e.Float0, e.Float1);
+                if (PuzzleFx.LiveApply && !e.Bool0) LibraryRobotGlide.To(x, to);
+                else
+                {
+                    LibraryRobotGlide.Stop(x);
+                    x.robotPos = to;
+                }
+            }
+            if (!e.Bool0) return;
+            bool was = x.solved;
+            x.solved = true;
+            if (x.Pickup != null) x.Pickup.SetActive(true);
+            if (x.Tome != null) x.Tome.gameObject.SetActive(true);
+            PuzzleSyncService.RevealPickups(x.Pickup);
+            PuzzleSyncService.RevealPickups(x.gameObject);
+            PuzzleSyncService.DisableInteractions(x);
+            PuzzleEdge.Solved("RES_LibraryPC", was, true, durable: null,
+                onLive: () => PuzzleEdge.Invoke(x.onSuccess), at: x);
+        }
+
+        internal static void ApplyPaternoster(RES_Paternoster x, PuzzleStateEntry e)
         {
             if (x == null) return;
             try { x.setPower(e.Bool0); }
-            catch
+            catch (Exception ex)
             {
-                try { x.powered = e.Bool0; } catch { }
+                Guard.Swallow("Puzzle.paternoster-power", ex);
+                x.powered = e.Bool0;
             }
         }
 
-        public static void ApplyKeyGrid(PuzzleStateEntry e)
+        /// <summary>Bool0 → static solved; Int0 → nodes connected + nodesObjects active (what native Update mirrors).</summary>
+        internal static void ApplyKeyGrid(PuzzleStateEntry e)
         {
-            try { MED_KeyGrid.solved = e.Bool0; } catch { }
+            MED_KeyGrid.solved = e.Bool0;
+            if (e.Int1 <= 0) return;
+            var grids = WorldLookup.All<MED_KeyGrid>();
+            if (grids == null) return;
+            for (int g = 0; g < grids.Length; g++)
+            {
+                var x = grids[g];
+                if (x == null) continue;
+                ChapterMachineSyncService.UnpackNodes(x.nodes, e.Int0, e.Int1);
+                var objs = x.nodesObjects;
+                if (objs == null) continue;
+                int n = objs.Count;
+                if (e.Int1 < n) n = e.Int1;
+                n = Mathf.Min(n, 32);
+                for (int i = 0; i < n; i++)
+                    if (objs[i] != null) objs[i].SetActive((e.Int0 & (1 << i)) != 0);
+            }
         }
 
-        public static void ApplyArianePhotoCode(PuzzleStateEntry e)
+        /// <summary>LoadState may reload the code from the local save: the wire's code is asserted again after it.</summary>
+        internal static void ApplyArianePhotoCode(PuzzleStateEntry e)
         {
-            try { ArianePhotoCode.code = e.Int0; } catch { }
-            try { ArianePhotoCode.LoadState(); } catch { }
-            // Reassert after LoadState in case it reloads from local save.
-            try { ArianePhotoCode.code = e.Int0; } catch { }
+            ArianePhotoCode.code = e.Int0;
+            Native("ariane-load", ArianePhotoCode.LoadState);
+            ArianePhotoCode.code = e.Int0;
         }
 
-        public static void ApplyServiceLockKey(DET_ServiceLock_Key x, PuzzleStateEntry e)
+        internal static void ApplyServiceLockKey(DET_ServiceLock_Key x, PuzzleStateEntry e)
         {
-            if (x != null && e.Bool0)
-                SnapServiceLockKey(x);
+            if (x == null || !e.Bool0) return;
+            x.Open = true;
+            if (x.KeyObj != null) x.KeyObj.SetActive(true);
+            if (x.Key != null)
+            {
+                var r = x.Key.localEulerAngles;
+                r.z = x.keyTargetRot;
+                x.Key.localEulerAngles = r;
+            }
+            if (x.Door != null)
+            {
+                var r = x.Door.localEulerAngles;
+                r.y = x.doorTargetRot;
+                x.Door.localEulerAngles = r;
+            }
+            if (x.lockInteraction != null) x.lockInteraction.SetActive(false);
+            PuzzleSyncService.DisableInteractions(x);
+            PuzzleSyncService.DisableOne(x.inter);
+            PuzzleSyncService.TryUnlockDoors(x.gameObject);
         }
 
-        public static void ApplySafeDoorSmall(SafeDoorSmall x, PuzzleStateEntry e)
+        /// <summary>onSolved (scene data: dimPOI) only on the opening edge; the open pose on every apply.</summary>
+        internal static void ApplySafeDoor(SafeDoorSmall x, PuzzleStateEntry e)
         {
-            if (x != null && e.Bool0)
-                SnapSafeDoorSmall(x);
+            if (x == null || !e.Bool0) return;
+            bool was = x.open;
+            x.open = true;
+            if (x.key != null) x.key.SetActive(true);
+            if (x.smallKey != null) x.smallKey.SetActive(true);
+            PuzzleSyncService.RevealPickups(x.key);
+            PuzzleSyncService.RevealPickups(x.smallKey);
+            PuzzleSyncService.RevealPickups(x.gameObject);
+            if (x.keypad != null)
+            {
+                x.keypad.solved = true;
+                PuzzleSyncService.DisableInteractions(x.keypad);
+            }
+            PuzzleSyncService.TryUnlockDoors(x.gameObject);
+            PuzzleEdge.Solved("SafeDoorSmall", was, true,
+                durable: () => { if (!was) PuzzleEdge.ReplayDurable(x.onSolved); },
+                onLive: () => PuzzleEdge.Invoke(x.onSolved), at: x);
         }
 
-        public static void ApplyMultiKeyLock(MultiKeyLock x, PuzzleStateEntry e)
+        /// <summary>
+        /// keys[] is the whole lock state: checkLock() is a pure predicate over it (Ghidra MultiKeyLock.c, no writes),
+        /// so unpacking keys is the unlock; the door / interaction consequences follow.
+        /// </summary>
+        internal static void ApplyMultiKeyLock(MultiKeyLock x, PuzzleStateEntry e)
         {
             if (x == null) return;
             UnpackBoolArray(x.keys, e.Int0);
             if (!e.Bool0) return;
-            try { x.checkLock(); } catch { }
             PuzzleSyncService.TryUnlockDoors(x.gameObject);
-            try { PuzzleSyncService.DisableInteractions(x); } catch { }
+            PuzzleSyncService.DisableInteractions(x);
         }
 
-        public static void ApplyOpenableDrawer(OpenableDrawer x, PuzzleStateEntry e)
+        internal static void ApplyDrawer(OpenableDrawer x, PuzzleStateEntry e)
         {
-            if (x == null) return;
-            if (x.open == e.Bool0) return;
-            try { x.open = e.Bool0; } catch { }
-            PoseDrawer(x, e.Bool0);
-        }
-
-        public static void SnapMusicBox(RES_MusicBox x)
-        {
-            if (x == null) return;
-            try { x.opened = true; } catch { }
-            try { x.hasCassette = true; } catch { }
-            try { if (x.CardPickup != null) x.CardPickup.SetActive(true); } catch { }
-            try { if (x.BoxObs != null) x.BoxObs.SetActive(false); } catch { }
-            try
-            {
-                if (x.euleLid != null)
-                {
-                    var e = x.euleLid.localEulerAngles;
-                    e.z = x.lidOpen;
-                    x.euleLid.localEulerAngles = e;
-                }
-            }
-            catch { }
-            try { PuzzleSyncService.RevealPickups(x.CardPickup); } catch { }
-            try { PuzzleSyncService.RevealPickups(x.gameObject); } catch { }
-            try { PuzzleSyncService.DisableInteractions(x); } catch { }
-            try { if (x.tapeInteraction != null) x.tapeInteraction.SetActive(false); } catch { }
-        }
-
-        public static void SnapLibraryPc(RES_LibraryPC x)
-        {
-            if (x == null) return;
-            try { x.solved = true; } catch { }
-            try { if (x.Pickup != null) x.Pickup.SetActive(true); } catch { }
-            try { if (x.Tome != null) x.Tome.gameObject.SetActive(true); } catch { }
-            try { PuzzleSyncService.RevealPickups(x.Pickup); } catch { }
-            try { PuzzleSyncService.RevealPickups(x.gameObject); } catch { }
-            try { PuzzleSyncService.DisableInteractions(x); } catch { }
-        }
-
-        public static void SnapServiceLockKey(DET_ServiceLock_Key x)
-        {
-            if (x == null) return;
-            try { x.Open = true; } catch { }
-            try { if (x.KeyObj != null) x.KeyObj.SetActive(true); } catch { }
-            try
-            {
-                if (x.Key != null)
-                {
-                    var e = x.Key.localEulerAngles;
-                    e.z = x.keyTargetRot;
-                    x.Key.localEulerAngles = e;
-                }
-            }
-            catch { }
-            try
-            {
-                if (x.Door != null)
-                {
-                    var e = x.Door.localEulerAngles;
-                    e.y = x.doorTargetRot;
-                    x.Door.localEulerAngles = e;
-                }
-            }
-            catch { }
-            try
-            {
-                if (x.lockInteraction != null)
-                    x.lockInteraction.SetActive(false);
-            }
-            catch { }
-            try { PuzzleSyncService.DisableInteractions(x); } catch { }
-            try { if (x.inter != null) PuzzleSyncService.DisableOne(x.inter); } catch { }
-            PuzzleSyncService.TryUnlockDoors(x.gameObject);
-        }
-
-        public static void SnapSafeDoorSmall(SafeDoorSmall x)
-        {
-            if (x == null) return;
-            try { x.open = true; } catch { }
-            try { if (x.key != null) x.key.SetActive(true); } catch { }
-            try { if (x.smallKey != null) x.smallKey.SetActive(true); } catch { }
-            try { PuzzleSyncService.RevealPickups(x.key); } catch { }
-            try { PuzzleSyncService.RevealPickups(x.smallKey); } catch { }
-            try { PuzzleSyncService.RevealPickups(x.gameObject); } catch { }
-            try
-            {
-                if (x.keypad != null)
-                {
-                    x.keypad.solved = true;
-                    PuzzleSyncService.DisableInteractions(x.keypad);
-                }
-            }
-            catch { }
-            PuzzleSyncService.TryUnlockDoors(x.gameObject);
-        }
-
-        static void PoseDrawer(OpenableDrawer x, bool open)
-        {
-            try
-            {
-                if (x.drawer != null && open)
-                    x.drawer.localPosition = x.openPos;
-            }
-            catch { }
-            try
-            {
-                var content = x.Content;
-                if (content != null)
-                {
-                    for (int i = 0; i < content.Count; i++)
-                    {
-                        try
-                        {
-                            if (content[i] != null)
-                                content[i].SetActive(open);
-                        }
-                        catch { }
-                    }
-                }
-            }
-            catch { }
-            if (open)
-            {
-                try { PuzzleSyncService.RevealPickups(x.gameObject); } catch { }
-            }
+            if (x == null || x.open == e.Bool0) return;
+            x.open = e.Bool0;
+            if (x.drawer != null && e.Bool0)
+                x.drawer.localPosition = x.openPos;
+            var content = x.Content;
+            if (content != null)
+                for (int i = 0; i < content.Count; i++)
+                    if (content[i] != null) content[i].SetActive(e.Bool0);
+            if (e.Bool0)
+                PuzzleSyncService.RevealPickups(x.gameObject);
         }
 
         internal static int PackBoolArray(Il2CppStructArray<bool> arr)
         {
             int bits = 0;
             if (arr == null) return bits;
-            try
-            {
-                int n = arr.Length;
-                if (n > 32) n = 32;
-                for (int i = 0; i < n; i++)
-                {
-                    try { if (arr[i]) bits |= 1 << i; } catch { }
-                }
-            }
-            catch { }
+            int n = Mathf.Min(arr.Length, 32);
+            for (int i = 0; i < n; i++)
+                if (arr[i]) bits |= 1 << i;
             return bits;
         }
 
         internal static void UnpackBoolArray(Il2CppStructArray<bool> arr, int bits)
         {
             if (arr == null) return;
-            try
-            {
-                int n = arr.Length;
-                if (n > 32) n = 32;
-                for (int i = 0; i < n; i++)
-                {
-                    try { arr[i] = (bits & (1 << i)) != 0; } catch { }
-                }
-            }
-            catch { }
+            int n = Mathf.Min(arr.Length, 32);
+            for (int i = 0; i < n; i++)
+                arr[i] = (bits & (1 << i)) != 0;
         }
     }
 }

@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using LiteNetLib;
 using LiteNetLib.Utils;
 using SyncRADation.Cheats;
+using SyncRADation.Config;
 using SyncRADation.Players;
 using SyncRADation.Sync;
 using UnityEngine;
@@ -18,15 +19,46 @@ namespace SyncRADation.Networking
             _net = net ?? throw new System.ArgumentNullException(nameof(net));
         }
 
+        // Persistent on purpose: serialized size of an empty snapshot struct, a pure cache that never depends on session state.
+        // persistent: serialized size of an empty snapshot (pure cache)
+        private static int _snapBytes;
+        // Snapshot packets are built one at a time and copied by LiteNetLib on send: one writer serves them all.
+        private readonly NetDataWriter _stateWriter = new NetDataWriter();
+
+        static int SnapshotBytes()
+        {
+            if (_snapBytes == 0)
+            {
+                var probe = new NetDataWriter();
+                new EnemySnapshotNet().Serialize(probe);
+                _snapBytes = probe.Length;
+            }
+            return _snapBytes;
+        }
+
+        /// <summary>
+        /// Continuous snapshot: Sequenced on the State channel, chunked to one packet each (Sequenced cannot
+        /// fragment), so a stall here never blocks the ReliableOrdered event stream. Full list re-sent at 15 Hz.
+        /// </summary>
         internal void SendEnemyState(IList<EnemySnapshotNet> snaps)
         {
             if (snaps == null || snaps.Count == 0) return;
-            var writer = new NetDataWriter();
-            writer.Put((byte)NetMessageType.EnemyState);
-            writer.Put(snaps.Count);
-            for (int i = 0; i < snaps.Count; i++)
-                snaps[i].Serialize(writer);
-            _net.BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
+            int perPacket = (_net.StatePacketBudget() - 1 - 4) / SnapshotBytes();
+            if (perPacket < 1) perPacket = 1;
+            if (perPacket > NetWire.MaxEnemies) perPacket = NetWire.MaxEnemies;
+            int total = NetWire.ClampCount(snaps.Count, 4096, "EnemyState send");
+            for (int start = 0; start < total; start += perPacket)
+            {
+                int n = total - start;
+                if (n > perPacket) n = perPacket;
+                var writer = _stateWriter;
+                writer.Reset();
+                writer.Put((byte)NetMessageType.EnemyState);
+                writer.Put(n);
+                for (int i = 0; i < n; i++)
+                    snaps[start + i].Serialize(writer);
+                _net.BroadcastState(writer);
+            }
         }
 
         internal void SendEnemySpawnRequest(string typeKey, Vector3 pos, float rotY)
@@ -43,15 +75,17 @@ namespace SyncRADation.Networking
             var writer = new NetDataWriter();
             writer.Put((byte)NetMessageType.EnemySpawn);
             msg.Serialize(writer);
-            if (_net.Role == NetworkRole.Host)
-                HandleEnemySpawn(msg);
+            if (NetGate.HostRole)
+                EntitySpawner.FinishSpawn(msg.TypeKey, new Vector3(msg.PosX, msg.PosY, msg.PosZ), msg.RotY, 0, true);
             else if (_net.TryGetPeer(0, out var peer) && peer.ConnectionState == ConnectionState.Connected)
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+                SyncRADation.Sync.NetStats.Send(peer, writer, DeliveryMethod.ReliableOrdered);
         }
 
         internal void BroadcastEnemySpawn(EnemySpawnMessage msg)
         {
-            if (_net.Role != NetworkRole.Host) return;
+            if (!NetGate.HostRole) return;
+            // Host just spawned/adopted an enemy (spawner child, F11): its hurtboxes join the damage scan now.
+            ClientDamageService.NoteSpawn();
             var writer = new NetDataWriter();
             writer.Put((byte)NetMessageType.EnemySpawn);
             msg.Serialize(writer);
@@ -60,10 +94,17 @@ namespace SyncRADation.Networking
 
         internal void HandleEnemySpawn(EnemySpawnMessage msg)
         {
-            if (_net.Role == NetworkRole.Host)
+            if (NetGate.HostRole)
             {
                 if (msg.Seq > 0) return;
+                // A client's F11 spawns for the whole party: only when the host allows client cheats.
+                if (!ModConfig.ClientCheatsAllowed)
+                {
+                    PlaytestLog.Warn("Spawn", "rejected client spawn " + msg.TypeKey + " (AllowClientCheats off)");
+                    return;
+                }
                 EntitySpawner.FinishSpawn(msg.TypeKey, new Vector3(msg.PosX, msg.PosY, msg.PosZ), msg.RotY, 0, true);
+                ClientDamageService.NoteSpawn();
                 return;
             }
             EntitySpawner.ApplyFromNet(msg);
@@ -89,17 +130,19 @@ namespace SyncRADation.Networking
             msg.Serialize(writer);
             if (_net.TryGetPeer(targetPlayerId, out var peer)
                 && peer.ConnectionState == ConnectionState.Connected)
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+                SyncRADation.Sync.NetStats.Send(peer, writer, DeliveryMethod.ReliableOrdered);
         }
 
-        internal void SendNativeEnemyHit(ulong enemyWorldId, float fire, float crit, float hurt, bool noSneak)
+        /// <summary>Client → host: a local hit on a puppet (HP the client's PlayerAttack took off + TakeDamage chances).</summary>
+        internal void SendNativeEnemyHit(ulong enemyWorldId, int damage, float fire, float crit, float hurt, bool noSneak)
         {
+            if (!NetGate.ClientRole) return;
             var msg = new EnemyDamageMessage
             {
                 AttackerPlayerId = _net.LocalPlayerId,
                 TargetPlayerId = -1,
                 EnemyWorldId = unchecked((long)enemyWorldId),
-                Damage = 0f,
+                Damage = damage,
                 IsStagger = false,
                 NativeTakeDamage = true,
                 FireChance = fire,
@@ -110,39 +153,61 @@ namespace SyncRADation.Networking
             var writer = new NetDataWriter();
             writer.Put((byte)NetMessageType.EnemyDamage);
             msg.Serialize(writer);
+            if (_net.TryGetPeer(0, out var peer) && peer.ConnectionState == ConnectionState.Connected)
+                SyncRADation.Sync.NetStats.Send(peer, writer, DeliveryMethod.ReliableOrdered);
+        }
 
-            if (_net.Role == NetworkRole.Host)
+        /// <summary>Client → host: stomp/push/burn/wake side effects the puppeted client cannot run itself.</summary>
+        internal void SendEnemyAction(ulong enemyWorldId, EnemyActionKind action)
+        {
+            if (!NetGate.ClientRole) return;
+            var msg = new EnemyActionMessage
             {
-                if (!_net.EnemySync.ApplyNativeTakeDamageOnHost(enemyWorldId, fire, crit, hurt, noSneak))
-                    PlaytestLog.Event("Damage", "host hit miss id=" + enemyWorldId.ToString("X16"));
-            }
-            else if (_net.TryGetPeer(0, out var peer)
-                && peer.ConnectionState == ConnectionState.Connected)
-            {
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
-            }
+                SenderPlayerId = _net.LocalPlayerId,
+                EnemyWorldId = unchecked((long)enemyWorldId),
+                Action = action
+            };
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.EnemyAction);
+            msg.Serialize(writer);
+            if (_net.TryGetPeer(0, out var peer) && peer.ConnectionState == ConnectionState.Connected)
+                SyncRADation.Sync.NetStats.Send(peer, writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        internal void HandleEnemyAction(EnemyActionMessage msg, int senderId)
+        {
+            if (!NetGate.HostRole) return;
+            _net.EnemySync.ApplyActionOnHost(unchecked((ulong)msg.EnemyWorldId), msg.Action, senderId);
         }
 
         internal void HandleEnemyDamage(EnemyDamageMessage msg)
         {
             ulong enemyId = unchecked((ulong)msg.EnemyWorldId);
 
+            // Host receives only client-originated EnemyDamage (AttackerPlayerId stamped from the peer map by dispatch).
+            // A client may hit enemies (TargetPlayerId < 0). No client sends EnemyDamage at a player: player->player
+            // damage is the FriendlyFire message (opt-in, clamped in CombatNetHandlers). Refuse any such packet.
+            // Enemy->player damage the host itself authors is sent host->client and handled on the client below.
+            if (NetGate.HostRole && msg.TargetPlayerId >= 0)
+            {
+                PlaytestLog.Warn("Damage", "rejected client damage to player " + msg.TargetPlayerId
+                    + " from " + msg.AttackerPlayerId);
+                return;
+            }
+
             if (msg.TargetPlayerId == _net.LocalPlayerId)
             {
                 PlaytestLog.Verbose("Enemy", "dmg=" + msg.Damage.ToString("F0")
                     + " from " + enemyId.ToString("X16"));
-                NetworkDamageSystem.ApplyDamage(msg.Damage, Vector3.zero, Vector3.zero);
+                NetworkDamageSystem.ApplyDamage(msg.Damage);
             }
-            else if (msg.AttackerPlayerId >= 0 && msg.TargetPlayerId < 0 && _net.Role == NetworkRole.Host)
+            else if (msg.AttackerPlayerId >= 0 && msg.TargetPlayerId < 0 && NetGate.HostRole
+                && msg.NativeTakeDamage)
             {
-                if (msg.NativeTakeDamage)
-                {
-                    if (!_net.EnemySync.ApplyNativeTakeDamageOnHost(enemyId, msg.FireChance, msg.CriticalChance, msg.HurtChance, msg.NoSneak))
-                        PlaytestLog.Event("Damage", "client hit miss id=" + enemyId.ToString("X16")
-                            + " from=" + msg.AttackerPlayerId);
-                }
-                else
-                    _net.EnemySync.ApplyDamageOnHost(enemyId, msg.Damage);
+                // Damage = HP the client's own PlayerAttack took off its puppet (native mode only).
+                if (!_net.EnemySync.ApplyNativeTakeDamageOnHost(enemyId, msg.Damage, msg.FireChance, msg.CriticalChance, msg.HurtChance, msg.NoSneak))
+                    PlaytestLog.Event("Damage", "client hit miss id=" + enemyId.ToString("X16")
+                        + " from=" + msg.AttackerPlayerId);
             }
         }
     }

@@ -1,5 +1,6 @@
-// Dropped-item world registry + claim/inspect helpers (Domains peel from DroppedItemManager).
+// Player-dropped items: the key → floor object registry, lookup by object, inspect-safe despawn and play restore.
 using System.Collections.Generic;
+using SyncRADation.Sync;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -41,11 +42,6 @@ namespace SyncRADation.ItemSystem
             _worldItems[netID] = drop;
         }
 
-        public static void Remove(int netID)
-        {
-            _worldItems.Remove(netID);
-        }
-
         public static bool IsDropped(ItemPickup p)
         {
             if (p == null) return false;
@@ -63,28 +59,22 @@ namespace SyncRADation.ItemSystem
         {
             key = -1;
             if (p == null) return false;
-            try { return TryKeyOfGo(p.gameObject, out key); }
+            try { return FindDrop(p.gameObject, out key, false); }
             catch { return false; }
         }
 
-        public static bool TryKeyOfGo(GameObject go, out int key)
-        {
-            return FindDrop(go, out key, false);
-        }
-
+        /// <summary>The drop this object (or one of its parents) belongs to: SR_Drop_&lt;key&gt; name, else a registry match.</summary>
         static bool FindDrop(GameObject go, out int key, bool prefixCounts)
         {
             key = -1;
-            Transform t = null;
-            try { if (go != null) t = go.transform; } catch { return false; }
-            while (t != null)
+            if (go == null) return false;
+            try
             {
-                GameObject g = null;
-                try { g = t.gameObject; } catch { break; }
-                if (g != null)
+                for (var t = go.transform; t != null; t = t.parent)
                 {
-                    string n = null;
-                    try { n = g.name; } catch { }
+                    var g = t.gameObject;
+                    if (g == null) continue;
+                    string n = g.name;
                     if (!string.IsNullOrEmpty(n) && n.StartsWith(NamePrefix, System.StringComparison.Ordinal))
                     {
                         int parsed;
@@ -105,8 +95,8 @@ namespace SyncRADation.ItemSystem
                         }
                     }
                 }
-                try { t = t.parent; } catch { break; }
             }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
 
@@ -123,7 +113,7 @@ namespace SyncRADation.ItemSystem
                 else if (f == PlayerState.face.N)
                     pos.y += 0.35f;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return pos;
         }
 
@@ -134,27 +124,20 @@ namespace SyncRADation.ItemSystem
             return n;
         }
 
-        public static int CountInBag(Items.itemlist id)
+        /// <summary>Move a registered drop to a new key (and rename its GameObject). False when absent / newKey taken.</summary>
+        public static bool Rekey(int oldKey, int newKey)
         {
-            if (id == Items.itemlist.None) return 0;
-            try
-            {
-                var dict = InventoryManager.elsterItems;
-                if (dict == null) return 0;
-                var en = dict.GetEnumerator();
-                int n = 0;
-                while (en.MoveNext())
-                {
-                    var held = en.Current.key;
-                    if (held == null || held._item != id) continue;
-                    int v = en.Current.value;
-                    if (v > 0 && v <= 99) n += v;
-                    else if (v > 99) n += 1;
-                }
-                en.Dispose();
-                return n;
-            }
-            catch { return 0; }
+            if (oldKey == newKey) return false;
+            Drop drop;
+            if (!_worldItems.TryGetValue(oldKey, out drop)) return false;
+            if (_worldItems.ContainsKey(newKey)) return false;
+            _worldItems.Remove(oldKey);
+            drop.Key = newKey;
+            _worldItems[newKey] = drop;
+            try { if (drop.Go != null) drop.Go.name = NamePrefix + newKey; }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            if (_deferKey == oldKey) _deferKey = newKey;
+            return true;
         }
 
         public static Interaction NearbyInteraction(Vector3 pos, float maxDist)
@@ -179,7 +162,7 @@ namespace SyncRADation.ItemSystem
                         best = inter;
                     }
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
             return best;
         }
@@ -192,12 +175,9 @@ namespace SyncRADation.ItemSystem
                 var outlines = go.GetComponentsInChildren<cakeslice.Outline>(true);
                 if (outlines == null) return;
                 for (int i = 0; i < outlines.Length; i++)
-                {
-                    if (outlines[i] == null) continue;
-                    try { outlines[i].enabled = on; } catch { }
-                }
+                    if (outlines[i] != null) outlines[i].enabled = on;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public static bool InspectLocked()
@@ -205,34 +185,90 @@ namespace SyncRADation.ItemSystem
             try
             {
                 var gs = PlayerState.gameState;
-                if (gs == PlayerState.gameStates.dialogue
+                return gs == PlayerState.gameStates.dialogue
                     || gs == PlayerState.gameStates.eventScreen
-                    || gs == PlayerState.gameStates.book)
-                    return true;
+                    || gs == PlayerState.gameStates.book
+                    || PlayerState.paused || PlayerState.eventScreen || PlayerState.suspendInput;
             }
-            catch { }
-            try { if (PlayerState.paused || PlayerState.eventScreen || PlayerState.suspendInput) return true; }
-            catch { }
-            return false;
+            catch (System.Exception e) { Guard.Swallow(e); return false; }
         }
 
         public static void RestorePlay()
         {
-            try { PlayerState.paused = false; } catch { }
-            try { PlayerState.eventScreen = false; } catch { }
-            try { PlayerState.suspendInput = false; } catch { }
+            try
+            {
+                PlayerState.paused = false;
+                PlayerState.eventScreen = false;
+                PlayerState.suspendInput = false;
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            var all = WorldLookup.All<InventoryBase>();
+            if (all != null)
+            {
+                for (int i = 0; i < all.Length; i++)
+                {
+                    var inv = all[i];
+                    if (inv == null) continue;
+                    try
+                    {
+                        if (inv.inventoryOpen) inv.inventoryOpen = false;
+                        if (inv.intMenuOn) inv.ToggleInteractMenu();
+                    }
+                    catch (System.Exception e) { Guard.Swallow(e); }
+                }
+            }
             try
             {
                 var gs = PlayerState.gameState;
                 if (gs == PlayerState.gameStates.dialogue
                     || gs == PlayerState.gameStates.eventScreen
                     || gs == PlayerState.gameStates.book
-                    || gs == PlayerState.gameStates.paused)
+                    || gs == PlayerState.gameStates.paused
+                    || gs == PlayerState.gameStates.inventory
+                    || gs == PlayerState.gameStates.menu)
                     PlayerState.gameState = PlayerState.gameStates.play;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
+        /// <summary>
+        /// RestorePlay + story state, for a follow load / disconnect: a peer that was mid-cutscene or mid-Dialoguer
+        /// when the host loaded another scene kept gameStates.cutscene / PlayerState.cutscene / dialogue sticky
+        /// (the coroutine that would clear them dies with the unloaded scene). Not used by pickup inspect paths.
+        /// </summary>
+        public static void RestorePlayForLoad()
+        {
+            RestorePlay();
+            try
+            {
+                if (PlayerState.gameState == PlayerState.gameStates.dialogue)
+                {
+                    // EndDialogue fires the dialogue's end callbacks, which can start a load of their own (and
+                    // IsApplying lets loads through): swallow loads for the duration, the follow's own load comes after.
+                    NetGate.BeginApply();
+                    SyncRADation.Networking.SceneFollowService.BeginSuppressLoads();
+                    try { Dialoguer.EndDialogue(); }
+                    finally
+                    {
+                        SyncRADation.Networking.SceneFollowService.EndSuppressLoads();
+                        NetGate.EndApply();
+                    }
+                }
+            }
+            catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] RestorePlayForLoad dialogue: " + ex.Message); }
+            try { SyncRADation.Patches.DialoguerGate.ClearFlavor(); }
+            catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] RestorePlayForLoad flavor: " + ex.Message); }
+            try
+            {
+                PlayerState.cutscene = false;
+                if (PlayerState.gameState == PlayerState.gameStates.cutscene)
+                    PlayerState.gameState = PlayerState.gameStates.play;
+                CutsceneSkippingUI.skippableCutscene = false;
+            }
+            catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] RestorePlayForLoad cutscene: " + ex.Message); }
+        }
+
+        /// <summary>Make a claimed floor item untouchable now (colliders, interaction) and invisible unless an inspect is open on it.</summary>
         public static void HideForClaim(int netID)
         {
             var go = GetItem(netID);
@@ -241,16 +277,8 @@ namespace SyncRADation.ItemSystem
             {
                 var cols = go.GetComponents<BoxCollider2D>();
                 if (cols != null)
-                {
                     for (int i = 0; i < cols.Length; i++)
-                    {
                         if (cols[i] != null) cols[i].enabled = false;
-                    }
-                }
-            }
-            catch { }
-            try
-            {
                 var inter = go.GetComponent<Interaction>();
                 if (inter != null)
                 {
@@ -258,24 +286,15 @@ namespace SyncRADation.ItemSystem
                     inter.inRange = false;
                     inter.enabled = false;
                 }
-            }
-            catch { }
-            if (!InspectLocked())
-            {
-                try
+                if (!InspectLocked())
                 {
-                    if (go == null) return;
                     var rends = go.GetComponentsInChildren<Renderer>(true);
                     if (rends != null)
-                    {
                         for (int i = 0; i < rends.Length; i++)
-                        {
                             if (rends[i] != null) rends[i].enabled = false;
-                        }
-                    }
                 }
-                catch { }
             }
+            catch (System.Exception e) { Guard.Swallow(e); }
             SetHighlight(go, false);
         }
 
@@ -294,7 +313,7 @@ namespace SyncRADation.ItemSystem
 
         public static void TickDeferred()
         {
-            try { SyncRADation.Patches.ItemPickupPatches.TickPendingDrop(); } catch { }
+            try { DroppedItemSpawner.TickRest(); } catch (System.Exception e) { Guard.Swallow(e); }
             if (_deferKey < 0) return;
             bool wait = InspectLocked();
             if (wait && Time.unscaledTime - _deferAt < 2.5f) return;
@@ -310,15 +329,52 @@ namespace SyncRADation.ItemSystem
         public static void DespawnItem(int netID)
         {
             Drop drop;
-            if (_worldItems.TryGetValue(netID, out drop))
+            if (!_worldItems.TryGetValue(netID, out drop)) return;
+            if (drop.Go != null)
             {
-                if (drop.Go != null)
+                FinishPendingRelease(drop.Go);
+                try
                 {
-                    try { drop.Go.SetActive(false); } catch { }
-                    try { Object.Destroy(drop.Go); } catch { }
+                    drop.Go.SetActive(false);
+                    Object.Destroy(drop.Go);
                 }
-                _worldItems.Remove(netID);
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
+            _worldItems.Remove(netID);
+        }
+
+        /// <summary>
+        /// A confirmed take despawns its floor item right away, which kills the Invoke("release", 0.1) the yes/no
+        /// callback scheduled (Ghidra ItemPickup.c dialoguerCallback). Release is what clears the cutscene flag
+        /// pickUp set: left on, every later inspect line refused to open (Dialogue.c) and event-screen locks such
+        /// as the PEN_Wreck airlock card reader ignored the player. Run its state part before the object goes.
+        /// </summary>
+        static void FinishPendingRelease(GameObject go)
+        {
+            ItemPickup p = null;
+            try { p = go.GetComponent<ItemPickup>(); } catch (System.Exception e) { Guard.Swallow(e); }
+            if (p == null) return;
+            bool pending = false;
+            try { pending = p.IsInvoking("release"); } catch (System.Exception e) { Guard.Swallow(e); }
+            if (!pending) return;
+            try { p.CancelInvoke("release"); } catch (System.Exception e) { Guard.Swallow(e); }
+            ReleaseHead(p);
+            PlaytestLog.Verbose("Drop", "despawn ran the pending release state of " + go.name);
+        }
+
+        /// <summary>The play-state part of native ItemPickup.release (its first lines), for takes that skip it.</summary>
+        public static void ReleaseHead(ItemPickup p)
+        {
+            try
+            {
+                PlayerState.cutscene = false;
+                PlayerState.paused = false;
+                // A cutscene that began during the pickup keeps its state (see ItemPickupReleasePatch).
+                if (PlayerState.gameState != PlayerState.gameStates.cutscene)
+                    PlayerState.gameState = p.prevState;
+                BlackSleekGuiSubs.itemView = false;
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public static void ClearVisuals()
@@ -340,7 +396,7 @@ namespace SyncRADation.ItemSystem
         public static void RespawnCurrentScene()
         {
             string scene = "";
-            try { scene = SceneManager.GetActiveScene().name ?? ""; } catch { }
+            try { scene = SceneManager.GetActiveScene().name ?? ""; } catch (System.Exception e) { Guard.Swallow(e); }
             _keyScratch.Clear();
             foreach (var k in _worldItems.Keys)
                 _keyScratch.Add(k);
@@ -370,9 +426,7 @@ namespace SyncRADation.ItemSystem
         public static GameObject GetItem(int netID)
         {
             Drop drop;
-            if (_worldItems.TryGetValue(netID, out drop))
-                return drop.Go;
-            return null;
+            return _worldItems.TryGetValue(netID, out drop) ? drop.Go : null;
         }
 
         public static bool TryGet(int netID, out Items.itemlist item, out int count)

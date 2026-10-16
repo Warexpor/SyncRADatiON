@@ -9,13 +9,38 @@ namespace SyncRADation.Config
         public static MelonPreferences_Entry<string> ConnectAddress;
         public static MelonPreferences_Entry<int> ConnectPort;
         public static MelonPreferences_Entry<bool> FriendlyFire;
-        /// <summary>Host diffs puzzles/locks/elevators/radio/storage/event zones.</summary>
+        /// <summary>Host diffs puzzles/locks/elevators/radio/storage/event zones. Local pref: read PuzzlesEnabled instead.</summary>
         public static MelonPreferences_Entry<bool> SyncPuzzles;
-        /// <summary>Legacy name kept for old prefs files; mirrors SyncPuzzles when binding.</summary>
-        public static MelonPreferences_Entry<bool> ExperimentalPuzzles;
+        /// <summary>Local pref: read WorldPickupsEnabled instead.</summary>
         public static MelonPreferences_Entry<bool> SyncWorldPickups;
         public static MelonPreferences_Entry<bool> SyncPlayerVitals;
         public static MelonPreferences_Entry<bool> VerboseLogging;
+        /// <summary>Diagnostic instrumentation (traces, phase timing, stall breakdown, full patch audit). Read DiagnosticsOn.</summary>
+        public static MelonPreferences_Entry<bool> Diagnostics;
+        /// <summary>Host: send the shared-world digest for the live desync check ([Desync] lines). Read DesyncCheckOn.</summary>
+        public static MelonPreferences_Entry<bool> DesyncCheck;
+        public static MelonPreferences_Entry<int> DesyncCheckSeconds;
+        /// <summary>[Wire] line per sent / received message with its fields (streams excluded). Read WireTraceOn.</summary>
+        public static MelonPreferences_Entry<bool> WireTrace;
+        /// <summary>[Call] line per patched native game method that ran or was skipped. Read CallTraceOn (latched at boot).</summary>
+        public static MelonPreferences_Entry<bool> CallTrace;
+        /// <summary>Rewrite Cursor.lockState Confined/Locked to None (free pointer for dual-box).</summary>
+        public static MelonPreferences_Entry<bool> FreeCursor;
+        /// <summary>Host only: session capacity (host + clients). 2..8, default 4.</summary>
+        public static MelonPreferences_Entry<int> MaxPlayers;
+
+        public const int DefaultMaxPlayers = 4;
+        public const int MinMaxPlayers = 2;
+        public const int HardMaxPlayers = 8;
+        /// <summary>Seconds a downed player waits before respawning next to a living teammate.</summary>
+        public static MelonPreferences_Entry<float> DownedRespawnDelay;
+        /// <summary>Host: let clients use the F6 / F7 / F11 cheats that touch the shared world. Default off.</summary>
+        public static MelonPreferences_Entry<bool> AllowClientCheats;
+
+        /// <summary>How this peer draws the other players: 0 Elster, 1 Ariane (sleep dress), 2 Ariane (uniform). Local only.</summary>
+        public static MelonPreferences_Entry<int> RemotePlayerModel;
+        /// <summary>Marker: an Ariane model preload was started and has not finished (a crash there disables the automatic one).</summary>
+        public static MelonPreferences_Entry<bool> SkinPreloadPending;
 
         public static void Bind()
         {
@@ -24,21 +49,147 @@ namespace SyncRADation.Config
             ConnectPort = Category.CreateEntry("ConnectPort", PluginInfo.DefaultPort, "Default UDP port");
             FriendlyFire = Category.CreateEntry("FriendlyFire", false, "Allow players to damage each other");
             SyncPuzzles = Category.CreateEntry("SyncPuzzles", true,
-                "Sync puzzles, locks, elevators, radio, storage, interactions, alert (host-authoritative)");
-            ExperimentalPuzzles = Category.CreateEntry("ExperimentalPuzzles", true,
-                "Deprecated alias — use SyncPuzzles (kept for old configs)");
+                "Sync puzzles, locks, elevators, radio, storage, interactions, alert (host-authoritative). Clients use the host's value.");
             SyncWorldPickups = Category.CreateEntry("SyncWorldPickups", true,
                 "Sync world ItemPickups (keys, modules, docs, ground ammo)");
             SyncPlayerVitals = Category.CreateEntry("SyncPlayerVitals", true,
                 "Share HP / death / game-state for remote Elster display");
             VerboseLogging = Category.CreateEntry("VerboseLogging", false,
-                "OFF unless diagnosing. When true: FMOD Play/Stop, proxy clone/FX internals, incremental puzzle apply. Set in MelonPreferences.cfg under [SyncRADation] on BOTH installs.");
+                "Log volume only: extra lines from code that runs anyway (FMOD Play/Stop, proxy clone/FX internals, incremental puzzle apply). Costs nothing but log size. Instrumentation is the separate Diagnostics pref. Set in MelonPreferences.cfg under [SyncRADation] on BOTH installs.");
+            Diagnostics = Category.CreateEntry("Diagnostics", false,
+                "Instrumentation that costs CPU every frame, read once at game start (restart to change). When true: [Room]/[Proxy]/[Enemy] flicker trace, [Move] blocked trace, [Bag] trace, [EventCam] click trace, [Hitch] phase= timing (wraps every patched Update/LateUpdate/FixedUpdate) and stall breakdowns, and the full boot [Harmony] audit. Off: only the cheap always-on [Hitch] spike lines and 5 s summary remain. Set on BOTH installs for a dual-box hunt.");
+            DiagnosticsOn = Diagnostics.Value;
+            DesyncCheck = Category.CreateEntry("DesyncCheck", true,
+                "Host: every DesyncCheckSeconds send a digest of the shared world (story flags, doors, enemies, pickups, puzzles, cutscenes); each client compares it with its own and both logs get a [Desync] DESYNC line for whatever stays different. A few ms and ~15 KB per check.");
+            DesyncCheckSeconds = Category.CreateEntry("DesyncCheckSeconds", 20,
+                "Seconds between desync checks (5-300).");
+            WireTrace = Category.CreateEntry("WireTrace", true,
+                "Log volume only: one [Wire] line per message sent and received, with its decoded fields (the pose and enemy snapshot streams are left out, a burst is capped at 10 lines per type per second). The complete record of what crossed the network.");
 
-            if (!SyncPuzzles.Value && ExperimentalPuzzles.Value)
-                SyncPuzzles.Value = true;
-            ExperimentalPuzzles.Value = SyncPuzzles.Value;
+            CallTrace = Category.CreateEntry("CallTrace", true,
+                "One [Call] line per native game method the mod patches (interactions, pickups, doors, puzzles, saves, scene loads): that it ran, or that the mod SKIPPED it, or that it threw. Rate limited per method; per-frame methods are left out. Read once at game start (restart to change).");
+            CallTraceOn = CallTrace.Value;
+
+            FreeCursor = Category.CreateEntry("FreeCursor", false,
+                "Dual-box testing under Proton/Wayland: never confine the mouse to the game window. First-person scenes still lock it while the window has focus (mouse look); F9 or switching windows frees it. Off = vanilla.");
+
+            MaxPlayers = Category.CreateEntry("MaxPlayers", DefaultMaxPlayers,
+                "Host session capacity incl. host (2-8). Applies on next Host Game.");
+            if (MaxPlayers.Value < MinMaxPlayers || MaxPlayers.Value > HardMaxPlayers)
+                MaxPlayers.Value = System.Math.Max(MinMaxPlayers, System.Math.Min(HardMaxPlayers, MaxPlayers.Value));
+            DownedRespawnDelay = Category.CreateEntry("DownedRespawnDelay", 20f,
+                "Seconds a downed player (host or client) waits before respawning next to the nearest living teammate. The party wipes (host reloads its last save) only when everyone is down.");
+
+            RemotePlayerModel = Category.CreateEntry("RemotePlayerModel", 0,
+                "How the other players look on this screen: 0 = Elster, 1 = Ariane (white sleep dress), 2 = Ariane (Penrose uniform). Local display only (F2 menu).");
+            if (RemotePlayerModel.Value < 0 || RemotePlayerModel.Value > 2) RemotePlayerModel.Value = 0;
+            SkinPreloadPending = Category.CreateEntry("SkinPreloadPending", false,
+                "Internal: set while the Ariane model is being loaded at the main menu. Left true by a crash: the automatic load is then skipped (F2 has a manual button). Set false to re-enable.");
+
+            AllowClientCheats = Category.CreateEntry("AllowClientCheats", false,
+                "Host: allow clients' F6 keys and story objects, F7 (chapter loads) and F11 (enemy spawns). Off = only the host can cheat.");
         }
 
-        public static bool PuzzlesEnabled => SyncPuzzles?.Value == true;
+        /// <summary>
+        /// Diagnostics pref, latched at Bind (game start). A plain static read so every gated trace costs one branch when off;
+        /// Harmony phase timing is installed (or not) at boot, so a runtime flip could not take full effect anyway.
+        /// </summary>
+        // persistent: pref latched at boot
+        public static bool DiagnosticsOn { get; private set; }
+
+        public static bool DesyncCheckOn => DesyncCheck == null || DesyncCheck.Value;
+
+        // persistent: pref latched at boot (the patches are installed once)
+        public static bool CallTraceOn { get; private set; }
+
+        public static bool WireTraceOn => WireTrace == null || WireTrace.Value;
+
+        public static float DesyncCheckInterval
+        {
+            get
+            {
+                int v = DesyncCheckSeconds != null ? DesyncCheckSeconds.Value : 20;
+                return v < 5 ? 5 : (v > 300 ? 300 : v);
+            }
+        }
+
+        public static float DownedRespawnSeconds
+        {
+            get
+            {
+                float v = DownedRespawnDelay != null ? DownedRespawnDelay.Value : 20f;
+                return v < 1f ? 1f : (v > 600f ? 600f : v);
+            }
+        }
+
+        // ---- Effective sync toggles. The host is authoritative: it sends its prefs in every PlayerRoster, and a connected
+        // client uses those for the session (two installs with different toggles would otherwise desync silently).
+        // Host, solo and offline use the local prefs. Read these, not the MelonPreferences entries.
+
+        public const byte FlagPuzzles = 1;
+        public const byte FlagWorldPickups = 2;
+        public const byte FlagPlayerVitals = 4;
+        public const byte FlagFriendlyFire = 8;
+        public const byte FlagClientCheats = 16;
+
+        // Session state (cleared by SessionReset "HostSyncFlags" on start / stop).
+        private static bool _hasHostFlags;
+        private static byte _hostFlags;
+
+        /// <summary>This install's toggles as roster flags (what a host sends).</summary>
+        public static byte LocalSyncFlags =>
+            (byte)((SyncPuzzles?.Value == true ? FlagPuzzles : 0)
+                | (SyncWorldPickups?.Value == true ? FlagWorldPickups : 0)
+                | (SyncPlayerVitals?.Value == true ? FlagPlayerVitals : 0)
+                | (FriendlyFire?.Value == true ? FlagFriendlyFire : 0)
+                | (AllowClientCheats?.Value == true ? FlagClientCheats : 0));
+
+        /// <summary>Client: the host's toggles arrived (PlayerRoster). Logged when they differ from the local prefs.</summary>
+        public static void ApplyHostSyncFlags(byte flags)
+        {
+            bool changed = !_hasHostFlags || _hostFlags != flags;
+            _hasHostFlags = true;
+            _hostFlags = flags;
+            if (changed && flags != LocalSyncFlags)
+                ModRuntime.Log?.Msg("[Config] using the host's sync toggles: " + Describe(flags) + " (local prefs: " + Describe(LocalSyncFlags) + ")");
+        }
+
+        public static void ClearHostSyncFlags()
+        {
+            _hasHostFlags = false;
+            _hostFlags = 0;
+        }
+
+        static bool Effective(byte flag, MelonPreferences_Entry<bool> local) =>
+            _hasHostFlags ? (_hostFlags & flag) != 0 : local?.Value == true;
+
+        public static bool PuzzlesEnabled => Effective(FlagPuzzles, SyncPuzzles);
+        public static bool WorldPickupsEnabled => Effective(FlagWorldPickups, SyncWorldPickups);
+        public static bool PlayerVitalsEnabled => Effective(FlagPlayerVitals, SyncPlayerVitals);
+        public static bool FriendlyFireEnabled => Effective(FlagFriendlyFire, FriendlyFire);
+        /// <summary>Clients may use the shared-world cheats (host's AllowClientCheats while connected).</summary>
+        public static bool ClientCheatsAllowed => Effective(FlagClientCheats, AllowClientCheats);
+
+        public static string Describe(byte flags) =>
+            "FF=" + ((flags & FlagFriendlyFire) != 0 ? "ON" : "OFF")
+            + " clientCheats=" + ((flags & FlagClientCheats) != 0 ? "ON" : "OFF")
+            + " puzzles=" + ((flags & FlagPuzzles) != 0 ? "ON" : "OFF")
+            + " pickups=" + ((flags & FlagWorldPickups) != 0 ? "ON" : "OFF")
+            + " vitals=" + ((flags & FlagPlayerVitals) != 0 ? "ON" : "OFF");
+
+        /// <summary>The toggles in effect right now (host's while connected as a client).</summary>
+        public static byte EffectiveSyncFlags => _hasHostFlags ? _hostFlags : LocalSyncFlags;
+
+        /// <summary>Clamped MaxPlayers (2..8); DefaultMaxPlayers before Bind().</summary>
+        public static int MaxPlayersClamped
+        {
+            get
+            {
+                int v = MaxPlayers != null ? MaxPlayers.Value : DefaultMaxPlayers;
+                if (v < MinMaxPlayers) v = MinMaxPlayers;
+                if (v > HardMaxPlayers) v = HardMaxPlayers;
+                return v;
+            }
+        }
     }
 }

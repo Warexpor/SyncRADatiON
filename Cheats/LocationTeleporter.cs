@@ -9,12 +9,18 @@ namespace SyncRADation.Cheats
 {
     public static class LocationTeleporter
     {
+        // persistent: F7 window state
         public static bool ShowMenu;
 
+        // persistent: F7 window state
         private static Vector2 _scrollPos;
+        // persistent: F7 window state
         private static string _statusMessage = "";
+        // persistent: F7 window state
         private static float _statusTimer;
+        // persistent: F7 window state
         private static int _tab; // 0 = chapters, 1 = rooms in current level
+        // persistent: F7 window state
         private static Rect _windowRect = new Rect(220f, 80f, 420f, 520f);
 
         private static readonly LocationEntry[] Chapters =
@@ -35,6 +41,7 @@ namespace SyncRADation.Cheats
             new LocationEntry("Memory", "MEM_Memory"),
             new LocationEntry("Memory Gestade", "MEM_Gestade"),
             new LocationEntry("Boss Adler", "BOS_Adler"),
+            new LocationEntry("Dead menu (Memory retry)", "DeadMenu"),
         };
 
         public static void OnGUI()
@@ -103,32 +110,59 @@ namespace SyncRADation.Cheats
             GUI.EndScrollView();
         }
 
+        // OnGUI runs several times per frame while the Rooms tab is open: scan + sort once per registry generation
+        // (every scene load / rebuild bumps it), not per repaint.
+        // persistent: cache keyed by WorldRegistry.Generation (self-invalidating)
+        private static readonly List<Room> _rooms = new List<Room>();
+        // persistent: cache key of _rooms
+        private static int _roomsGeneration = -1;
+
         private static List<Room> CollectRooms()
         {
-            var list = new List<Room>();
+            int g = WorldRegistry.Generation;
+            if (g == _roomsGeneration)
+            {
+                _rooms.RemoveAll(r => r == null);
+                return _rooms;
+            }
+            _roomsGeneration = g;
+            _rooms.Clear();
             try
             {
                 var all = Object.FindObjectsOfType<Room>();
-                if (all == null) return list;
+                if (all == null) return _rooms;
                 foreach (var r in all)
                 {
-                    if (r != null) list.Add(r);
+                    if (r != null) _rooms.Add(r);
                 }
-                list.Sort((a, b) =>
+                _rooms.Sort((a, b) =>
                 {
                     string an = a.roomName ?? a.name;
                     string bn = b.roomName ?? b.name;
                     return string.CompareOrdinal(an, bn);
                 });
             }
-            catch { }
-            return list;
+            catch (System.Exception e) { Guard.Swallow(e); }
+            return _rooms;
+        }
+
+        /// <summary>Chapter load by scene name (same path as the F7 click); used by the <c>--sync-scene</c> boot argument.</summary>
+        public static void LoadChapterByName(string scene)
+        {
+            if (string.IsNullOrEmpty(scene)) return;
+            LoadChapter(new LocationEntry(scene, scene));
         }
 
         private static void LoadChapter(LocationEntry loc)
         {
             if (NetGate.Client)
             {
+                // A client F7 makes the host load the chapter for everyone: only when the host allows client cheats.
+                if (!Config.ModConfig.ClientCheatsAllowed)
+                {
+                    SetStatus("Host does not allow client cheats", true);
+                    return;
+                }
                 SceneFollowService.RequestFollow(loc.Scene);
                 SetStatus("Requested host load: " + loc.Scene);
                 ShowMenu = false;
@@ -230,20 +264,19 @@ namespace SyncRADation.Cheats
 
                 string name = !string.IsNullOrEmpty(room.roomName) ? room.roomName : room.gameObject.name;
 
-                // Native goto first
-                bool cheated = false;
-                try { global::Cheats.cheat("goto " + name); cheated = true; } catch { }
-
-                // Direct fallback: move player to gotoSpawn + EnterRoom
+                // One path only: move the player to gotoSpawn + EnterRoom. The native console "goto" used to run
+                // first and then this teleport + EnterRoom ran again on top of it; the console is often locked anyway.
                 var player = PlayerState.player;
                 Transform spawn = room.gotoSpawn != null ? room.gotoSpawn : room.transform;
-                if (player != null && spawn != null)
+                if (player == null || spawn == null)
                 {
-                    player.transform.position = spawn.position;
-                    try { room.EnterRoom(); } catch { }
+                    SetStatus("No player / spawn for " + name, true);
+                    return;
                 }
+                player.transform.position = spawn.position;
+                try { room.EnterRoom(); } catch (System.Exception e) { Guard.Swallow(e); }
 
-                SetStatus((cheated ? "goto " : "teleport ") + name);
+                SetStatus("teleport " + name);
                 ShowMenu = false;
             }
             catch (System.Exception ex)

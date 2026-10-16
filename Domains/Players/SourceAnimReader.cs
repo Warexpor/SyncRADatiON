@@ -1,5 +1,5 @@
-// SyncRADation � reads Animator state from local player via individual GetFloat/GetBool (IL2CPP-safe)
-using MelonLoader;
+// Local Elster -> PlayerState pose fields + edge cues, read once per 30 Hz send with no per-send allocation.
+using SyncRADation.Config;
 using SyncRADation.Networking;
 using SyncRADation.Sync;
 using UnityEngine;
@@ -8,385 +8,275 @@ namespace SyncRADation.Players
 {
     public static class SourceAnimReader
     {
-        private static BoneSyncManager _boneReader;
-        private static Transform _facingPivotCache;
-        private static Transform _lastPlayerRoot;
-        private static AnimBools _lastBools;
-        private static AnimTriggers _accumulatedTriggers;
+        // ElsterNewController parameters still read (hashed once; AssetRipper AnimatorController/ElsterNewController).
+        private static readonly int ForwardHash = Animator.StringToHash("Forward");
+        private static readonly int AimingTimeHash = Animator.StringToHash("AimingTime");
+        private static readonly int InventoryHash = Animator.StringToHash("Inventory");
+        private static readonly int InjuredHash = Animator.StringToHash("Injured");
+        // Bool pulse: native ElsterHurtAnimation.hurt sets it per hit and clears it 0.2 s later (Ghidra <Callback>d__17).
+        private static readonly int HurtHash = Animator.StringToHash("Hurt");
+        // Trigger, read as a bool: set until the controller's transition consumes it.
+        private static readonly int ReloadHash = Animator.StringToHash("Reload");
+
+        // Per player object (looked up once, not on every send).
+        private static GameObject _player;
+        private static Animator _anim;
+        private static Transform _model;
+        private static Transform _hips;
+        private static CharacterModelType _outfit;
+        private static readonly BoneSyncManager _bones = new BoneSyncManager();
+
+        private static float _prevLoopTime;
         private static bool _hasLast;
-        private static float _prevNormTime;
-        private static Networking.WeaponType _lastWeaponRead;
-        private static float _lastSrcLog;
-        private static int _lastMagAmmo = -1;
-        private static bool _hasMagAmmo;
+        private static bool _lastInjured;
+        private static bool _lastHurt;
+        private static bool _lastReload;
         private static bool _lastTriggerHeld;
-        private static bool _magReloadPulse;
+        private static WeaponType _lastWeapon;
+        private static int _lastMagAmmo;
+        private static bool _hasMagAmmo;
+        private static bool _magRefilled;
         private static float _crawlCheckAt;
         private static bool _crawlActive;
+        private static GameObject _crawlGo;
+        private static GameObject _crawlBound;
+        private static Transform[] _crawlMap;
+        private static Transform _crawlHips;
 
-        public static void ReadFromPlayer(GameObject player, ref PlayerStateMessage msg)
+        /// <summary>
+        /// Shot serial: +1 for every pose tick that saw the equipped weapon's magAmmo drop (a live round). Local
+        /// friendly fire keys off this edge, the same one that sends AvatarCue.Fire. Intentionally persistent:
+        /// readers compare it with the value they last saw, never with zero.
+        /// </summary>
+        public static int ShotSerial { get; private set; }
+
+        /// <summary>Fills the pose fields of <paramref name="msg"/> (all but position / velocity / sender) and returns this tick's edge cues.</summary>
+        public static AvatarCue Read(GameObject player, ref PlayerStateMessage msg)
         {
-            Animator anim = null;
-            var anims = player.GetComponentsInChildren<Animator>(true);
-            for (int i = 0; i < anims.Length; i++)
+            if (_player != player) Bind(player);
+            var crawl = CrawlRig(player);
+            if (crawl != null)
+                msg.SetFacingWorld(crawl.rotation);
+            else if (_model != null)
+                msg.SetFacingWorld(_model.rotation);
+            // Bone indices match because the proxy is a clone of this same model (the crawl rig maps by name path).
+            msg.BoneRotations = crawl != null ? _bones.ReadRotations(_crawlMap) : _bones.ReadRotations();
+            // The one positional channel the Animator writes; rotations alone would leave the proxy hips at bind height.
+            var hips = crawl != null ? _crawlHips : _hips;
+            if (hips != null)
             {
-                if (anims[i] != null && anims[i].runtimeAnimatorController != null)
+                var hp = hips.localPosition;
+                msg.HipsX = hp.x;
+                msg.HipsY = hp.y;
+                msg.HipsZ = hp.z;
+                msg.Flags |= PoseFlags.HasHips;
+                if (ModConfig.DiagnosticsOn && crawl == null)
+                    FlickerTrace.SelfBob(player.transform.position.z, player.transform.position.z - hips.position.z);
+            }
+
+            AvatarCue cues = AvatarCue.None;
+            try
+            {
+                if (_outfit != null) msg.ModelState = (byte)_outfit.modelState;
+                if (CharacterModelType.wearHat) msg.Flags |= PoseFlags.WearHat;
+                if (AlternatePlayerController.running || PlayerState.charState == PlayerState.charStates.run)
+                    msg.Flags |= PoseFlags.Running;
+                if (PlayerState.gameState == PlayerState.gameStates.traversing || CrawlActive())
+                    msg.Flags |= PoseFlags.Climbing;
+                if (PlayerState.gameState == PlayerState.gameStates.cutscene)
+                    msg.Flags |= PoseFlags.Scripted;
+
+                msg.Weapon = WeaponUtils.EquippedWeaponType();
+                if (msg.Weapon != _lastWeapon)
                 {
-                    anim = anims[i];
-                    break;
+                    PlaytestLog.Event("Weapon", "local " + _lastWeapon + " -> " + msg.Weapon);
+                    _lastWeapon = msg.Weapon;
+                    _hasMagAmmo = false; // new magazine baseline
                 }
-            }
-            if (anim == null) return;
-
-            // Read floats
-            msg.Forward = SafeGetFloat(anim, "Forward");
-            msg.Turn = SafeGetFloat(anim, "Turn");
-            msg.AimingTime = SafeGetFloat(anim, "AimingTime");
-            msg.Stamina = SafeGetFloat(anim, "Stamina");
-            msg.Blend = SafeGetFloat(anim, "Blend");
-            msg.IKwalk = SafeGetFloat(anim, "IKwalk");
-            msg.InputX = SafeGetFloat(anim, "X");
-            msg.InputY = SafeGetFloat(anim, "Y");
-            msg.HurtTime = SafeGetFloat(anim, "HurtTime");
-
-            // Detect footsteps from animation normalizedTime (base layer)
-            try
-            {
-                var stateInfo = anim.GetCurrentAnimatorStateInfo(0);
-                float nt = stateInfo.normalizedTime - Mathf.Floor(stateInfo.normalizedTime);
-                msg.StepHappened = false;
-                if (msg.Forward > 0.05f)
+                var equipped = InventoryManager.EquippedWeapon;
+                if (ReadMagShot(equipped))
                 {
-                    if ((_prevNormTime < 0.5f && nt >= 0.5f) || (nt < _prevNormTime && nt < 0.3f))
-                        msg.StepHappened = true;
+                    ShotSerial++;
+                    cues |= AvatarCue.Fire;
+                    PlaytestLog.Rate("Weapon", "shot", 0.2f, "shot " + msg.Weapon + " mag=" + (equipped != null ? equipped.magAmmo : -1)
+                        + " room='" + NetworkDamageSystem.CurrentRoomName() + "'");
                 }
-                _prevNormTime = nt;
-            }
-            catch { }
 
-            msg.Climbing = false;
-            try
-            {
-                if (PlayerState.gameState == PlayerState.gameStates.traversing)
-                    msg.Climbing = true;
-            }
-            catch { }
-            if (!msg.Climbing)
-                msg.Climbing = CrawlMeshActive();
-
-            msg.Weapon = Networking.WeaponUtils.EquippedWeaponType();
-            if (msg.Weapon != _lastWeaponRead)
-            {
-                PlaytestLog.Event("Weapon", "local " + _lastWeaponRead + " -> " + msg.Weapon);
-                _lastWeaponRead = msg.Weapon;
-                _hasMagAmmo = false; // resync mag baseline on weapon swap
-                _lastMagAmmo = -1;
-            }
-
-            // Read bools
-            // IL2CPP: Animator.GetBool for Aiming/Shooting is unreliable.
-            // Aiming: AimingTime float. Shot edge: equipped magAmmo decrease → AnimTriggers.Fire.
-            AnimBools b = 0;
-
-            if (msg.AimingTime > 0.5f)
-                b |= AnimBools.Aiming;
-            try { if (PlayerState.aiming) b |= AnimBools.Aiming; } catch { }
-
-            bool aiming = b.HasFlag(AnimBools.Aiming);
-            bool inventory = false;
-            try { inventory = SafeGetBool(anim, "Inventory"); } catch { }
-            bool playOk = true;
-            try
-            {
-                playOk = PlayerState.gameState == PlayerState.gameStates.play
-                    && !PlayerState.reloading;
-            }
-            catch { }
-            bool canFire = aiming && playOk && !inventory;
-
-            // Live round: magAmmo decreased. Empty click is a separate flag — never Fire.
-            bool ammoShot = TryDetectAmmoShot();
-            bool triggerHeld = Input.GetButton("Fire1") || Input.GetMouseButton(0);
-            bool triggerEdge = triggerHeld && !_lastTriggerHeld;
-            _lastTriggerHeld = triggerHeld;
-            bool magEmpty = false;
-            try
-            {
-                var eq = InventoryManager.EquippedWeapon;
-                if (eq != null && _hasMagAmmo)
-                    magEmpty = eq.magAmmo <= 0;
-            }
-            catch { }
-
-            if (ammoShot)
-                b |= AnimBools.Shooting;
-            else if (canFire && triggerHeld && !magEmpty && _hasMagAmmo)
-                b |= AnimBools.Shooting;
-            else if (canFire && triggerHeld && !_hasMagAmmo && msg.Weapon != Networking.WeaponType.None
-                && msg.Weapon != Networking.WeaponType.Melee)
-                b |= AnimBools.Shooting;
-
-            if (canFire && triggerEdge && magEmpty && _hasMagAmmo
-                && msg.Weapon != Networking.WeaponType.None
-                && msg.Weapon != Networking.WeaponType.Melee)
-                b |= AnimBools.EmptyClick;
-
-            if (SafeGetBool(anim, "Running")) b |= AnimBools.Running;
-            try { if (AlternatePlayerController.running) b |= AnimBools.Running; } catch { }
-            try { if (PlayerState.charState == PlayerState.charStates.run) b |= AnimBools.Running; } catch { }
-            if (SafeGetBool(anim, "Grounded")) b |= AnimBools.Grounded;
-            if (SafeGetBool(anim, "Crouch")) b |= AnimBools.Crouch;
-            if (SafeGetBool(anim, "Blocked")) b |= AnimBools.Blocked;
-            if (SafeGetBool(anim, "Dead")) b |= AnimBools.Dead;
-            if (SafeGetBool(anim, "Inventory")) b |= AnimBools.Inventory;
-            try { if (PlayerState.reloading) b |= AnimBools.Reload; } catch { }
-            try { if (PlayerAttack.reloading) b |= AnimBools.Reload; } catch { }
-            if (SafeGetBool(anim, "Attack")) b |= AnimBools.Attack;
-            if (SafeGetBool(anim, "Injured")) b |= AnimBools.Injured;
-            if (SafeGetBool(anim, "Stomp")) b |= AnimBools.Stomp;
-            if (SafeGetBool(anim, "Push")) b |= AnimBools.Push;
-            if (SafeGetBool(anim, "Melee")) b |= AnimBools.Melee;
-            if (SafeGetBool(anim, "Snap")) b |= AnimBools.Snap;
-            if (SafeGetBool(anim, "Reload")) b |= AnimBools.Reload;
-            if (SafeGetBool(anim, "Swap")) b |= AnimBools.Swap;
-            if (SafeGetBool(anim, "Burst")) b |= AnimBools.Burst;
-            if (SafeGetBool(anim, "Taser")) b |= AnimBools.Taser;
-            if (SafeGetBool(anim, "Random")) b |= AnimBools.Random;
-            if (SafeGetBool(anim, "Hugged")) b |= AnimBools.Hugged;
-            if (SafeGetBool(anim, "ReloadRounds")) b |= AnimBools.ReloadRounds;
-            if (SafeGetBool(anim, "ReloadChamber")) b |= AnimBools.ReloadChamber;
-            msg.AnimBools = b;
-
-            // Read all armature bone rotations from the facing pivot child only
-            // (same hierarchy that model-only proxy clones — ensures indices match)
-            if (_lastPlayerRoot != player.transform)
-            {
-                _lastPlayerRoot = player.transform;
-                _facingPivotCache = FindFacingPivot(player.transform);
-                if (_facingPivotCache != null)
+                bool reload = PlayerState.reloading || PlayerAttack.reloading;
+                bool aiming = PlayerState.aiming;
+                bool inventory = false, injured = false, hurt = false;
+                if (_anim != null)
                 {
-                    _boneReader = new BoneSyncManager();
-                    _boneReader.FindArmature(_facingPivotCache.gameObject);
+                    float forward = _anim.GetFloat(ForwardHash);
+                    msg.SetForward(forward);
+                    aiming |= _anim.GetFloat(AimingTimeHash) > 0.5f;
+                    inventory = _anim.GetBool(InventoryHash);
+                    injured = _anim.GetBool(InjuredHash);
+                    hurt = _anim.GetBool(HurtHash);
+                    reload |= _anim.GetBool(ReloadHash);
+                    // A step lands when the base-layer locomotion loop crosses its half or wraps.
+                    var st = _anim.GetCurrentAnimatorStateInfo(0);
+                    float loop = st.normalizedTime - Mathf.Floor(st.normalizedTime);
+                    if (forward > 0.05f && ((_prevLoopTime < 0.5f && loop >= 0.5f) || (loop < _prevLoopTime && loop < 0.3f)))
+                        msg.Flags |= PoseFlags.Step;
+                    _prevLoopTime = loop;
                 }
-            }
-            if (_boneReader != null)
-                msg.BoneRotations = _boneReader.ReadRotations();
+                if (aiming) msg.Flags |= PoseFlags.Aiming;
 
-            // Detect triggers: if a bool changed from false→true, fire the trigger
-            AnimTriggers triggers = 0;
-            if (ammoShot)
-                triggers |= AnimTriggers.Fire;
-            if (_magReloadPulse)
-            {
-                triggers |= AnimTriggers.ReloadTrigger;
-                _magReloadPulse = false;
-            }
-            if (_hasLast)
-            {
-                if (!_lastBools.HasFlag(AnimBools.Reload) && b.HasFlag(AnimBools.Reload))
-                    triggers |= AnimTriggers.ReloadTrigger;
-                if (!_lastBools.HasFlag(AnimBools.Attack) && b.HasFlag(AnimBools.Attack))
-                    triggers |= AnimTriggers.AttackTrigger;
-                if (!_lastBools.HasFlag(AnimBools.Swap) && b.HasFlag(AnimBools.Swap))
-                    triggers |= AnimTriggers.SwapTrigger;
-                if (!_lastBools.HasFlag(AnimBools.Burst) && b.HasFlag(AnimBools.Burst))
-                    triggers |= AnimTriggers.BurstTrigger;
-                if (!_lastBools.HasFlag(AnimBools.Stomp) && b.HasFlag(AnimBools.Stomp))
-                    triggers |= AnimTriggers.StompTrigger;
-                if (!_lastBools.HasFlag(AnimBools.Push) && b.HasFlag(AnimBools.Push))
-                    triggers |= AnimTriggers.PushTrigger;
-                if (!_lastBools.HasFlag(AnimBools.Snap) && b.HasFlag(AnimBools.Snap))
-                    triggers |= AnimTriggers.SnapTrigger;
-                if (!_lastBools.HasFlag(AnimBools.Injured) && b.HasFlag(AnimBools.Injured))
-                    triggers |= AnimTriggers.Hurt;
-                if (!_lastBools.HasFlag(AnimBools.Dead) && b.HasFlag(AnimBools.Dead))
-                    triggers |= AnimTriggers.Die;
-            }
-            triggers |= _accumulatedTriggers;
-            _accumulatedTriggers = 0;
-            msg.AnimTriggers = triggers;
-            _lastBools = b;
-            _hasLast = true;
+                // Dry fire: a fresh trigger press with an empty magazine while able to shoot (a live round is Fire).
+                bool triggerHeld = Input.GetButton("Fire1") || Input.GetMouseButton(0);
+                bool canFire = aiming && !inventory && !PlayerState.reloading && PlayerState.gameState == PlayerState.gameStates.play;
+                bool gun = msg.Weapon != WeaponType.None && msg.Weapon != WeaponType.Melee;
+                if (canFire && gun && triggerHeld && !_lastTriggerHeld && _hasMagAmmo && equipped != null && equipped.magAmmo <= 0)
+                    msg.Flags |= PoseFlags.EmptyClick;
+                _lastTriggerHeld = triggerHeld;
 
-            if (ModRuntime.VerboseLogging && Time.time - _lastSrcLog > 30f)
-            {
-                PlaytestLog.Verbose("SRC", "shoot=" + (b.HasFlag(AnimBools.Shooting) ? "1" : "0")
-                    + " Fire1=" + (Input.GetButton("Fire1") ? "1" : "0")
-                    + " Mouse0=" + (Input.GetMouseButton(0) ? "1" : "0")
-                    + " aiming=" + (msg.AimingTime > 0.5f ? "1" : "0")
-                    + " aimingTime=" + msg.AimingTime.ToString("F2")
-                    + " weapon=" + msg.Weapon
-                    + " forward=" + msg.Forward.ToString("F2"));
-                _lastSrcLog = Time.time;
+                if (_magRefilled || (_hasLast && reload && !_lastReload))
+                    cues |= AvatarCue.Reload;
+                _magRefilled = false;
+                if (_hasLast && ((injured && !_lastInjured) || (hurt && !_lastHurt)))
+                    cues |= AvatarCue.Hurt;
+                _lastReload = reload;
+                _lastInjured = injured;
+                _lastHurt = hurt;
+                _hasLast = true;
             }
+            catch (System.Exception e) { Guard.Swallow("SourceAnim.Read", e); }
+            return cues;
         }
 
-        public static void AccumulateTrigger(AnimTriggers trigger)
-        {
-            _accumulatedTriggers |= trigger;
-        }
-
+        /// <summary>World rotation of the local Elster model (its facing pivot); the root's when there is none.</summary>
         public static Quaternion ReadFacingWorldRotation(GameObject player)
         {
-            if (player == null) return Quaternion.identity;
-            try
+            if (_player != player) Bind(player);
+            return _model != null ? _model.rotation : player.transform.rotation;
+        }
+
+        /// <summary>The sent root position: the crawl rig's while it stands in for the hidden Elster.</summary>
+        public static Vector3 RootPosition(GameObject player)
+        {
+            if (_player != player) Bind(player);
+            var crawl = CrawlRig(player);
+            return crawl != null ? crawl.position : player.transform.position;
+        }
+
+        /// <summary>
+        /// PEN_CodeRoom (PEN_Hole) / DET_Oven crawls hide PlayerState.player and animate a separate rig in its place
+        /// (Ghidra PEN_CodeRoom.c &lt;Cutscene&gt;: crawlPlayer.position = player.position, player.SetActive(false),
+        /// crawlPlayer.SetActive(true); clip Elster_CIN_Crawl_Root on the same humanoid avatar). Reading the hidden
+        /// Elster left the proxy standing in front of the hole: while the rig is up, it is the pose source.
+        /// </summary>
+        static Transform CrawlRig(GameObject player)
+        {
+            bool hidden;
+            try { hidden = !player.activeInHierarchy; } catch { return null; }
+            if (!hidden || !CrawlActive() || _crawlGo == null) return null;
+            if (_crawlGo != _crawlBound)
             {
-                if (_facingPivotCache == null || _lastPlayerRoot != player.transform)
-                    _facingPivotCache = FindFacingPivot(player.transform);
-                if (_facingPivotCache != null)
-                    return _facingPivotCache.rotation;
+                _crawlBound = _crawlGo;
+                _crawlMap = _bones.MapByPath(_crawlGo.transform);
+                _crawlHips = null;
+                var anim = _crawlGo.GetComponentInChildren<Animator>(true);
+                if (anim != null && anim.isHuman) _crawlHips = anim.GetBoneTransform(HumanBodyBones.Hips);
+                int mapped = 0;
+                if (_crawlMap != null)
+                    for (int i = 0; i < _crawlMap.Length; i++) if (_crawlMap[i] != null) mapped++;
+                PlaytestLog.Event("DRV", "crawl rig " + _crawlGo.name + " mapped " + mapped + "/" + _bones.BoneCount
+                    + " hips=" + (_crawlHips != null ? _crawlHips.name : "NULL"));
             }
-            catch { }
-            return player.transform.rotation;
+            return _crawlGo.transform;
         }
 
         public static void Reset()
         {
+            _player = null;
+            _anim = null;
+            _model = null;
+            _hips = null;
+            _outfit = null;
+            _bones.FindArmature(null);
+            _prevLoopTime = 0f;
             _hasLast = false;
-            _lastBools = 0;
-            _accumulatedTriggers = 0;
-            _prevNormTime = 0f;
-            _facingPivotCache = null;
-            _lastPlayerRoot = null;
-            _boneReader = null;
-            _lastWeaponRead = 0;
-            _lastMagAmmo = -1;
-            _hasMagAmmo = false;
+            _lastInjured = false;
+            _lastHurt = false;
+            _lastReload = false;
             _lastTriggerHeld = false;
-            _magReloadPulse = false;
+            _lastWeapon = WeaponType.None;
+            _hasMagAmmo = false;
+            _magRefilled = false;
             _crawlCheckAt = 0f;
             _crawlActive = false;
+            _crawlGo = null;
+            _crawlBound = null;
+            _crawlMap = null;
+            _crawlHips = null;
         }
 
-        static bool CrawlMeshActive()
+        private static void Bind(GameObject player)
+        {
+            _player = player;
+            _anim = null;
+            _hips = null;
+            _model = BoneSyncManager.FindModelRoot(player.transform);
+            _bones.FindArmature(_model);
+            _outfit = player.GetComponentInChildren<CharacterModelType>(true);
+            var anims = player.GetComponentsInChildren<Animator>(true);
+            for (int i = 0; i < anims.Length && _anim == null; i++)
+            {
+                if (anims[i] != null && anims[i].runtimeAnimatorController != null)
+                    _anim = anims[i];
+            }
+            if (_anim != null && _anim.isHuman)
+                _hips = _anim.GetBoneTransform(HumanBodyBones.Hips);
+        }
+
+        /// <summary>
+        /// True once per tick in which the equipped magazine lost rounds (one visual shot even for a multi-round
+        /// burst; full-auto re-samples next tick). A rise is a reload / swap: flagged for the Reload cue, not a shot.
+        /// </summary>
+        private static bool ReadMagShot(AnWeapon equipped)
+        {
+            if (equipped == null)
+            {
+                _hasMagAmmo = false;
+                return false;
+            }
+            int mag = equipped.magAmmo;
+            if (!_hasMagAmmo)
+            {
+                _lastMagAmmo = mag;
+                _hasMagAmmo = true;
+                return false;
+            }
+            int last = _lastMagAmmo;
+            _lastMagAmmo = mag;
+            if (mag > last) _magRefilled = true;
+            return mag < last;
+        }
+
+        /// <summary>The crawl-space Elster (PEN_CodeRoom / DET_Oven crawlPlayer) is active: polled at 5 Hz.</summary>
+        private static bool CrawlActive()
         {
             if (Time.unscaledTime - _crawlCheckAt < 0.2f)
                 return _crawlActive;
             _crawlCheckAt = Time.unscaledTime;
             _crawlActive = false;
-            try
+            _crawlGo = null;
+            var rooms = WorldLookup.All<PEN_CodeRoom>();
+            for (int i = 0; rooms != null && i < rooms.Length && !_crawlActive; i++)
             {
-                var rooms = SyncRADation.Sync.WorldLookup.All<PEN_CodeRoom>();
-                if (rooms != null)
-                {
-                    for (int i = 0; i < rooms.Length; i++)
-                    {
-                        var r = rooms[i];
-                        if (r == null) continue;
-                        try
-                        {
-                            if (r.crawlPlayer != null && r.crawlPlayer.activeInHierarchy)
-                            {
-                                _crawlActive = true;
-                                return true;
-                            }
-                        }
-                        catch { }
-                    }
-                }
+                var r = rooms[i];
+                _crawlActive = r != null && r.crawlPlayer != null && r.crawlPlayer.activeInHierarchy;
+                if (_crawlActive) _crawlGo = r.crawlPlayer;
             }
-            catch { }
-            try
+            var ovens = WorldLookup.All<DET_Oven>();
+            for (int i = 0; ovens != null && i < ovens.Length && !_crawlActive; i++)
             {
-                var ovens = SyncRADation.Sync.WorldLookup.All<DET_Oven>();
-                if (ovens != null)
-                {
-                    for (int i = 0; i < ovens.Length; i++)
-                    {
-                        var o = ovens[i];
-                        if (o == null) continue;
-                        try
-                        {
-                            if (o.crawlPlayer != null && o.crawlPlayer.activeInHierarchy)
-                            {
-                                _crawlActive = true;
-                                return true;
-                            }
-                        }
-                        catch { }
-                    }
-                }
+                var o = ovens[i];
+                _crawlActive = o != null && o.crawlPlayer != null && o.crawlPlayer.activeInHierarchy;
+                if (_crawlActive) _crawlGo = o.crawlPlayer;
             }
-            catch { }
-            return false;
-        }
-
-        /// <summary>True once per expended round when EquippedWeapon.magAmmo decreases.</summary>
-        private static bool TryDetectAmmoShot()
-        {
-            try
-            {
-                var equipped = InventoryManager.EquippedWeapon;
-                if (equipped == null)
-                {
-                    _hasMagAmmo = false;
-                    _lastMagAmmo = -1;
-                    return false;
-                }
-                int mag = equipped.magAmmo;
-                if (!_hasMagAmmo)
-                {
-                    _lastMagAmmo = mag;
-                    _hasMagAmmo = true;
-                    return false;
-                }
-                // Reload / swap can increase mag — resync, not a shot
-                if (mag > _lastMagAmmo)
-                {
-                    if (_hasMagAmmo)
-                        _magReloadPulse = true;
-                    _lastMagAmmo = mag;
-                    return false;
-                }
-                if (mag < _lastMagAmmo)
-                {
-                    int spent = _lastMagAmmo - mag;
-                    _lastMagAmmo = mag;
-                    // One network pulse per state tick; multi-round spend still one visual shot (full-auto re-samples next tick)
-                    return spent > 0;
-                }
-                return false;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        private static Transform FindFacingPivot(Transform root)
-        {
-            if (root == null) return null;
-            for (int i = 0; i < root.childCount; i++)
-            {
-                Transform child = root.GetChild(i);
-                if (HasSkinnedMeshInDescendants(child))
-                    return child;
-            }
-            return null;
-        }
-
-        private static bool HasSkinnedMeshInDescendants(Transform t)
-        {
-            if (t == null) return false;
-            if (t.GetComponent<SkinnedMeshRenderer>() != null) return true;
-            for (int i = 0; i < t.childCount; i++)
-            {
-                if (HasSkinnedMeshInDescendants(t.GetChild(i)))
-                    return true;
-            }
-            return false;
-        }
-
-        private static float SafeGetFloat(Animator a, string name)
-        {
-            try { return a.GetFloat(name); }
-            catch { return 0f; }
-        }
-
-        private static bool SafeGetBool(Animator a, string name)
-        {
-            try { return a.GetBool(name); }
-            catch { return false; }
+            return _crawlActive;
         }
     }
 }

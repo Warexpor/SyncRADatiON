@@ -25,8 +25,17 @@ namespace SyncRADation.Patches
             if (!NetGate.Live) return true;
 
             // Client must not spawn — dual Instantiates yield divergent WorldIds / map misses.
+            // Exception: personal scene (wreck/hole, airlock). Host snapshots never map there, so the
+            // client's spawners must run natively or the room stays empty.
             if (NetGate.Client)
+            {
+                var clientNet = LanNetworkManager.Instance;
+                if (clientNet != null && clientNet.SceneMismatch) return true;
                 return false;
+            }
+
+            // Host with nobody connected: vanilla spawner.
+            if (!NetGate.Party) return true;
 
             // Host FixedUpdate distances against Player (local Elster). When only a peer is
             // in radius, point Player at that proxy for this tick so the spawner still fires.
@@ -40,10 +49,12 @@ namespace SyncRADation.Patches
             if (__state.Swapped && __instance != null)
             {
                 try { __instance.Player = __state.OriginalPlayer; }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
 
-            if (!NetGate.Host || __instance == null) return;
+            // A lone host keeps the native child as is (no SR_Spawn_ rename, no template scan). The child is still
+            // _Child when a peer joins, so the first Party tick adopts and broadcasts it then.
+            if (!NetGate.Host || !NetGate.Party || __instance == null) return;
             TryAdoptNativeChild(__instance);
         }
 
@@ -64,17 +75,17 @@ namespace SyncRADation.Patches
             float r2 = radius * radius;
 
             GameObject local = null;
-            try { local = net.GetLocalPlayer(); } catch { }
+            try { local = net.GetLocalPlayer(); } catch (System.Exception e) { Guard.Swallow(e); }
             if (local == null)
             {
-                try { local = spawner.Player; } catch { }
+                try { local = spawner.Player; } catch (System.Exception e) { Guard.Swallow(e); }
             }
 
             bool localInRange = false;
             if (local != null)
             {
                 try { localInRange = (local.transform.position - origin).sqrMagnitude <= r2; }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
             if (localInRange) return;
 
@@ -107,20 +118,34 @@ namespace SyncRADation.Patches
             }
         }
 
+        // FixedUpdate runs this per spawner per physics tick: remember which _Child was already
+        // adopted so the steady state is one field read + one int compare (no GetComponent / name).
+        static readonly System.Collections.Generic.HashSet<int> _adoptedChildren
+            = new System.Collections.Generic.HashSet<int>();
+
+        internal static void ClearAdopted() => _adoptedChildren.Clear();
+
         static void TryAdoptNativeChild(EnemySpawner spawner)
         {
             GameObject child = null;
-            try { child = spawner._Child; } catch { }
+            try { child = spawner._Child; } catch (System.Exception e) { Guard.Swallow(e); }
             if (child == null) return;
 
+            int cid;
+            try { cid = child.GetInstanceID(); } catch { return; }
+            if (_adoptedChildren.Contains(cid)) return;
+
             EnemyController ec = null;
-            try { ec = child.GetComponent<EnemyController>(); } catch { }
+            try { ec = child.GetComponent<EnemyController>(); } catch (System.Exception e) { Guard.Swallow(e); }
             if (ec == null)
             {
-                try { ec = child.GetComponentInChildren<EnemyController>(true); } catch { }
+                try { ec = child.GetComponentInChildren<EnemyController>(true); } catch (System.Exception e) { Guard.Swallow(e); }
             }
             if (ec == null) return;
 
+            _adoptedChildren.Add(cid);
+            // New enemy => its weapon hurtboxes must enter the host's damage scan without waiting a full refresh.
+            ClientDamageService.NoteSpawn();
             EntitySpawner.AdoptNativeSpawn(ec, broadcast: true);
         }
     }

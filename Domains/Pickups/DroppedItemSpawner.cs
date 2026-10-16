@@ -1,4 +1,4 @@
-// Dropped-item spawn / clone / floor placement (Domains peel from DroppedItemManager).
+// Dropped-item spawn / clone / floor placement.
 using System.Collections.Generic;
 using SyncRADation.Networking;
 using SyncRADation.Sync;
@@ -18,6 +18,8 @@ namespace SyncRADation.ItemSystem
         {
             if (DroppedItemRegistry.TryGetExisting(netID, out var existing) && existing.Go != null)
                 return existing.Go;
+            // A new drop under this key supersedes any earlier claim record of it (ids/indices recycle).
+            SyncRADation.Patches.ItemPickupPatches.ForgetDropClaim(netID);
 
             GameObject go = null;
             try { go = TryCloneNative(item, count, netID, pos); }
@@ -38,14 +40,14 @@ namespace SyncRADation.ItemSystem
             LogSpawn(go, item, pos);
 
             Vector3 stored = pos;
-            try { if (go != null) stored = go.transform.position; } catch { }
             string scene = "";
             try
             {
+                if (go != null) stored = go.transform.position;
                 scene = SceneManager.GetActiveScene().name ?? "";
                 if (SceneFollowService.IsTransient(scene)) scene = "";
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
 
             DroppedItemRegistry.Put(netID, new DroppedItemRegistry.Drop
             {
@@ -66,29 +68,16 @@ namespace SyncRADation.ItemSystem
                 ModRuntime.Log?.Warning("[Drop] spawn failed " + item);
                 return;
             }
-            int rends = 0;
             try
             {
+                int rends = 0;
                 var rs = go.GetComponentsInChildren<Renderer>(true);
                 if (rs != null)
-                {
                     for (int i = 0; i < rs.Length; i++)
-                    {
-                        try { if (rs[i] != null && rs[i].enabled) rends++; } catch { }
-                    }
-                }
-            }
-            catch { }
-            string parent = "null";
-            try { if (go.transform.parent != null) parent = go.transform.parent.name; } catch { }
-            bool active = false;
-            try { active = go.activeInHierarchy; } catch { }
-            bool trig = false;
-            float cx = 0f, cy = 0f;
-            int layer = -1;
-            try
-            {
-                layer = go.layer;
+                        if (rs[i] != null && rs[i].enabled) rends++;
+                var parent = go.transform.parent;
+                bool trig = false;
+                float cx = 0f, cy = 0f;
                 var col = go.GetComponent<BoxCollider2D>();
                 if (col != null)
                 {
@@ -97,18 +86,25 @@ namespace SyncRADation.ItemSystem
                     cx = Mathf.Max(col.size.x, b.x);
                     cy = Mathf.Max(col.size.y, b.y);
                 }
+                var at = go.transform.position;
+                // Visible model vs root: z span (up is -Z, the floor is the root z) and its XY offset from the prompt.
+                string vis = "none";
+                Bounds vb;
+                if (VisibleBounds(go, out vb))
+                    vis = "z=" + vb.min.z.ToString("F1") + ".." + vb.max.z.ToString("F1")
+                        + " size=" + Mathf.Max(vb.size.x, Mathf.Max(vb.size.y, vb.size.z)).ToString("F1")
+                        + " off=" + Vector2.Distance(new Vector2(vb.center.x, vb.center.y), new Vector2(at.x, at.y)).ToString("F1");
+                ModRuntime.Log?.Msg("[Drop] spawn " + go.name + " " + item
+                    + " pos=" + at.x.ToString("F1") + "," + at.y.ToString("F1") + "," + at.z.ToString("F1")
+                    + " parent=" + (parent != null ? parent.name : "null")
+                    + " active=" + go.activeInHierarchy
+                    + " rends=" + rends
+                    + " layer=" + go.layer
+                    + " trigger=" + trig
+                    + " col=" + cx.ToString("F1") + "x" + cy.ToString("F1")
+                    + " vis " + vis);
             }
-            catch { }
-            ModRuntime.Log?.Msg("[Drop] spawn " + go.name + " " + item
-                + " pos=" + go.transform.position.x.ToString("F1") + ","
-                + go.transform.position.y.ToString("F1") + ","
-                + go.transform.position.z.ToString("F1")
-                + " parent=" + parent
-                + " active=" + active
-                + " rends=" + rends
-                + " layer=" + layer
-                + " trigger=" + trig
-                + " col=" + cx.ToString("F1") + "x" + cy.ToString("F1"));
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         static GameObject TryCloneNative(Items.itemlist item, int count, int netID, Vector3 pos)
@@ -133,26 +129,37 @@ namespace SyncRADation.ItemSystem
 
             go.name = DroppedItemRegistry.NamePrefix + netID;
             StripUniqueId(go, src);
+            StripSupplyScripts(go);
             StripInspectJunk(go);
-            try { go.transform.SetParent(null, true); } catch { }
+            try { go.transform.SetParent(null, true); } catch (System.Exception e) { Guard.Swallow(e); }
             Object.Destroy(holder);
-            try { go.transform.localScale = Vector3.one; } catch { }
+            try { go.transform.localScale = Vector3.one; } catch (System.Exception e) { Guard.Swallow(e); }
 
-            bool same = ResolveItem(src) == item;
+            bool same = WorldPickupSyncService.ResolveItem(src, bindCatalog: false) == item;
             ApplyPickupFields(go, item, count, same);
             if (!same)
                 ApplyCatalogMesh(go, item);
             PlaceInWorld(go, pos);
-            try { go.SetActive(true); } catch { }
+            try { go.SetActive(true); } catch (System.Exception e) { Guard.Swallow(e); }
             if (!same)
             {
                 var m3 = go.transform.Find("Model3D");
-                if (m3 != null) FitMeshToNative(m3.gameObject);
+                if (m3 != null) SettleCatalogModel(m3.gameObject, go.transform);
             }
             RestOnFloor(go);
+            AlignPrompt(go);
             try { FinishInteractable(go); }
             catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] finish: " + ex.Message); }
-            try { Physics2D.SyncTransforms(); } catch { }
+            // No take collider = nobody can pick it up here: the bare fallback pickup always gets one.
+            bool takeable = false;
+            try { takeable = go.GetComponent<BoxCollider2D>() != null; } catch (System.Exception e) { Guard.Swallow(e); }
+            if (!takeable)
+            {
+                ModRuntime.Log?.Warning("[Drop] clone of " + src.name + " has no take collider, using the fallback for " + item);
+                try { Object.Destroy(go); } catch (System.Exception e) { Guard.Swallow(e); }
+                return null;
+            }
+            try { Physics2D.SyncTransforms(); } catch (System.Exception e) { Guard.Swallow(e); }
             return go;
         }
 
@@ -160,95 +167,110 @@ namespace SyncRADation.ItemSystem
         {
             var p = go.GetComponent<ItemPickup>();
             if (p == null) return;
-
-            AnItem catalog = null;
-            try { catalog = InventoryManager.getItem(item); } catch { }
-
-            try { p.triggered = false; } catch { }
-            try { p.slave = false; } catch { }
-            try { p.count = DroppedItemRegistry.SanitizeStack(count, PartyKeyRing.IsKeyOrObject(item)); } catch { }
-            try { p.focusCamera = true; } catch { }
-            try { p.pauseGame = true; } catch { }
-            try { p.showItemView = true; } catch { }
-            try { p.fadeOnPickup = false; } catch { }
-            try { p.playPickupAnimation = false; } catch { }
-            try { p.dontDestroyOnPickup = true; } catch { }
-            try { p.message = ""; } catch { }
-            try { p.onPickup = new UnityEvent(); } catch { }
-            if (catalog != null)
-            {
-                try { p._item = catalog; } catch { }
-                try { p._itemEnum = catalog._item; } catch { }
-            }
-
-            var inter = go.GetComponent<Interaction>();
-            if (inter != null)
-            {
-                try { inter.triggered = false; } catch { }
-                try { inter.inRange = false; } catch { }
-                try { inter.enabled = true; } catch { }
-                try { inter.anyAngle = true; } catch { }
-                try { inter.type = Interaction.interType.take; } catch { }
-                try { p.inter = inter; } catch { }
-            }
-
-            var col = go.GetComponent<BoxCollider2D>();
-            if (col == null) col = go.AddComponent<BoxCollider2D>();
-            try { col.enabled = true; } catch { }
-            try { col.isTrigger = false; } catch { }
             try
             {
-                if (col.size.x < 4f || col.size.y < 4f)
-                    col.size = new Vector2(6.4f, 6.4f);
+                var catalog = InventoryManager.getItem(item);
+                p.triggered = false;
+                p.slave = false;
+                p.count = DroppedItemRegistry.SanitizeStack(count, PartyKeyRing.IsKeyOrObject(item));
+                // Native pickUp re-rolls count through DynamicDifficulty.calculateCount on the first look
+                // (firstObserved false): a dropped 1-round stack became 2 for a low-ammo taker.
+                p.firstObserved = true;
+                p.focusCamera = true;
+                p.pauseGame = true;
+                p.showItemView = true;
+                p.fadeOnPickup = false;
+                p.playPickupAnimation = false;
+                p.dontDestroyOnPickup = true;
+                p.message = "";
+                p.onPickup = new UnityEvent();
+                if (catalog != null)
+                {
+                    p._item = catalog;
+                    p._itemEnum = catalog._item;
+                }
+                SetTakeInteraction(go, p);
+                var col = EnsureBoxCollider(go);
+                if (col != null)
+                {
+                    col.enabled = true;
+                    col.isTrigger = false;
+                    if (col.size.x < 4f || col.size.y < 4f)
+                        col.size = new Vector2(6.4f, 6.4f);
+                }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            SetLayer(go, InteractablesLayer());
+        }
 
+        /// <summary>
+        /// The floor item's take collider. Unity refuses a 2D collider next to 3D physics on one GameObject
+        /// (AddComponent returns null), which a non-matching fallback template can carry: those go first.
+        /// </summary>
+        static BoxCollider2D EnsureBoxCollider(GameObject go)
+        {
+            var col = go.GetComponent<BoxCollider2D>();
+            if (col != null) return col;
+            col = go.AddComponent<BoxCollider2D>();
+            if (col != null) return col;
+            try
+            {
+                var c3 = go.GetComponents<Collider>();
+                if (c3 != null)
+                    for (int i = 0; i < c3.Length; i++)
+                        if (c3[i] != null) Object.DestroyImmediate(c3[i]);
+                var rb = go.GetComponent<Rigidbody>();
+                if (rb != null) Object.DestroyImmediate(rb);
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            return go.AddComponent<BoxCollider2D>();
+        }
+
+        static int InteractablesLayer()
+        {
             int layer = LayerMask.NameToLayer("Interactables");
-            if (layer < 0) layer = 19;
-            SetLayer(go, layer);
+            return layer < 0 ? 19 : layer;
+        }
+
+        /// <summary>The floor item's Interaction: an untriggered any-angle "take" bound to its ItemPickup.</summary>
+        static void SetTakeInteraction(GameObject go, ItemPickup p)
+        {
+            var inter = go.GetComponent<Interaction>();
+            if (inter == null) return;
+            inter.enabled = true;
+            inter.triggered = false;
+            inter.inRange = false;
+            inter.anyAngle = true;
+            inter.type = Interaction.interType.take;
+            if (p != null) p.inter = inter;
         }
 
         static void FinishInteractable(GameObject go)
         {
             if (go == null) return;
-            try { go.SetActive(true); } catch { }
-            var p = go.GetComponent<ItemPickup>();
-            if (p != null)
-            {
-                try { p.enabled = true; } catch { }
-                try { p.triggered = false; } catch { }
-                try { p.slave = false; } catch { }
-            }
-            var inter = go.GetComponent<Interaction>();
-            if (inter != null)
-            {
-                try { inter.enabled = true; } catch { }
-                try { inter.triggered = false; } catch { }
-                try { inter.inRange = false; } catch { }
-                try { inter.anyAngle = true; } catch { }
-                try { inter.type = Interaction.interType.take; } catch { }
-                if (p != null)
-                {
-                    try { p.inter = inter; } catch { }
-                }
-            }
-            var col = go.GetComponent<BoxCollider2D>();
-            if (col != null)
-            {
-                try { col.enabled = true; } catch { }
-                try { col.isTrigger = false; } catch { }
-            }
-            RebuildCollider(go);
-            int layer = LayerMask.NameToLayer("Interactables");
-            if (layer < 0) layer = 19;
-            SetLayer(go, layer);
-            EnsureOutlines(go);
             try
             {
-                if (go.GetComponent<DroppedItemAnchor>() == null)
-                    go.AddComponent<DroppedItemAnchor>();
+                go.SetActive(true);
+                var p = go.GetComponent<ItemPickup>();
+                if (p != null)
+                {
+                    p.enabled = true;
+                    p.triggered = false;
+                    p.slave = false;
+                }
+                SetTakeInteraction(go, p);
+                var col = go.GetComponent<BoxCollider2D>();
+                if (col != null)
+                {
+                    col.enabled = true;
+                    col.isTrigger = false;
+                }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            RebuildCollider(go);
+            SetLayer(go, InteractablesLayer());
+            EnsureOutlines(go);
+            _restNextFrame.Add(go);
         }
 
         static void EnsureOutlines(GameObject go)
@@ -272,18 +294,15 @@ namespace SyncRADation.ItemSystem
                         outline.enabled = false;
                     }
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
         }
 
         static void ApplyCatalogMesh(GameObject go, Items.itemlist item)
         {
-            AnItem catalog = null;
-            try { catalog = InventoryManager.getItem(item); } catch { }
-            if (catalog == null || go == null) return;
-
+            if (go == null) return;
             GameObject prefab = null;
-            try { prefab = catalog.Image3D; } catch { }
+            try { prefab = InventoryManager.getItem(item)?.Image3D; } catch (System.Exception e) { Guard.Swallow(e); }
             if (prefab == null) return;
 
             Transform slot = FindModel(go.transform);
@@ -311,8 +330,72 @@ namespace SyncRADation.ItemSystem
 
             if (slot != null)
             {
-                try { slot.gameObject.SetActive(false); } catch { }
+                try { slot.gameObject.SetActive(false); } catch (System.Exception e) { Guard.Swallow(e); }
             }
+            // The template's own look is rarely a child named "Model" (ItemPickup_BrokenKey: KeycardModel): left on,
+            // the borrowed prop (a stun prod) floated at its table height beside the dropped item. Only the catalog
+            // model renders.
+            HideAllBut(go, vis.transform);
+        }
+
+        static void HideAllBut(GameObject go, Transform keep)
+        {
+            Renderer[] rs = null;
+            try { rs = go.GetComponentsInChildren<Renderer>(true); } catch (System.Exception e) { Guard.Swallow(e); }
+            if (rs == null) return;
+            for (int i = 0; i < rs.Length; i++)
+            {
+                var r = rs[i];
+                if (r == null) continue;
+                try { if (!r.transform.IsChildOf(keep)) r.enabled = false; }
+                catch (System.Exception e) { Guard.Swallow(e); }
+            }
+        }
+
+        /// <summary>
+        /// The interact prompt anchors on the pickup's "Prompt" child (AssetRipper ItemPickup_BrokenKey), placed for
+        /// the template's prop: after the visual is laid on the floor, put it over the visual.
+        /// </summary>
+        static void AlignPrompt(GameObject go)
+        {
+            if (go == null) return;
+            try
+            {
+                var prompt = go.transform.Find("Prompt");
+                Bounds b;
+                if (prompt == null || !VisibleBounds(go, out b)) return;
+                prompt.position = new Vector3(b.center.x, b.center.y, b.min.z);
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+        }
+
+        /// <summary>
+        /// An item with no floor pickup in the scene shows its catalog Image3D, posed for the inventory camera (any
+        /// axis up, pivot anywhere): it stood upright and floated (stun prod) or sank into the floor (tape), with
+        /// the outline away from the prompt. Lay it on its thinnest axis, size it like the floor items around, and
+        /// centre it over the root (collider + prompt); RestOnFloor then puts its lowest point on the floor.
+        /// </summary>
+        static void SettleCatalogModel(GameObject vis, Transform root)
+        {
+            if (vis == null || root == null) return;
+            try
+            {
+                Bounds b;
+                if (VisibleBounds(vis, out b))
+                {
+                    var s = b.size;
+                    // Up is -Z: turn the thinnest world axis onto Z.
+                    if (s.x < s.z && s.x <= s.y) vis.transform.rotation = Quaternion.AngleAxis(90f, Vector3.up) * vis.transform.rotation;
+                    else if (s.y < s.z && s.y < s.x) vis.transform.rotation = Quaternion.AngleAxis(90f, Vector3.right) * vis.transform.rotation;
+                }
+                FitMeshToNative(vis);
+                if (VisibleBounds(vis, out b))
+                {
+                    Vector3 d = root.position - b.center;
+                    vis.transform.position += new Vector3(d.x, d.y, 0f);
+                }
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         static void FitMeshToNative(GameObject vis)
@@ -338,36 +421,82 @@ namespace SyncRADation.ItemSystem
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             if (m > 8f || m > target * 1.4f || m < target * 0.4f)
                 vis.transform.localScale *= target / m;
         }
 
+        /// <summary>
+        /// SIGNALIS walks the XY plane and "up" is -Z (Elster's model up maps to -Z; feet sit at the floor z).
+        /// The drop root is placed at the dropper's feet, so the visual's lowest point (bounds.max.z) must
+        /// meet the root z: a template cloned from a table/shelf pickup otherwise keeps its raised model.
+        /// </summary>
         public static void RestOnFloor(GameObject go)
         {
             if (go == null) return;
             try { if (!go.activeInHierarchy) return; } catch { return; }
-            Renderer r = null;
-            try { r = go.GetComponentInChildren<Renderer>(); } catch { return; }
-            if (r == null) return;
+            Transform vis = null;
             try
             {
-                var s = r.bounds.size;
-                if (Mathf.Max(s.x, Mathf.Max(s.y, s.z)) > 3f) return;
+                vis = go.transform.Find("Model3D");
+                if (vis == null || !vis.gameObject.activeSelf) vis = FindModel(go.transform);
             }
-            catch { return; }
-            float dy = go.transform.position.y - r.bounds.min.y;
-            if (dy <= 0.04f) return;
-            if (dy > 0.7f) dy = 0.7f;
-            Transform vis = go.transform.Find("Model3D");
-            if (vis == null) vis = FindModel(go.transform);
-            Vector3 lift = new Vector3(0f, dy, 0f);
+            catch (System.Exception e) { Guard.Swallow(e); }
+            Bounds b;
+            if (!VisibleBounds(vis != null ? vis.gameObject : go, out b)) return;
+            // Elster is ~8 units tall: anything bigger is not a floor item (templates are floor pickups only).
+            if (Mathf.Max(b.size.x, Mathf.Max(b.size.y, b.size.z)) > 8f) return;
+            float dz = go.transform.position.z - b.max.z;
+            if (Mathf.Abs(dz) <= 0.01f) return;
+            dz = Mathf.Clamp(dz, -2.5f, 2.5f);
             try
             {
-                if (vis != null) vis.position += lift;
-                else go.transform.position += lift;
+                if (vis != null) vis.position += new Vector3(0f, 0f, dz);
+                else go.transform.position += new Vector3(0f, 0f, dz);
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
+        }
+
+        static bool VisibleBounds(GameObject root, out Bounds b)
+        {
+            b = default(Bounds);
+            if (root == null) return false;
+            Renderer[] rs;
+            try { rs = root.GetComponentsInChildren<Renderer>(false); } catch { return false; }
+            if (rs == null) return false;
+            bool any = false;
+            for (int i = 0; i < rs.Length; i++)
+            {
+                var r = rs[i];
+                if (r == null) continue;
+                try
+                {
+                    if (!r.enabled) continue;
+                    if (!any) { b = r.bounds; any = true; }
+                    else b.Encapsulate(r.bounds);
+                }
+                catch (System.Exception e) { Guard.Swallow(e); }
+            }
+            return any;
+        }
+
+        // persistent: one-frame deferral queue, drained every frame
+        static readonly List<GameObject> _restNextFrame = new List<GameObject>(4);
+
+        /// <summary>Second floor pass one frame after spawn (skinned / late-bound renderer bounds).</summary>
+        public static void TickRest()
+        {
+            if (_restNextFrame.Count == 0) return;
+            for (int i = 0; i < _restNextFrame.Count; i++)
+            {
+                try
+                {
+                    RestOnFloor(_restNextFrame[i]);
+                    AlignPrompt(_restNextFrame[i]);
+                }
+                catch (System.Exception e) { Guard.Swallow(e); }
+            }
+            _restNextFrame.Clear();
         }
 
         static void RebuildCollider(GameObject go)
@@ -378,7 +507,7 @@ namespace SyncRADation.ItemSystem
                 var all = go.GetComponents<BoxCollider2D>();
                 if (all == null || all.Length == 0)
                 {
-                    var created = go.AddComponent<BoxCollider2D>();
+                    var created = EnsureBoxCollider(go);
                     if (created == null) return;
                     created.offset = Vector2.zero;
                     created.size = new Vector2(6.4f, 6.4f);
@@ -402,44 +531,33 @@ namespace SyncRADation.ItemSystem
             }
         }
 
+        /// <summary>
+        /// The pickup's visual child. Level scenes name it "Model" (324 pickups), else "Model (1)" / "Model_1",
+        /// "KeycardModel", "FGun Model", "Nitro Model", "KeyCard", "Pistol Pickup" / "Revolver Pickup" (AssetRipper
+        /// level scenes); an exact "Model" wins.
+        /// </summary>
         static Transform FindModel(Transform root)
         {
             if (root == null) return null;
             var tfs = root.GetComponentsInChildren<Transform>(true);
+            Transform fallback = null;
             for (int i = 0; i < tfs.Length; i++)
             {
-                if (tfs[i] != null && tfs[i] != root && tfs[i].name == "Model")
-                    return tfs[i];
+                var t = tfs[i];
+                if (t == null || t == root) continue;
+                string n = t.name ?? "";
+                if (n == "Model") return t;
+                if (fallback == null && IsModelName(n)) fallback = t;
             }
-            return null;
+            return fallback;
         }
 
-        static void FitSpriteToNative(SpriteRenderer sr, Transform vis)
+        static bool IsModelName(string n)
         {
-            if (sr == null || sr.sprite == null || vis == null) return;
-            float target = 1.1f;
-            try
-            {
-                var near = NearestNativeModel(vis.position);
-                if (near != null)
-                {
-                    var r = near.GetComponent<Renderer>();
-                    if (r == null) r = near.GetComponentInChildren<Renderer>();
-                    if (r != null)
-                    {
-                        var s = r.bounds.size;
-                        float m = Mathf.Max(s.x, s.y);
-                        if (m > 0.2f && m < 4f) target = m;
-                    }
-                }
-            }
-            catch { }
-
-            Vector3 ext = sr.sprite.bounds.size;
-            float src = Mathf.Max(ext.x, ext.y);
-            if (src < 0.001f) return;
-            float k = target / src;
-            vis.localScale = Vector3.one * k;
+            return n.StartsWith("Model", System.StringComparison.Ordinal)
+                || n.EndsWith("Model", System.StringComparison.Ordinal)
+                || n == "KeyCard"
+                || n.EndsWith(" Pickup", System.StringComparison.Ordinal);
         }
 
         static Transform NearestNativeModel(Vector3 pos)
@@ -464,58 +582,10 @@ namespace SyncRADation.ItemSystem
             return bestT;
         }
 
-        static Vector3 SnapToFloor(Vector3 pos)
-        {
-            ItemPickup near = NearestNativePickup(pos, 4f);
-            if (near != null && near.transform != null)
-            {
-                pos.y = near.transform.position.y;
-                pos.z = near.transform.position.z;
-                return pos;
-            }
-
-            ItemPickup any = NearestNativePickup(pos, 80f);
-            if (any != null && any.transform != null)
-                pos.z = any.transform.position.z;
-            else
-                pos.z = 0f;
-            return pos;
-        }
-
-        static ItemPickup NearestNativePickup(Vector3 pos, float maxDist)
-        {
-            var all = ScenePickups();
-            if (all == null || all.Length == 0) return null;
-            ItemPickup best = null;
-            float bestD = maxDist;
-            for (int i = 0; i < all.Length; i++)
-            {
-                var p = all[i];
-                if (p == null || DroppedItemRegistry.IsDropped(p) || p.transform == null) continue;
-                try { if (p.triggered) continue; } catch { }
-                float d = Vector3.Distance(p.transform.position, pos);
-                if (d < bestD)
-                {
-                    bestD = d;
-                    best = p;
-                }
-            }
-            return best;
-        }
-
-        static Sprite SpriteOf(AnItem catalog)
-        {
-            if (catalog == null) return null;
-            try { if (catalog.worldSprite != null) return catalog.worldSprite; } catch { }
-            try { if (catalog.Image != null) return catalog.Image; } catch { }
-            try { if (catalog.Icon != null) return catalog.Icon; } catch { }
-            return null;
-        }
-
         static GameObject SpawnFallbackPickup(Items.itemlist item, int count, int netID, Vector3 pos)
         {
             var go = new GameObject(DroppedItemRegistry.NamePrefix + netID);
-            try { go.SetActive(false); } catch { }
+            try { go.SetActive(false); } catch (System.Exception e) { Guard.Swallow(e); }
             int layer = LayerMask.NameToLayer("Interactables");
             if (layer >= 0) go.layer = layer;
 
@@ -524,36 +594,37 @@ namespace SyncRADation.ItemSystem
             col.size = new Vector2(6.4f, 6.4f);
 
             var inter = go.AddComponent<Interaction>();
-            try { inter.type = Interaction.interType.take; } catch { }
-            try { inter.anyAngle = true; } catch { }
+            try { inter.type = Interaction.interType.take; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { inter.anyAngle = true; } catch (System.Exception e) { Guard.Swallow(e); }
 
             var p = go.AddComponent<ItemPickup>();
             ApplyPickupFields(go, item, count, false);
-            try { go.AddComponent<ItemPickupName>(); } catch { }
+            try { go.AddComponent<ItemPickupName>(); } catch (System.Exception e) { Guard.Swallow(e); }
             ApplyCatalogMesh(go, item);
             PlaceInWorld(go, pos);
-            try { go.SetActive(true); } catch { }
+            try { go.SetActive(true); } catch (System.Exception e) { Guard.Swallow(e); }
             var m3 = go.transform.Find("Model3D");
-            if (m3 != null) FitMeshToNative(m3.gameObject);
+            if (m3 != null) SettleCatalogModel(m3.gameObject, go.transform);
             RestOnFloor(go);
+            AlignPrompt(go);
             try { FinishInteractable(go); }
             catch (System.Exception ex) { ModRuntime.Log?.Warning("[Drop] finish: " + ex.Message); }
-            try { Physics2D.SyncTransforms(); } catch { }
+            try { Physics2D.SyncTransforms(); } catch (System.Exception e) { Guard.Swallow(e); }
             return go;
         }
 
         static void PlaceInWorld(GameObject go, Vector3 pos)
         {
             if (go == null) return;
-            pos = SnapToFloor(pos);
-            try { go.transform.SetParent(null, true); } catch { }
-            try { go.transform.rotation = Quaternion.identity; } catch { }
+            // pos is the dropper's feet (floor z). Native pickups sit on tables/shelves, so their z is not the floor.
+            try { go.transform.SetParent(null, true); } catch (System.Exception e) { Guard.Swallow(e); }
+            try { go.transform.rotation = Quaternion.identity; } catch (System.Exception e) { Guard.Swallow(e); }
             Transform room = RoomAt(pos);
             if (room != null)
             {
-                try { go.transform.SetParent(room, true); } catch { }
+                try { go.transform.SetParent(room, true); } catch (System.Exception e) { Guard.Swallow(e); }
             }
-            try { go.transform.position = pos; } catch { }
+            try { go.transform.position = pos; } catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         static Transform RoomAt(Vector3 pos)
@@ -583,7 +654,7 @@ namespace SyncRADation.ItemSystem
                 if (PlayerState.currentRoom != null)
                     return PlayerState.currentRoom.transform;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return null;
         }
 
@@ -598,7 +669,7 @@ namespace SyncRADation.ItemSystem
                     if (cams[i] != null) cams[i].enabled = false;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var tfs = go.GetComponentsInChildren<Transform>(true);
@@ -611,33 +682,42 @@ namespace SyncRADation.ItemSystem
                         || n.IndexOf("EventScreen", System.StringComparison.OrdinalIgnoreCase) >= 0
                         || n.IndexOf("Inspect", System.StringComparison.OrdinalIgnoreCase) >= 0)
                     {
-                        try { t.gameObject.SetActive(false); } catch { }
+                        try { t.gameObject.SetActive(false); } catch (System.Exception e) { Guard.Swallow(e); }
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
-        static Items.itemlist ResolveItem(ItemPickup p)
+        /// <summary>
+        /// A dynamic-difficulty prop (DynamicSupply on the pickup itself: LAB / ROT / MED / RES / EXC ammo and heals) is a
+        /// template like any other, and its clone kept the script: OnEnable subscribes Entered to every room entry, and
+        /// Entered reads the UniqueId the clone no longer has first thing (Ghidra DynamicSupply.c), so the drop threw on
+        /// each room the host entered (pilot soak, LAB_Labyrinth) and could have switched itself off by the host's stock.
+        /// A drop offers what was dropped: no supply decision.
+        /// </summary>
+        static void StripSupplyScripts(GameObject go)
         {
-            if (p == null) return Items.itemlist.None;
             try
             {
-                if (p._item != null && p._item._item != Items.itemlist.None)
-                    return p._item._item;
+                var ds = go.GetComponentsInChildren<DynamicSupply>(true);
+                for (int i = 0; i < ds.Length; i++)
+                    if (ds[i] != null) Object.DestroyImmediate(ds[i]);
+                var rs = go.GetComponentsInChildren<DynamicResupplyPickup>(true);
+                for (int i = 0; i < rs.Length; i++)
+                    if (rs[i] != null) Object.DestroyImmediate(rs[i]);
             }
-            catch { }
-            try { return p._itemEnum; } catch { return Items.itemlist.None; }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         static void StripUniqueId(GameObject go, ItemPickup src)
         {
             UniqueId uid = null;
-            try { uid = go.GetComponent<UniqueId>(); } catch { }
+            try { uid = go.GetComponent<UniqueId>(); } catch (System.Exception e) { Guard.Swallow(e); }
             if (uid == null) return;
             string stolen = null;
-            try { stolen = uid.id; } catch { }
-            try { Object.DestroyImmediate(uid); } catch { try { Object.Destroy(uid); } catch { } }
+            try { stolen = uid.id; } catch (System.Exception e) { Guard.Swallow(e); }
+            try { Object.DestroyImmediate(uid); } catch { try { Object.Destroy(uid); } catch (System.Exception e) { Guard.Swallow(e); } }
             if (string.IsNullOrEmpty(stolen) || src == null) return;
             try
             {
@@ -646,7 +726,7 @@ namespace SyncRADation.ItemSystem
                 if (original != null && all != null)
                     all[stolen] = original;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         static void SetLayer(GameObject go, int layer)
@@ -661,7 +741,7 @@ namespace SyncRADation.ItemSystem
                     if (tfs[i] != null) tfs[i].gameObject.layer = layer;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 }

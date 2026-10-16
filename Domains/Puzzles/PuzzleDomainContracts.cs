@@ -1,21 +1,20 @@
+using System;
+using SyncRADation.Sync;
 using UnityEngine;
 
 namespace SyncRADation.Networking
 {
-    /// <summary>
-    /// Held-state + rematch hooks Cryo/Codepad OnEnable handlers need from PuzzleSyncService.
-    /// </summary>
+    /// <summary>Held-state + rematch hooks the Cryo/Codepad OnEnable handlers need from PuzzleSyncService.</summary>
     internal interface IPuzzleDomainHost
     {
         bool IsHeld(PuzzleType type, ulong worldId);
-        bool HeldUnmatched(PuzzleType type);
+        /// <summary>A solved entry of this type is held under a WorldId no local component has, and candidateId is a
+        /// local component of the same type the host never sent (so it is that entry's local copy).</summary>
+        bool HeldUnmatched(PuzzleType type, ulong candidateId);
         void RemapHeld(PuzzleType type, ulong newId);
-        bool CryoFamilyHeldUnmatched();
     }
 
-    /// <summary>
-    /// Shared hierarchy walk + PuzzleStateEntry factory used by puzzle domains.
-    /// </summary>
+    /// <summary>Shared hierarchy walk, entry factory and native-call guard used by the puzzle domains.</summary>
     internal static class PuzzleDomainUtil
     {
         public static T FindInParents<T>(GameObject go) where T : Component
@@ -45,6 +44,16 @@ namespace SyncRADation.Networking
                 Float0 = f0,
                 Float1 = f1
             };
+        }
+
+        /// <summary>
+        /// A native game method inside a snap (coroutine starters, LoadState, event handlers): game code can throw on
+        /// its own missing references, and the rest of the snap (door, interaction, pose) must still land.
+        /// </summary>
+        public static void Native(string site, Action call)
+        {
+            try { call(); }
+            catch (Exception e) { Guard.Swallow("Puzzle." + site, e); }
         }
     }
 }

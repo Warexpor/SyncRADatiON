@@ -13,20 +13,20 @@ namespace SyncRADation.Sync
             {
                 if (DialoguerFlavor((int)d._dialogue)) return true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return UnderEventCamera(d.gameObject) || LockFlavor(d);
         }
 
         public static bool InspectScreen()
         {
-            try { if (PlayerState.eventScreen) return true; } catch { }
+            try { if (PlayerState.eventScreen) return true; } catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var gs = PlayerState.gameState;
                 if (gs == PlayerState.gameStates.eventScreen || gs == PlayerState.gameStates.book)
                     return true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
 
@@ -57,12 +57,57 @@ namespace SyncRADation.Sync
                         if (room == null)
                             room = t.GetComponent<Room>();
                     }
-                    catch { }
+                    catch (System.Exception e) { Guard.Swallow(e); }
                     t = t.parent;
                 }
                 return room == null;
             }
             catch { return true; }
+        }
+
+        /// <summary>
+        /// The local Elster's room as a cross-peer key (the Room's WorldId, hex), "" without one. Room names repeat
+        /// inside a scene (DET "Cell Block", MED "Surgery", RES "STCR Dorm").
+        /// </summary>
+        public static string LocalRoomKey()
+        {
+            try
+            {
+                var here = PlayerState.currentRoom;
+                if (here == null) return "";
+                return WorldId.FromGameObject(here.gameObject).ToString("X16");
+            }
+            catch (System.Exception e) { Guard.Swallow(e); return ""; }
+        }
+
+        /// <summary>
+        /// Does an event another player's trigger fired play for this peer? Yes in that player's room (the author's
+        /// room, a <see cref="LocalRoomKey"/>). The object's own Room ancestor only decides when a side has no room
+        /// (a scene without rooms): cutscenes and some zones / conditions sit outside every Room, where
+        /// <see cref="InLocalRoom"/> says yes to everyone.
+        /// </summary>
+        public static bool InAuthorRoom(GameObject go, string authorRoom)
+        {
+            string here = LocalRoomKey();
+            if (!string.IsNullOrEmpty(authorRoom) && here.Length > 0)
+                return string.Equals(authorRoom, here, System.StringComparison.Ordinal);
+            return InLocalRoom(go);
+        }
+
+        /// <summary>
+        /// <see cref="InLocalRoom"/> for a path that carries no author room (the PuzzleState poll): an object outside
+        /// every Room is nobody's while the local player stands in one.
+        /// </summary>
+        public static bool UnderLocalRoom(GameObject go)
+        {
+            if (go == null) return false;
+            try
+            {
+                var here = PlayerState.currentRoom;
+                if (here == null) return InLocalRoom(go);
+                return go.activeInHierarchy && go.transform.IsChildOf(here.transform);
+            }
+            catch (System.Exception e) { Guard.Swallow(e); return false; }
         }
 
         public static bool DialoguerFlavor(int id)
@@ -103,7 +148,7 @@ namespace SyncRADation.Sync
                     if (t.GetComponent<UseItemInteraction>() != null) return true;
                     if (t.GetComponent<useItemPuzzleHint>() != null) return true;
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 t = t.parent;
             }
             return false;
@@ -131,7 +176,7 @@ namespace SyncRADation.Sync
                     if (t.GetComponent<AirlockInside>() != null) return true;
                     if (t.GetComponent<AirlockDoorLoadZone>() != null) return true;
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 t = t.parent;
             }
             return false;
@@ -151,7 +196,7 @@ namespace SyncRADation.Sync
                     if (t.GetComponent<AirlockInside>() != null) return true;
                     if (t.GetComponent<AirlockDoorLoadZone>() != null) return true;
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 t = t.parent;
             }
             return false;
@@ -175,7 +220,7 @@ namespace SyncRADation.Sync
                     if (t.GetComponent<AutoTraverseDoor>() != null) return true;
                     if (t.GetComponent<useItemPuzzleHint>() != null) return true;
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
                 t = t.parent;
             }
             try
@@ -186,7 +231,7 @@ namespace SyncRADation.Sync
                     if (d != null && Dialogue(d)) return true;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
     }

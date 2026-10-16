@@ -2,6 +2,7 @@ using LiteNetLib;
 using LiteNetLib.Utils;
 using SyncRADation.Config;
 using SyncRADation.Players;
+using SyncRADation.Sync;
 using UnityEngine;
 
 namespace SyncRADation.Networking
@@ -16,9 +17,22 @@ namespace SyncRADation.Networking
             _net = net ?? throw new System.ArgumentNullException(nameof(net));
         }
 
+        /// <summary>Most one friendly-fire hit may take (Elster has 100 HP; a bad / forged value must not one-shot).</summary>
+        internal const float MaxFriendlyDamage = 100f;
+
+        /// <summary>Usable friendly-fire damage, or 0 to drop the hit (NaN, negative, zero).</summary>
+        internal static float ClampFriendlyDamage(float damage)
+        {
+            if (float.IsNaN(damage) || float.IsInfinity(damage) || damage <= 0f) return 0f;
+            return damage > MaxFriendlyDamage ? MaxFriendlyDamage : damage;
+        }
+
         internal void SendFriendlyFire(int targetPlayerId, float damage, Vector3 hitPos)
         {
-            if (ModConfig.FriendlyFire?.Value != true) return;
+            if (!ModConfig.FriendlyFireEnabled) return; // host's toggle while connected
+            if (PartyVitals.IsDown(targetPlayerId)) return; // downed players cannot be shot
+            damage = ClampFriendlyDamage(damage);
+            if (damage <= 0f) return;
 
             var msg = new FriendlyFireMessage
             {
@@ -34,12 +48,12 @@ namespace SyncRADation.Networking
             writer.Put((byte)NetMessageType.FriendlyFire);
             msg.Serialize(writer);
 
-            if (_net.Role == NetworkRole.Host)
+            if (NetGate.HostRole)
             {
                 if (_net.TryGetPeer(targetPlayerId, out var peer)
                     && peer.ConnectionState == ConnectionState.Connected)
                 {
-                    peer.Send(writer, DeliveryMethod.ReliableOrdered);
+                    SyncRADation.Sync.NetStats.Send(peer, writer, DeliveryMethod.ReliableOrdered);
                     ModRuntime.Log?.Msg("[FF] Host sent dmg=" + damage.ToString("F0") + " to " + targetPlayerId);
                 }
             }
@@ -52,22 +66,24 @@ namespace SyncRADation.Networking
 
         internal void HandleFriendlyFire(FriendlyFireMessage msg, int senderId)
         {
-            if (_net.Role == NetworkRole.Host && msg.TargetPlayerId != _net.LocalPlayerId)
+            msg.Damage = ClampFriendlyDamage(msg.Damage);
+            if (msg.Damage <= 0f) return;
+            if (PartyVitals.IsDown(msg.TargetPlayerId)) return; // downed players cannot be shot
+            if (NetGate.HostRole && msg.TargetPlayerId != _net.LocalPlayerId)
             {
                 var w = new NetDataWriter();
                 w.Put((byte)NetMessageType.FriendlyFire);
                 msg.Serialize(w);
                 if (_net.TryGetPeer(msg.TargetPlayerId, out var tpeer)
                     && tpeer.ConnectionState == ConnectionState.Connected)
-                    tpeer.Send(w, DeliveryMethod.ReliableOrdered);
+                    SyncRADation.Sync.NetStats.Send(tpeer, w, DeliveryMethod.ReliableOrdered);
             }
 
-            if (ModConfig.FriendlyFire?.Value != true) return;
+            if (!ModConfig.FriendlyFireEnabled) return;
             if (msg.TargetPlayerId == _net.LocalPlayerId)
             {
-                Vector3 hitPos = new Vector3(msg.HitPosX, msg.HitPosY, msg.HitPosZ);
                 ModRuntime.Log?.Msg("[FF] Received damage=" + msg.Damage.ToString("F0") + " from player " + msg.AttackerPlayerId);
-                NetworkDamageSystem.ApplyDamage(msg.Damage, hitPos, Vector3.zero);
+                NetworkDamageSystem.ApplyDamage(msg.Damage);
             }
         }
 

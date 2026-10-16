@@ -1,4 +1,16 @@
-// Host commits SProgress / Dialoguer / END_Manager; peers apply presentation natives.
+// Shared story. The host commits SProgress / Dialoguer globals / END_Manager to every peer (StoryCommit); clients
+// forward their own SProgress writes and END contributions to the host; presentation commands (cutscenes, event zones,
+// multi-conditions, the ending) replay natively on peers. This file: the commit pipeline and the client forward.
+// StorySyncService.End.cs: END tally, ending, scripted cheats. StorySyncService.Presentation.cs: presentations.
+// Cutscene rules: CutsceneSync. Direct slot access: ProgressSlot.
+//
+// Commits (host -> clients):
+//   incremental   - keys written since the last broadcast; Dialoguer globals only when they changed.
+//   full          - the whole shared table read from the live slot (join / resync / scene change), globals always.
+//   authoritative - the full broadcast after SaveManager.Load / NewGame replaced the slot: clients drop keys it lacks
+//                   (also every full inside the window after a party wipe).
+// A unicast (join / resync dump, ending re-send) is always full and leaves the party's broadcast bookkeeping alone.
+// Per-player keys (StoryWire.IsPerPlayerKey) never ride a commit; END_Manager.memoryTime is the host's clock only.
 using System.Collections.Generic;
 using SyncRADation.Patches;
 using SyncRADation.Sync;
@@ -6,38 +18,104 @@ using UnityEngine;
 
 namespace SyncRADation.Networking
 {
-    public sealed class StorySyncService
+    public sealed partial class StorySyncService
     {
-        private readonly Dictionary<string, StoryFlagEntry> _flags
-            = new Dictionary<string, StoryFlagEntry>();
+        // ---- host: the shared table (live slot's shared keys at the last full read + every write noted since)
+        private readonly Dictionary<string, StoryFlagEntry> _flags = new Dictionary<string, StoryFlagEntry>();
+        // Keys written since the last broadcast: an incremental commit carries only these.
+        private readonly HashSet<string> _dirty = new HashSet<string>();
         private bool _needSend = true;
         private bool _fullDump = true;
+        // The next full broadcast carries the Authoritative bit (SaveManager.Load / NewGame replaced the live slot).
+        private bool _authFull;
         private float _timer;
-        public StoryCmd LastCmd;
-        public ulong LastWorldId;
+        const float CommitInterval = 0.75f;
+
+        // ---- client: a commit buffered while loading / in a scene the host is not in
+        private StoryCommitMessage _pendingCommit;
+        private bool _hasPendingCommit;
+        // Until this time every full commit replaces local SProgress wholesale (the host reverted to a save after a party
+        // wipe and may send a pre-reload dump before the post-reload one; each is exact, so the last wins).
+        private float _authoritativeUntil;
+        const float AuthoritativeWindow = 30f;
+        // A commit that could not be applied completely asks for one fresh snapshot per scene.
+        private bool _healRequested;
+
+        // ---- client: SProgress writes forwarded to the host, coalesced per key
+        private readonly Dictionary<string, StoryFlagEntry> _outbox = new Dictionary<string, StoryFlagEntry>();
+        private readonly Dictionary<string, float> _outboxSentAt = new Dictionary<string, float>();
+        private readonly List<string> _flushKeys = new List<string>();
+        private float _clientTimer;
+        const int OutboxPerFlush = 24;
+        private static int _authorDepth;
+        private static int _suppressForward;
+
+        // persistent: warn-once set (a recurring fault logs one line per process)
+        private static readonly HashSet<string> _warned = new HashSet<string>();
+
+        /// <summary>True while a client-applied presentation runs UnityEvents whose SProgress writes must reach the host.</summary>
+        public static bool ClientAuthorScope => _authorDepth > 0;
+        public static void BeginAuthorScope() => _authorDepth++;
+        public static void EndAuthorScope() { if (_authorDepth > 0) _authorDepth--; }
+
+        /// <summary>SaveManager.Save/Load/NewGame (and per-player savers) write per-player state into SProgress: never forward those.</summary>
+        public static bool ForwardSuppressed => _suppressForward > 0;
+        public static void BeginSuppressForward() => _suppressForward++;
+        public static void EndSuppressForward() { if (_suppressForward > 0) _suppressForward--; }
+
+        internal static void WarnOnce(string site, System.Exception ex)
+        {
+            if (!_warned.Add(site)) return;
+            ModRuntime.Log?.Warning("[Story] " + site + ": " + ex.Message);
+        }
 
         public void Reset()
         {
             _flags.Clear();
+            _dirty.Clear();
             _needSend = true;
             _fullDump = true;
+            _authFull = false;
             _timer = 0f;
-            LastCmd = StoryCmd.None;
-            LastWorldId = 0;
-        }
-
-        public void RequestFullSend()
-        {
-            _needSend = true;
-            _fullDump = true;
+            _hasPendingCommit = false;
+            _authoritativeUntil = 0f;
+            _healRequested = false;
+            _outbox.Clear();
+            _outboxSentAt.Clear();
+            _clientTimer = 0f;
+            _authorDepth = 0;
+            _suppressForward = 0;
+            ResetEnd();
+            ResetPresentation();
         }
 
         public void OnSceneChanged()
         {
-            LastCmd = StoryCmd.None;
-            LastWorldId = 0;
+            _healRequested = false;
+            ResetPresentation();
             RequestFullSend();
         }
+
+        // ------------------------------------------------------------------ host: commit pipeline
+
+        public void RequestFullSend()
+        {
+            // A join / resync dump unicasts its own full commit: the party does not need another full broadcast after it.
+            var net = LanNetworkManager.Instance;
+            if (net != null && net.UnicastActive) return;
+            _needSend = true;
+            _fullDump = true;
+        }
+
+        /// <summary>Host: the live slot was replaced wholesale (SaveManager.Load / NewGame): the next full dump is authoritative.</summary>
+        public void RequestAuthoritativeFull()
+        {
+            _authFull = true;
+            RequestFullSend();
+        }
+
+        /// <summary>Host: flag-less change (END counters, ending id) that still needs a StoryCommit.</summary>
+        public void MarkDirty() => _needSend = true;
 
         public void NoteBool(string key, bool val) => Note(new StoryFlagEntry { Kind = 0, Key = key, BoolVal = val });
         public void NoteInt(string key, int val) => Note(new StoryFlagEntry { Kind = 1, Key = key, IntVal = val });
@@ -49,606 +127,371 @@ namespace SyncRADation.Networking
         private void Note(StoryFlagEntry e)
         {
             if (string.IsNullOrEmpty(e.Key)) return;
+            // Host per-player keys (enemy save, radio, minimap, inventory slot, help prompts) never ride the shared commit.
+            if (StoryWire.IsPerPlayerKey(e.Key)) return;
             _flags[e.Key] = e;
+            _dirty.Add(e.Key);
             _needSend = true;
         }
 
         public void TickHost(LanNetworkManager net)
         {
-            if (net == null || net.Role != NetworkRole.Host || !net.IsConnected) return;
+            if (net == null || !NetGate.Host) return;
+            CutsceneSync.TickDeferred();
+            // END_Manager statics are written directly by NPC_Tracker / InteractiveLockSingle / PlayerState.
+            int sig = EndSignature();
+            if (sig != _endSig)
+            {
+                _endSig = sig;
+                _needSend = true;
+            }
             if (!_needSend) return;
-            _timer += Mathf.Min(Time.deltaTime, 0.1f);
-            if (_timer < 0.75f) return;
+            // Unscaled: slow-mo / a paused host must not stall the shared story.
+            _timer += Mathf.Min(Time.unscaledDeltaTime, 0.1f);
+            if (_timer < CommitInterval) return;
             _timer = 0f;
-            bool full = _fullDump;
-            _fullDump = false;
-            _needSend = false;
-            Send(net, full);
+            Send(net, _fullDump);
+        }
+
+        /// <summary>
+        /// Host: broadcast whatever the next tick would send, now (a pending full stays full). Before a unicast dump to
+        /// one joiner the others must get writes still waiting for their broadcast: the dump records them as sent.
+        /// </summary>
+        public void FlushDiffNow()
+        {
+            var net = LanNetworkManager.Instance;
+            if (!NetGate.Host || !_needSend) return;
+            _timer = 0f;
+            Send(net, _fullDump);
         }
 
         public void Send(LanNetworkManager net, bool full, bool replayPresentation = false)
         {
+            bool unicast = net.UnicastActive;
+            if (unicast) full = true;
+
+            StoryFlagEntry[] flags;
+            bool authoritative = false;
             if (full)
-                DumpLiveProgress();
-
-            var arr = new StoryFlagEntry[_flags.Count];
-            int i = 0;
-            foreach (var kvp in _flags)
-                arr[i++] = kvp.Value;
-
-            string xml = "";
-            try { xml = Dialoguer.GetGlobalVariablesState() ?? ""; } catch { }
-
-            int circle = 0, death = 0, graves = 0, leave = 0, ending = 0;
-            int npc = 0, healedSeg = 0, doors = 0;
-            float healedTime = 0f, memoryTime = 0f;
-            try
             {
-                circle = END_Manager.Circle;
-                death = END_Manager.Death;
-                graves = END_Manager.Graves;
-                leave = END_Manager.Leave;
-                ending = END_Manager.Ending;
-                npc = END_Manager.NPC;
-                healedTime = END_Manager.healedTime;
-                healedSeg = END_Manager.healedTimeSegments;
-                memoryTime = END_Manager.memoryTime;
-                doors = END_Manager.doors;
+                // The table mirrors the live slot exactly: after SaveManager.Load (wipe reload), SProgress.Load or
+                // ResetProgress, keys the slot no longer has must not be resurrected by stale entries.
+                if (!ProgressSlot.ReadShared(_flags))
+                {
+                    // Never send a partial table as "the whole table" (an authoritative one would drop client keys).
+                    _needSend = true;
+                    _fullDump = true;
+                    return;
+                }
+                flags = new StoryFlagEntry[_flags.Count];
+                _flags.Values.CopyTo(flags, 0);
+                if (!unicast)
+                {
+                    // A broadcast full is the whole table: it satisfies a pending full (and carries its authoritative bit).
+                    authoritative = _authFull;
+                    _authFull = false;
+                    _fullDump = false;
+                    _dirty.Clear();
+                }
             }
-            catch { }
+            else
+                flags = StoryWire.TakeDirty(_flags, _dirty);
+            // An incremental broadcast never satisfies a pending full.
+            if (!unicast) _needSend = _fullDump;
 
-            byte gs = 0;
-            try { gs = (byte)PlayerState.gameState; } catch { }
-
-            bool replay = replayPresentation && CanReplayPresentation(LastCmd, LastWorldId);
-            net.SendStoryCommit(new StoryCommitMessage
+            // Dialoguer globals are never sent: every one the game reads is this player's own (the pickup yes/no
+            // answer ItemPickup.release reads 0.1 s after the callback, item / key names, MedicationCheck's bag test);
+            // the only dialogues with conditional phases are unused prototypes.
+            bool replay = replayPresentation && CanReplayPresentation();
+            var msg = new StoryCommitMessage
             {
                 FullRefresh = full,
-                DialoguerXml = xml,
-                EndCircle = circle,
-                EndDeath = death,
-                EndGraves = graves,
-                EndLeave = leave,
-                EndingId = ending,
-                EndNpc = npc,
-                EndHealedTime = healedTime,
-                EndHealedSegments = healedSeg,
-                EndMemoryTime = memoryTime,
-                EndDoors = doors,
-                Flags = arr,
-                ActiveGameState = gs,
-                ActiveWorldId = replay ? unchecked((long)LastWorldId) : 0,
-                ActiveStoryCmd = replay ? (byte)LastCmd : (byte)0
-            });
+                Flags = flags,
+                ActiveWorldId = replay ? unchecked((long)_lastWorldId) : 0,
+                ActiveStoryCmd = replay ? (byte)_lastCmd : (byte)0,
+                Authoritative = authoritative
+            };
+            try
+            {
+                msg.EndCircle = END_Manager.Circle;
+                msg.EndDeath = END_Manager.Death;
+                msg.EndGraves = END_Manager.Graves;
+                msg.EndLeave = END_Manager.Leave;
+                msg.EndingId = END_Manager.Ending;
+                msg.EndNpc = END_Manager.NPC;
+                msg.EndHealedTime = END_Manager.healedTime;
+                msg.EndHealedSegments = END_Manager.healedTimeSegments;
+                msg.EndMemoryTime = END_Manager.memoryTime;
+                msg.EndDoors = END_Manager.doors;
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            net.StoryHandlers.SendStoryCommit(msg);
             if (full)
-                PlaytestLog.Event("Story", "commit full flags=" + arr.Length
-                    + " xml=" + (xml != null ? xml.Length : 0)
-                    + " cmd=" + (replay ? LastCmd.ToString() : "-")
-                    + " gs=" + gs);
+                PlaytestLog.Event("Story", "commit full flags=" + flags.Length
+                    + " cmd=" + (replay ? _lastCmd.ToString() : "-")
+                    + (authoritative ? " authoritative" : ""));
+            else
+                PlaytestLog.Event("Story", "commit flags=" + flags.Length + FlagKeys(flags));
         }
 
-        static bool CanReplayPresentation(StoryCmd cmd, ulong id)
+        /// <summary>The first few keys of a commit with their values, for the log (an incremental one is a handful).</summary>
+        static string FlagKeys(StoryFlagEntry[] flags)
         {
-            switch (cmd)
+            if (flags == null || flags.Length == 0) return "";
+            var sb = new System.Text.StringBuilder(" [");
+            int n = System.Math.Min(flags.Length, 6);
+            for (int i = 0; i < n; i++)
             {
-                case StoryCmd.None:
-                case StoryCmd.CutsceneSkip:
-                case StoryCmd.CutsceneProceed:
-                case StoryCmd.EventZoneFire:
-                case StoryCmd.MultiConditionFire:
-                case StoryCmd.DetermineEnding:
-                    return false;
-                case StoryCmd.CutsceneStart:
+                var e = flags[i];
+                if (i > 0) sb.Append(", ");
+                sb.Append(e.Key).Append('=');
+                switch (e.Kind)
                 {
-                    var c = WorldLookup.Find<CutsceneManager>(id);
-                    if (c == null) return false;
-                    try
-                    {
-                        if (c.gameObject == null) return false;
-                        if (c.completed) return false;
-                        return c.cutscene != null;
-                    }
-                    catch { return false; }
-                }
-                default:
-                    return cmd != StoryCmd.None;
-            }
-        }
-
-        private void DumpLiveProgress()
-        {
-            try
-            {
-                var p = SProgress.progress;
-                if (p == null) return;
-                DumpBools(p);
-                DumpInts(p);
-                DumpFloats(p);
-                DumpStrings(p);
-                DumpVectors(p);
-            }
-            catch (System.Exception ex)
-            {
-                ModRuntime.Log?.Warning("[Story] Dump progress: " + ex.Message);
-            }
-        }
-
-        private void DumpBools(ProgressSlotBehaviour p)
-        {
-            try
-            {
-                var keys = p.boolKeys;
-                var vals = p.bools;
-                if (keys == null || vals == null) return;
-                int n = Mathf.Min(keys.Count, vals.Count);
-                for (int i = 0; i < n; i++)
-                {
-                    string k = keys[i];
-                    if (!string.IsNullOrEmpty(k))
-                        _flags[k] = new StoryFlagEntry { Kind = 0, Key = k, BoolVal = vals[i] };
+                    case 0: sb.Append(e.BoolVal ? "true" : "false"); break;
+                    case 1: sb.Append(e.IntVal); break;
+                    case 2: sb.Append(e.FloatVal.ToString("0.###")); break;
+                    case 3: sb.Append('\'').Append(e.StringVal).Append('\''); break;
+                    default: sb.Append("vec"); break;
                 }
             }
-            catch { }
+            if (flags.Length > n) sb.Append(", +").Append(flags.Length - n);
+            return sb.Append(']').ToString();
         }
 
-        private void DumpInts(ProgressSlotBehaviour p)
+        // ------------------------------------------------------------------ client: commit apply
+
+        /// <summary>
+        /// Client: the host reverted the party to a save (wipe reload). The clients never load a slot, so their local
+        /// SProgress still holds keys the reverted progress no longer has: full commits replace it wholesale for a while.
+        /// A commit buffered from before the wipe is stale and dropped.
+        /// </summary>
+        public void OnPartyWipe()
         {
-            try
-            {
-                var keys = p.intKeys;
-                var vals = p.ints;
-                if (keys == null || vals == null) return;
-                int n = Mathf.Min(keys.Count, vals.Count);
-                for (int i = 0; i < n; i++)
-                {
-                    string k = keys[i];
-                    if (!string.IsNullOrEmpty(k))
-                        _flags[k] = new StoryFlagEntry { Kind = 1, Key = k, IntVal = vals[i] };
-                }
-            }
-            catch { }
+            if (!NetGate.ClientRole) return;
+            _authoritativeUntil = Time.unscaledTime + AuthoritativeWindow;
+            _hasPendingCommit = false;
+            _endBaseValid = false;
+            PlaytestLog.Event("Story", "party wipe: full commits are authoritative for " + AuthoritativeWindow + "s");
         }
 
-        private void DumpFloats(ProgressSlotBehaviour p)
+        /// <summary>
+        /// Buffered commits are cumulative: flags union by key (newer wins; incremental commits only carry changed
+        /// keys), scalars are the newest, a FULL refresh / replay target already buffered is never lost.
+        /// </summary>
+        private void MergePending(ref StoryCommitMessage msg)
         {
-            try
+            if (!_hasPendingCommit) return;
+            var old = _pendingCommit;
+            // A newer FULL commit already is the whole table (union with an older full would keep keys the host since
+            // dropped); an incremental one only adds to whatever was buffered.
+            if (!msg.FullRefresh) msg.Flags = StoryWire.MergeFlags(old.Flags, msg.Flags);
+            // The Authoritative bit survives the merge: the result is a full table whenever the older commit was one.
+            if (old.FullRefresh && old.Authoritative) msg.Authoritative = true;
+            if (old.FullRefresh && !msg.FullRefresh)
             {
-                var keys = p.floatKeys;
-                var vals = p.floats;
-                if (keys == null || vals == null) return;
-                int n = Mathf.Min(keys.Count, vals.Count);
-                for (int i = 0; i < n; i++)
+                msg.FullRefresh = true;
+                if (msg.ActiveStoryCmd == 0)
                 {
-                    string k = keys[i];
-                    if (!string.IsNullOrEmpty(k))
-                        _flags[k] = new StoryFlagEntry { Kind = 2, Key = k, FloatVal = vals[i] };
+                    msg.ActiveStoryCmd = old.ActiveStoryCmd;
+                    msg.ActiveWorldId = old.ActiveWorldId;
                 }
             }
-            catch { }
-        }
-
-        private void DumpStrings(ProgressSlotBehaviour p)
-        {
-            try
-            {
-                var keys = p.stringKeys;
-                var vals = p.strings;
-                if (keys == null || vals == null) return;
-                int n = Mathf.Min(keys.Count, vals.Count);
-                for (int i = 0; i < n; i++)
-                {
-                    string k = keys[i];
-                    if (!string.IsNullOrEmpty(k))
-                        _flags[k] = new StoryFlagEntry { Kind = 3, Key = k, StringVal = vals[i] ?? "" };
-                }
-            }
-            catch { }
-        }
-
-        private void DumpVectors(ProgressSlotBehaviour p)
-        {
-            try
-            {
-                var keys = p.vectorKeys;
-                var vals = p.vectors;
-                if (keys == null || vals == null) return;
-                int n = Mathf.Min(keys.Count, vals.Count);
-                for (int i = 0; i < n; i++)
-                {
-                    string k = keys[i];
-                    if (string.IsNullOrEmpty(k)) continue;
-                    var v = vals[i];
-                    _flags[k] = new StoryFlagEntry { Kind = 4, Key = k, FloatVal = v.x, VecY = v.y, VecZ = v.z };
-                }
-            }
-            catch { }
+            _hasPendingCommit = false;
         }
 
         public void ApplyCommit(StoryCommitMessage msg)
         {
             var net = LanNetworkManager.Instance;
-            if (net != null && net.Role == NetworkRole.Host) return;
-            if (SceneFollowService.LocalIsTransient()) return;
-            if (net != null && net.SceneMismatch) return;
+            if (net == null || NetGate.HostRole) return;
+            bool loading = SceneFollowService.LocalIsTransient();
+            if (loading || net.SceneMismatch)
+            {
+                // Loading or in a scene the host is not in (the wreck / hole split can stay mismatched for a long
+                // time): keep the newest commit, merged, and apply it once the scene is up / matches.
+                MergePending(ref msg);
+                _pendingCommit = msg;
+                _hasPendingCommit = true;
+                PlaytestLog.Verbose("Story", "buffer commit (" + (loading ? "loading" : "scene mismatch") + ")");
+                return;
+            }
+            // A live commit supersedes the buffered (older) one: fold it in so TickClient never re-applies it on top.
+            MergePending(ref msg);
 
+            // The host stamps the bit on the full that follows its SaveManager.Load / NewGame (it survives buffering);
+            // the window after a PartyLife wipe stays as a fallback for a dump that predates the bit.
+            bool authoritative = msg.FullRefresh && (msg.Authoritative || Time.unscaledTime < _authoritativeUntil);
+            if (authoritative)
+                PlaytestLog.Event("Story", "authoritative full commit: clearing local SProgress"
+                    + (msg.Authoritative ? " (host bit)" : " (wipe window)"));
+
+            // Unsent local END contributions survive the overwrite (client increments between commits).
+            EndContribution unsent = authoritative ? default : UnsentEnd();
+            int written = 0;
+            bool ok = true;
             NetGate.BeginApply();
+            if (authoritative) BeginSuppressForward();
             try
             {
-                if (msg.Flags != null)
-                {
-                    for (int i = 0; i < msg.Flags.Length; i++)
-                    {
-                        var f = msg.Flags[i];
-                        if (string.IsNullOrEmpty(f.Key)) continue;
-                        _flags[f.Key] = f;
-                        try
-                        {
-                            switch (f.Kind)
-                            {
-                                case 0: SProgress.SetBool(f.Key, f.BoolVal); break;
-                                case 1: SProgress.SetInt(f.Key, f.IntVal); break;
-                                case 2: SProgress.SetFloat(f.Key, f.FloatVal); break;
-                                case 3: SProgress.SetString(f.Key, f.StringVal); break;
-                                case 4: SProgress.SetVector(f.Key, new Vector3(f.FloatVal, f.VecY, f.VecZ)); break;
-                            }
-                        }
-                        catch { }
-                    }
-                }
-
-                if (!string.IsNullOrEmpty(msg.DialoguerXml))
-                {
-                    try { Dialoguer.SetGlobalVariablesState(msg.DialoguerXml); } catch { }
-                    try { PartyKeyRing.RestoreUiNames(); } catch { }
-                }
-
-                try
-                {
-                    // END_Manager is static; wrap each write so one bad field cannot abort the rest.
-                    END_Manager.Circle = msg.EndCircle;
-                    END_Manager.Death = msg.EndDeath;
-                    END_Manager.Graves = msg.EndGraves;
-                    END_Manager.Leave = msg.EndLeave;
-                    END_Manager.Ending = msg.EndingId;
-                    END_Manager.NPC = msg.EndNpc;
-                    END_Manager.healedTime = msg.EndHealedTime;
-                    END_Manager.healedTimeSegments = msg.EndHealedSegments;
-                    END_Manager.memoryTime = msg.EndMemoryTime;
-                    END_Manager.doors = msg.EndDoors;
-                }
-                catch { }
+                if (authoritative) ok = ProgressSlot.ClearShared();
+                ok &= ProgressSlot.Apply(msg.Flags, out written);
+                ok &= ApplyEnd(msg, unsent);
+                DynamicSupplySync.ReconcileResupply();
             }
             finally
             {
+                if (authoritative) EndSuppressForward();
                 NetGate.EndApply();
             }
 
             PlaytestLog.Event("Story", "apply commit full=" + msg.FullRefresh
-                + " flags=" + (msg.Flags != null ? msg.Flags.Length : 0)
-                + " xml=" + (msg.DialoguerXml != null ? msg.DialoguerXml.Length : 0)
+                + " flags=" + (msg.Flags != null ? msg.Flags.Length : 0) + " written=" + written
+                + (msg.FullRefresh ? "" : FlagKeys(msg.Flags))
                 + " cmd=" + (StoryCmd)msg.ActiveStoryCmd);
+            if (!ok) HealAfterFailedApply(net);
 
-            if (msg.FullRefresh && msg.ActiveStoryCmd != 0 && msg.ActiveWorldId != 0)
+            if (msg.FullRefresh && msg.ActiveStoryCmd != 0)
+                ReplayActivePresentation(msg);
+        }
+
+        /// <summary>
+        /// Part of a commit did not land (logged where it failed): the local story is now a mix of old and new. Ask the
+        /// host for a fresh snapshot once per scene, so the next full commit settles it instead of the mix staying.
+        /// </summary>
+        void HealAfterFailedApply(LanNetworkManager net)
+        {
+            ModRuntime.Log?.Warning("[Story] commit applied only in part" + (_healRequested ? "" : "; requesting a resync"));
+            if (_healRequested) return;
+            _healRequested = true;
+            net.SessionHandlers.RequestWorldSnapshot();
+        }
+
+        // ------------------------------------------------------------------ client: forward + tick
+
+        public void TickClient(LanNetworkManager net)
+        {
+            if (net == null || !NetGate.Client) return;
+            CutsceneSync.TickDeferred();
+            // A blocked / queued scene request that never arrived is re-asked (LanNetworkManager ticks only the host side).
+            SceneFollowService.TickClient();
+            if (SceneFollowService.LocalIsTransient()) return;
+
+            if (_hasPendingCommit && !net.SceneMismatch)
             {
-                var replay = (StoryCmd)msg.ActiveStoryCmd;
-                if (!IsLocalInspect(replay))
-                {
-                    ApplyPresentation(new StoryPresentationMessage
-                    {
-                        WorldId = msg.ActiveWorldId,
-                        Cmd = replay,
-                        Int0 = 0,
-                        Text = ""
-                    });
-                }
+                var m = _pendingCommit;
+                _hasPendingCommit = false;
+                PlaytestLog.Event("Story", "apply buffered commit (scene loaded)");
+                ApplyCommit(m);
+            }
+
+            _clientTimer += Mathf.Min(Time.unscaledDeltaTime, 0.1f);
+            if (_clientTimer < 0.2f) return;
+            _clientTimer = 0f;
+            // Not gated on a pending commit: under a permanent scene mismatch (wreck / hole split) the pending commit
+            // never applies. END deltas are relative to the last *applied* baseline, so flushing stays consistent.
+            FlushOutbox(net);
+            FlushEndDelta(net);
+        }
+
+        /// <summary>
+        /// Client: a story-flag write that must be authored on the host (host applies + commits to everyone).
+        /// The local write still happens so the client's own logic sees it immediately.
+        /// </summary>
+        /// <summary>
+        /// Keys native code rolls at random when a scene starts and they are missing: DET_RadioCodeLock.Start writes
+        /// WallSafeF0-5 / WallSafeC0-5 (the wall safe's radio frequencies and codes). Every peer loads the scene at
+        /// once and rolls its own; a client that forwarded its roll replaced the host's in the shared story, while the
+        /// host's lock component (and every client's, through the puzzle sync) kept the host's roll: the saved code
+        /// was not the one on the wall. The host's roll is the party's; the commit hands it to everyone.
+        /// </summary>
+        internal static bool HostRolled(string key) =>
+            key.StartsWith("WallSafeF", System.StringComparison.Ordinal) || key.StartsWith("WallSafeC", System.StringComparison.Ordinal);
+
+        public void ClientForward(StoryFlagEntry e)
+        {
+            if (string.IsNullOrEmpty(e.Key) || ForwardSuppressed || SameAsLocal(e)) return;
+            if (HostRolled(e.Key)) return;
+            _outbox[e.Key] = e;
+        }
+
+        private void FlushOutbox(LanNetworkManager net)
+        {
+            if (_outbox.Count == 0) return;
+            float now = Time.unscaledTime;
+            _flushKeys.Clear();
+            foreach (var kvp in _outbox)
+            {
+                if (_flushKeys.Count >= OutboxPerFlush) break;
+                var e = kvp.Value;
+                // Floats / vectors can be rewritten every frame by game code: 1 Hz per key.
+                float last;
+                if ((e.Kind == 2 || e.Kind == 4) && _outboxSentAt.TryGetValue(kvp.Key, out last) && now - last < 1f) continue;
+                SendFlag(net, e);
+                _outboxSentAt[kvp.Key] = now;
+                _flushKeys.Add(kvp.Key);
+            }
+            for (int i = 0; i < _flushKeys.Count; i++)
+                _outbox.Remove(_flushKeys[i]);
+        }
+
+        /// <summary>One SProgress write to the host (InspectFlag: Int0 = kind; a string rides as "key\nvalue").</summary>
+        internal static void SendFlag(LanNetworkManager net, StoryFlagEntry e)
+        {
+            switch (e.Kind)
+            {
+                case 0:
+                    net.InteractionHandlers.SendInteractionRequest(0, InteractionKind.InspectFlag, 0, e.BoolVal ? 1 : 0, 0f, 0f, 0f, e.Key);
+                    break;
+                case 1:
+                    net.InteractionHandlers.SendInteractionRequest(0, InteractionKind.InspectFlag, 1, e.IntVal, 0f, 0f, 0f, e.Key);
+                    break;
+                case 2:
+                    net.InteractionHandlers.SendInteractionRequest(0, InteractionKind.InspectFlag, 2, 0, e.FloatVal, 0f, 0f, e.Key);
+                    break;
+                case 3:
+                    net.InteractionHandlers.SendInteractionRequest(0, InteractionKind.InspectFlag, 3, 0, 0f, 0f, 0f,
+                        e.Key + "\n" + (e.StringVal ?? ""));
+                    break;
+                case 4:
+                    net.InteractionHandlers.SendInteractionRequest(0, InteractionKind.InspectFlag, 4, 0, e.FloatVal, e.VecY, e.VecZ, e.Key);
+                    break;
             }
         }
 
-        public void BroadcastPresentation(StoryCmd cmd, ulong worldId, int int0, string text)
+        /// <summary>The live slot already holds this value. Missing keys never match (sentinel defaults), so first writes always count.</summary>
+        internal static bool SameAsLocal(StoryFlagEntry e)
         {
-            if (IsLocalInspect(cmd)) return;
-            var net = LanNetworkManager.Instance;
-            if (net == null || !net.IsConnected) return;
-            LastCmd = cmd;
-            LastWorldId = worldId;
-            PlaytestLog.Event("Story", "send " + cmd + " id=" + worldId.ToString("X16") + " i=" + int0
-                + (string.IsNullOrEmpty(text) ? "" : " '" + text + "'"));
-            net.SendStoryPresentation(new StoryPresentationMessage
-            {
-                WorldId = unchecked((long)worldId),
-                Cmd = cmd,
-                Int0 = int0,
-                Text = text ?? ""
-            });
-        }
-
-        public void ApplyPresentation(StoryPresentationMessage msg)
-        {
-            var net = LanNetworkManager.Instance;
-            if (net != null && net.Role == NetworkRole.Host) return;
-
-            NetGate.BeginApply();
             try
             {
-                ulong id = unchecked((ulong)msg.WorldId);
-                PlaytestLog.Event("Story", "apply " + msg.Cmd + " id=" + id.ToString("X16") + " i=" + msg.Int0);
-                switch (msg.Cmd)
+                switch (e.Kind)
                 {
-                    case StoryCmd.DialogueStart:
+                    case 0:
                     {
-                        var d = Find<Dialogue>(id);
-                        if (d == null || LocalInspect.Dialogue(d))
-                            PlaytestLog.Verbose("Story", "skip local inspect DialogueStart");
-                        break;
+                        bool a = SProgress.GetBool(e.Key, true);
+                        return a == SProgress.GetBool(e.Key, false) && a == e.BoolVal;
                     }
-                    case StoryCmd.DialoguerStartId:
-                        if (LocalInspect.DialoguerFlavor(msg.Int0))
-                            PlaytestLog.Verbose("Story", "skip flavor DialoguerStartId i=" + msg.Int0);
-                        else
-                        {
-                            try { Dialoguer.StartDialogue(msg.Int0); } catch { }
-                        }
-                        break;
-                    case StoryCmd.DialogueContinue:
-                        try
-                        {
-                            if (msg.Int0 != 0) Dialoguer.ContinueDialogue(msg.Int0);
-                            else Dialoguer.ContinueDialogue();
-                        }
-                        catch { }
-                        break;
-                    case StoryCmd.DialogueEnd:
-                        try { Dialoguer.EndDialogue(); } catch { }
-                        break;
-                    case StoryCmd.CutsceneStart:
+                    case 1:
+                        return SProgress.GetInt(e.Key, int.MinValue) == e.IntVal;
+                    case 2:
                     {
-                        var c = FindAlive<CutsceneManager>(id);
-                        if (c == null)
-                            break;
-                        try
-                        {
-                            if (LocalInspect.AirlockCinematic(c.gameObject))
-                            {
-                                PlaytestLog.Event("Story", "skip local cinematic CutsceneStart");
-                                break;
-                            }
-                            if (!LocalInspect.InLocalRoom(c.gameObject))
-                            {
-                                PlaytestLog.Event("Story", "skip other-room CutsceneStart id=" + id.ToString("X16"));
-                                break;
-                            }
-                            if (InteractionSyncService.WasSkipped(id)
-                                || !InteractionSyncService.RememberStart(id))
-                            {
-                                PlaytestLog.Event("Story", "CutsceneStart already done id=" + id.ToString("X16"));
-                                break;
-                            }
-                            try { if (c.completed) break; } catch { }
-                            c.StartCutscene();
-                            try
-                            {
-                                if (!c.unskippable)
-                                    CutsceneSkippingUI.skippableCutscene = true;
-                            }
-                            catch { }
-                        }
-                        catch (System.Exception ex)
-                        {
-                            ModRuntime.Log?.Warning("[Story] CutsceneStart: " + ex.Message);
-                        }
-                        break;
+                        float c = SProgress.GetFloat(e.Key, float.NaN);
+                        return !float.IsNaN(c) && Mathf.Approximately(c, e.FloatVal);
                     }
-                    case StoryCmd.CutsceneSkip:
+                    case 3:
+                        return string.Equals(SProgress.GetString(e.Key, "\u0001<none>"), e.StringVal ?? "",
+                            System.StringComparison.Ordinal);
+                    case 4:
                     {
-                        var c = FindAlive<CutsceneManager>(id);
-                        if (c != null)
-                        {
-                            try
-                            {
-                                if (LocalInspect.AirlockCinematic(c.gameObject))
-                                {
-                                    PlaytestLog.Event("Story", "skip local cinematic CutsceneSkip");
-                                    break;
-                                }
-                            }
-                            catch { }
-                        }
-                        if (!InteractionSyncService.RememberSkip(id))
-                            PlaytestLog.Event("Story", "CutsceneSkip already done id=" + id.ToString("X16"));
-                        else
-                            InteractionSyncService.NativeSkip(c);
-                        break;
-                    }
-                    case StoryCmd.CutsceneProceed:
-                    {
-                        var cut = FindAlive<CutsceneCut>(id);
-                        if (cut != null)
-                        {
-                            try
-                            {
-                                if (LocalInspect.InLocalRoom(cut.gameObject))
-                                    cut.Proceed();
-                            }
-                            catch { }
-                        }
-                        break;
-                    }
-                    case StoryCmd.EventScreenStart:
-                    case StoryCmd.EventScreenExit:
-                    case StoryCmd.OpenBookMemory:
-                    case StoryCmd.BookOpen:
-                        PlaytestLog.Verbose("Story", "skip local inspect " + msg.Cmd);
-                        break;
-                    case StoryCmd.EventZoneFire:
-                    {
-                        var z = FindAlive<EventZone>(id);
-                        if (z == null) break;
-                        try
-                        {
-                            if (LocalInspect.LockWorld(z.gameObject))
-                                PlaytestLog.Event("Story", "skip lock EventZoneFire");
-                            else if (LocalInspect.AirlockCinematic(z.gameObject))
-                                PlaytestLog.Event("Story", "skip airlock EventZoneFire");
-                            else
-                            {
-                                z.triggered = true;
-                                if (LocalInspect.InLocalRoom(z.gameObject))
-                                {
-                                    try { if (z.onInRange != null) z.onInRange.Invoke(); } catch { }
-                                }
-                                else
-                                    PlaytestLog.Event("Story", "skip other-room EventZoneFire id=" + id.ToString("X16"));
-                            }
-                        }
-                        catch (System.Exception ex)
-                        {
-                            ModRuntime.Log?.Warning("[Story] EventZoneFire: " + ex.Message);
-                        }
-                        break;
-                    }
-                    case StoryCmd.MultiConditionFire:
-                    {
-                        var m = FindAlive<MultiConditionEvent>(id);
-                        if (m == null) break;
-                        try
-                        {
-                            if (!LocalInspect.InLocalRoom(m.gameObject)) break;
-                            try
-                            {
-                                if (msg.Int0 == 1) m.TryTrigger();
-                                else m.TryOnce();
-                            }
-                            catch { }
-                            try { if (m.OnTryDone != null) m.OnTryDone.Invoke(); } catch { }
-                        }
-                        catch { }
-                        break;
-                    }
-                    case StoryCmd.DetermineEnding:
-                    {
-                        try
-                        {
-                            ModRuntime.Log?.Msg("[Story] END_Manager.Ending=" + END_Manager.Ending);
-                            var finales = WorldLookup.All<Finale>();
-                            if (finales != null)
-                            {
-                                for (int fi = 0; fi < finales.Length; fi++)
-                                {
-                                    if (finales[fi] == null) continue;
-                                    finales[fi].determineEnding();
-                                    break;
-                                }
-                            }
-                        }
-                        catch { }
-                        break;
+                        var v = SProgress.GetVector(e.Key, new Vector3(float.NaN, float.NaN, float.NaN));
+                        return !float.IsNaN(v.x) && Mathf.Approximately(v.x, e.FloatVal)
+                            && Mathf.Approximately(v.y, e.VecY) && Mathf.Approximately(v.z, e.VecZ);
                     }
                 }
             }
-            catch (System.Exception ex)
-            {
-                ModRuntime.Log?.Warning("[Story] Apply presentation: " + ex.Message);
-            }
-            finally
-            {
-                NetGate.EndApply();
-            }
+            catch (System.Exception ex) { WarnOnce("SameAsLocal", ex); }
+            return false;
         }
 
-        private static bool IsLocalInspect(StoryCmd cmd)
-        {
-            return cmd == StoryCmd.EventScreenStart
-                || cmd == StoryCmd.EventScreenExit
-                || cmd == StoryCmd.OpenBookMemory
-                || cmd == StoryCmd.BookOpen;
-        }
-
-        private static T Find<T>(ulong worldId) where T : Component =>
-            WorldLookup.Find<T>(worldId, "Story");
-
-        // Unity destroyed objects compare equal to null via overloaded ==.
-        private static T FindAlive<T>(ulong worldId) where T : Component
-        {
-            var c = Find<T>(worldId);
-            if (c == null) return null;
-            try
-            {
-                if (c.gameObject == null) return null;
-            }
-            catch { return null; }
-            return c;
-        }
-
-        // PuzzleStateMessage MultiCondition / SaveRoom / Cutscene / Dialogue ownership.
-        internal static bool TryReadPuzzle(PuzzleType type, Component c, long wid, out PuzzleStateEntry entry)
-        {
-            entry = default;
-            switch (type)
-            {
-                case PuzzleType.MultiConditionEvent:
-                {
-                    var x = (MultiConditionEvent)c;
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.triedOnce, false, false, x.tried, 0, 0, 0, 0);
-                    return true;
-                }
-                case PuzzleType.SaveRoomEvent:
-                {
-                    var x = (SaveRoomEvent)c;
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.triggered, false, false, 0, 0, 0, 0, 0);
-                    return true;
-                }
-                case PuzzleType.CutsceneCompleted:
-                {
-                    var x = (CutsceneManager)c;
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.completed, false, false, 0, 0, 0, 0, 0);
-                    return true;
-                }
-                case PuzzleType.DialoguePlayedOnce:
-                {
-                    var x = (Dialogue)c;
-                    // Flavor / EventScreen / lock lines stay local — do not party-sync.
-                    if (Sync.LocalInspect.Dialogue(x))
-                        return false;
-                    entry = PuzzleDomainUtil.Mk(type, wid, x.playedOnce, false, false, 0, 0, 0, 0, 0);
-                    return true;
-                }
-                default:
-                    return false;
-            }
-        }
-
-        internal static void ApplyMultiConditionEvent(MultiConditionEvent x, PuzzleStateEntry e)
-        {
-            if (x == null) return;
-            x.triedOnce = e.Bool0;
-            x.tried = e.Int0;
-        }
-
-        internal static void ApplySaveRoomEvent(SaveRoomEvent x, PuzzleStateEntry e)
-        {
-            if (x == null) return;
-            x.triggered = e.Bool0;
-            if (!e.Bool0) return;
-            // Party-wide: once triggered, disable the one-shot interaction on observers.
-            try
-            {
-                if (x.eventInter != null)
-                    x.eventInter.enabled = false;
-            }
-            catch { }
-        }
-
-        internal static void ApplyCutsceneCompleted(CutsceneManager x, PuzzleStateEntry e)
-        {
-            if (x != null && e.Bool0)
-                x.completed = true;
-        }
-
-        internal static void ApplyDialoguePlayedOnce(Dialogue x, PuzzleStateEntry e)
-        {
-            if (x == null) return;
-            if (Sync.LocalInspect.Dialogue(x)) return;
-            x.playedOnce = e.Bool0;
-        }
+        private static T FindAlive<T>(ulong worldId) where T : Component =>
+            InteractionSyncService.FindAlive<T>(worldId, "Story");
     }
 }

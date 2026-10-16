@@ -1,296 +1,161 @@
-// SyncRADation � model-only clone: MB removal, mesh/material fix (IL2CPP), CapsuleCollider+Rigidbody
-using MelonLoader;
+// Model-only remote-player clone: script-free copy of the local Elster's model, IL2CPP mesh/material fix-up, FF capsule.
+using SyncRADation.Sync;
 using UnityEngine;
 
 namespace SyncRADation.Players
 {
+    /// <summary>The parts of a proxy clone the per-player drivers write.</summary>
+    public sealed class ProxyRig
+    {
+        /// <summary>Clone of the Elster model (Ellie_Default): the armature root lives under it.</summary>
+        public Transform Model;
+        /// <summary>Humanoid hips bone (the one bone whose position the sender's Animator moves).</summary>
+        public Transform Hips;
+        /// <summary>
+        /// Outfit objects indexed by CharacterModelType.ElsterType (0 normal, 1 armored, 2 eva, 3 crippled, 4 isa) and the
+        /// hat: what CharacterModelType.ApplyType toggles by modelState / the static wearHat (Ghidra CharacterModelType.c).
+        /// </summary>
+        public readonly GameObject[] Outfits = new GameObject[5];
+        public GameObject Hat;
+    }
+
     public static class PlayerProxyBuilder
     {
-        private static System.Collections.Generic.Dictionary<string, object> SavePlayerStatics()
+        public static GameObject CreatePlayerClone(GameObject source, string objectName, out ProxyRig rig)
         {
-            var dict = new System.Collections.Generic.Dictionary<string, object>();
-            var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static;
-            foreach (var field in typeof(PlayerState).GetFields(flags))
-                dict[field.Name] = field.GetValue(null);
-            return dict;
-        }
-
-        private static void RestorePlayerStatics(System.Collections.Generic.Dictionary<string, object> saved)
-        {
-            var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static;
-            foreach (var field in typeof(PlayerState).GetFields(flags))
+            rig = null;
+            // Model-only: a full clone duplicates door scripts ("single-use door" bug) and would run their Awake.
+            Transform model = BoneSyncManager.FindModelRoot(source.transform);
+            if (model == null)
             {
-                if (saved.TryGetValue(field.Name, out var val))
-                    field.SetValue(null, val);
-            }
-        }
-
-        public static GameObject CreatePlayerClone(GameObject source, string objectName, Vector3 positionOffset, MelonLogger.Instance log)
-        {
-            if (source == null)
-            {
-                log?.Warning("Cannot spawn player clone: source is null.");
+                PlaytestLog.Warn("Proxy", "no skinned model under '" + source.name + "' - proxy not created");
                 return null;
             }
 
-            // Model-only approach: clone only the facing-pivot child (skinned model).
-            // Full-clone duplicates door scripts → "single-use door" bug.
-            Transform facingChild = FindFacingPivotRoot(source.transform);
-            if (facingChild == null)
-            {
-                log?.Warning("Cannot find facing-pivot child — falling back to full clone");
-                return CreateFullClone(source, objectName, positionOffset, log);
-            }
-
-            var savedStatics = SavePlayerStatics();
-            var savedModelInstance = CharacterModelType.instance;
-            var savedWearHat = CharacterModelType.wearHat;
-
+            // Instantiated under an inactive parent: no Awake / OnEnable runs on the clone's scripts, so the local
+            // Elster's statics (PlayerState, CharacterModelType.instance / wearHat) are never touched.
             GameObject proxy = new GameObject(objectName);
             proxy.SetActive(false);
-            proxy.transform.position = source.transform.position + positionOffset;
-            proxy.transform.rotation = source.transform.rotation;
+            // Keeps the source root tilt (SIGNALIS player roots carry non-zero X/Z euler): the clone's up is world -Z.
+            proxy.transform.SetPositionAndRotation(source.transform.position, source.transform.rotation);
 
-            GameObject modelClone = Object.Instantiate(facingChild.gameObject, proxy.transform, true);
-            modelClone.name = facingChild.name;
+            GameObject modelClone = Object.Instantiate(model.gameObject, proxy.transform, true);
+            modelClone.name = model.name;
 
-            RestorePlayerStatics(savedStatics);
-            CharacterModelType.instance = savedModelInstance;
-            CharacterModelType.wearHat = savedWearHat;
+            rig = new ProxyRig { Model = modelClone.transform, Hips = FindCloneHips(source, model, modelClone.transform) };
+            ReadOutfits(modelClone, rig);
 
-            proxy.tag = "Untagged";
-
-            // Destroy ALL MonoBehaviours while proxy is still inactive (prevents Awake from ever running)
-            var allMbs = proxy.GetComponentsInChildren<MonoBehaviour>(true);
-            foreach (var mb in allMbs)
+            foreach (var mb in proxy.GetComponentsInChildren<MonoBehaviour>(true))
             {
-                if (mb != null)
-                    Object.DestroyImmediate(mb);
+                if (mb != null) Object.DestroyImmediate(mb);
+            }
+            // The pose comes from the sender's bones (ProxyPose); any Animator left in the clone would overwrite it.
+            foreach (var anim in proxy.GetComponentsInChildren<Animator>(true))
+            {
+                if (anim != null) Object.DestroyImmediate(anim);
             }
 
-            // Also destroy the source's Animator clones on modelClone (we'll add a fresh one)
-            var animators = modelClone.GetComponentsInChildren<Animator>(true);
-            foreach (var anim in animators)
-            {
-                if (anim != null && anim.gameObject != modelClone)
-                    Object.DestroyImmediate(anim);
-            }
-
-            // Now safe to activate proxy — no Awake runs (no MBs left)
             proxy.SetActive(true);
-
-            // Animator-primary pose: keep enabled so the controller evaluates network params.
-            Animator sourceAnim = source.GetComponentInChildren<Animator>(true);
-            if (sourceAnim != null)
-            {
-                Animator proxyAnim = proxy.AddComponent<Animator>();
-                proxyAnim.runtimeAnimatorController = sourceAnim.runtimeAnimatorController;
-                proxyAnim.avatar = sourceAnim.avatar;
-                proxyAnim.applyRootMotion = false;
-                proxyAnim.cullingMode = AnimatorCullingMode.AlwaysAnimate;
-                proxyAnim.updateMode = AnimatorUpdateMode.Normal;
-                proxyAnim.speed = 1f;
-                proxyAnim.enabled = true;
-                try { proxyAnim.Rebind(); proxyAnim.Update(0f); } catch { }
-                if (ModRuntime.VerboseLogging)
-                    log?.Msg("[Proxy] Animator ENABLED: ctrl=" + sourceAnim.runtimeAnimatorController
-                    + " avatar=" + sourceAnim.avatar);
-            }
-            else
-            {
-                log?.Warning("[Proxy] No source Animator found!");
-            }
-
-            // Preserve source root tilt (SIGNALIS uses non-zero root X/Z euler)
-            proxy.transform.rotation = source.transform.rotation;
 
             foreach (var col in proxy.GetComponentsInChildren<Collider>(true))
             {
-                if (col != null)
-                    col.enabled = false;
+                if (col != null) col.enabled = false;
             }
             foreach (var col in proxy.GetComponentsInChildren<Collider2D>(true))
             {
-                if (col != null)
-                    col.enabled = false;
+                if (col != null) col.enabled = false;
             }
 
-            var rb2 = proxy.GetComponent<Rigidbody2D>();
-            if (rb2 != null) { rb2.gravityScale = 0f; rb2.isKinematic = true; rb2.Sleep(); }
-            var rb3 = proxy.GetComponent<Rigidbody>();
-            if (rb3 != null) { rb3.useGravity = false; rb3.isKinematic = true; rb3.Sleep(); }
-
-            if (ModRuntime.VerboseLogging)
-                log?.Msg("Model-only proxy created: " + proxy.name + " at " + proxy.transform.position.ToString("F1")
-                + " rootEuler=" + proxy.transform.eulerAngles.ToString("F1"));
-
-            // --- Fix IL2CPP: copy sharedMesh from source SMRs to proxy SMRs ---
-            var sourceSmrs = facingChild.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+            // IL2CPP Instantiate drops sharedMesh / sharedMaterials on skinned renderers: copy them from the source by index.
+            var sourceSmrs = model.GetComponentsInChildren<SkinnedMeshRenderer>(true);
             var proxySmrs = modelClone.GetComponentsInChildren<SkinnedMeshRenderer>(true);
-            int copyCount = 0;
-            for (int si = 0; si < sourceSmrs.Length && si < proxySmrs.Length; si++)
+            for (int i = 0; i < sourceSmrs.Length && i < proxySmrs.Length; i++)
             {
-                if (sourceSmrs[si] != null && proxySmrs[si] != null
-                    && proxySmrs[si].sharedMesh == null && sourceSmrs[si].sharedMesh != null)
-                {
-                    proxySmrs[si].sharedMesh = sourceSmrs[si].sharedMesh;
-                    copyCount++;
-                }
+                var src = sourceSmrs[i];
+                var dst = proxySmrs[i];
+                if (src == null || dst == null) continue;
+                if (dst.sharedMesh == null && src.sharedMesh != null)
+                    dst.sharedMesh = src.sharedMesh;
+                var mats = src.sharedMaterials;
+                if (mats != null && mats.Length > 0)
+                    dst.sharedMaterials = mats;
+                else if (dst.sharedMaterial == null && src.sharedMaterial != null)
+                    dst.sharedMaterial = src.sharedMaterial;
             }
-            for (int si = 0; si < sourceSmrs.Length && si < proxySmrs.Length; si++)
-            {
-                if (sourceSmrs[si] != null && proxySmrs[si] != null)
-                {
-                    if (proxySmrs[si].sharedMaterial == null && sourceSmrs[si].sharedMaterial != null)
-                        proxySmrs[si].sharedMaterial = sourceSmrs[si].sharedMaterial;
-                    if (sourceSmrs[si].sharedMaterials != null && sourceSmrs[si].sharedMaterials.Length > 0)
-                        proxySmrs[si].sharedMaterials = sourceSmrs[si].sharedMaterials;
-                }
-            }
-            if (copyCount > 0 && ModRuntime.VerboseLogging)
-                log?.Msg("[Proxy] Copied " + copyCount + " sharedMeshes from source to proxy");
 
-            // Apply character model variant if present on source
-            try
-            {
-                var srcCmt = source.GetComponentInChildren<CharacterModelType>(true);
-                var proxyCmt = proxy.GetComponentInChildren<CharacterModelType>(true);
-                if (srcCmt != null && proxyCmt != null)
-                {
-                    proxyCmt.modelState = srcCmt.modelState;
-                    CharacterModelType.wearHat = savedWearHat;
-                    CharacterModelType.ApplyType();
-                }
-            }
-            catch { }
+            // After the index-matched SMR copy above (the source still has its weapon's renderers).
+            ClearRuntimeMounts(modelClone.transform);
 
             var anyRenderer = proxy.GetComponentInChildren<Renderer>(true);
             if (anyRenderer != null)
                 proxy.layer = anyRenderer.gameObject.layer;
 
-            // Kinematic collider for FF raycasts — does not fight net position interp
-            var proxyRb = proxy.AddComponent<Rigidbody>();
-            proxyRb.useGravity = false;
-            proxyRb.isKinematic = true;
-            proxyRb.constraints = RigidbodyConstraints.FreezeAll;
-            var proxyCol = proxy.AddComponent<CapsuleCollider>();
-            proxyCol.radius = 0.3f;
-            proxyCol.height = 1.8f;
-            proxyCol.center = new Vector3(0, 0.9f, 0);
-            proxyCol.isTrigger = true;
-            if (ModRuntime.VerboseLogging)
-                log?.Msg("[Proxy] Kinematic trigger capsule for FF detection");
+            // Kinematic trigger capsule for friendly-fire raycasts; does not fight the net position interpolation.
+            // Local Y of the proxy root is the sender root's up (world -Z), so the capsule stands on the feet.
+            var rb = proxy.AddComponent<Rigidbody>();
+            rb.useGravity = false;
+            rb.isKinematic = true;
+            rb.constraints = RigidbodyConstraints.FreezeAll;
+            var capsule = proxy.AddComponent<CapsuleCollider>();
+            capsule.radius = 0.3f;
+            capsule.height = 1.8f;
+            capsule.center = new Vector3(0, 0.9f, 0);
+            capsule.isTrigger = true;
 
             return proxy;
         }
 
-        // Returns the first direct child of root that has a SkinnedMeshRenderer in its subtree
-        private static Transform FindFacingPivotRoot(Transform root)
+        /// <summary>The source Animator's humanoid hips, found in the clone by the same path below the model.</summary>
+        private static Transform FindCloneHips(GameObject source, Transform model, Transform modelClone)
         {
-            SkinnedMeshRenderer[] smrs = root.GetComponentsInChildren<SkinnedMeshRenderer>(true);
-            for (int si = 0; si < smrs.Length; si++)
+            Transform hips = null;
+            try
             {
-                if (smrs[si] != null)
-                {
-                    Transform t = smrs[si].transform;
-                    while (t != null && t.parent != null && t.parent != root)
-                        t = t.parent;
-                    if (t != null && t.parent == root)
-                        return t;
-                }
+                var anim = source.GetComponentInChildren<Animator>(true);
+                if (anim != null && anim.isHuman) hips = anim.GetBoneTransform(HumanBodyBones.Hips);
             }
-            return null;
+            catch (System.Exception e) { Guard.Swallow(e); }
+            if (hips == null) return null;
+            string path = hips.name;
+            for (var t = hips.parent; t != null && t != model; t = t.parent)
+                path = t.name + "/" + path;
+            return modelClone.Find(path);
         }
 
-        // --- Fallback: full clone for players without a facing-pivot child ---
-        private static GameObject CreateFullClone(GameObject source, string objectName, Vector3 positionOffset, MelonLogger.Instance log)
+        private static void ReadOutfits(GameObject modelClone, ProxyRig rig)
         {
-            var savedStatics = SavePlayerStatics();
-            var savedModelInstance = CharacterModelType.instance;
-            var savedWearHat = CharacterModelType.wearHat;
-
-            GameObject dummy = new GameObject("__Dummy");
-            dummy.SetActive(false);
-            dummy.transform.position = source.transform.position;
-            dummy.transform.rotation = source.transform.rotation;
-            GameObject proxy = Object.Instantiate(source, dummy.transform, true);
-            proxy.name = objectName;
-
-            RestorePlayerStatics(savedStatics);
-            CharacterModelType.instance = savedModelInstance;
-            CharacterModelType.wearHat = savedWearHat;
-
-            proxy.transform.SetParent(null, true);
-            RestorePlayerStatics(savedStatics);
-            CharacterModelType.instance = savedModelInstance;
-            CharacterModelType.wearHat = savedWearHat;
-
-            proxy.transform.position += positionOffset;
-
-            proxy.tag = "Untagged";
-
-            var proxyAnimators = proxy.GetComponentsInChildren<Animator>(true);
-
-            foreach (var mb in proxy.GetComponentsInChildren<MonoBehaviour>(true))
-            {
-                if (mb != null)
-                    mb.enabled = false;
-            }
-
-            foreach (var col in proxy.GetComponentsInChildren<Collider>(true))
-            {
-                if (col != null)
-                    col.enabled = false;
-            }
-            foreach (var col in proxy.GetComponentsInChildren<Collider2D>(true))
-            {
-                if (col != null)
-                    col.enabled = false;
-            }
-
-            foreach (var anim in proxyAnimators)
-            {
-                if (anim != null)
-                {
-                    anim.applyRootMotion = false;
-                    anim.cullingMode = AnimatorCullingMode.AlwaysAnimate;
-                    anim.updateMode = AnimatorUpdateMode.Normal;
-                    anim.speed = 1f;
-                    anim.enabled = true;
-                }
-            }
-
-            var rb2 = proxy.GetComponent<Rigidbody2D>();
-            if (rb2 != null) { rb2.gravityScale = 0f; rb2.isKinematic = true; rb2.Sleep(); }
-            var rb3 = proxy.GetComponent<Rigidbody>();
-            if (rb3 != null) { rb3.useGravity = false; rb3.isKinematic = true; rb3.Sleep(); }
-
-            var proxyRb = proxy.GetComponent<Rigidbody>();
-            if (proxyRb == null)
-            {
-                proxyRb = proxy.AddComponent<Rigidbody>();
-                proxyRb.useGravity = false;
-                proxyRb.isKinematic = true;
-                proxyRb.constraints = RigidbodyConstraints.FreezeAll;
-            }
-            var proxyCol = proxy.GetComponent<CapsuleCollider>();
-            if (proxyCol == null)
-            {
-                proxyCol = proxy.AddComponent<CapsuleCollider>();
-                proxyCol.radius = 0.3f;
-                proxyCol.height = 1.8f;
-                proxyCol.center = new Vector3(0, 0.9f, 0);
-                proxyCol.isTrigger = true;
-            }
-            else
-                proxyCol.enabled = true;
-
-            Object.Destroy(dummy);
-
-            if (ModRuntime.VerboseLogging)
-                log?.Msg("Full proxy created: " + proxy.name + " at " + proxy.transform.position.ToString("F1"));
-            return proxy;
+            // Instantiate remaps the clone's serialized references onto the clone's own children.
+            var cmt = modelClone.GetComponentInChildren<CharacterModelType>(true);
+            if (cmt == null) return;
+            rig.Outfits[0] = cmt.normal;
+            rig.Outfits[1] = cmt.armored;
+            rig.Outfits[2] = cmt.eva;
+            rig.Outfits[3] = cmt.crippled;
+            rig.Outfits[4] = cmt.isa;
+            rig.Hat = cmt.hat;
         }
 
+        /// <summary>
+        /// The clone copies whatever the local Elster held at clone time: her equipped weapon (runtime child of
+        /// hand_R/WeaponMount) and reload props (hand_L/MagazineMount). RemoteWeaponSync only toggles its own weapon
+        /// clones, so the copied weapon would stay in the proxy's hand forever: remove it, hide the props.
+        /// </summary>
+        private static void ClearRuntimeMounts(Transform root)
+        {
+            foreach (var t in root.GetComponentsInChildren<Transform>(true))
+            {
+                if (t == null) continue;
+                if (t.name == "WeaponMount")
+                {
+                    for (int c = t.childCount - 1; c >= 0; c--)
+                        Object.DestroyImmediate(t.GetChild(c).gameObject);
+                }
+                else if (t.name == "MagazineMount")
+                {
+                    for (int c = 0; c < t.childCount; c++)
+                        t.GetChild(c).gameObject.SetActive(false);
+                }
+            }
+        }
     }
 }

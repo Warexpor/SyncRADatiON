@@ -1,4 +1,4 @@
-// Invoke SIGNALIS door entry points (private methods via reflection when needed).
+// SIGNALIS door entry points for remote applies (lock flags, plates, native cycle), plus the host's lock-solved checks.
 using System.Reflection;
 using FMODUnity;
 using SyncRADation.Sync;
@@ -8,9 +8,9 @@ namespace SyncRADation.Networking
 {
     public static class DoorNative
     {
-        private static MethodInfo _doubleOpen;
-        private static MethodInfo _doubleClose;
+        // persistent: per-process reflection cache
         private static MethodInfo _slideCycle;
+        // persistent: per-process reflection cache
         private static bool _resolved;
 
         private static void Resolve()
@@ -18,15 +18,32 @@ namespace SyncRADation.Networking
             if (_resolved) return;
             _resolved = true;
             const BindingFlags f = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-            _doubleOpen = typeof(Doorway_Double).GetMethod("openDoors", f);
-            _doubleClose = typeof(Doorway_Double).GetMethod("closeDoors", f);
             _slideCycle = typeof(EventSlidingDoor).GetMethod("cycle", f);
+        }
+
+        /// <summary>A door for the log: WorldId plus the room it stands in (every door object is named "Inter").</summary>
+        public static string Label(GameObject go, ulong id = 0)
+        {
+            if (go == null) return "id=?";
+            string room = "?";
+            try
+            {
+                if (id == 0) id = WorldId.FromGameObject(go);
+                for (Transform t = go.transform; t != null; t = t.parent)
+                {
+                    var r = t.GetComponent<Room>();
+                    if (r == null) continue;
+                    room = string.IsNullOrEmpty(r.roomName) ? r.gameObject.name : r.roomName;
+                    break;
+                }
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            return "id=" + id.ToString("X16") + " '" + go.name + "' in " + room;
         }
 
         public static void ApplyDoubleDoor(Doorway_Double d, bool open, bool locked)
         {
             if (d == null) return;
-            Resolve();
             // Flavor / DLC seals keep locked=false on the host. Writing that across
             // still runs native Update/indicator as "you can walk in".
             if (!locked && SealedFace(d.gameObject))
@@ -44,65 +61,43 @@ namespace SyncRADation.Networking
                     if (dlc != null)
                         ApplyDoorLockControl(dlc, true);
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
 
-            bool wasOpen = d.open;
-            if (open == wasOpen)
+            if (open == d.open)
                 return;
 
-            PlaytestLog.Event("Door", "apply " + (open ? "open" : "close") + " " + d.gameObject.name);
-            NetGate.BeginApply();
-            try
-            {
-                if (open)
-                {
-                    if (_doubleOpen != null)
-                        _doubleOpen.Invoke(d, null);
-                }
-                else
-                {
-                    if (_doubleClose != null)
-                        _doubleClose.Invoke(d, null);
-                }
-                d.open = open;
-            }
+            PlaytestLog.Event("Door", "apply " + (open ? "open" : "close") + " " + Label(d.gameObject));
+            // `open` is the whole state: native Update calls openDoors / closeDoors every frame to lerp the leaves
+            // toward it (Ghidra Doorway_Double.c Update).
+            try { d.open = open; }
             catch (System.Exception ex)
             {
                 ModRuntime.Log?.Warning("[DoorNative] DoubleDoor: " + ex.Message);
-            }
-            finally
-            {
-                NetGate.EndApply();
             }
 
             PlayWorld(open ? d.OpenSFX : d.CloseSFX, d.gameObject);
         }
 
+        /// <summary>A key-less lock on the door's root (Doorway_Double / DoorLockControl / Doorway_simple): never solvable.</summary>
         public static bool IsFlavorSeal(GameObject go)
         {
             if (go == null) return false;
             GameObject root = go;
             try
             {
-                Transform t = go.transform;
-                while (t != null)
+                for (Transform t = go.transform; t != null; t = t.parent)
                 {
-                    try
+                    if (t.GetComponent<Doorway_Double>() != null
+                        || t.GetComponent<DoorLockControl>() != null
+                        || t.GetComponent<Doorway_simple>() != null)
                     {
-                        if (t.GetComponent<Doorway_Double>() != null
-                            || t.GetComponent<DoorLockControl>() != null
-                            || t.GetComponent<Doorway_simple>() != null)
-                        {
-                            root = t.gameObject;
-                            break;
-                        }
+                        root = t.gameObject;
+                        break;
                     }
-                    catch { }
-                    t = t.parent;
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return FlavorOn(root);
         }
 
@@ -113,10 +108,67 @@ namespace SyncRADation.Networking
             try
             {
                 var dlc = DoorLockOn(go);
-                if (dlc != null && dlc.locked) return true;
+                return dlc != null && dlc.locked;
             }
-            catch { }
-            return false;
+            catch (System.Exception e) { Guard.Swallow(e); return false; }
+        }
+
+        /// <summary>
+        /// Decompile InteractiveLock.Update copies locked -> door.locked every frame, so a door governed by a
+        /// still-locked InteractiveLock cannot legitimately be open/unlocked.
+        /// </summary>
+        public static bool HasUnsolvedLock(Doorway_Double d)
+        {
+            bool any; bool solved;
+            ScanGoverningLocks(d, out any, out solved);
+            if (any && !solved) return true;
+            try
+            {
+                var dlc = DoorLockOn(d.gameObject);
+                return dlc != null && dlc.locked;
+            }
+            catch (System.Exception ex) { Guard.Swallow("Door.DlcRead", ex); return false; }
+        }
+
+        /// <summary>True when a key/code lock governs this door and every such lock is solved (host truth).</summary>
+        public static bool LockSolvedFor(Doorway_Double d)
+        {
+            if (d == null) return false;
+            bool any; bool solved;
+            ScanGoverningLocks(d, out any, out solved);
+            return any && solved;
+        }
+
+        /// <summary>True when a DoorLockControl governs this door and it is already unlocked (host truth).</summary>
+        public static bool DoorLockUnlocked(Doorway_Double d)
+        {
+            if (d == null) return false;
+            try
+            {
+                var dlc = DoorLockOn(d.gameObject);
+                return dlc != null && !dlc.locked;
+            }
+            catch (System.Exception ex) { Guard.Swallow("Door.DlcUnlocked", ex); return false; }
+        }
+
+        static void ScanGoverningLocks(Doorway_Double d, out bool any, out bool solved)
+        {
+            any = false; solved = true;
+            if (d == null) return;
+            try
+            {
+                var locks = WorldLookup.All<InteractiveLock>();
+                if (locks == null) return;
+                for (int i = 0; i < locks.Length; i++)
+                {
+                    var l = locks[i];
+                    if (l == null || l.door != d) continue;
+                    // Key-less locks are flavor seals: never solvable.
+                    any = true;
+                    if (l.locked || l.key == null) solved = false;
+                }
+            }
+            catch (System.Exception ex) { Guard.Swallow("Door.ScanLocks", ex); }
         }
 
         static DoorLockControl DoorLockOn(GameObject go)
@@ -140,67 +192,94 @@ namespace SyncRADation.Networking
                     for (int i = 0; i < locks.Length; i++)
                     {
                         var l = locks[i];
-                        if (l == null) continue;
-                        try
-                        {
-                            if (l.locked && l.key == null) return true;
-                        }
-                        catch { }
+                        if (l != null && l.locked && l.key == null) return true;
                     }
                 }
-            }
-            catch { }
-            try
-            {
                 var singles = go.GetComponentsInChildren<InteractiveLockSingle>(true);
                 if (singles != null)
                 {
                     for (int i = 0; i < singles.Length; i++)
                     {
                         var s = singles[i];
-                        if (s == null) continue;
-                        try
-                        {
-                            if (s.key == null) return true;
-                        }
-                        catch { }
+                        if (s != null && IsSealedSingle(s)) return true;
                     }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
+        }
+
+        /// <summary>
+        /// A single whose door can never open: no master (its ConnectedDoors never woke, so native Update forces it
+        /// locked) or a locked master nothing can unlock. "No key" alone is not a seal: a plain unlocked connection
+        /// (LOV East Corridor -> Aula) has none, and sealing it made the host reject every open (door flapping).
+        /// </summary>
+        public static bool IsSealedSingle(InteractiveLockSingle s)
+        {
+            if (s == null) return false;
+            try
+            {
+                var m = s.master;
+                return m == null || (m.locked && !HasUnlocker(m));
+            }
+            catch (System.Exception e) { Guard.Swallow(e); return false; }
+        }
+
+        /// <summary>The InteractiveLockSingle driving this door's lock flag (native Update writes door.locked), or null.</summary>
+        static InteractiveLockSingle GoverningSingle(Doorway_Double d)
+        {
+            var singles = WorldLookup.All<InteractiveLockSingle>();
+            if (singles == null) return null;
+            for (int i = 0; i < singles.Length; i++)
+            {
+                var s = singles[i];
+                if (s != null && s.door == d) return s;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// The door's real lock: a governing single's master when wired (door.locked is only its per-frame mirror,
+        /// stale while the room sleeps), the door's own flag otherwise.
+        /// </summary>
+        public static bool EffectiveLocked(Doorway_Double d)
+        {
+            if (d == null) return true;
+            try
+            {
+                var s = GoverningSingle(d);
+                if (s != null) return s.master == null || s.master.locked;
+                return d.locked;
+            }
+            catch (System.Exception e) { Guard.Swallow(e); return true; }
         }
 
         public static void ApplyDoorLockControl(DoorLockControl dlc, bool locked)
         {
             if (dlc == null || !locked) return;
-            try { dlc.setLock(true); }
-            catch
-            {
-                try { dlc.locked = true; } catch { }
-            }
-            try
-            {
-                if (dlc.doorZone != null)
-                    dlc.doorZone.locked = true;
-            }
-            catch { }
+            SetDoorLock(dlc, true);
         }
 
         public static void UnsealDoorLockControl(DoorLockControl dlc)
         {
             if (dlc == null || IsFlavorSeal(dlc.gameObject)) return;
-            try { dlc.setLock(false); }
+            SetDoorLock(dlc, false);
+        }
+
+        /// <summary>Native setLock (indicator + zone), falling back to the raw flag; the door zone follows either way.</summary>
+        static void SetDoorLock(DoorLockControl dlc, bool locked)
+        {
+            try { dlc.setLock(locked); }
             catch
             {
-                try { dlc.locked = false; } catch { }
+                try { dlc.locked = locked; } catch (System.Exception e) { Guard.Swallow(e); }
             }
             try
             {
                 if (dlc.doorZone != null)
-                    dlc.doorZone.locked = false;
+                    dlc.doorZone.locked = locked;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         public static void ReassertLockVisuals()
@@ -214,9 +293,9 @@ namespace SyncRADation.Networking
                 try
                 {
                     if (dlc.locked)
-                        ApplyDoorLockControl(dlc, true);
+                        SetDoorLock(dlc, true);
                 }
-                catch { }
+                catch (System.Exception e) { Guard.Swallow(e); }
             }
         }
 
@@ -228,21 +307,35 @@ namespace SyncRADation.Networking
         public static void ApplyConnectedDoors(ConnectedDoors cd, bool locked)
         {
             if (cd == null) return;
+            // Scene unload can destroy the door between registry lookup and apply.
+            if (!Alive(cd)) return;
             try
             {
+                // Awake never ran (inactive, e.g. PEN_Wreck DemoOnly): Unlock / UpdateProperties would wire its
+                // singles here only, and the peers then disagreed on that door forever. Keep the flag, wire nothing.
+                if (!Wired(cd))
+                {
+                    cd.locked = locked;
+                    return;
+                }
                 if (!locked)
                 {
                     if (!HasUnlocker(cd))
                         return;
                     cd.locked = false;
-                    try { cd.Unlock(); } catch { }
-                    ReleaseTraverse(cd);
-                    try { cd.UpdateProperties(); } catch { }
-                    EnsurePlates(cd, false);
+                    try { cd.Unlock(); } catch (System.Exception e) { Guard.Swallow(e); }
+                    // Re-check after Unlock: mid-unload can tear the GO during the native call.
+                    if (!Alive(cd)) return;
+                    ReleaseTraverseDoor(cd.A);
+                    ReleaseTraverseDoor(cd.B);
+                    try { cd.UpdateProperties(); } catch (System.Exception e) { Guard.Swallow(e); }
+                    SetTraversePlate(cd.A, false);
+                    SetTraversePlate(cd.B, false);
                     return;
                 }
                 cd.locked = true;
-                EnsurePlates(cd, true);
+                SetTraversePlate(cd.A, true);
+                SetTraversePlate(cd.B, true);
             }
             catch (System.Exception ex)
             {
@@ -250,16 +343,34 @@ namespace SyncRADation.Networking
             }
         }
 
-        static void ReleaseTraverse(ConnectedDoors cd)
+        /// <summary>ConnectedDoors.Awake ran: it makes its A/B singles' master point back at it (Ghidra ConnectedDoors.c).</summary>
+        static bool Wired(ConnectedDoors cd)
         {
-            ReleaseTraverseDoor(cd.A);
-            ReleaseTraverseDoor(cd.B);
+            try
+            {
+                if (cd.gameObject.activeInHierarchy) return true;
+                return SingleMaster(cd.A) == cd || SingleMaster(cd.B) == cd;
+            }
+            catch { return false; }
+        }
+
+        static ConnectedDoors SingleMaster(AutoTraverseDoor atd)
+        {
+            if (atd == null) return null;
+            var s = atd.GetComponent<InteractiveLockSingle>();
+            return s != null ? s.master : null;
+        }
+
+        static bool Alive(Component c)
+        {
+            try { return c.gameObject != null; }
+            catch { return false; }
         }
 
         static void ReleaseTraverseDoor(AutoTraverseDoor atd)
         {
             if (atd == null) return;
-            try { atd.enabled = true; } catch { }
+            try { atd.enabled = true; } catch (System.Exception e) { Guard.Swallow(e); }
             try
             {
                 var inters = atd.GetComponentsInChildren<Interaction>(true);
@@ -268,37 +379,26 @@ namespace SyncRADation.Networking
                 {
                     var it = inters[i];
                     if (it == null) continue;
-                    try
+                    var t = it.type;
+                    if (t == Interaction.interType.open || t == Interaction.interType.move)
                     {
-                        var t = it.type;
-                        if (t == Interaction.interType.open || t == Interaction.interType.move)
-                        {
-                            it.triggered = false;
-                            it.enabled = true;
-                        }
+                        it.triggered = false;
+                        it.enabled = true;
                     }
-                    catch { }
                 }
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
+        /// <summary>
+        /// A ConnectedDoors the game can unlock (external unlocker, key, key hint, or a backtrack door that opens
+        /// from its far side). Others stay locked.
+        /// </summary>
         public static bool HasUnlocker(ConnectedDoors cd)
         {
             if (cd == null) return false;
-            try
-            {
-                if (cd.externalUnlocker) return true;
-                if (cd.key != null) return true;
-                if (cd.GiveKeyHint) return true;
-            }
+            try { return cd.externalUnlocker || cd.key != null || cd.GiveKeyHint || cd.BacktrackDoor; }
             catch { return false; }
-            return false;
-        }
-
-        public static bool AllowUnlock(ConnectedDoors cd)
-        {
-            return HasUnlocker(cd);
         }
 
         public static bool TraversePlateActive(InteractiveLockSingle x)
@@ -306,80 +406,38 @@ namespace SyncRADation.Networking
             if (x == null) return false;
             try
             {
-                if (x.master != null)
-                {
-                    if (PlateOn(x.master.A) || PlateOn(x.master.B)) return true;
-                }
-            }
-            catch { }
-            try
-            {
-                var atd = x.GetComponentInParent<AutoTraverseDoor>();
-                if (PlateOn(atd)) return true;
-            }
-            catch { }
-            try
-            {
+                if (x.master != null && (PlateOn(x.master.A) || PlateOn(x.master.B))) return true;
+                if (PlateOn(x.GetComponentInParent<AutoTraverseDoor>())) return true;
                 if (x.door != null)
                 {
                     var dlc = DoorLockOn(x.door.gameObject);
                     if (dlc != null && dlc.locked) return true;
                 }
+                var own = x.GetComponent<DoorLockControl>();
+                return own != null && own.locked;
             }
-            catch { }
-            try
-            {
-                var dlc2 = x.GetComponent<DoorLockControl>();
-                if (dlc2 != null && dlc2.locked) return true;
-            }
-            catch { }
-            return false;
+            catch (System.Exception e) { Guard.Swallow(e); return false; }
         }
 
         public static void ApplyLockPlate(InteractiveLockSingle x, bool on)
         {
             if (x == null) return;
-            if (!on)
-            {
-                try
-                {
-                    if (x.key == null) return;
-                }
-                catch { }
-                try
-                {
-                    if (x.door != null && IsFlavorSeal(x.door.gameObject)) return;
-                }
-                catch { }
-            }
             try
             {
+                // Sealed singles and flavor-sealed doors are never unplated.
+                if (!on && (IsSealedSingle(x) || (x.door != null && IsFlavorSeal(x.door.gameObject)))) return;
                 if (x.master != null)
                 {
                     SetTraversePlate(x.master.A, on);
                     SetTraversePlate(x.master.B, on);
                 }
+                SetTraversePlate(x.GetComponentInParent<AutoTraverseDoor>(), on);
+                if (!on || x.door == null) return;
+                var dlc = DoorLockOn(x.door.gameObject);
+                if (dlc != null)
+                    SetDoorLock(dlc, true);
             }
-            catch { }
-            try { SetTraversePlate(x.GetComponentInParent<AutoTraverseDoor>(), on); } catch { }
-            if (!on) return;
-            try
-            {
-                if (x.door != null)
-                {
-                    var dlc = DoorLockOn(x.door.gameObject);
-                    if (dlc != null)
-                        ApplyDoorLockControl(dlc, true);
-                }
-            }
-            catch { }
-        }
-
-        static void EnsurePlates(ConnectedDoors cd, bool on)
-        {
-            if (cd == null) return;
-            try { SetTraversePlate(cd.A, on); } catch { }
-            try { SetTraversePlate(cd.B, on); } catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         static bool PlateOn(AutoTraverseDoor atd)
@@ -387,25 +445,45 @@ namespace SyncRADation.Networking
             return atd != null && atd.blocker != null && atd.blocker.activeSelf;
         }
 
+        /// <summary>
+        /// The blocker is the doorway's 2D collider (BoxCollider2D, layer 8; the player moves on 3D physics). Native code
+        /// switches it off only for the length of a traverse and back on at its end, locked door or not (Ghidra
+        /// ConnectedDoors.traverseAB; Unlock / UpdateProperties never touch it), so its rest state is always on. "Off"
+        /// therefore leaves it alone: clearing it on every unlocked link left a client's doorways open to anything
+        /// that paths on 2D physics while the host's stayed closed (test pilot digest, DET_Detention).
+        /// </summary>
         static void SetTraversePlate(AutoTraverseDoor atd, bool on)
         {
-            if (atd == null || atd.blocker == null) return;
-            try { atd.blocker.SetActive(on); } catch { }
+            try
+            {
+                if (!on || atd == null || atd.blocker == null) return;
+                atd.blocker.SetActive(true);
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
+        /// <summary>
+        /// Native cycle (Ghidra EventSlidingDoor.c): no-op while moving, else moving=true and an open/close coroutine
+        /// that sets opened/moving when it ends. A peer's cycle hook reports (opened = state it moved FROM,
+        /// moving = true); a full dump reports the settled state (moving = false). Either way the target is reached
+        /// by one native cycle here; opened/moving are never written directly (a forced moving=true without a
+        /// running coroutine wedged the door for good, cycle() ignores a moving door).
+        /// </summary>
         public static void ApplySlidingDoor(EventSlidingDoor sd, bool opened, bool moving)
         {
             if (sd == null) return;
             Resolve();
 
-            bool was = sd.opened;
-            if (opened == was && !moving)
+            bool target = moving ? !opened : opened;
+            // In motion: the running coroutine ends at !opened. Already heading there = nothing to do; the other
+            // way cannot be reversed mid-move (native cycle ignores it), the next edge / dump settles it.
+            if (sd.moving || sd.opened == target)
                 return;
 
             NetGate.BeginApply();
             try
             {
-                if (opened != was && _slideCycle != null)
+                if (_slideCycle != null)
                     _slideCycle.Invoke(sd, null);
             }
             catch (System.Exception ex)
@@ -417,22 +495,19 @@ namespace SyncRADation.Networking
                 NetGate.EndApply();
             }
 
-            sd.opened = opened;
-            sd.moving = moving;
-            if (opened != was)
-                PlayWorldPath(opened ? sd.openSFX : sd.closeSFX, sd.gameObject);
+            PlayWorldPath(target ? sd.openSFX : sd.closeSFX, sd.gameObject);
         }
 
         static void PlayWorld(StudioEventEmitter emitter, GameObject at)
         {
             if (emitter == null || at == null) return;
             string path = null;
-            try { path = emitter.Event; } catch { }
+            try { path = emitter.Event; } catch (System.Exception e) { Guard.Swallow(e); }
             if (string.IsNullOrEmpty(path))
             {
                 float dummy;
                 if (!WorldSfx.TryVolume(at.transform.position, out dummy)) return;
-                try { emitter.Play(); } catch { }
+                try { emitter.Play(); } catch (System.Exception e) { Guard.Swallow(e); }
                 return;
             }
             PlayWorldPath(path, at);
@@ -443,12 +518,10 @@ namespace SyncRADation.Networking
             if (string.IsNullOrEmpty(path) || at == null) return;
             float vol;
             if (!WorldSfx.TryVolume(at.transform.position, out vol))
-            {
-                PlaytestLog.Event("Door", "sfx skip far " + at.name);
-                return;
-            }
+                return; // out of earshot
             WorldSfx.Play(path, at.transform);
-            PlaytestLog.Verbose("Door", "sfx " + path + " @ " + at.name + " vol=" + vol.ToString("0.00"));
+            if (ModRuntime.VerboseLogging)
+                PlaytestLog.Verbose("Door", "sfx " + path + " @ " + Label(at) + " vol=" + vol.ToString("0.00"));
         }
     }
 }

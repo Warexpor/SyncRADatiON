@@ -10,6 +10,14 @@ namespace SyncRADation.Patches
     {
         static bool _interactThisFrame;
 
+        /// <summary>SessionReset: drop the per-frame flag and the highlight reference (the highlighted clone dies with the session).</summary>
+        internal static void ResetSession()
+        {
+            _interactThisFrame = false;
+            _highlighted = null;
+            _hlOutlines = null;
+        }
+
         [HarmonyPrefix]
         public static void Prefix(Interactor __instance)
         {
@@ -32,10 +40,12 @@ namespace SyncRADation.Patches
             if (_interactThisFrame) return;
             if (!InteractPressed()) return;
             try { __instance.Interact(); }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
 
         static Interaction _highlighted;
+        // Outlines of _highlighted, fetched once per drop (GetComponentsInChildren ran twice a frame near a drop).
+        static cakeslice.Outline[] _hlOutlines;
 
         static Interaction FeedCurrent(Interactor inst)
         {
@@ -44,29 +54,46 @@ namespace SyncRADation.Patches
             try { t = inst.transform; } catch { return null; }
             if (t == null) return null;
 
-            var drop = DroppedItemManager.NearbyInteraction(t.position, 1.8f);
+            var drop = DroppedItemRegistry.NearbyInteraction(t.position, 1.8f);
             if (drop != _highlighted)
             {
                 if (_highlighted != null)
                 {
-                    try { _highlighted.setInRange(false); } catch { }
-                    try { DroppedItemManager.SetHighlight(_highlighted.gameObject, false); } catch { }
+                    try { _highlighted.setInRange(false); } catch (System.Exception e) { Guard.Swallow(e); }
+                    SetOutlines(_hlOutlines, false);
                 }
                 _highlighted = drop;
+                _hlOutlines = null;
+                if (drop != null)
+                {
+                    try { _hlOutlines = drop.gameObject.GetComponentsInChildren<cakeslice.Outline>(true); }
+                    catch (System.Exception e) { Guard.Swallow(e); }
+                }
             }
             if (drop == null) return null;
 
-            try { drop.setInRange(true); } catch { }
-            try { DroppedItemManager.SetHighlight(drop.gameObject, true); } catch { }
+            try { drop.setInRange(true); } catch (System.Exception e) { Guard.Swallow(e); }
+            SetOutlines(_hlOutlines, true);
 
             Interaction cur = null;
-            try { cur = inst.currentInter; } catch { }
-            bool ours = cur != null && DroppedItemManager.IsDroppedGo(cur.gameObject);
+            try { cur = inst.currentInter; } catch (System.Exception e) { Guard.Swallow(e); }
+            bool ours = cur != null && DroppedItemRegistry.IsDroppedGo(cur.gameObject);
             if (cur == null || ours)
             {
-                try { inst.currentInter = drop; } catch { }
+                try { inst.currentInter = drop; } catch (System.Exception e) { Guard.Swallow(e); }
             }
             return drop;
+        }
+
+        static void SetOutlines(cakeslice.Outline[] outlines, bool on)
+        {
+            if (outlines == null) return;
+            for (int i = 0; i < outlines.Length; i++)
+            {
+                var o = outlines[i];
+                if (o == null) continue;
+                try { if (o.enabled != on) o.enabled = on; } catch (System.Exception e) { Guard.Swallow(e); }
+            }
         }
 
         static bool InPlay()
@@ -83,15 +110,23 @@ namespace SyncRADation.Patches
 
         internal static bool InteractPressed()
         {
+            // The game's interact is Rewired CharacterAction.Use (Interactor.Update reads
+            // input.Use.WasPressed, Ghidra Interactor.c). Fire1 is the shoot button — never use it,
+            // or shooting near a drop auto-takes it.
             try
             {
-                if (Input.GetButtonDown("Submit")) return true;
-                if (Input.GetButtonDown("Fire1")) return true;
+                var input = PlayerState.input;
+                if (input != null && input.Use != null)
+                    return input.Use.WasPressed;
+            }
+            catch (System.Exception ex) { ModRuntime.Log?.Warning("[DroppedInteract] input: " + ex.Message); }
+            try
+            {
                 if (Input.GetButtonDown("Interact")) return true;
                 if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
                     return true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
             return false;
         }
     }
@@ -111,52 +146,22 @@ namespace SyncRADation.Patches
                 if (gs != PlayerState.gameStates.play)
                     return true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
 
             Transform t = null;
             try { t = __instance.transform; } catch { return true; }
             if (t == null) return true;
 
-            var drop = DroppedItemManager.NearbyInteraction(t.position, 1.8f);
+            var drop = DroppedItemRegistry.NearbyInteraction(t.position, 1.8f);
             if (drop == null) return true;
 
             Interaction cur = null;
-            try { cur = __instance.currentInter; } catch { }
-            if (cur != null && !DroppedItemManager.IsDroppedGo(cur.gameObject))
+            try { cur = __instance.currentInter; } catch (System.Exception e) { Guard.Swallow(e); }
+            if (cur != null && !DroppedItemRegistry.IsDroppedGo(cur.gameObject))
                 return true;
 
-            try { __instance.currentInter = drop; } catch { }
+            try { __instance.currentInter = drop; } catch (System.Exception e) { Guard.Swallow(e); }
             return true;
-        }
-    }
-
-    [HarmonyPatch(typeof(Interaction), nameof(Interaction.trigger))]
-    public static class DroppedTriggerArmPatch
-    {
-        [HarmonyPrefix]
-        public static void Prefix(Interaction __instance)
-        {
-            if (__instance == null) return;
-            try
-            {
-                var p = __instance.GetComponent<ItemPickup>();
-                if (p == null) p = __instance.GetComponentInParent<ItemPickup>();
-                ItemPickupPatches.ArmDropped(p);
-            }
-            catch { }
-        }
-
-        [HarmonyPostfix]
-        public static void Postfix(Interaction __instance)
-        {
-            if (__instance == null) return;
-            try
-            {
-                var p = __instance.GetComponent<ItemPickup>();
-                if (p == null) p = __instance.GetComponentInParent<ItemPickup>();
-                ItemPickupPatches.CommitDroppedIfTaken(p);
-            }
-            catch { }
         }
     }
 }

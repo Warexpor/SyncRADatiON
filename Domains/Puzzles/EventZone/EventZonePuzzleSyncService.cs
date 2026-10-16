@@ -1,37 +1,33 @@
+using SyncRADation.Patches;
 using SyncRADation.Sync;
-using UnityEngine;
+using static SyncRADation.Networking.PuzzleDomainUtil;
 
 namespace SyncRADation.Networking
 {
     /// <summary>
-    /// EventZoneTriggered flag + in-room Invoke. Not cutscene/dialogue (Story owns those).
-    /// Respects InLocalRoom + MutateWorld — never EventScreen / Interaction.trigger().
+    /// EventZoneTriggered flag + in-room Invoke (host-authored; cutscene / dialogue stay with Story). An observer in
+    /// another room never Invokes (it would yank them through a traverse they never started); never EventScreen /
+    /// Interaction.trigger().
     /// </summary>
     public sealed class EventZonePuzzleSyncService
     {
-        public static bool TryRead(EventZone x, long wid, out PuzzleStateEntry entry)
-        {
-            entry = default;
-            if (x == null) return false;
-            entry = PuzzleDomainUtil.Mk(PuzzleType.EventZoneTriggered, wid, x.triggered, false, false, 0, 0, 0, 0, 0);
-            return true;
-        }
+        internal static PuzzleStateEntry Read(EventZone x, long wid)
+            => Mk(PuzzleType.EventZoneTriggered, wid, x.triggered, false, false, 0, 0, 0, 0, 0);
 
-        public static void Apply(EventZone x, PuzzleStateEntry e, bool mutateWorld)
+        internal static void Apply(EventZone x, PuzzleStateEntry e)
         {
             if (x == null) return;
-            bool was = false;
-            try { was = x.triggered; } catch { }
+            bool was = x.triggered;
             x.triggered = e.Bool0;
-            if (!(e.Bool0 && !was)) return;
-
-            SyncRADation.Patches.EventZonePatch.MarkFired(unchecked((ulong)e.WorldId));
-            if (mutateWorld && LocalInspect.InLocalRoom(x.gameObject))
-            {
-                try { if (x.onInRange != null) x.onInRange.Invoke(); } catch { }
-            }
-            else
+            if (!e.Bool0 || was) return;
+            EventZonePatch.MarkFired(unchecked((ulong)e.WorldId));
+            // No author room on the poll: the live fire is the EventZoneFire presentation (it carries one and marks the
+            // zone triggered first); a zone outside every Room is not invoked from here.
+            bool inRoom = LocalInspect.UnderLocalRoom(x.gameObject);
+            if (!PuzzleSyncService.LiveEdge || !inRoom)
                 PlaytestLog.Verbose("Puzzle", "skip EventZone invoke " + x.gameObject.name);
+            PuzzleEdge.Solved("EventZone", was, true, durable: null,
+                onLive: () => { if (x.onInRange != null) x.onInRange.Invoke(); }, inRoom: inRoom);
         }
     }
 }

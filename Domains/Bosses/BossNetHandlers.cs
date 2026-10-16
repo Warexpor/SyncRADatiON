@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using LiteNetLib;
 using LiteNetLib.Utils;
+using SyncRADation.Sync;
 
 namespace SyncRADation.Networking
 {
@@ -14,20 +15,91 @@ namespace SyncRADation.Networking
             _net = net ?? throw new System.ArgumentNullException(nameof(net));
         }
 
+        // Persistent on purpose: serialized size of an empty snapshot struct, a pure cache that never depends on session state.
+        // persistent: serialized size of an empty snapshot (pure cache)
+        private static int _snapBytes;
+        // Snapshot packets are built one at a time and copied by LiteNetLib on send: one writer serves them all.
+        private readonly NetDataWriter _stateWriter = new NetDataWriter();
+
+        static int SnapshotBytes()
+        {
+            if (_snapBytes == 0)
+            {
+                var probe = new NetDataWriter();
+                new BossSnapshotNet().Serialize(probe);
+                _snapBytes = probe.Length;
+            }
+            return _snapBytes;
+        }
+
+        /// <summary>Continuous snapshot: Sequenced on the State channel (see EnemyNetHandlers.SendEnemyState).</summary>
         internal void SendBossState(IList<BossSnapshotNet> snaps)
         {
             if (snaps == null || snaps.Count == 0) return;
-            var writer = new NetDataWriter();
-            writer.Put((byte)NetMessageType.BossState);
-            writer.Put(snaps.Count);
-            for (int i = 0; i < snaps.Count; i++)
-                snaps[i].Serialize(writer);
-            _net.BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
+            int perPacket = (_net.StatePacketBudget() - 1 - 4) / SnapshotBytes();
+            if (perPacket < 1) perPacket = 1;
+            if (perPacket > NetWire.MaxBosses) perPacket = NetWire.MaxBosses;
+            int total = NetWire.ClampCount(snaps.Count, 1024, "BossState send");
+            for (int start = 0; start < total; start += perPacket)
+            {
+                int n = total - start;
+                if (n > perPacket) n = perPacket;
+                var writer = _stateWriter;
+                writer.Reset();
+                writer.Put((byte)NetMessageType.BossState);
+                writer.Put(n);
+                for (int i = 0; i < n; i++)
+                    snaps[start + i].Serialize(writer);
+                _net.BroadcastState(writer);
+            }
         }
 
         internal void HandleBossState(BossStateMessage msg)
         {
             _net.BossSync.OnBossStateReceived(msg);
+        }
+
+        /// <summary>Client → host: boss hitbox damage / Falke stab / spear take.</summary>
+        internal void SendBossHitToHost(long worldId, BossHitKind kind, int amount)
+        {
+            if (!NetGate.ClientRole) return;
+            var msg = new BossHitMessage
+            {
+                SenderPlayerId = _net.LocalPlayerId,
+                WorldId = worldId,
+                Kind = kind,
+                Amount = amount
+            };
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.BossHit);
+            msg.Serialize(writer);
+            if (_net.TryGetPeer(0, out var peer) && peer.ConnectionState == ConnectionState.Connected)
+                SyncRADation.Sync.NetStats.Send(peer, writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        /// <summary>Host → every client: boss presentation event (spear taken, Chimera rifle shot).</summary>
+        internal void BroadcastBossEvent(long worldId, BossHitKind kind, int amount)
+        {
+            if (!NetGate.Host) return;
+            var msg = new BossHitMessage
+            {
+                SenderPlayerId = _net.LocalPlayerId,
+                WorldId = worldId,
+                Kind = kind,
+                Amount = amount
+            };
+            var writer = new NetDataWriter();
+            writer.Put((byte)NetMessageType.BossHit);
+            msg.Serialize(writer);
+            _net.BroadcastRaw(writer, DeliveryMethod.ReliableOrdered);
+        }
+
+        internal void HandleBossHit(BossHitMessage msg, int senderId)
+        {
+            if (NetGate.HostRole)
+                _net.BossSync.ApplyHitOnHost(msg, senderId);
+            else
+                _net.BossSync.ApplyBossEventOnClient(msg);
         }
     }
 }

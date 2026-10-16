@@ -1,111 +1,80 @@
-// Host validates client interaction intents and applies native world mutations.
-using System.Reflection;
+// Host side of client interaction requests: validate, run the native world mutation, ack the sender.
+// UseItem: InteractionSyncService.UseItem.cs. Cutscene start / done: CutsceneSync.
 using SyncRADation.Patches;
 using SyncRADation.Sync;
 using UnityEngine;
 
 namespace SyncRADation.Networking
 {
-    public static class InteractionSyncService
+    public static partial class InteractionSyncService
     {
         public static void HandleRequest(InteractionRequestMessage msg)
         {
             var net = LanNetworkManager.Instance;
-            if (net == null || net.Role != NetworkRole.Host) return;
+            if (net == null || !NetGate.HostRole) return;
 
             ulong id = unchecked((ulong)msg.WorldId);
             bool ok = false;
             string reason = "";
 
+            // Peer-gone mid-flight: DroppedPickup / StorageTake must not mutate shared
+            // stock when the claimer can no longer receive grant/ack (floor/box item loss).
+            // StoragePut still applies — boxing preserves the item for the party.
+            // Mirrors the WorldPickupNetHandlers HasPeer guard.
+            if (msg.SenderPlayerId != net.LocalPlayerId
+                && (msg.Kind == InteractionKind.DroppedPickup
+                    || msg.Kind == InteractionKind.StorageTake)
+                && !net.HasPeer(msg.SenderPlayerId))
+            {
+                reason = "peer gone";
+                PlaytestLog.Event("Interact", "FAIL " + msg.Kind
+                    + " from=" + msg.SenderPlayerId
+                    + " id=" + id.ToString("X16")
+                    + " peer gone");
+                long earlyAck = msg.WorldId;
+                if (msg.Kind == InteractionKind.DroppedPickup && earlyAck == 0 && msg.Int0 != 0)
+                    earlyAck = msg.Int0;
+                net.InteractionHandlers.SendInteractionAck(msg.SenderPlayerId, earlyAck, msg.Kind, false, reason);
+                return;
+            }
+
+            int prevSender = NetGate.ApplySender;
+            if (msg.SenderPlayerId >= 1 && msg.SenderPlayerId != net.LocalPlayerId)
+                NetGate.ApplySender = msg.SenderPlayerId;
             try
             {
                 switch (msg.Kind)
                 {
                     case InteractionKind.EventZone:
-                        ok = ApplyEventZone(id);
+                        ok = ApplyEventZone(id, msg.SenderPlayerId, msg.Text ?? "");
                         break;
                     case InteractionKind.UseItem:
                         ok = ApplyUseItem(id, msg.SenderPlayerId, out string consumeReason);
                         if (!ok) reason = "no key";
                         else if (!string.IsNullOrEmpty(consumeReason)) reason = consumeReason;
                         break;
-                    case InteractionKind.UseItemMulti:
-                        ok = ApplyUseItemMulti(id, msg.SenderPlayerId, out string multiReason);
-                        if (!ok) reason = "no key";
-                        else if (!string.IsNullOrEmpty(multiReason)) reason = multiReason;
-                        break;
-                    case InteractionKind.KeypadSubmit:
-                        ok = ApplyKeypad(id);
-                        break;
-                    case InteractionKind.DialogueStart:
-                        if (LocalInspect.DialoguerFlavor(msg.Int0))
-                        {
-                            ok = true;
-                            break;
-                        }
-                        if (id == 0 && msg.Int0 != 0)
-                        {
-                            NetGate.BeginApply();
-                            try { Dialoguer.StartDialogue(msg.Int0); }
-                            finally { NetGate.EndApply(); }
-                            net.StorySync.BroadcastPresentation(StoryCmd.DialoguerStartId, 0, msg.Int0, "");
-                            ok = true;
-                        }
-                        else
-                            ok = true;
-                        break;
+                    // KeypadSubmit / Dialogue* / EventScreen* / Book* / SceneFollowRequest / UseItemMulti are wire values only: no
+                    // build sends them (keypads are live puzzle state, dialogues and inspect screens stay local, scene
+                    // requests ride SceneFollow). Anything unhandled is acked FAIL below.
                     case InteractionKind.CutsceneStart:
-                        ok = ApplyCutscene(id, net);
+                        ok = CutsceneSync.HostApplyStart(id, msg.Text ?? "", msg.SenderPlayerId, net);
                         break;
-                    case InteractionKind.EventScreenStart:
-                    case InteractionKind.EventScreenExit:
-                    case InteractionKind.BookMemory:
-                    case InteractionKind.BookOpen:
-                        ok = true;
-                        break;
-                    case InteractionKind.CutsceneSkip:
-                        ok = ApplyCutsceneSkip(id, net);
-                        break;
-                    case InteractionKind.DialogueContinue:
-                        NetGate.BeginApply();
-                        try
-                        {
-                            if (msg.Int0 != 0) Dialoguer.ContinueDialogue(msg.Int0);
-                            else Dialoguer.ContinueDialogue();
-                        }
-                        finally { NetGate.EndApply(); }
-                        net.StorySync.BroadcastPresentation(StoryCmd.DialogueContinue, 0, msg.Int0, "");
-                        ok = true;
-                        break;
-                    case InteractionKind.DialogueEnd:
-                        NetGate.BeginApply();
-                        try { Dialoguer.EndDialogue(); }
-                        finally { NetGate.EndApply(); }
-                        net.StorySync.BroadcastPresentation(StoryCmd.DialogueEnd, 0, 0, "");
-                        ok = true;
+                    case InteractionKind.CutsceneDone:
+                        ok = CutsceneSync.HostApplyDone(id);
                         break;
                     case InteractionKind.StoragePut:
-                        ok = ApplyStorage(msg, put: true, out reason);
-                        break;
                     case InteractionKind.StorageTake:
-                        ok = ApplyStorage(msg, put: false, out reason);
+                        ok = StorageService.HostApply(msg, out reason);
                         break;
                     case InteractionKind.Gunshot:
                         ApplyGunshot(new Vector3(msg.Float0, msg.Float1, msg.Float2), net);
                         ok = true;
                         break;
                     case InteractionKind.MultiCondition:
-                        ok = ApplyMultiCondition(id, msg.Int0);
-                        break;
-                    case InteractionKind.SceneFollowRequest:
-                        ok = SceneFollowService.TryApplyRequest(msg.Text);
-                        if (!ok) reason = "unknown scene";
-                        break;
-                    case InteractionKind.CutsceneProceed:
-                        ok = ApplyCutsceneProceed(id, net);
+                        ok = ApplyMultiCondition(id, msg.Int0, msg.Text ?? "");
                         break;
                     case InteractionKind.DroppedPickup:
-                        ok = net.TryClaimDropped(msg.Int0, msg.SenderPlayerId, out reason);
+                        ok = net.DroppedItemHandlers.TryClaimDropped(msg.Int0, msg.SenderPlayerId, out reason);
                         break;
                     case InteractionKind.InspectFlag:
                         ok = ApplyInspectFlag(msg);
@@ -117,397 +86,56 @@ namespace SyncRADation.Networking
                 reason = ex.Message;
                 ModRuntime.Log?.Warning("[Interact] " + msg.Kind + ": " + ex.Message);
             }
+            finally
+            {
+                NetGate.ApplySender = prevSender;
+            }
 
             if (msg.Kind != InteractionKind.Gunshot)
                 PlaytestLog.Event("Interact", (ok ? "ok " : "FAIL ") + msg.Kind
                     + " from=" + msg.SenderPlayerId
                     + " id=" + unchecked((ulong)msg.WorldId).ToString("X16")
+                    + (msg.Kind == InteractionKind.InspectFlag ? FlagLabel(msg.Int0, msg.Int1, msg.Float0, msg.Text) : "")
                     + (string.IsNullOrEmpty(reason) ? "" : " " + reason));
-            net.SendInteractionAck(msg.SenderPlayerId, msg.WorldId, msg.Kind, ok, reason);
+            // DroppedPickup: echo drop key in WorldId (request Int0) so client FAIL revert matches.
+            long ackId = msg.WorldId;
+            if (msg.Kind == InteractionKind.DroppedPickup && ackId == 0 && msg.Int0 != 0)
+                ackId = msg.Int0;
+            net.InteractionHandlers.SendInteractionAck(msg.SenderPlayerId, ackId, msg.Kind, ok, reason);
         }
 
-        private static bool ApplyEventZone(ulong id)
+        /// <summary>
+        /// A client stepped into this zone in that room. The host invokes it only when it stands there too (zones can
+        /// sit outside every Room); the broadcast carries the room for the other clients.
+        /// </summary>
+        private static bool ApplyEventZone(ulong id, int senderId, string room)
         {
             var z = Find<EventZone>(id);
             if (z == null) return false;
             if (LocalInspect.LockWorld(z.gameObject)) return true;
             if (z.triggered) return true;
             z.triggered = true;
-            SyncRADation.Patches.EventZonePatch.MarkFired(id);
-            if (LocalInspect.InLocalRoom(z.gameObject))
+            EventZonePatch.MarkFired(id);
+            bool hostRan = LocalInspect.InAuthorRoom(z.gameObject, room);
+            if (hostRan)
             {
-                try { if (z.onInRange != null) z.onInRange.Invoke(); } catch { }
+                try { if (z.onInRange != null) z.onInRange.Invoke(); } catch (System.Exception e) { Guard.Swallow(e); }
             }
             else
-                PlaytestLog.Event("Interact", "EventZone other-room id=" + id.ToString("X16"));
-            LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.EventZoneFire, id, 0, "");
-            return true;
-        }
-
-        private static bool ApplyUseItem(ulong id, int senderId, out string consumeReason)
-        {
-            consumeReason = "";
-            var u = Find<UseItemInteraction>(id);
-            if (u == null)
-            {
-                PlaytestLog.Event("Interact", "UseItem other-scene id=" + id.ToString("X16")
-                    + " from=" + senderId);
-                return true;
-            }
-            if (u.unlocked && !u.repeatable) return true;
-
-            AnItem key = u.key;
-            if (key != null && !PartyKeyRing.LocalOrRingHas(key))
-            {
-                var net = LanNetworkManager.Instance;
-                int localId = net != null ? net.LocalPlayerId : 0;
-                if (senderId == localId || senderId < 0) return false;
-                try { PartyKeyRing.Note(key._item); } catch { return false; }
-                PlaytestLog.Event("KeyRing", "trust UseItem from=" + senderId + " " + key._item);
-            }
-
-            if (!PuzzleSyncService.PerPlayerUse(u))
-                u.unlocked = true;
-            PuzzleSyncService.TryUnlockDoors(u.gameObject);
-            try { PuzzleSyncService.SnapUseItemWorld(u); } catch { }
-            try
-            {
-                var netPuzzle = LanNetworkManager.Instance;
-                if (netPuzzle != null)
-                    netPuzzle.PuzzleSync.Emit(PuzzleType.UseItemInteraction, id, u);
-            }
-            catch { }
-
-            bool consumes = UnlockInteractiveLocks(u, key);
-
-            if (consumes)
-            {
-                bool hostHad = PartyKeyRing.InLocalBag(key);
-                ConsumeKey(key);
-                if (!hostHad)
-                    consumeReason = "consume:" + (int)key._item;
-            }
-            else
-            {
-                PartyKeyRing.Note(key);
-            }
-            PartyKeyRing.Broadcast();
-            return true;
-        }
-
-        private static bool ApplyUseItemMulti(ulong id, int senderId, out string consumeReason)
-        {
-            consumeReason = "";
-            var m = Find<UseItemMultiInteraction>(id);
-            if (m == null) return false;
-
-            try
-            {
-                var list = m.Interactions;
-                if (list != null)
-                {
-                    for (int i = 0; i < list.Count; i++)
-                    {
-                        var u = list[i];
-                        if (u == null) continue;
-                        AnItem key = u.key;
-                        if (key == null || PartyKeyRing.LocalOrRingHas(key)) continue;
-                        var net = LanNetworkManager.Instance;
-                        int localId = net != null ? net.LocalPlayerId : 0;
-                        if (senderId == localId || senderId < 0) return false;
-                        try { PartyKeyRing.Note(key._item); } catch { return false; }
-                        PlaytestLog.Event("KeyRing", "trust UseItemMulti from=" + senderId + " " + key._item);
-                    }
-                }
-            }
-            catch { return false; }
-
-            var ready = typeof(UseItemMultiInteraction).GetMethod("ready",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (ready == null) return false;
-
-            NetGate.BeginApply();
-            try { ready.Invoke(m, null); }
-            finally { NetGate.EndApply(); }
-
-            var parts = new System.Collections.Generic.List<string>();
-            try
-            {
-                var list = m.Interactions;
-                if (list != null)
-                {
-                    for (int i = 0; i < list.Count; i++)
-                    {
-                        var u = list[i];
-                        if (u == null) continue;
-                        AnItem key = u.key;
-                        if (key == null) continue;
-                        bool consumes = UnlockInteractiveLocks(u, key);
-                        if (consumes)
-                        {
-                            bool hostHad = PartyKeyRing.InLocalBag(key);
-                            ConsumeKey(key);
-                            if (!hostHad)
-                                parts.Add((int)key._item + ":1");
-                        }
-                        else
-                            PartyKeyRing.Note(key);
-                    }
-                }
-            }
-            catch { }
-            if (parts.Count > 0)
-                consumeReason = "consume:" + string.Join("|", parts);
-            PartyKeyRing.Broadcast();
-            return true;
-        }
-
-        private static bool ApplyCutsceneProceed(ulong id, LanNetworkManager net)
-        {
-            var cut = Find<CutsceneCut>(id);
-            if (cut == null) return false;
-            if (LocalInspect.InLocalRoom(cut.gameObject))
-            {
-                NetGate.BeginApply();
-                try { cut.Proceed(); }
-                finally { NetGate.EndApply(); }
-            }
-            else
-                PlaytestLog.Event("Interact", "CutsceneProceed other-room id=" + id.ToString("X16"));
-            net.StorySync.BroadcastPresentation(StoryCmd.CutsceneProceed, id, 0, "");
-            return true;
-        }
-
-        private static void ConsumeKey(AnItem key)
-        {
-            try
-            {
-                var held = PartyKeyRing.FindInBag(key);
-                if (held != null)
-                    InventoryManager.RemoveItem(held, 1);
-            }
-            catch { }
-            try { PartyKeyRing.Remove(key._item); } catch { }
-        }
-
-        static bool UnlockInteractiveLocks(UseItemInteraction u, AnItem key)
-        {
-            bool consumes = false;
-            if (u == null) return false;
-            try
-            {
-                var lockComp = u.GetComponent<InteractiveLock>()
-                    ?? u.GetComponentInChildren<InteractiveLock>(true);
-                if (lockComp != null)
-                {
-                    lockComp.locked = false;
-                    consumes = consumes || (lockComp.ConsumesKey && key != null);
-                }
-            }
-            catch { }
-            try
-            {
-                var single = u.GetComponent<InteractiveLockSingle>()
-                    ?? u.GetComponentInChildren<InteractiveLockSingle>(true)
-                    ?? u.GetComponentInParent<InteractiveLockSingle>();
-                if (single != null)
-                {
-                    consumes = consumes || (single.ConsumesKey && key != null);
-                    try
-                    {
-                        if (single.master != null && DoorNative.AllowUnlock(single.master))
-                            single.master.locked = false;
-                    }
-                    catch { }
-                    try
-                    {
-                        if (single.door != null)
-                        {
-                            var master = single.master;
-                            if (master == null || DoorNative.AllowUnlock(master))
-                                single.door.locked = false;
-                        }
-                    }
-                    catch { }
-                }
-            }
-            catch { }
-            return consumes;
-        }
-
-        private static bool ApplyKeypad(ulong id)
-        {
-            var k = Find<Keypad3D>(id);
-            if (k != null)
-            {
-                k.solved = true;
-                k.opening = true;
-                return true;
-            }
-            var r = Find<ROT_Keypad>(id);
-            if (r != null)
-            {
-                r.solved = true;
-                r.opening = true;
-                return true;
-            }
-            var p = Find<PEN_Codepad>(id);
-            if (p != null)
-            {
-                PuzzleSyncService.ApplyCodepadConsequences(p);
-                return true;
-            }
-            return false;
-        }
-
-        private static bool ApplyCutscene(ulong id, LanNetworkManager net)
-        {
-            var c = Find<CutsceneManager>(id);
-            if (c == null) return true;
-            if (LocalInspect.AirlockCinematic(c.gameObject))
-                return true;
-            InteractionSyncService.RememberStart(id);
-            if (LocalInspect.InLocalRoom(c.gameObject))
-            {
-                NetGate.BeginApply();
-                try { c.StartCutscene(); }
-                finally { NetGate.EndApply(); }
-                try
-                {
-                    if (c.unskippable) CutsceneSkippingUI.skippableCutscene = false;
-                    else CutsceneSkippingUI.skippableCutscene = true;
-                }
-                catch { }
-            }
-            else
-                PlaytestLog.Event("Interact", "CutsceneStart other-room id=" + id.ToString("X16"));
-            net.StorySync.BroadcastPresentation(StoryCmd.CutsceneStart, id, 0, "");
-            return true;
-        }
-
-        private static readonly System.Collections.Generic.HashSet<ulong> _skippedCuts
-            = new System.Collections.Generic.HashSet<ulong>();
-        private static readonly System.Collections.Generic.HashSet<ulong> _startedCuts
-            = new System.Collections.Generic.HashSet<ulong>();
-
-        public static void OnSceneChanged()
-        {
-            _skippedCuts.Clear();
-            _startedCuts.Clear();
-        }
-
-        private static bool ApplyCutsceneSkip(ulong id, LanNetworkManager net)
-        {
-            var c = Find<CutsceneManager>(id);
-            if (c != null && LocalInspect.AirlockCinematic(c.gameObject))
-                return true;
-            if (!RememberSkip(id))
-            {
-                PlaytestLog.Event("Interact", "CutsceneSkip already done id=" + id.ToString("X16"));
-                return true;
-            }
-            net.StorySync.BroadcastPresentation(StoryCmd.CutsceneSkip, id, 0, "");
-            NativeSkip(c);
-            return true;
-        }
-
-        internal static bool RememberSkip(ulong id)
-        {
-            return id == 0 || _skippedCuts.Add(id);
-        }
-
-        internal static bool WasSkipped(ulong id)
-        {
-            return id != 0 && _skippedCuts.Contains(id);
-        }
-
-        internal static bool RememberStart(ulong id)
-        {
-            return id == 0 || _startedCuts.Add(id);
-        }
-
-        internal static void NativeSkip(CutsceneManager c)
-        {
-            if (c == null) return;
-            try { if (c.completed) return; } catch { }
-            bool running = false;
-            try { running = c.cutscene != null; } catch { }
-            if (!running)
-            {
-                try { c.completed = true; } catch { }
-                try
-                {
-                    if (c.onCutsceneSkip != null)
-                        c.onCutsceneSkip.Invoke();
-                }
-                catch { }
-                try { CutsceneSkippingUI.skippableCutscene = false; } catch { }
-                return;
-            }
-            NetGate.BeginApply();
-            try { c.Skip(); }
-            catch
-            {
-                try
-                {
-                    if (c.skipper != null && c.skipper.skipEvent != null)
-                        c.skipper.skipEvent.Invoke();
-                }
-                catch { }
-            }
-            finally { NetGate.EndApply(); }
-            try { CutsceneSkippingUI.skippableCutscene = false; } catch { }
-        }
-
-        private static bool ApplyStorage(InteractionRequestMessage msg, bool put, out string reasonOut)
-        {
-            reasonOut = "";
-            var item = InventoryManager.getItem((Items.itemlist)msg.Int0);
-            if (item == null) return false;
-            int n = msg.Int1 > 0 ? msg.Int1 : 1;
-            NetGate.BeginApply();
-            try
-            {
-                // Box only — never host Elster bag. Sender bag is adjusted via ack.
-                if (put) InventoryManager.boxItem(item, n);
-                else
-                {
-                    for (int i = 0; i < n; i++)
-                        InventoryManager.unboxItem(item);
-                }
-            }
-            finally { NetGate.EndApply(); }
-            var net = LanNetworkManager.Instance;
-            net?.StorageSync.RequestSend();
-            net?.StorageSync.SendNow(net);
-            int enumVal = 0;
-            try { enumVal = (int)item._item; } catch { }
-            reasonOut = put
-                ? "consume:" + enumVal + ":" + n
-                : "grant:" + enumVal + ":" + n;
+                PlaytestLog.Event("Interact", "EventZone other-room id=" + id.ToString("X16") + " room=" + room
+                    + " here=" + LocalInspect.LocalRoomKey());
+            // END attribution: host ran it natively (it counted) or only the requesting client counts.
+            LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.EventZoneFire, id, 0,
+                StoryWire.WithRoom(hostRan ? StoryWire.HostCounted : StoryWire.PlayerCounted(senderId), room));
             return true;
         }
 
         private static void ApplyGunshot(Vector3 pos, LanNetworkManager net)
         {
-            float range = 25f;
-            try
-            {
-                var settingsArr = WorldLookup.All<ElsterSettings>();
-                if (settingsArr != null)
-                {
-                    for (int i = 0; i < settingsArr.Length; i++)
-                    {
-                        if (settingsArr[i] != null)
-                        {
-                            range = settingsArr[i].hearRange;
-                            break;
-                        }
-                    }
-                }
-            }
-            catch { }
-            float r2 = range * range;
+            float r2 = HearRange();
+            r2 *= r2;
+            Transform shooter = null;
+            bool shooterKnown = false;
             foreach (var kvp in WorldRegistry.AllEnemies())
             {
                 var e = kvp.Value;
@@ -516,13 +144,37 @@ namespace SyncRADation.Networking
                 {
                     if (e.state == EnemyController.enemystate.dead) continue;
                     if ((e.transform.position - pos).sqrMagnitude > r2) continue;
-                    EnemySyncService.WakeForCombat(e);
-                    Transform t = FindShooterTransform(pos, net);
-                    if (t != null) e.playerPos = t;
+                    if (!EnemySyncService.WakeForCombat(e)) continue; // level-disabled enemies stay off
+                    if (!shooterKnown)
+                    {
+                        shooter = FindShooterTransform(pos, net);
+                        shooterKnown = true;
+                    }
+                    // Chase the shooter through EnemyTargetPatch (never playerPos = a player root: native Update
+                    // writes the host position into it every frame).
+                    if (shooter != null) EnemySyncService.ChaseNow(e, shooter);
                     e.WakeUpfromGunShot();
                 }
-                catch { }
+                catch (System.Exception ex) { Guard.Swallow(ex); }
             }
+        }
+
+        /// <summary>ElsterSettings.hearRange of the scene (25 without one).</summary>
+        static float HearRange()
+        {
+            try
+            {
+                var settings = WorldLookup.All<ElsterSettings>();
+                if (settings != null)
+                {
+                    for (int i = 0; i < settings.Length; i++)
+                    {
+                        if (settings[i] != null) return settings[i].hearRange;
+                    }
+                }
+            }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            return 25f;
         }
 
         private static Transform FindShooterTransform(Vector3 pos, LanNetworkManager net)
@@ -546,8 +198,9 @@ namespace SyncRADation.Networking
             return best;
         }
 
-        private static bool ApplyMultiCondition(ulong id, int kind)
+        private static bool ApplyMultiCondition(ulong id, int kind, string room)
         {
+            // The host runs TryOnce / TryTrigger natively whatever room it is in, so it always counts END effects.
             var m = Find<MultiConditionEvent>(id);
             if (m == null) return false;
             NetGate.BeginApply();
@@ -557,12 +210,64 @@ namespace SyncRADation.Networking
                 else m.TryOnce();
             }
             finally { NetGate.EndApply(); }
-            LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.MultiConditionFire, id, kind, "");
+            // TryTrigger's count reaches peers through the PuzzleState poll only (MultiConditionTriggerPatch).
+            if (kind != 1)
+                LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.MultiConditionFire, id, kind,
+                    StoryWire.WithRoom(StoryWire.HostCounted, room));
             return true;
+        }
+
+        /// <summary>InspectFlag Int0 &gt;= 100 carries a story request (100 + StoryCmd) on the same wire kind.</summary>
+        private static bool ApplyStoryRequest(InteractionRequestMessage msg)
+        {
+            var story = LanNetworkManager.Instance.StorySync;
+            switch ((StoryCmd)(msg.Int0 - 100))
+            {
+                case StoryCmd.EndDelta:
+                    story.HostApplyEndDelta(msg.Text, msg.SenderPlayerId);
+                    return true;
+                case StoryCmd.PartyCheat:
+                    story.HostPartyCheat(msg.Text, msg.SenderPlayerId);
+                    return true;
+                case StoryCmd.EndGraves:
+                    // END_Graves.Graves() writes END_Manager.Ending = 1 directly (secret ending).
+                    END_Manager.Ending = 1;
+                    story.MarkDirty();
+                    return true;
+                case StoryCmd.DetermineEnding:
+                    story.HostDetermineEnding(msg.SenderPlayerId);
+                    return true;
+                case StoryCmd.GoToPenny:
+                    story.HostGoToPenny();
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>A client's SProgress write (Int0 = kind, see StorySyncService.SendFlag): the host applies and commits it.</summary>
+        /// <summary>An InspectFlag request for the log: the SProgress key and value it writes, or the story request it carries.</summary>
+        internal static string FlagLabel(int int0, int int1, float f0, string text)
+        {
+            if (int0 >= 100) return " story=" + (StoryCmd)(int0 - 100);
+            string key = text ?? "";
+            int nl = key.IndexOf('\n');
+            string val;
+            switch (int0)
+            {
+                case 0: val = int1 != 0 ? "true" : "false"; break;
+                case 1: val = int1.ToString(); break;
+                case 2: val = f0.ToString("0.###"); break;
+                case 3: val = nl >= 0 ? "'" + key.Substring(nl + 1) + "'" : "''"; break;
+                default: val = "vec"; break;
+            }
+            if (nl >= 0) key = key.Substring(0, nl);
+            return " " + key + "=" + val;
         }
 
         private static bool ApplyInspectFlag(InteractionRequestMessage msg)
         {
+            if (msg.Int0 >= 100) return ApplyStoryRequest(msg);
+            if (msg.Int0 < 0 || msg.Int0 > 4) return false;
             string key = msg.Text;
             string strVal = "";
             if (msg.Int0 == 3)
@@ -575,42 +280,40 @@ namespace SyncRADation.Networking
                 }
             }
             if (string.IsNullOrEmpty(key)) return false;
-            var story = LanNetworkManager.Instance.StorySync;
-            NetGate.BeginApply();
-            try
+            if (StorySyncService.HostRolled(key)) return true; // the host's roll stands (an older client still forwards its own)
+            var e = new StoryFlagEntry
             {
-                switch (msg.Int0)
-                {
-                    case 0:
-                        SProgress.SetBool(key, msg.Int1 != 0);
-                        story.NoteBool(key, msg.Int1 != 0);
-                        break;
-                    case 1:
-                        SProgress.SetInt(key, msg.Int1);
-                        story.NoteInt(key, msg.Int1);
-                        break;
-                    case 2:
-                        SProgress.SetFloat(key, msg.Float0);
-                        story.NoteFloat(key, msg.Float0);
-                        break;
-                    case 3:
-                        SProgress.SetString(key, strVal);
-                        story.NoteString(key, strVal);
-                        break;
-                    case 4:
-                        var v = new Vector3(msg.Float0, msg.Float1, msg.Float2);
-                        SProgress.SetVector(key, v);
-                        story.NoteVector(key, v);
-                        break;
-                }
+                Kind = (byte)msg.Int0,
+                Key = key,
+                BoolVal = msg.Int1 != 0,
+                IntVal = msg.Int1,
+                FloatVal = msg.Float0,
+                VecY = msg.Float1,
+                VecZ = msg.Float2,
+                StringVal = strVal
+            };
+            // N clients forwarding the same consequence: write only when it changes the host value. The note always
+            // runs: a host-side write made before the table existed may not be committed yet, and out-of-room peers
+            // must converge.
+            if (!StorySyncService.SameAsLocal(e))
+            {
+                NetGate.BeginApply();
+                try { ProgressSlot.SetNative(e); }
+                finally { NetGate.EndApply(); }
             }
-            finally { NetGate.EndApply(); }
+            SProgressPatches.NoteEntry(LanNetworkManager.Instance.StorySync, e);
             return true;
         }
 
-        private static T Find<T>(ulong worldId) where T : Component
+        /// <summary>Scene change / session reset of the request dedupe (cutscene start / skip stamps are per-scene WorldIds).</summary>
+        public static void OnSceneChanged() => CutsceneSync.OnSceneChanged();
+
+        private static T Find<T>(ulong worldId) where T : Component => FindAlive<T>(worldId, "Interact");
+
+        /// <summary>WorldId lookup that also rejects a destroyed object (Unity's overloaded == null). Shared by the Story services.</summary>
+        internal static T FindAlive<T>(ulong worldId, string tag) where T : Component
         {
-            var c = WorldLookup.Find<T>(worldId, "Interact");
+            var c = WorldLookup.Find<T>(worldId, tag);
             if (c == null) return null;
             try
             {

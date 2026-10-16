@@ -12,14 +12,38 @@ namespace SyncRADation.Networking
                 HandleHandshake(HandshakeMessage.Deserialize(reader), senderId);
                 return true;
             case NetMessageType.SceneHello:
-                SceneHandlers.HandleSceneHello(SceneHelloMessage.Deserialize(reader));
+            {
+                var hello = SceneHelloMessage.Deserialize(reader);
+                if (_role == NetworkRole.Host) hello.SenderPlayerId = senderId;
+                SceneHandlers.HandleSceneHello(hello);
                 return true;
+            }
             case NetMessageType.SceneFollow:
-                SceneHandlers.HandleSceneFollow(SceneFollowMessage.Deserialize(reader));
+            {
+                var follow = SceneFollowMessage.Deserialize(reader);
+                if (_role == NetworkRole.Host) follow.SenderPlayerId = senderId;
+                SceneHandlers.HandleSceneFollow(follow);
                 return true;
+            }
+            case NetMessageType.SceneDiff:
+            {
+                var diff = SceneDiffMessage.Deserialize(reader);
+                if (_role == NetworkRole.Client && senderId == 0) SceneHandlers.HandleSceneDiff(diff); // host-authored only
+                return true;
+            }
+            case NetMessageType.WorldDigest:
+            {
+                // Host digest lines to clients, a client's findings to the host (DesyncCheck checks kind and sender).
+                DesyncCheck.Handle(this, WorldDigestMessage.Deserialize(reader), senderId);
+                return true;
+            }
             case NetMessageType.SnapshotRequest:
-                SessionHandlers.HandleSnapshotRequest(SnapshotRequestMessage.Deserialize(reader), senderId);
+            {
+                var req = SnapshotRequestMessage.Deserialize(reader);
+                if (_role == NetworkRole.Host) req.SenderPlayerId = senderId;
+                SessionHandlers.HandleSnapshotRequest(req, senderId);
                 return true;
+            }
             case NetMessageType.PlayerRoster:
                 HandlePlayerRoster(PlayerRosterMessage.Deserialize(reader));
                 return true;

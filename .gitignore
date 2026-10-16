@@ -1,3 +1,6 @@
+# Agent worktrees (Claude Code)
+.claude/worktrees/
+
 # Build output
 [Bb]in/
 [Oo]bj/

@@ -1,9 +1,7 @@
-// Cutscene Start / Skip / Proceed + pause-during-cutscene skip remap.
-// Preserve Start vs Proceed asymmetry as-is (do not unify in this peel).
+// Cutscene Start / Skip / OnDisable detours and the pause-during-cutscene skip remap. Logic: Story/CutsceneSync.
 using HarmonyLib;
 using SyncRADation.Networking;
 using SyncRADation.Sync;
-using UnityEngine;
 
 namespace SyncRADation.Patches
 {
@@ -14,25 +12,21 @@ namespace SyncRADation.Patches
         public static bool Prefix(CutsceneManager __instance)
         {
             if (__instance == null) return true;
-            if (NetGate.IsApplying)
-            {
-                try { if (__instance.completed) return false; } catch { }
-                try { if (__instance.cutscene == null) return false; } catch { }
-                return true;
-            }
-            if (!NetGate.Live) return true;
-            if (LocalInspect.AirlockCinematic(__instance.gameObject)) return true;
-            ulong id = WorldId.FromGameObject(__instance.gameObject);
-            InteractionSyncService.RememberSkip(id);
-            bool running = true;
-            try { running = __instance.cutscene != null && !__instance.completed; } catch { }
-            if (NetGate.Host)
-            {
-                LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.CutsceneSkip, id, 0, "");
-                return running;
-            }
-            LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.CutsceneSkip);
-            return running;
+            // A mod-driven skip (CutsceneSync.NativeSkip) only reaches a cutscene that is running here.
+            if (NetGate.IsApplying) return CutsceneSync.StartedHere(__instance);
+            if (!NetGate.Party) return true;
+            return CutsceneSync.LocalSkip(__instance);
+        }
+    }
+
+    /// <summary>A level intro (onStart) starts from CutsceneManager.Start, never StartCutscene: logged like any other.</summary>
+    [HarmonyPatch(typeof(CutsceneManager), "Start")]
+    public static class CutsceneIntroLogPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(CutsceneManager __instance)
+        {
+            if (__instance != null && NetGate.Live) CutsceneSync.NoteStarted(__instance, "level intro");
         }
     }
 
@@ -42,37 +36,29 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static bool Prefix(CutsceneManager __instance)
         {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
             if (__instance == null) return true;
-            if (LocalInspect.AirlockCinematic(__instance.gameObject)) return true;
-            try { if (__instance.completed) return false; } catch { }
-            ulong id = WorldId.FromGameObject(__instance.gameObject);
-            if (InteractionSyncService.WasSkipped(id)) return false;
-            InteractionSyncService.RememberStart(id);
-            // Host runs native + broadcasts. Client must NOT run local StartCutscene:
-            // SProgress.Set* is client-blocked, so a client-only cut leaves flags unauthored
-            // (decompile CutsceneManager.StartCutscene → UnityEvents often write SProgress).
-            // Reverse: client request → host ApplyCutsceneStart → presentation replay.
-            if (NetGate.Host)
+            if (!NetGate.Party)
             {
-                LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.CutsceneStart, id, 0, "");
+                if (NetGate.Host && !NetGate.IsApplying) CutsceneSync.SoloHostStart(__instance);
                 return true;
             }
-            LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.CutsceneStart);
-            return false;
+            if (NetGate.IsApplying)
+                return !StorySyncService.InEndingApply || CutsceneSync.EndingReplayStart(__instance);
+            return CutsceneSync.LocalStart(__instance);
         }
 
         [HarmonyPostfix]
         public static void Postfix(CutsceneManager __instance)
         {
-            if (__instance == null || !NetGate.Live) return;
-            if (LocalInspect.AirlockCinematic(__instance.gameObject)) return;
+            if (__instance == null) return;
+            if (NetGate.Live) CutsceneSync.NoteStarted(__instance);
+            if (!NetGate.Party) return;
             try
             {
-                if (!__instance.unskippable)
+                if (!LocalInspect.AirlockCinematic(__instance.gameObject) && !__instance.unskippable)
                     CutsceneSkippingUI.skippableCutscene = true;
             }
-            catch { }
+            catch (System.Exception e) { Guard.Swallow(e); }
         }
     }
 
@@ -82,128 +68,56 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static bool Prefix()
         {
-            if (!NetGate.Live) return true;
+            if (!NetGate.Party) return true;
             try
             {
-                var all = AirlockCinematic.AllTitles();
-                if (all != null)
+                // PEN_Titles (airlock) has its own skipper: pausing arms it instead.
+                var titles = AirlockCinematic.AllTitles();
+                if (titles != null)
                 {
-                    for (int i = 0; i < all.Length; i++)
+                    for (int i = 0; i < titles.Length; i++)
                     {
-                        var t = all[i];
-                        if (t == null) continue;
-                        bool started = false;
-                        try { started = t.started; } catch { }
-                        if (!started) continue;
-                        try { CutsceneSkippingUI.skippableCutscene = false; } catch { }
+                        var t = titles[i];
+                        if (t == null || !t.started) continue;
+                        CutsceneSkippingUI.skippableCutscene = false;
                         AirlockCinematic.ArmTitlesSkip(t);
                         return false;
                     }
                 }
-            }
-            catch { }
-            if (ArmWorldSkippers())
-            {
-                try { CutsceneSkippingUI.skippableCutscene = true; } catch { }
-                return false;
-            }
-            bool inCut = false;
-            try { inCut = PlayerState.cutscene || PlayerState.gameState == PlayerState.gameStates.cutscene; } catch { }
-            try { inCut = inCut || CutsceneSkippingUI.skippableCutscene; } catch { }
+                // No PEN_HoleSnowblind / PEN_CodeRoomEnd branch: SkippableCutscene has no Update / OnEnable (only Check /
+                // continousCheck), so "arming" one did nothing, and any not-done skipper in PEN_Hole blocked the pause menu.
+                bool inCut = PlayerState.cutscene || PlayerState.gameState == PlayerState.gameStates.cutscene
+                    || CutsceneSkippingUI.skippableCutscene;
 
-            // One scene-cached scan (not Update) — detect running + pick skip target.
-            CutsceneManager target = null;
-            var managers = WorldLookup.All<CutsceneManager>();
-            if (managers != null)
-            {
-                for (int i = 0; i < managers.Length; i++)
+                // Only a manager whose coroutine is live counts (CutsceneManager.Cutscene sets completed after its last
+                // cut): an unplayed one also has skipper.done == false, and skipping it stamped it skipped (blocking its
+                // start) while the real one played on.
+                CutsceneManager target = null;
+                var managers = WorldLookup.All<CutsceneManager>();
+                if (managers != null)
                 {
-                    var c = managers[i];
-                    if (c == null) continue;
-                    try
+                    for (int i = 0; i < managers.Length; i++)
                     {
-                        if (!inCut && c.cutscene != null && !c.completed)
-                            inCut = true;
-                        if (target == null
-                            && !LocalInspect.AirlockCinematic(c.gameObject)
-                            && (c.cutscene != null || (c.skipper != null && !c.skipper.done)))
+                        var c = managers[i];
+                        if (!CutsceneSync.StartedHere(c)) continue;
+                        inCut = true;
+                        if (target == null && !LocalInspect.AirlockCinematic(c.gameObject))
                             target = c;
                     }
-                    catch { }
                 }
+                if (!inCut || target == null) return true;
+                target.Skip();
+                return false;
             }
-            if (!inCut) return true;
-            if (target == null) return true;
-            try { target.Skip(); } catch { }
-            return false;
-        }
-
-        static bool ArmWorldSkippers()
-        {
-            bool armed = false;
-            try
-            {
-                var holes = WorldLookup.All<PEN_HoleSnowblind>();
-                if (holes != null)
-                {
-                    for (int i = 0; i < holes.Length; i++)
-                    {
-                        var h = holes[i];
-                        if (h == null) continue;
-                        armed |= ArmSkipper(h.skipper) | ArmSkipper(h.skipper2);
-                    }
-                }
-            }
-            catch { }
-            try
-            {
-                var ends = WorldLookup.All<PEN_CodeRoomEnd>();
-                if (ends != null)
-                {
-                    for (int i = 0; i < ends.Length; i++)
-                    {
-                        var e = ends[i];
-                        if (e == null) continue;
-                        armed |= ArmSkipper(e.skipper);
-                    }
-                }
-            }
-            catch { }
-            return armed;
-        }
-
-        static bool ArmSkipper(SkippableCutscene s)
-        {
-            if (s == null) return false;
-            try
-            {
-                bool done = false;
-                try { done = s.done; } catch { }
-                if (done) return false;
-                s.enabled = true;
-                return true;
-            }
-            catch { return false; }
+            catch (System.Exception e) { Guard.Swallow(e); }
+            return true;
         }
     }
 
-    [HarmonyPatch(typeof(CutsceneCut), nameof(CutsceneCut.Proceed))]
-    public static class CutsceneProceedPatch
+    [HarmonyPatch(typeof(CutsceneManager), "OnDisable")]
+    public static class CutsceneOnDisablePatch
     {
-        [HarmonyPrefix]
-        public static bool Prefix(CutsceneCut __instance)
-        {
-            if (NetGate.IsApplying || !NetGate.Live) return true;
-            if (__instance == null) return true;
-            if (LocalInspect.AirlockCinematic(__instance.gameObject)) return true;
-            ulong id = WorldId.FromGameObject(__instance.gameObject);
-            if (NetGate.Host)
-            {
-                LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.CutsceneProceed, id, 0, "");
-                return true;
-            }
-            LanNetworkManager.Instance.SendInteractionRequest(id, InteractionKind.CutsceneProceed);
-            return false;
-        }
+        [HarmonyPostfix]
+        public static void Postfix(CutsceneManager __instance) => CutsceneSync.OnDisabled(__instance);
     }
 }
