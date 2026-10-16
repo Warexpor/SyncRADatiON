@@ -107,7 +107,7 @@ namespace SyncRADation.Patches
 
     // SaveManager.Save/Load/NewGame dump and restore *per-player* state (hp, position, enemies, minimap,
     // inventory, END statics) through SProgress.Set*: never forward those to the host.
-    // (The key-ring masquerade is off for Save too: Inventory/Patches SaveManagerKeyRingScopePatch.)
+    // (The getCount bag-instance mapping is off for Save too: Inventory/Patches SaveManagerKeyRingScopePatch.)
     [HarmonyPatch(typeof(SaveManager), nameof(SaveManager.Save))]
     public static class SaveManagerSaveScopePatch
     {

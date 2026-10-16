@@ -2,7 +2,7 @@
 
 LAN/VPN co-op for **SIGNALIS**, for **2 to 8 players** (default 4). One player hosts and owns the world and story. Everyone else plays as a real Elster and their actions go through the host.
 
-**Status: 0.5.73, protocol 21, pre-release.** This build is in the playtest phase. Nothing in it is proven in a real multi-player session yet, so expect bugs. Back up your saves before you try it.
+**Status: 0.5.74, protocol 21, pre-release.** This build is in the playtest phase. Nothing in it is proven in a real multi-player session yet, so expect bugs. Back up your saves before you try it.
 
 ## Requirements
 
@@ -48,6 +48,7 @@ The F2 menu shows a roster of everyone connected. It also has **Other players lo
 | F2 | Multiplayer menu (Host, Connect, Disconnect, Resync world, roster, status) |
 | F3 | Quick connect to the saved address |
 | G | Drop the highlighted inventory slot (or DROP in the item command list) |
+| F9 | Free the mouse from the game window (only with `FreeCursor`; first-person scenes keep it until you press F9 or switch windows) |
 | F6 | Item giver (cheat tool). A client can only give itself keys and story objects when the host allows client cheats |
 | F7 | Location teleporter: chapters and rooms in the current level. As a client this loads the chapter on the host and everyone follows (only when the host allows client cheats) |
 | F11 | Entity spawner (cheat tool, host-authoritative; clients only when the host allows client cheats) |
@@ -64,7 +65,7 @@ To pick up something another player dropped, walk up to it and use the normal TA
 - Doors, locks and puzzles. A door or lock solved by one player is open for everyone, including people who join later.
 - Puzzle screens are live: if two players look at the same keypad, pattern lock, dial or board, each sees the other's presses as they happen (one shared code on keypads). Anyone standing near the panel hears the button presses from where the panel is.
 - Elevators, radio, pumps and pipes, storage boxes (box contents are shared).
-- Items lying in the world. Each one exists once: whoever picks it up gets it, and if your bag can't hold the whole stack the rest stays there for everyone. Unique keys and key objects go onto a **party key ring**, so one key opens the door for the whole party.
+- Items lying in the world. Each one exists once: whoever picks it up gets it, and if your bag can't hold the whole stack the rest stays there for everyone. Keys and key objects are personal: only the player carrying one can use it, but a door or lock it opens stays open for everyone. Drop a key (G) to hand it to someone.
 - Sounds from world objects.
 - Death and revive (see below).
 
@@ -114,7 +115,7 @@ Edited in `SIGNALIS/UserData/MelonPreferences.cfg` under `[SyncRADation]` (creat
 | `AllowClientCheats` | `false` | Host only. Let clients use the F6 (keys / story objects), F7 (chapter loads) and F11 (enemy spawns) cheats that change the shared world |
 | `VerboseLogging` | `false` | Extra log noise for diagnosing sound, player-model and puzzle issues. Turn on for **both** installs only when hunting a bug |
 | `Diagnostics` | `false` | Developer traces (room / movement / bag / puzzle-click / proxy visibility, per-frame timing, full patch audit). Costs a little every frame; turn on for **both** installs only when hunting a bug. Restart after changing |
-| `FreeCursor` | `false` | Never confine the mouse to the game window (handy when running two copies side by side) |
+| `FreeCursor` | `false` | Never confine the mouse to the game window (handy when running two copies side by side). First-person scenes still lock it for mouse look while the window has focus: F9 or switching windows frees it |
 
 The sync toggles (`SyncPuzzles`, `SyncWorldPickups`, `SyncPlayerVitals`, `FriendlyFire`, `AllowClientCheats`) are the **host's**: a connected client uses the host's values for the session, whatever its own config says.
 

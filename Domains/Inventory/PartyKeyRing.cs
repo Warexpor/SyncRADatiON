@@ -1,4 +1,5 @@
-// Party-held unique keys/objects so UseItemInteraction works for either Elster.
+// Record of the unique keys/objects the party holds (host UseItem validation, party saves, pickup vetoes).
+// Keys are personal: only a player whose own bag holds a key can use it; the ring never grants it to anyone else.
 using System.Collections.Generic;
 using SyncRADation.ItemSystem;
 using SyncRADation.Sync;
@@ -13,16 +14,15 @@ namespace SyncRADation.Networking
         {
             _keys.Clear();
             _uiName = null;
-            _masqueradeOff = 0;
+            _bagMappingOff = 0;
         }
 
-        // hasItem/getCount ring masquerade (StoryPatches) is off while > 0: SaveManager.Save writes every
-        // hasItem item with its getCount into the saver's bag (Ghidra SaveManager.c Save), so ring keys
-        // held by other peers would be saved as this player's items.
-        static int _masqueradeOff;
-        public static bool MasqueradeOff => _masqueradeOff > 0;
-        public static void SuspendMasquerade() => _masqueradeOff++;
-        public static void ResumeMasquerade() { if (_masqueradeOff > 0) _masqueradeOff--; }
+        // getCount other-instance mapping (PartyKeyRingPatches) is off while > 0: SaveManager.Save writes every
+        // hasItem item with its getCount into the saver's bag (Ghidra SaveManager.c Save), it must see the raw bag.
+        static int _bagMappingOff;
+        public static bool BagMappingOff => _bagMappingOff > 0;
+        public static void SuspendBagMapping() => _bagMappingOff++;
+        public static void ResumeBagMapping() { if (_bagMappingOff > 0) _bagMappingOff--; }
 
         public static bool IsKeyOrObject(Items.itemlist item)
         {
@@ -407,9 +407,8 @@ namespace SyncRADation.Networking
         /// Native UseItem / Interactor.InteractItem compare AnItem by reference.
         /// Scene <c>key</c> is the catalog SO; a dropped grant may be a different
         /// instance with the same <c>_item</c>. Point both at the bag copy.
-        /// A ring key held by another peer is never added to this bag: UseItemInteraction.StartDialogue
-        /// only asks hasItem(key) (ring masquerade) and its onMessageEvent RemoveItem is a no-op for an
-        /// item not in the bag (Ghidra UseItemInteraction.c / InventoryManager.c RemoveItem ContainsKey).
+        /// A key held only by another peer stays theirs: UseItemInteraction.StartDialogue asks hasItem(key)
+        /// on this bag alone (Ghidra UseItemInteraction.c), so this player gets the native "missing item" path.
         /// </summary>
         public static AnItem BindSceneKey(AnItem sceneKey)
         {

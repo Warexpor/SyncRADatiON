@@ -1,7 +1,6 @@
-// While native ItemPickup.release runs, hasItem/getCount report the real bag, not the party key ring.
-// release only adds when getCount(item) < maxNumber (Ghidra ItemPickup.c release): the ring masquerade
-// (getCount = 1 for a ring key) made it skip the add for a unique key whose ring broadcast arrived first,
-// so the PEN_Wreck cryo card was claimed, put on the ring, and never reached the taker's bag.
+// While native ItemPickup.release runs, getCount reports the real bag (no other-instance mapping).
+// release only adds when getCount(item) < maxNumber (Ghidra ItemPickup.c release): any count the mod adds on top
+// makes it skip the add (the PEN_Wreck cryo card was claimed and never reached the taker's bag).
 using HarmonyLib;
 using UnityEngine;
 

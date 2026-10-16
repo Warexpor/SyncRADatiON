@@ -8,7 +8,7 @@ namespace SyncRADation.Networking
     /// LOV_Reeducation (Ghidra PEN_CodeRoomEnd.c &lt;Cutscene&gt; state 0): Elster reaches Sierpinski empty-handed and
     /// the intro gives her Alina's photo. The cutscene plays on one peer only; the others just follow the load, so
     /// they kept their bag (a client walked in holding the King in Yellow) and the party key ring kept every
-    /// prologue key/object, which then masqueraded in everyone's slots. Every peer arriving in LOV_Reeducation
+    /// prologue key/object, which then answered for everyone's slots. Every peer arriving in LOV_Reeducation
     /// straight from PEN_Hole clears its bag the same way, and the ring empties with it.
     /// </summary>
     public static class ChapterWipe

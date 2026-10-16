@@ -50,7 +50,7 @@ Run each row for both H and C; with three players also run it with the second cl
 - [ ] **H killed, C alive:** H is downed (input off, downed pose, enemies lose sight of H), no game-over screen for H, C keeps playing. After `DownedRespawnDelay` (20 s default) H revives at C's position/room with HP and brief invincibility.
 - [ ] **C killed, H alive:** same from the other arrow: C downed, no game-over, revive near H after the delay, H sees C's proxy lie down and stand back up.
 - [ ] Downed player is ignored by enemies and bosses (no damage, no re-targeting) and by friendly fire if enabled.
-- [ ] Downed player's bag: ammo and docs are left on the floor, unique Key/Object items stay on the party key ring (still open doors for the party), nothing is duplicated after revive.
+- [ ] Downed player's bag: ammo and docs are left on the floor, unique Key/Object items stay in the downed player's bag, nothing is duplicated after revive.
 - [ ] Downed while the teammate is in another scene: revive falls back in place (note: known limitation), no softlock.
 - [ ] **Change `DownedRespawnDelay`** to 5 and to 60: timer matches.
 - [ ] Killing the last living player does not drop a death bag (last player down skips it).
@@ -61,7 +61,7 @@ Run each row for both H and C; with three players also run it with the second cl
 ## 4. All-down wipe and party save restore
 
 - [ ] **Wipe (two players):** H and C both downed. About 3 s after the last one falls, both see the reload: host runs `SaveManager.Load()`, the scene reloads for C too (C follows the host scene), no duplicate loads.
-- [ ] After the wipe: host state equals the last save (key ring restored from host snapshot); **C's bag is restored** from its bag snapshot (items only; note ammo), nothing doubled on floor or bag.
+- [ ] After the wipe: host state equals the last save (key ring restored from host snapshot); **C's bag is restored** from its bag snapshot (items and keys; note ammo), nothing doubled on floor or bag.
 - [ ] Wipe with three players: only when all three are down; if C2 is revived first there is no wipe.
 - [ ] Wipe while a client is in another scene than the host: client still follows, no softlock.
 - [ ] Wipe from client-initiated last death (the last player down is C) and from the host being last down: both paths reload.
@@ -82,7 +82,8 @@ Run each row for both H and C; with three players also run it with the second cl
 ## 6. Doors and locks
 
 - [ ] **H opens** a double/sliding door -> C sees it open. **C opens** one -> H (and C2) see it. Both directions.
-- [ ] A unique key door: one key on the party ring opens it for H and C (both walk through, neither is pulled through).
+- [ ] A unique key door: the player without the key gets the native missing-item dialogue; the holder opens it and both walk through (neither is pulled through).
+- [ ] Key handover: the holder G-drops a key, the other player picks it up and can now use it; the dropper can't.
 - [ ] A no-key locked link stays red/NO ENTRY for everybody; a client cannot force it open (client door opens are rejected unless a real key/code lock is solved on the host).
 - [ ] ConnectedDoors (room links): traversal is local; H going through does not move C.
 - [ ] **LJ:** a door solved before C joined is open on C.
@@ -114,7 +115,7 @@ For each family: (a) H starts/solves part or all, C verifies; (b) C does the sam
 ## 8. Pickups and dropped items
 
 - [ ] **World pickup, H takes:** item disappears for C; only H has it (partner `hasItem` stays false for ammo/health).
-- [ ] **World pickup, C takes:** same from the other arrow; unique Key/Object lands on the party key ring, ammo/docs do not.
+- [ ] **World pickup, C takes:** same from the other arrow; unique Key/Object lands in C's bag only (H can't use it); with a full bag C's take is refused.
 - [ ] **Simultaneous grab:** H and C take the same world item in the same second: exactly one gets it, the loser's claim is rolled back (`WorldPickupDeny`), no duplicate, no ghost.
 - [ ] **Pickup with an existing stack** (ammo or a stackable item you already hold): stack increases once, slot count correct, no second slot.
 - [ ] **Inspect-path pickup decline:** walk up to an inspect-style pickup, answer No/decline: item stays in the world for everyone, claim released, nothing in the bag; accepting afterwards still works. Try from H and from C.

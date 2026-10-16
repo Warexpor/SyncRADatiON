@@ -1,4 +1,6 @@
-// Party key ring — held use pick, InteractItem args, display names, reject None adds, craft notes, hasItem/getCount masquerade.
+// Party key ring — held use pick, InteractItem args, display names, reject None adds, craft notes, getCount bag instance.
+// The ring only records which uniques the party holds (host validation, saves, pickup vetoes); it never makes a key
+// usable by a player whose own bag does not hold it.
 using HarmonyLib;
 using SyncRADation.Networking;
 using SyncRADation.Sync;
@@ -273,40 +275,16 @@ namespace SyncRADation.Patches
         }
     }
 
-    // ---- ring masquerade: a key another peer holds answers hasItem / getCount on this peer.
-    // Off inside native ItemPickup.release (ItemPickupTakeScope: release only adds when getCount < maxNumber)
-    // and inside SaveManager.Save (it saves every hasItem item with its getCount into this player's bag).
-
-    [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.hasItem), new[] { typeof(AnItem) })]
-    public static class InventoryHasItemPatch
-    {
-        internal static bool Masquerading => NetGate.Live && !ItemPickupTakeScope.Active && !PartyKeyRing.MasqueradeOff;
-
-        [HarmonyPostfix]
-        public static void Postfix(AnItem item, ref bool __result)
-        {
-            if (__result || item == null || !Masquerading) return;
-            if (PartyKeyRing.Has(item))
-                __result = true;
-        }
-    }
-
-    [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.hasItem), new[] { typeof(Items.itemlist) })]
-    public static class InventoryHasItemEnumPatch
-    {
-        [HarmonyPostfix]
-        public static void Postfix(Items.itemlist item, ref bool __result)
-        {
-            if (__result || !InventoryHasItemPatch.Masquerading) return;
-            if (PartyKeyRing.Has(item))
-                __result = true;
-        }
-    }
+    // ---- getCount bag instance: native compares AnItem by reference, a grant / drop may be another instance of the
+    // same kind in this bag. Off inside native ItemPickup.release (ItemPickupTakeScope: release only adds when
+    // getCount < maxNumber) and inside SaveManager.Save / InventoryThumbs.ItemViewHandling (own bag as native sees it).
 
     [HarmonyPatch(typeof(InventoryManager), nameof(InventoryManager.getCount), new[] { typeof(AnItem) })]
     public static class InventoryGetCountPatch
     {
         static bool _counting;
+
+        internal static bool Active => NetGate.Live && !ItemPickupTakeScope.Active && !PartyKeyRing.BagMappingOff;
 
         // Item types with no other bag instance, valid for one frame at one bag entry count. A miss can only
         // turn into a hit by adding a new bag entry (Count changes), so the cache never hides a real stack.
@@ -348,7 +326,7 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(AnItem item, ref int __result)
         {
-            if (__result > 0 || item == null || _counting || !InventoryHasItemPatch.Masquerading) return;
+            if (__result > 0 || item == null || _counting || !Active) return;
             var held = OtherBagInstance(item);
             if (held != null && held != item)
             {
@@ -356,31 +334,28 @@ namespace SyncRADation.Patches
                 try { __result = InventoryManager.getCount(held); }
                 catch { __result = 1; }
                 finally { _counting = false; }
-                return;
             }
-            if (PartyKeyRing.Has(item))
-                __result = 1;
         }
     }
 
     // SaveManager.Save writes every hasItem item with its getCount into the saved bag (Ghidra SaveManager.c Save):
-    // the masquerade is off for its duration so other peers' ring keys are not saved as this player's items.
+    // the getCount instance mapping is off for its duration, the save sees the bag exactly as native holds it.
     // (Story's SaveManagerSaveScopePatch suppresses the SProgress forward on the same call.)
     [HarmonyPatch(typeof(SaveManager), nameof(SaveManager.Save))]
     public static class SaveManagerKeyRingScopePatch
     {
-        [HarmonyPrefix] public static void Prefix() => PartyKeyRing.SuspendMasquerade();
-        [HarmonyFinalizer] public static void Finalizer() => PartyKeyRing.ResumeMasquerade();
+        [HarmonyPrefix] public static void Prefix() => PartyKeyRing.SuspendBagMapping();
+        [HarmonyFinalizer] public static void Finalizer() => PartyKeyRing.ResumeBagMapping();
     }
 
     // InventoryThumbs.ItemViewHandling (Ghidra InventoryThumbs.c): while the pickup item view shows a key, hasItem(queuedItem)
-    // picks images[currentItems.IndexOf(queuedItem)]. The ring notes a picked key before native release adds it to the bag,
-    // so the masquerade answered true with the key not yet in currentItems: IndexOf -1, ArgumentOutOfRangeException each
-    // frame (test pilot LOV_Reeducation ObservationKey). The thumbs are this player's own bag: no masquerade.
+    // picks images[currentItems.IndexOf(queuedItem)]; a count that disagrees with currentItems throws
+    // ArgumentOutOfRangeException each frame (test pilot LOV_Reeducation ObservationKey). The thumbs are this player's
+    // own bag as native holds it: no instance mapping.
     [HarmonyPatch(typeof(InventoryThumbs), nameof(InventoryThumbs.ItemViewHandling))]
     public static class InventoryThumbsItemViewScopePatch
     {
-        [HarmonyPrefix] public static void Prefix() => PartyKeyRing.SuspendMasquerade();
-        [HarmonyFinalizer] public static void Finalizer() => PartyKeyRing.ResumeMasquerade();
+        [HarmonyPrefix] public static void Prefix() => PartyKeyRing.SuspendBagMapping();
+        [HarmonyFinalizer] public static void Finalizer() => PartyKeyRing.ResumeBagMapping();
     }
 }

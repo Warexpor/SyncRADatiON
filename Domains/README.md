@@ -25,7 +25,7 @@ Authority: `docs/SYNC.md`; reverse-check rule: repo root `AGENTS.md`. Wire in `N
 | MultiCondition / SaveRoom / CutsceneCompleted / Dialogue playedOnce state | `Puzzles/StoryFlags/StoryFlagPuzzleSyncService` | On the PuzzleState poll |
 | Storage **lid** open | `Puzzles/Storage/StorageLidSyncService` | Host poll + client emit |
 | Storage **box items** (put/take, blob) | `Inventory/StorageService` (host put/take, `StorageTxn`, acks) + `Inventory/StorageBoxSyncService` (blob) + `Inventory/Patches/StorageBoxPatches` | Shared box; bag/box walks in `Inventory/ItemBag` |
-| UseItem world unlock / airlock card | `Puzzles/UseItem/` + `Inventory/Patches/UseItem*` | Party ring + PerPlayerUse |
+| UseItem world unlock / airlock card | `Puzzles/UseItem/` + `Inventory/Patches/UseItem*` | Holder's bag + PerPlayerUse |
 | EventZone fire (in-room) | `Story/Patches/EventZonePatches` + `Puzzles/EventZone/` | Other-room must not Invoke: the fire carries the author's room (`StoryWire.WithRoom`, `LocalInspect.InAuthorRoom`) |
 | Cutscene start / skip / proceed | `Story/CutsceneSync` + `Story/CutsceneStamps` (4 s start, 30 s local skip windows) + `Story/Patches/CutscenePatches` | Start: host presentation, played only in the author's room (`LocalInspect.LocalRoomKey`); `CutsceneDone` settles a host that did not watch; skip / proceed per player; scene-ending cutscene loads wait (`Scene/SceneFollowService` hold / queue); wreck/hole split runs locally |
 | Story flags / commits (SProgress) / ending | `Story/StorySyncService` (+ `.End`, `.Presentation`) + `Story/ProgressSlot` + `Story/StorySlotPlan` | Incremental / full / authoritative; per-player keys stay local |
@@ -36,7 +36,7 @@ Authority: `docs/SYNC.md`; reverse-check rule: repo root `AGENTS.md`. Wire in `N
 | World authored pickup claim | `Pickups/WorldPickupSyncService` (one `Take` record per in-flight take) + `WorldPickupNetHandlers` + `Pickups/Patches/ItemPickupPatches` | Host claim/grant; partial take releases the claim with the remainder (`Count` / `Remaining`) |
 | Player-dropped prop (G / TAKE) | `Pickups/DroppedItem*` (Registry, Spawner, NetHandlers) + `Pickups/Patches/DroppedTakePatches` | Peer spawn + host claim |
 | Bag / ring wrong after PEN_Hole → Sierpinski | `Inventory/ChapterWipe` | Mirrors the native PEN_CodeRoomEnd bag clear on every peer, empties the ring |
-| Party key ring names / hasItem / getCount (masquerade) | `Inventory/PartyKeyRing` + `Inventory/Patches/PartyKeyRingPatches` | Key/Object only; off inside `SaveManager.Save` and `ItemPickup.release`; never a physical bag copy |
+| Party key ring record / item names / getCount bag instance | `Inventory/PartyKeyRing` + `Inventory/Patches/PartyKeyRingPatches` | Key/Object only; records, never grants (keys are personal); mapping off inside `SaveManager.Save` and `ItemPickup.release` |
 | Client enemy actions (Stomp, Kill/KillSilent, Knockback, GetPushed, Burndown, WakeUp) | `Enemies/Patches/EnemyActionPatches` + `Enemies/EnemyNetHandlers` | `EnemyAction` (63); host sim applies |
 | Enemies / alert bits | `Enemies/` (+ `Patches/EnemySpawnerPatches`) | WorldId; wake sleeping chunks; **client never EnemySpawner.FixedUpdate**; host adopts `_Child` → `SR_Spawn_*` + `EnemySpawn` |
 | Bosses (END/Chimera/Mynah/Kolibri/Adler) | `Bosses/` (+ `Patches/KolibriAdlerAuthPatches`) | Kolibri/Adler Prefix+Postfix Hold; Falke snap stage/corrupt + SetBodySpearStates; HaltBossController StopAllCoroutines |

@@ -1,4 +1,4 @@
-// F6 IMGUI debug window: add any game item to the inventory (keys / story objects also go on the party ring).
+// F6 IMGUI debug window: add any game item to the inventory (keys / story objects are also noted on the party ring).
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -183,8 +183,8 @@ namespace SyncRADation.Cheats
             var target = FindAnItem(itemId);
             if (target == null) return "Can't find '" + itemId + "'";
 
-            // Keys / story objects go onto the shared party ring and unlock the world for everyone: a client
-            // needs the host's AllowClientCheats for those. Consumables stay personal.
+            // Keys / story objects open shared doors and locks (synced for everyone): a client needs the host's
+            // AllowClientCheats for those. The key itself is personal like any other item.
             if (Sync.NetGate.Client && !Config.ModConfig.ClientCheatsAllowed
                 && (target.type == AnItem.AnItemType.Object || target.type == AnItem.AnItemType.Key))
                 return "Host does not allow client cheats (keys)";

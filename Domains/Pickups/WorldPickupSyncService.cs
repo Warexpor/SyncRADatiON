@@ -345,13 +345,13 @@ namespace SyncRADation.Networking
         {
             int magGain;
             int bagGain = Gained(t, out magGain);
-            // hasItem/getCount are ring-masqueraded outside release, so only the raw bag delta is logged.
+            // getCount maps other bag instances outside release, so only the raw bag delta is logged.
             PlaytestLog.Event("Pickup", "native release id=" + id.ToString("X16") + " " + t.Item
                 + " gained=" + bagGain + "/" + t.Count + " bag " + t.BagBefore + "->" + ItemBag.CountInBag(t.Item)
                 + " mag+" + magGain + " prop x" + (p != null ? p.count : -1) + " yes=" + SyncRADation.Patches.ItemPickupPatches.AnsweredYes());
             int remainder = t.Count - bagGain - magGain;
             if (remainder <= 0 || t.Item == Items.itemlist.None) return;
-            // Key/Object ride the party key ring; they never stack or overflow.
+            // Key/Object never stack: a take either lands in the bag or the claim was refused (bag full).
             if (PartyKeyRing.IsKeyOrObject(t.Item)) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
@@ -1032,7 +1032,7 @@ namespace SyncRADation.Networking
         /// <summary>
         /// Host: decide a claim and publish it — the one path for the host's own native take (hostNative: pickUp /
         /// release add the item and already ran onPickup) and a client's claim (grant message). Claimed props hide
-        /// for everyone and a unique goes on the party key ring.
+        /// for everyone and a unique is noted on the party key ring (the claimer's bag holds it).
         /// </summary>
         public bool HostClaim(ulong id, int claimer, Items.itemlist hintItem, int hintCount, bool hostNative)
         {

@@ -1,3 +1,17 @@
+## 0.5.74 — 2026-10-16
+
+Protocol **v21** (unchanged). From the first 0.5.73 session (LOV_Reeducation, Surface Access).
+
+### Changed
+- **Keys and story objects are personal.** A key one player picked up opened locks for everyone, though only that player had it (the host took SurfaceKey, the client opened the Surface Access door with it). Now only the bag that holds a key can use it. Anyone else gets the game's own missing-item dialogue. A door or lock the holder opens still opens for everyone. To hand a key over, drop it (G) and let the other player pick it up. The party key ring only records which uniques the party holds; it no longer answers `hasItem` / `getCount` for other players.
+- A key pickup now needs a free bag slot, like the native `pickUp` check (it used to land on the ring with a full bag).
+- A downed player keeps their keys in the bag (they used to move onto the ring).
+- Client bag snapshots for party saves include keys (`bagk=` lines). An older keyless snapshot (`bag=`) keeps the keys the bag holds when it is restored.
+
+### Fixed
+- **The client froze for over 100 s after the host quit** (`[Stall] main thread stuck 100144ms phase after=pollEvents`): stopping LiteNetLib joins its socket threads, and under Proton that join hung on the game thread. The socket now closes on a background thread. Hosting again waits up to 3 s for the old port, and quitting waits 1.5 s so the disconnect goes out.
+- **First-person scenes could not be played with `FreeCursor` on**: `EventWalking` locks the mouse for mouse look, and the mod rewrote that lock to "free", so the pointer ran into the window edge or out of the window. The lock now stays while the window has focus. **F9** frees the mouse, and so does switching windows (Alt+Tab or the compositor's focus keys). The lock comes back when the window has focus again. Confined (third-person aim) is still never applied.
+
 ## 0.5.73 — 2026-10-10
 
 Protocol **v21** (unchanged). Logging only: the 0.5.72 session had many more bugs on screen than its logs showed.

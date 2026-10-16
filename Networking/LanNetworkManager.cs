@@ -22,6 +22,10 @@ namespace SyncRADation.Networking
         public static LanNetworkManager Instance { get; private set; }
 
         private NetManager _net;
+        // A stopped NetManager shutting down off the main thread: NetManager.Stop joins its socket threads, and
+        // under Proton that join hung the client's game for 100 s+ after the host quit (0.5.73 [Stall] after=pollEvents).
+        private System.Threading.Thread _stopThread;
+        private long _stopMs = -1;
         private NetworkRole _role = NetworkRole.Offline;
         private int _localPlayerId;
         private int _unicastPlayerId = -1; // >=0: join/resync dump goes only to this peer
@@ -242,6 +246,7 @@ namespace SyncRADation.Networking
             {
                 _role = NetworkRole.Host;
                 _localPlayerId = 0;
+                WaitForPreviousStop(3000); // the old host socket may still hold the port
                 _net = NewNetManager();
                 if (!_net.Start(port))
                 {
@@ -352,7 +357,7 @@ namespace SyncRADation.Networking
 
             if (_net != null)
             {
-                _net.Stop();
+                StopInBackground(_net);
                 _net = null;
             }
 
@@ -363,6 +368,41 @@ namespace SyncRADation.Networking
             // opened (F2 is used from the pause menu).
             if (wasLive)
                 RestoreLocalControl();
+        }
+
+        /// <summary>NetManager.Stop off the main thread. Nothing else touches that manager again: its events only
+        /// fire inside PollEvents, which runs on _net alone.</summary>
+        void StopInBackground(NetManager net)
+        {
+            WaitForPreviousStop(1000);
+            System.Threading.Interlocked.Exchange(ref _stopMs, -1);
+            var t = new System.Threading.Thread(() =>
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                try { net.Stop(); } catch { } // off the main thread: the mod log is not thread safe
+                System.Threading.Interlocked.Exchange(ref _stopMs, sw.ElapsedMilliseconds);
+            })
+            { IsBackground = true, Name = "SyncRADation net stop" };
+            _stopThread = t;
+            t.Start();
+        }
+
+        /// <summary>Main thread: let the previous socket finish closing (host port reuse, the quit disconnect).</summary>
+        internal void WaitForPreviousStop(int ms)
+        {
+            var t = _stopThread;
+            if (t == null) return;
+            if (t.Join(ms)) ReportStopDone();
+            else ModRuntime.Log?.Warning("[Network] previous socket still closing after " + ms + " ms (left in the background)");
+        }
+
+        void ReportStopDone()
+        {
+            long ms = System.Threading.Interlocked.Read(ref _stopMs);
+            if (ms < 0) return;
+            _stopThread = null;
+            System.Threading.Interlocked.Exchange(ref _stopMs, -1);
+            if (ms >= 1000) ModRuntime.Log?.Warning("[Network] socket close took " + ms + " ms (off the main thread)");
         }
 
         static void RestoreLocalControl()
@@ -394,6 +434,7 @@ namespace SyncRADation.Networking
 
         public void Update()
         {
+            if (_stopThread != null && !_stopThread.IsAlive) ReportStopDone();
             if (_net != null)
             {
                 long tPoll = HitchTrace.Begin();

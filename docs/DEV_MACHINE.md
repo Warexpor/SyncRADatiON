@@ -45,7 +45,7 @@ Read with `grep -a` (non-UTF8 bytes). Connected lines are prefixed `H ` (host) /
 
 **Move** (`Sync/MoveTrace.cs`, Diagnostics): `[Move] BLOCKED …` when the local player holds a direction for 1 s without moving: every native movement gate (gameState, charState, suspendInput, hurt/stun, animating/useAnim/grappled, cutscene/eventScreen flags, overrideInput, MoveOverrideActive, controller/rigidbody state, foto mode, tuner) plus what the native forward wall raycasts (`ThirdPersonCharacter.CollisionDetection`, `WallMask`) hit and the solid 3D colliders within 1.2 units; `[Move] free` when walking works again.
 
-**Bag** (`Sync/BagTrace.cs`, Diagnostics): `[Bag] start/change` lines with the raw bag contents (not the ring masquerade).
+**Bag** (`Sync/BagTrace.cs`, Diagnostics): `[Bag] start/change` lines with the raw bag contents.
 
 **VerboseLogging** (`[SyncRADation]` pref, default `false`, set on **both** installs and restart): log volume only — FMOD Play/Stop, proxy clone/FX, incremental puzzle apply diffs. Instrumentation is `Diagnostics`.
 

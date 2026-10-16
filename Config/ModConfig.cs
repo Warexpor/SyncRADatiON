@@ -71,7 +71,7 @@ namespace SyncRADation.Config
             CallTraceOn = CallTrace.Value;
 
             FreeCursor = Category.CreateEntry("FreeCursor", false,
-                "Never confine/lock the mouse to the game window (dual-box testing under Proton/Wayland). Off = vanilla.");
+                "Dual-box testing under Proton/Wayland: never confine the mouse to the game window. First-person scenes still lock it while the window has focus (mouse look); F9 or switching windows frees it. Off = vanilla.");
 
             MaxPlayers = Category.CreateEntry("MaxPlayers", DefaultMaxPlayers,
                 "Host session capacity incl. host (2-8). Applies on next Host Game.");
@@ -87,7 +87,7 @@ namespace SyncRADation.Config
                 "Internal: set while the Ariane model is being loaded at the main menu. Left true by a crash: the automatic load is then skipped (F2 has a manual button). Set false to re-enable.");
 
             AllowClientCheats = Category.CreateEntry("AllowClientCheats", false,
-                "Host: allow clients' F6 (keys onto the party ring), F7 (chapter loads) and F11 (enemy spawns). Off = only the host can cheat.");
+                "Host: allow clients' F6 keys and story objects, F7 (chapter loads) and F11 (enemy spawns). Off = only the host can cheat.");
         }
 
         /// <summary>

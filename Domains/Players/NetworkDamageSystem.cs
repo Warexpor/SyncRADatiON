@@ -220,22 +220,12 @@ namespace SyncRADation.Players
 
                 foreach (var entry in itemsToDrop)
                 {
-                    // Party ring is SoT for unique Key/Object. Bag copies are claim / storage
-                    // grants. Floor-dropping them DetachDroppedKey-clears the ring
-                    // for every peer while box / WorldId claim may still hold the real unique
-                    // → ghost floor + UseItem softlock. Never floor uniques on death: Note
-                    // onto the ring if the bag somehow held one the ring missed (race), then
-                    // strip the bag copy only. G-drop still transfers ownership.
+                    // Unique Key/Object are personal and stay in the downed player's bag: only the holder can
+                    // use them, so on the floor they would be one bad pickup away from a softlock. G-drop is
+                    // how a key changes hands.
                     if (PartyKeyRing.IsKeyOrObject(entry.enumVal))
                     {
-                        if (!PartyKeyRing.Has(entry.enumVal))
-                        {
-                            PartyKeyRing.Note(entry.enumVal);
-                            PartyKeyRing.OfferToHost(entry.item);
-                            PlaytestLog.Event("Damage", "death note ring unique " + entry.enumVal);
-                        }
-                        InventoryManager.RemoveItem(entry.item, entry.count);
-                        PlaytestLog.Event("Damage", "death skip floor unique " + entry.enumVal);
+                        PlaytestLog.Event("Damage", "death keeps unique " + entry.enumVal);
                         continue;
                     }
 

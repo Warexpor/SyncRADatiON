@@ -269,7 +269,6 @@ namespace SyncRADation.Networking
             }
 
             int count;
-            bool fromBag = false;
             AnItem bagItem = null;
             try
             {
@@ -277,13 +276,9 @@ namespace SyncRADation.Networking
                 if (bagItem == null)
                     bagItem = InventoryManager.getItem(itemToDrop);
                 int have = ItemBag.CountInBag(itemToDrop);
-                if (have > 0)
-                    fromBag = true;
-                else if (PartyKeyRing.Has(itemToDrop))
-                    have = 1;
-                else
+                if (have <= 0)
                 {
-                    ModRuntime.Log?.Msg("[Drop] count 0 for " + itemToDrop + " (not in bag or key ring)");
+                    ModRuntime.Log?.Msg("[Drop] count 0 for " + itemToDrop + " (not in bag)");
                     return false;
                 }
                 count = DroppedItemRegistry.SanitizeStack(have, PartyKeyRing.IsKeyOrObject(itemToDrop));
@@ -304,7 +299,7 @@ namespace SyncRADation.Networking
             RefreshInventoryAfterDrop();
             DetachDroppedKey(itemToDrop);
             ModRuntime.Log?.Msg("[Drop] Dropped " + itemToDrop + " x" + count
-                + (fromBag ? " from bag" : " from key ring")
+                + " from bag"
                 + " at " + pos.x.ToString("F2") + "," + pos.y.ToString("F2") + "," + pos.z.ToString("F2"));
             return true;
         }
@@ -336,8 +331,7 @@ namespace SyncRADation.Networking
                 return false;
             }
 
-            // Only the claimer gets the item. Key/Object reach everyone else through the party key ring
-            // (Note + Broadcast below), never as a bag copy on every peer.
+            // Only the claimer gets the item (keys too: they are personal). The ring Note below only records it.
             SendItemPickedUp(new ItemPickedUpMessage
             {
                 SenderID = (byte)((itemKey >> 16) & 0xFF),

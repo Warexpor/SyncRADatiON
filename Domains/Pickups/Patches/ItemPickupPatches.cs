@@ -114,12 +114,12 @@ namespace SyncRADation.Patches
         }
 
         /// <summary>
-        /// Key/Object land on the party key ring even when the 6-slot bag is full; ammo/docs/tools need a free slot
-        /// (or an existing stack) — same rule as drops. An unresolved enum does not gate (may still be Key/Object).
+        /// Every item needs a free slot (or an existing stack) — same rule as drops and native pickUp. Keys and
+        /// story objects too: they are personal, only the bag that holds one can use it. An unresolved enum does not gate.
         /// </summary>
         static bool BagFullFor(Items.itemlist kind)
         {
-            if (kind == Items.itemlist.None || PartyKeyRing.IsKeyOrObject(kind)) return false;
+            if (kind == Items.itemlist.None) return false;
             return !ItemBag.BagHasRoom(kind);
         }
 
@@ -341,7 +341,7 @@ namespace SyncRADation.Patches
     {
         /// <summary>
         /// gameState when release began. pickUp parks gameState at 6 and release puts prevState back (Ghidra
-        /// ItemPickup.c). A cutscene that started in between (the party key ring makes hasItem true before release:
+        /// ItemPickup.c). A cutscene that started in between (a pickup's onPickup can start one before release:
         /// PEN_CodeRoomEnd fires on the King in Yellow book) set it to cutscene, and release reverted that to the event
         /// screen: no skip bar, and Esc opened the pause menu instead of holding to skip.
         /// </summary>

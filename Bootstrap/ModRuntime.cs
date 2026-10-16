@@ -310,6 +310,7 @@ namespace SyncRADation
         public static void Stop()
         {
             LanNetworkManager.Instance?.StopNetwork();
+            LanNetworkManager.Instance?.WaitForPreviousStop(1500); // let the disconnect reach the peers before exit
             _harmony?.UnpatchSelf();
             _running = false;
         }

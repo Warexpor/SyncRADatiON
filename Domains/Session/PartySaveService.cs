@@ -1,6 +1,6 @@
 // Party save snapshots. The host stamps every native SaveManager.Save with a token
 // (slot + counter + host stamp) and snapshots the party key ring; every client snapshots its
-// own 6-slot bag under the same token. A party wipe (or a late join into the same save)
+// own 6-slot bag (keys included: they are personal) under the same token. A party wipe (or a late join into the same save)
 // restores those snapshots instead of letting each peer load its own save slot.
 // Persisted as plain text under MelonLoader UserData/SyncRADation/.
 // Solo play stays vanilla: outside a hosted session the Save/Load postfixes only write two ints (no file IO, no
@@ -53,6 +53,9 @@ namespace SyncRADation.Networking
         private const string HostFile = "host_saves.txt";
         private const string LegacyBagFile = "bag_snapshots.txt";
         private const int MaxInstanceSlots = 16;
+        // Bag file line prefixes: "bagk=" snapshots hold the whole bag, legacy "bag=" ones were taken without keys.
+        private const string BagKeysPrefix = "bagk=";
+        private const string BagPrefix = "bag=";
 
         // Token/ring/bag tables mirror files under UserData: persistent across sessions on purpose (Reset only drops Current/_bagAtDeath).
         // persistent: mirrors host_saves.txt
@@ -76,6 +79,10 @@ namespace SyncRADation.Networking
         private static readonly List<string> _bagOrder = new List<string>();
         // persistent: mirrors the bag file
         private static readonly Dictionary<string, BagEntry[]> _bags = new Dictionary<string, BagEntry[]>();
+        // Snapshots written before keys were personal ("bag=" lines, Key/Object left out): restoring one keeps the
+        // keys this bag holds now instead of emptying them. Reference set of the arrays in _bags.
+        // persistent: mirrors the bag file
+        private static readonly HashSet<BagEntry[]> _keylessBags = new HashSet<BagEntry[]>();
         private static BagEntry[] _bagAtDeath;
 
         // Run tracking (solo + hosted): which slot this run was last saved to / loaded from.
@@ -241,12 +248,16 @@ namespace SyncRADation.Networking
                 foreach (string raw in File.ReadAllLines(path))
                 {
                     string line = raw.Trim();
-                    if (!line.StartsWith("bag=", StringComparison.Ordinal)) continue;
-                    string v = line.Substring(4);
+                    bool withKeys = line.StartsWith(BagKeysPrefix, StringComparison.Ordinal);
+                    if (!withKeys && !line.StartsWith(BagPrefix, StringComparison.Ordinal)) continue;
+                    string v = line.Substring(withKeys ? BagKeysPrefix.Length : BagPrefix.Length);
                     int bar = v.IndexOf('|');
                     if (bar <= 0) continue;
                     string key = v.Substring(0, bar);
-                    _bags[key] = ParseBag(v.Substring(bar + 1));
+                    var parsed = ParseBag(v.Substring(bar + 1));
+                    if (_bags.TryGetValue(key, out var old)) _keylessBags.Remove(old);
+                    _bags[key] = parsed;
+                    if (!withKeys) _keylessBags.Add(parsed);
                     _bagOrder.Remove(key);
                     _bagOrder.Add(key);
                 }
@@ -266,7 +277,8 @@ namespace SyncRADation.Networking
                 {
                     BagEntry[] bag;
                     if (!_bags.TryGetValue(_bagOrder[i], out bag)) continue;
-                    sb.Append("bag=").Append(_bagOrder[i]).Append('|').Append(JoinBag(bag)).Append('\n');
+                    sb.Append(_keylessBags.Contains(bag) ? BagPrefix : BagKeysPrefix)
+                        .Append(_bagOrder[i]).Append('|').Append(JoinBag(bag)).Append('\n');
                 }
                 File.WriteAllText(BagPath(), sb.ToString());
             }
@@ -546,11 +558,13 @@ namespace SyncRADation.Networking
             // down is the truthful "as of this save" content.
             var bag = Players.NetworkDamageSystem.IsDead && _bagAtDeath != null ? _bagAtDeath : CaptureBag();
             string key = token.Key;
+            if (_bags.TryGetValue(key, out var old)) _keylessBags.Remove(old);
             _bags[key] = bag;
             _bagOrder.Remove(key);
             _bagOrder.Add(key);
             while (_bagOrder.Count > MaxBagSnapshots)
             {
+                if (_bags.TryGetValue(_bagOrder[0], out var gone)) _keylessBags.Remove(gone);
                 _bags.Remove(_bagOrder[0]);
                 _bagOrder.RemoveAt(0);
             }
@@ -599,7 +613,7 @@ namespace SyncRADation.Networking
 
         // ------------------------------------------------------------------ bag capture / restore
 
-        /// <summary>Bag contents minus Key/Object (the party ring is source of truth for uniques).</summary>
+        /// <summary>Bag contents, keys and story objects included (they are personal).</summary>
         public static BagEntry[] CaptureBag()
         {
             var list = new List<BagEntry>(8);
@@ -615,7 +629,6 @@ namespace SyncRADation.Networking
                     Items.itemlist e;
                     try { e = item._item; } catch { continue; }
                     if (e == Items.itemlist.None) continue;
-                    if (PartyKeyRing.IsKeyOrObject(item)) continue;
                     list.Add(new BagEntry { Item = (ushort)e, Count = count });
                 }
             }
@@ -651,19 +664,21 @@ namespace SyncRADation.Networking
             return list.ToArray();
         }
 
-        /// <summary>Empty the local bag (keys too; party keys stay usable through the ring masquerade) and refill from entries.</summary>
+        /// <summary>Empty the local bag and refill it from entries. A legacy keyless snapshot keeps the keys held now.</summary>
         public static void RestoreBag(BagEntry[] entries)
         {
             if (entries == null) return;
             NetGate.BeginApply();
             try
             {
+                bool keepKeys = _keylessBags.Contains(entries);
                 var have = new List<AnItem>();
                 var counts = new List<int>();
                 var bag = ItemBag.Bag(new List<ItemBag.Stack>(8));
                 for (int i = 0; i < bag.Count; i++)
                 {
                     if (bag[i].Item == null || bag[i].Count <= 0) continue;
+                    if (keepKeys && PartyKeyRing.IsKeyOrObject(bag[i].Item)) continue;
                     have.Add(bag[i].Item);
                     counts.Add(bag[i].Count);
                 }
@@ -672,6 +687,7 @@ namespace SyncRADation.Networking
                     try { InventoryManager.RemoveItem(have[i], counts[i]); }
                     catch (Exception ex) { ModRuntime.Log?.Warning("[PartySave] bag clear: " + ex.Message); }
                 }
+                if (keepKeys) PlaytestLog.Event("PartySave", "legacy keyless snapshot: keys in the bag kept");
                 try { InventoryManager.CurrentItem = null; }
                 catch (Exception ex) { ModRuntime.Log?.Warning("[PartySave] CurrentItem reset: " + ex.Message); }
 
