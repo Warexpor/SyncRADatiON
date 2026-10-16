@@ -13,7 +13,7 @@ namespace SyncRADation.Tests
     /// readonly static collection / sized buffer) must either belong to a class that Bootstrap/SessionResetRegistrations.cs
     /// names (a registered reset, or an "also clears" comment on one), or carry a "// persistent: &lt;reason&gt;" line in the
     /// comment / attribute block directly above the declaration. New session state therefore cannot leak between
-    /// sessions, wipe reloads or scenes without someone deciding which it is.
+    /// sessions or scenes without someone deciding which it is.
     /// Not counted: const, readonly scalars / references, readonly arrays initialized from a literal list (lookup tables),
     /// get-only or computed properties, events, methods.
     /// </summary>

@@ -30,7 +30,7 @@ WINEDLLOVERRIDES="version=n,b" %command%
 
 ## Settings
 
-`SIGNALIS/UserData/MelonPreferences.cfg`, section `[SyncRADation]`: `MaxPlayers` (2 to 8, default 4), `DownedRespawnDelay` (seconds, default 20), `FriendlyFire`, `ConnectAddress`, `ConnectPort`, `VerboseLogging`.
+`SIGNALIS/UserData/MelonPreferences.cfg`, section `[SyncRADation]`: `MaxPlayers` (2 to 8, default 4), `FriendlyFire`, `ConnectAddress`, `ConnectPort`, `VerboseLogging`.
 
 ## Problems
 

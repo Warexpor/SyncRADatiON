@@ -1,7 +1,7 @@
 // Party save snapshots. The host stamps every native SaveManager.Save with a token
 // (slot + counter + host stamp) and snapshots the party key ring; every client snapshots its
-// own 6-slot bag (keys included: they are personal) under the same token. A party wipe (or a late join into the same save)
-// restores those snapshots instead of letting each peer load its own save slot.
+// own 6-slot bag (keys included: they are personal) under the same token. A late join into the same save restores
+// those snapshots instead of letting each peer load its own save slot.
 // Persisted as plain text under MelonLoader UserData/SyncRADation/.
 // Solo play stays vanilla: outside a hosted session the Save/Load postfixes only write two ints (no file IO, no
 // token). The run is remembered in memory (_runSlot / _runDirty) and a token is minted when a host session starts.
@@ -57,7 +57,7 @@ namespace SyncRADation.Networking
         private const string BagKeysPrefix = "bagk=";
         private const string BagPrefix = "bag=";
 
-        // Token/ring/bag tables mirror files under UserData: persistent across sessions on purpose (Reset only drops Current/_bagAtDeath).
+        // Token/ring/bag tables mirror files under UserData: persistent across sessions on purpose (Reset only drops Current).
         // persistent: mirrors host_saves.txt
         private static bool _hostLoaded;
         // persistent: mirrors the bag file
@@ -83,7 +83,6 @@ namespace SyncRADation.Networking
         // keys this bag holds now instead of emptying them. Reference set of the arrays in _bags.
         // persistent: mirrors the bag file
         private static readonly HashSet<BagEntry[]> _keylessBags = new HashSet<BagEntry[]>();
-        private static BagEntry[] _bagAtDeath;
 
         // Run tracking (solo + hosted): which slot this run was last saved to / loaded from.
         // persistent: the run outlives the session
@@ -554,9 +553,7 @@ namespace SyncRADation.Networking
 
         private static void SnapshotBag(PartySaveToken token)
         {
-            // A downed peer already dropped its bag on the floor; the bag it held when it went
-            // down is the truthful "as of this save" content.
-            var bag = Players.NetworkDamageSystem.IsDead && _bagAtDeath != null ? _bagAtDeath : CaptureBag();
+            var bag = CaptureBag();
             string key = token.Key;
             if (_bags.TryGetValue(key, out var old)) _keylessBags.Remove(old);
             _bags[key] = bag;
@@ -572,42 +569,12 @@ namespace SyncRADation.Networking
             PlaytestLog.Event("PartySave", "bag snapshot " + key + " items=" + bag.Length);
         }
 
-        /// <summary>Latest snapshot for the token, else the bag held when this peer went down, else null.</summary>
-        public static BagEntry[] ResolveWipeBag(PartySaveToken token, out string source)
-        {
-            EnsureBagsLoaded();
-            BagEntry[] bag;
-            if (token.Valid && _bags.TryGetValue(token.Key, out bag))
-            {
-                source = "snapshot " + token.Key;
-                return bag;
-            }
-            if (_bagAtDeath != null)
-            {
-                source = "bag at down";
-                return _bagAtDeath;
-            }
-            source = "none";
-            return null;
-        }
-
-        public static void NoteBagAtDown()
-        {
-            _bagAtDeath = CaptureBag();
-        }
-
-        public static void ClearBagAtDown()
-        {
-            _bagAtDeath = null;
-        }
-
         /// <summary>
-        /// Network stop: forget the downed-bag capture and the session token. The run (slot / dirty flag) and the
+        /// Network stop: forget the session token. The run (slot / dirty flag) and the
         /// persisted token tables survive: hosting again from the same run re-adopts them in OnSessionStart.
         /// </summary>
         public static void Reset()
         {
-            _bagAtDeath = null;
             Current = default(PartySaveToken);
         }
 

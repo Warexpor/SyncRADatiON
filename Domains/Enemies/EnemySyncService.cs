@@ -322,7 +322,7 @@ namespace SyncRADation.Networking
                 int pid = remote[i];
                 var proxy = pm.GetProxy(pid);
                 if (proxy == null || proxy.GameObject == null) continue;
-                if (PartyVitals.IsProxyDown(pid, proxy)) continue; // downed peers are not targets
+                if (PartyVitals.IsProxyDown(pid, proxy)) continue; // dead (reloading) peers are not targets
                 var pt = proxy.GameObject.transform;
                 float d = (pt.position - fromPos).sqrMagnitude;
                 if (d < bestDist)

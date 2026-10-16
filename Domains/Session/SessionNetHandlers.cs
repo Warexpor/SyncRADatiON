@@ -79,9 +79,6 @@ namespace SyncRADation.Networking
             FlushRateDeferred();
             if (!_pendingDumpAll && _pendingDumpTargets.Count == 0) return;
             if (SceneFollowService.LocalIsTransient()) return;
-            // A wipe reload has not reset the host's world yet: a dump now would carry the pre-wipe puzzle memory,
-            // floor drops and claims. HostReload.OnLoadFinished / OnSceneArrived (and Abort) queue the post-reset one.
-            if (HostReload.Pending) return;
 
             bool all = _pendingDumpAll;
             int[] targets = null;
@@ -145,7 +142,7 @@ namespace SyncRADation.Networking
         internal void SendFullWorldSnapshot(int targetPlayerId = -1)
         {
             if (!NetGate.Host) return;
-            if (SceneFollowService.LocalIsTransient() || HostReload.Pending)
+            if (SceneFollowService.LocalIsTransient())
             {
                 DeferDump(targetPlayerId);
                 return;

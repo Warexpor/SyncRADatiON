@@ -56,6 +56,7 @@ For a bug report: `VerboseLogging` and `Diagnostics` on, on every install, quit 
 | `[Net] 30s tx N msg X KB top: <Type> n/KB ... \| rx ... \| pN ping= lost=` | Traffic by message type, top five by bytes each way, and the link. |
 | `[Log] summary (session end\|last player left\|quit): N lines, warnings W (Tag n, ...), errors E (...)` | See above. |
 | `[Owners] H scenes 0=<scene>;1=<scene>;...` / `[Owners] C '<scene>' owner pA -> pB (this player runs it)` / `send scene world to pN\|this scene` / `pN world dump from owner pM` | The host's player -> scene table as sent, and each peer's scene owner edges (handoffs). |
+| `[Damage] host\|client died - reloading this scene on its own` / `death: reload '<scene>' at save room '<room>'\|at its entrance (no save here)` / `death reload: placed at save room` / `back after death hp=` / `peer N died` / `peer N back (vital)` / `save\|load: restart point` | A death and its personal reload, and where this player restarts next time. |
 | `[Room] pN 'old' -> 'new'` | A remote player's room as this peer knows it. `[Room] enter` / `chunk ON\|OFF` are this peer's own (Diagnostics). |
 
 ## The three traces

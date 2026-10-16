@@ -38,7 +38,6 @@ namespace SyncRADation.Networking
         PlayerRoster = 33,
         BonePose = 34,
         EnemySpawn = 35,
-        PartyLife = 40,
         PartySave = 41,
         PartyRoom = 42,
         /// <summary>Host → client: world pickup claim refused (another player got it first).</summary>

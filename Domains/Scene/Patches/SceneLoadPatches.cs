@@ -42,7 +42,7 @@ namespace SyncRADation.Patches
                     return true;
                 }
                 // Personal like every level load. The announcement only moves a client that just joined (or sits
-                // in a title-flow scene) and a wipe reload.
+                // in a title-flow scene).
                 SceneFollowService.NoteGoingTo(scene);
                 PlaytestLog.Event("Scene", "host load '" + scene + "'");
                 SceneOwners.HostRecompute(LanNetworkManager.Instance);

@@ -11,23 +11,21 @@ namespace SyncRADation.Tests
     public class SessionResetTests
     {
         [Fact]
-        public void Session_scope_clears_on_stop_and_wipe_not_on_scene()
+        public void Session_scope_clears_on_stop_not_on_scene()
         {
             int n = 0;
             SessionReset.Register("t.session", ResetScope.Session, () => n++);
             SessionReset.RunScene("S");
             Assert.Equal(0, n);
             SessionReset.RunAll(SessionReset.ReasonStop);
-            SessionReset.RunAll(SessionReset.ReasonWipe);
-            Assert.Equal(2, n);
+            Assert.Equal(1, n);
         }
 
         [Fact]
-        public void Connection_scope_skips_the_wipe_and_the_scene()
+        public void Connection_scope_skips_the_scene()
         {
             int n = 0;
             SessionReset.Register("t.conn", ResetScope.Connection, () => n++);
-            SessionReset.RunAll(SessionReset.ReasonWipe);
             SessionReset.RunScene("S");
             Assert.Equal(0, n);
             SessionReset.RunAll(SessionReset.ReasonStop);
@@ -41,12 +39,11 @@ namespace SyncRADation.Tests
             SessionReset.Register("t.scene", ResetScope.Scene, () => scene++);
             SessionReset.Register("t.scene+session", ResetScope.Scene | ResetScope.Session, () => both++);
             SessionReset.RunAll(SessionReset.ReasonStop);
-            SessionReset.RunAll(SessionReset.ReasonWipe);
             Assert.Equal(0, scene);
-            Assert.Equal(2, both);
+            Assert.Equal(1, both);
             SessionReset.RunScene("S");
             Assert.Equal(1, scene);
-            Assert.Equal(3, both);
+            Assert.Equal(2, both);
         }
 
         [Fact]
@@ -59,7 +56,7 @@ namespace SyncRADation.Tests
             SessionReset.RunScene("DET_Detention");
             int a = order.IndexOf("a"), b = order.IndexOf("b:DET_Detention"), c = order.IndexOf("c");
             Assert.True(a >= 0 && b > a && c > b, string.Join(",", order));
-            // Scene-name steps never run on stop / wipe.
+            // Scene-name steps never run on stop.
             order.Clear();
             SessionReset.RunAll(SessionReset.ReasonStop);
             Assert.DoesNotContain(order, s => s.StartsWith("b:", StringComparison.Ordinal));

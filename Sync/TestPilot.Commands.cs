@@ -83,13 +83,13 @@ namespace SyncRADation.Sync
                     Out("  god=" + _god + " hp=" + PlayerState.hp);
                     return;
                 case "hurt":
-                    // The native hurt path an enemy hit takes (party patches: downed instead of game over).
+                    // The native hurt path an enemy hit takes (party patches: personal reload instead of game over).
                     PlayerState.HurtElster(I(a[1]), Vector2.zero);
                     Out("  hp=" + PlayerState.hp + " dead=" + NetworkDamageSystem.IsDead);
                     return;
                 case "die":
                 {
-                    // Hits through the native hurt path until this player is down (one hit is capped, and the hurt
+                    // Hits through the native hurt path until this player is dead (one hit is capped, and the hurt
                     // cool-down / i-frames swallow the next ones).
                     _god = false;
                     int hits = 0;
@@ -97,7 +97,7 @@ namespace SyncRADation.Sync
                     {
                         if (NetworkDamageSystem.IsDead || PlayerState.hp <= 0)
                         {
-                            Out("  down after " + hits + " hit(s): hp=" + PlayerState.hp + " dead=" + NetworkDamageSystem.IsDead);
+                            Out("  dead after " + hits + " hit(s): hp=" + PlayerState.hp + " dead=" + NetworkDamageSystem.IsDead);
                             return true;
                         }
                         PlayerState.inviTimer = 0f;

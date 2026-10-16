@@ -263,7 +263,7 @@ namespace SyncRADation.Networking
         public static ushort[] Export() => Snapshot();
 
         /// <summary>
-        /// Party wipe / load: replace the ring with a saved snapshot (host). Caller broadcasts.
+        /// Host save load: replace the ring with a saved snapshot (host). Caller broadcasts.
         /// </summary>
         public static void Import(ushort[] enums)
         {

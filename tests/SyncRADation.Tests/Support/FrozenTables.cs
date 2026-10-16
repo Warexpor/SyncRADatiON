@@ -15,7 +15,7 @@ namespace SyncRADation.Tests
             ("SceneFollow", 24), ("InteractionRequest", 25), ("InteractionAck", 26), ("StoryCommit", 27),
             ("StoryPresentation", 28), ("StorageBoxBlob", 29), ("PartyKeyRing", 30), ("DeathPolicy", 31),
             ("FmodEmitter", 32), ("PlayerRoster", 33), ("BonePose", 34), ("EnemySpawn", 35),
-            ("PartyLife", 40), ("PartySave", 41), ("PartyRoom", 42), ("WorldPickupDeny", 60),
+            ("PartySave", 41), ("PartyRoom", 42), ("WorldPickupDeny", 60),
             ("AvatarOneShot", 61), ("BossHit", 62), ("EnemyAction", 63), ("FmodEmitterRequest", 67), ("DropRekey", 73),
             ("SceneDiff", 74), ("WorldDigest", 75), ("PeerScenes", 76), ("WorldRelay", 77),
         };
@@ -95,11 +95,6 @@ namespace SyncRADation.Tests
         public static readonly (string Name, int Value)[] T_BossType =
         {
             ("END_Boss", 0), ("LAB_ChimeraBoss", 1), ("MED_MynahBoss", 2),
-        };
-
-        public static readonly (string Name, int Value)[] T_PartyLifeKind =
-        {
-            ("Revive", 1), ("Wipe", 2),
         };
     }
 }

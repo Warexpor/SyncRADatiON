@@ -13,7 +13,7 @@ namespace SyncRADation.Tests
         {
             var names = WireFuzz.AllWireTypes().Select(t => t.Name).ToHashSet();
             Assert.True(WireFuzz.AllMessageTypes().Length >= 35, "expected all 35 NetMessageType messages");
-            foreach (string n in new[] { "PuzzleStateEntry", "EnemySnapshotNet", "BossSnapshotNet", "StoryFlagEntry", "StorageBoxItem", "WorldPickupEntry", "HandshakeMessage", "PartyLifeMessage" })
+            foreach (string n in new[] { "PuzzleStateEntry", "EnemySnapshotNet", "BossSnapshotNet", "StoryFlagEntry", "StorageBoxItem", "WorldPickupEntry", "HandshakeMessage", "PartySaveMessage" })
                 Assert.Contains(n, names);
         }
 

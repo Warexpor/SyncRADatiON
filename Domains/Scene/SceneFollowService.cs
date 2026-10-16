@@ -1,6 +1,6 @@
 // Scene follow: every chapter / level load is personal (each player travels on their own). The host still announces
 // its loads (SceneFollow) and its scene (SceneHello); a client only acts on them right after it connects (it goes to
-// the host's scene once) or from a title-flow scene. A party wipe reloads everyone (NetworkDamageSystem.FollowWipeReload).
+// the host's scene once) or from a title-flow scene.
 // A scene the host is not in is run by the lowest client id there (Sync/SceneOwners); its SProgress writes still
 // reach the host, which is how vanilla keeps a scene's progress across loads.
 using SyncRADation.ItemSystem;
@@ -18,7 +18,7 @@ namespace SyncRADation.Networking
         public const string DeadMenuScene = "DeadMenu";
         public const string EndCreditsScene = "EndCredits";
 
-        // A load this peer started (or a follow / wipe reload is running) to this scene, and when.
+        // A load this peer started (or a follow is running) to this scene, and when.
         static string _pending;
         static float _pendingAt;
         const float InflightWindow = 12f;

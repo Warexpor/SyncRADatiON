@@ -1,16 +1,17 @@
 ## 0.5.76 — 2026-10-16
 
-Protocol **v22** (`PeerScenes` 76, `WorldRelay` 77).
+Protocol **v22** (`PeerScenes` 76, `WorldRelay` 77; `PartyLife` 40 removed).
 
 ### Changed
-- **Players in an area the host is not in now share it.** In 0.5.75 every client away from the host ran its area on its own, so two clients in the same place saw different enemies, doors and cutscenes. Now the lowest-id player there runs that area for everyone in it, the way the host runs its own: enemies, bosses, doors, puzzles, cutscene starts, event zones, gunshot wakes, scripted `goto` / `sethp`, `goToPenny` and world sounds. Clients only connect to the host, so that player's traffic goes through the host, which passes it on to the players in that area only. The story, the storage box, keys, pickups, downs / wipes and saves stay with the host wherever it is.
+- **Players in an area the host is not in now share it.** In 0.5.75 every client away from the host ran its area on its own, so two clients in the same place saw different enemies, doors and cutscenes. Now the lowest-id player there runs that area for everyone in it, the way the host runs its own: enemies, bosses, doors, puzzles, cutscene starts, event zones, gunshot wakes, scripted `goto` / `sethp`, `goToPenny` and world sounds. Clients only connect to the host, so that player's traffic goes through the host, which passes it on to the players in that area only. The story, the storage box, keys, pickups and saves stay with the host wherever it is.
 - When the area changes hands (the host walks in, or its runner leaves), the new runner's enemies take their own AI back and it sends its world to the others there. The old runner's enemies become puppets. In 0.5.75 a client stayed with frozen puppet enemies after the host left its area; this fixes that.
+- **Death is personal and never rolls the world back.** There is no downed state, revive timer or party wipe any more. Whoever dies (host or client) plays the death, then about 3.5 s later reloads the area they died in on their own, at the last save point they used in it (or the area's entrance if they never saved there), with full health and the bag they had. Nobody else is moved. No save slot is read, so the story, opened locks, taken items and killed enemies stay as the party left them: no player ever ends up with an older world than the others. `DownedRespawnDelay` is gone, and so is the floor drop of a downed player's bag.
 
 ### Fixed
 - A client sitting on the title screen at connect no longer counts as running a scene.
 
 ### Docs
-- `docs/SYNC.md` (per-scene authority), `docs/PROTOCOL.md` v22, `docs/LOGGING.md` `[Owners]`, `docs/PLAYTEST.md` 3-player items, AGENTS rule 2.
+- `docs/SYNC.md` (per-scene authority, death), `docs/PROTOCOL.md` v22, `docs/LOGGING.md` `[Owners]`, `docs/PLAYTEST.md` 3-player items and death section, README death / config, AGENTS rule 2; `coop-soak.sh` checks the death reload.
 
 ## 0.5.75 — 2026-10-16
 

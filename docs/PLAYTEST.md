@@ -43,30 +43,29 @@ Session info to record: date, build (0.5.75), players, chapter, result notes.
 - [ ] Join while the host is mid-load (loading screen): C waits, then gets the dump (or seeds from defaults after about 6 s and Resync fixes it). Note which happened.
 - [ ] Party save token on join: host has saved at least once; on join the client log shows the party save token received (`[Scene]`/party-save line) and `UserData/SyncRADation/host_saves.txt` exists on H.
 
-## 3. Death, downed and revive
+## 3. Death and personal reload
 
 Run each row for both H and C; with three players also run it with the second client.
 
-- [ ] **H killed, C alive:** H is downed (input off, downed pose, enemies lose sight of H), no game-over screen for H, C keeps playing. After `DownedRespawnDelay` (20 s default) H revives at C's position/room with HP and brief invincibility.
-- [ ] **C killed, H alive:** same from the other arrow: C downed, no game-over, revive near H after the delay, H sees C's proxy lie down and stand back up.
-- [ ] Downed player is ignored by enemies and bosses (no damage, no re-targeting) and by friendly fire if enabled.
-- [ ] Downed player's bag: ammo and docs are left on the floor, unique Key/Object items stay in the downed player's bag, nothing is duplicated after revive.
-- [ ] Downed while the teammate is in another scene: revive falls back in place (note: known limitation), no softlock.
-- [ ] **Change `DownedRespawnDelay`** to 5 and to 60: timer matches.
-- [ ] Killing the last living player does not drop a death bag (last player down skips it).
+- [ ] **H killed, C alive (same scene):** H plays the death (input off, dead pose, enemies lose sight of H), no game-over screen, and about 3.5 s later reloads the scene alone (`[Damage] death: reload '<scene>' at save room '<room>'`, then `placed at save room`, `back after death hp=100`). C is not moved and keeps playing; C sees H's proxy lie down, vanish for the load and come back.
+- [ ] **C killed, H alive:** same from the other arrow. C comes back as a follower: it gets H's world dump, enemies H killed stay dead, doors and pickups match (`[Desync]` clean).
+- [ ] **The world is not rolled back:** take an item and open a lock after the last save, then die: the item is still in your bag, the lock still open, the item still gone from the floor for everyone. Story flags set since the save stay set (`[Story]` on H, no authoritative clear).
+- [ ] **No save in this scene** (die right after arriving through a chapter door): the reload lands at the scene's entrance (`at its entrance (no save here)`).
+- [ ] Dead player is ignored by enemies and bosses (no damage, no re-targeting) and by friendly fire if enabled, until it is back.
+- [ ] **Both die** (two players, or all three): each reloads on its own; nothing waits for the other, nobody's world is reverted.
+- [ ] Death while alone in an area the host is not in: the client reloads that area, its owner is itself again on arrival.
+- [ ] Death of a client owner with a follower there (3 players): the follower takes the area over during the load (`[Owners] ... -> p2`), the reloaded player comes back as its follower or owner and the world matches.
+- [ ] H dies with C in its scene: the scene stays H's through the load (no `[Owners]` handoff), C's enemies stay puppets, and H's arrival dump matches what C saw.
+- [ ] Equipped injector: the native auto-revive still fires instead of the death.
 - [ ] Solo host (no client connected) dies: vanilla game over, not the party flow.
-- [ ] Client disconnects while downed: client is back in vanilla state offline; host party state drops the client.
-- [ ] Host disconnects while a client is downed: client wakes up offline with input restored.
+- [ ] Client disconnects while dead: it gets up offline with input restored; the host drops it from the party.
+- [ ] Host disconnects while a client is dead: the client gets up offline with input restored.
 
-## 4. All-down wipe and party save restore
+## 4. Party save restore
 
-- [ ] **Wipe (two players):** H and C both downed. About 3 s after the last one falls, both see the reload: host runs `SaveManager.Load()`, the scene reloads for C too (C is brought to the host scene), no duplicate loads.
-- [ ] After the wipe: host state equals the last save (key ring restored from host snapshot); **C's bag is restored** from its bag snapshot (items and keys; note ammo), nothing doubled on floor or bag.
-- [ ] Wipe with three players: only when all three are down; if C2 is revived first there is no wipe.
-- [ ] Wipe while a client is in another scene than the host: the client is brought to the reload scene, no softlock.
-- [ ] Wipe from client-initiated last death (the last player down is C) and from the host being last down: both paths reload.
-- [ ] Manual save at a save room on H then quit and restart the session: `bag_snapshots.txt` and `host_saves.txt` updated; reconnect, token matches; a later wipe restores that save.
-- [ ] Clients without the matching snapshot (fresh install, no `bag_snapshots.txt`): wipe does not crash; the client keeps what it has and logs why.
+- [ ] Manual save at a save room on H then quit and restart the session: `bag_snapshots.txt` and `host_saves.txt` updated; reconnect, token matches; the client's join restores its bag snapshot for that save.
+- [ ] Clients without the matching snapshot (fresh install, no `bag_snapshots.txt`): the join does not crash; the client keeps what it has and logs why.
+- [ ] A save on H or C sets that player's restart point (`[Damage] save: restart point '<scene>' room '<room>'`).
 
 ## 5. Scene and chapter flow
 
@@ -173,12 +172,12 @@ For each family: (a) H starts/solves part or all, C verifies; (b) C does the sam
 ## 13. Friendly fire
 
 - [ ] Default `FriendlyFire=false`: no damage between players; a client cannot damage the host by modified packets (rejected).
-- [ ] With `FriendlyFire=true` on the host: players can damage each other, downed players still skipped.
+- [ ] With `FriendlyFire=true` on the host: players can damage each other, dead players still skipped.
 
 ## 14. DeadMenu / MEM_Memory
 
 - [ ] **DeadMenu -> MEM_Memory:** when a game-over path leads to the DeadMenu (solo host, or a real game over), each player gets the memory sequence when their own run reaches it; the other player is not moved and the menu is usable.
-- [ ] Party (2+ live) does not show the native game-over while players are only downed.
+- [ ] Party (2+ live) does not show the native game-over: a dead player reloads its scene instead.
 - [ ] After MEM_Memory the session continues (peers still connected, roster intact).
 
 ## 15. End credits
@@ -223,4 +222,4 @@ Known risks to watch (from CHANGELOG 0.5.57/0.5.58 "Open risks"): Harmony detour
 
 ## Automated runs
 
-The test pilot (`docs/PILOT.md`) runs host + two clients unattended and diffs every peer's world against the host's after each step. `scripts/pilot/coop-soak.sh` covers sections 2 (late join), 3 (downed / revive), 6 (one door arrow), 8 (pickups, simultaneous grab) and 9 (client kills, including rooms the host never entered) for three players in one chapter; `scripts/pilot/story-run.sh` covers section 5 (host and client chapter loads) across the story. A pilot pass does not replace the hands-on items (presentation, audio, feel), it gates them: run it first and fix what it finds.
+The test pilot (`docs/PILOT.md`) runs host + two clients unattended and diffs every peer's world against the host's after each step. `scripts/pilot/coop-soak.sh` covers sections 2 (late join), 3 (a client's death and reload), 6 (one door arrow), 8 (pickups, simultaneous grab) and 9 (client kills, including rooms the host never entered) for three players in one chapter; `scripts/pilot/story-run.sh` covers section 5 (host and client chapter loads) across the story. A pilot pass does not replace the hands-on items (presentation, audio, feel), it gates them: run it first and fix what it finds.

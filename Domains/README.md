@@ -44,17 +44,16 @@ Authority: `docs/SYNC.md`; reverse-check rule: repo root `AGENTS.md`. Wire in `N
 | Client boss hits (Falke Stab / TakeSpear, boss HP, Chimera rifle shot) | `Bosses/Patches/BossActionPatches` + `Bosses/BossNetHandlers` | `BossHit` (62) |
 | Avatar / bones / weapons | `Players/` (`PlayerProxyBuilder` → `ProxyRig`, `ProxyPose` bones+hips, `ProxyMotion` root, `SnapshotRing`, `SnapClock`) + `AvatarNetHandlers` + `SourceAnimReader` | Peer-authored; the proxy has no Animator; per-sender scene check |
 | Other players drawn as Ariane (F2) | `Players/AvatarSkins` (templates, harvest, main-menu preload) + `Players/ProxySkin` (bone copy, mounts on her hands) | local only |
-| Party vitals: downed / revive / wipe, party-life state | `Players/PartyVitals` + `Combat/PartyNetHandlers` + `Combat/Patches/DeathPatches` | `PartyLife`/`PartyRoom` (40, 42); `DownedRespawnDelay` |
+| Death: personal scene reload at the last save point, dead peers skipped as targets | `Players/NetworkDamageSystem` + `Players/DeathReload` + `Players/PartyVitals` + `Combat/Patches/DeathPatches` | `DeathPolicy` / `PlayerVital`; `PartyRoom` (42) |
 | Party save token / key-ring + bag snapshots (host_saves.txt, bag_snapshots.txt) | `Session/PartySaveService` + `Combat/PartyNetHandlers` | `PartySave` (41); `SaveManager.Save/Load` hooks |
-| Client → player/enemy damage checks (hurtbox / melee vs proxies) | `Combat/ClientDamageService` | Host-side; skips downed peers; friendly fire opt-in |
+| Client → player/enemy damage checks (hurtbox / melee vs proxies) | `Combat/ClientDamageService` | Host-side; skips dead peers; friendly fire opt-in |
 | Friendly fire / death bag | `Combat/CombatNetHandlers` + `Combat/Patches` | Opt-in FF |
 | FMOD world emitters | `Audio/` | Skip Music/Cutscenes/Ambience beds |
 | Gunshot wake | `Combat/Patches/GunshotWakePatch` | Host wakes near shot |
 | Swallowed exceptions / `[Guard]` log lines | `Sync/Guard.cs` | Throttled per tag (first hit, then one line / 30 s with count) |
-| Party wipe host reload (scene + save reload, watchdog, peers follow) | `Session/HostReload` + `Combat/PartyNetHandlers` | `PartyLife.Scene`; watchdog 45 s |
 | Boot patch audit / reflected-member table (`[Harmony] audit:` line, F2 status) | `Bootstrap/PatchAudit` | Add every new `GetField/GetMethod/GetProperty/Find("...")` literal to its table |
 | Game build hash in handshake (other game build → rejected) | `Bootstrap/GameBuild` + `Networking/LanNetworkManager` | `Handshake.GameBuildHash`/`GameBuild` |
-| Session state that must not leak between scenes / sessions / wipe reloads | `Sync/SessionReset` (scopes `Scene` / `Session` / `Connection`; `RunScene`, `RunAll("stop"/"wipe")`) + `Bootstrap/SessionResetRegistrations` | Register a clear, or `// persistent: <reason>` directly above the field; `StaticStateGuardTests` enforces it |
+| Session state that must not leak between scenes / sessions | `Sync/SessionReset` (scopes `Scene` / `Session` / `Connection`; `RunScene`, `RunAll("stop")`) + `Bootstrap/SessionResetRegistrations` | Register a clear, or `// persistent: <reason>` directly above the field; `StaticStateGuardTests` enforces it |
 | Sync toggles agreed with the host (puzzles, pickups, vitals, FF, client cheats) | `Config/ModConfig` (`*Enabled`, `ClientCheatsAllowed`) | `PlayerRoster.HostFlags` |
 | Developer traces on/off | `Config/ModConfig.DiagnosticsOn` (`Diagnostics` pref) | Gated inside each trace class |
 | Client quit-to-menu / host→MainMenu ends the session | `Networking/LanNetworkManager.SessionEnd` (`EndSession`) | Uses `RejectPeer` / `RequestStop` / `_stopReason` |

@@ -30,7 +30,7 @@ namespace SyncRADation.Networking
         internal void SendFriendlyFire(int targetPlayerId, float damage, Vector3 hitPos)
         {
             if (!ModConfig.FriendlyFireEnabled) return; // host's toggle while connected
-            if (PartyVitals.IsDown(targetPlayerId)) return; // downed players cannot be shot
+            if (PartyVitals.IsDown(targetPlayerId)) return; // dead (reloading) players cannot be shot
             damage = ClampFriendlyDamage(damage);
             if (damage <= 0f) return;
 
@@ -68,7 +68,7 @@ namespace SyncRADation.Networking
         {
             msg.Damage = ClampFriendlyDamage(msg.Damage);
             if (msg.Damage <= 0f) return;
-            if (PartyVitals.IsDown(msg.TargetPlayerId)) return; // downed players cannot be shot
+            if (PartyVitals.IsDown(msg.TargetPlayerId)) return; // dead (reloading) players cannot be shot
             if (NetGate.HostRole && msg.TargetPlayerId != _net.LocalPlayerId)
             {
                 var w = new NetDataWriter();

@@ -1,4 +1,4 @@
-// Co-op death: native game over is replaced by downed/revive/party-wipe while a party is live.
+// Co-op death: native game over is replaced by a personal reload of the scene (Players/DeathReload) while a party is live.
 // Solo / no party: every prefix returns true and the game behaves like vanilla.
 using HarmonyLib;
 using SyncRADation.ItemSystem;
@@ -10,10 +10,10 @@ using UnityEngine;
 namespace SyncRADation.Patches
 {
     /// <summary>
-    /// A real native load (SaveManager.loading was true on entry; otherwise native Load is a no-op): a hosted
-    /// session now runs from that slot's last party save. Reset the party key ring to that save's snapshot,
-    /// claimed uniques and floor drops so a wipe reload does not keep state the save never had. Clients keep
-    /// their own saves untouched. Solo play: two int writes, nothing else.
+    /// A real native load (SaveManager.loading was true on entry; otherwise native Load is a no-op): its save room is
+    /// this player's restart point. A hosting host now runs from that slot's last party save: the party key ring
+    /// becomes that save's snapshot and claimed uniques / floor drops go, so the world does not keep state the save
+    /// never had. Clients never load a slot in a party (DeathReload's LoadingManager prefix). Solo: two int writes.
     /// </summary>
     [HarmonyPatch(typeof(SaveManager), nameof(SaveManager.Load))]
     public static class SaveManagerLoadPatch
@@ -21,30 +21,33 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static void Prefix(out bool __state)
         {
-            __state = HostReload.LoadWillRun();
+            try { __state = SaveManager.loading; }
+            catch (System.Exception ex) { Guard.Swallow("DeathPatches.loading", ex); __state = false; }
         }
 
         [HarmonyPostfix]
         public static void Postfix(bool __state)
         {
             if (!__state) return; // native Load returned immediately: nothing was loaded
+            DeathReload.NoteSave("load");
             if (!NetGate.WorldOwner) return;
             var net = LanNetworkManager.Instance;
             try
             {
-                bool wipe = HostReload.OnLoadFinished();
                 if (!NetGate.Host)
                 {
                     PartySaveService.NoteSoloLoad();
                     return;
                 }
                 PartySaveService.OnHostLoaded();
-                HostReload.ResetHostWorldState(net);
-                PlaytestLog.Event("PartySave", "host load - ring/claims/floor drops reset" + (wipe ? " (wipe reload)" : ""));
-                if (wipe)
-                    SessionReset.RunAll(SessionReset.ReasonWipe);
-                // The snapshot sent at scene arrival was held back (HostReload.Pending) or pre-dates this reset:
-                // send the post-reset world once the host is out of the loading screen.
+                PartyKeyRing.Import(PartySaveService.RingForCurrent());
+                PartyKeyRing.Broadcast();
+                DroppedItemRegistry.ClearAll();
+                ItemPickupPatches.ResetDropClaims();
+                net?.PickupSync.Reset();
+                PlaytestLog.Event("PartySave", "host load - ring/claims/floor drops reset");
+                // The snapshot sent at scene arrival pre-dates this reset: send the post-reset world once the host is
+                // out of the loading screen.
                 net?.SessionHandlers.DeferDump(-1);
             }
             catch (System.Exception ex)
@@ -64,11 +67,11 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix()
         {
+            DeathReload.NoteSave("save");
             if (!NetGate.WorldOwner) return;
             var net = LanNetworkManager.Instance;
             try
             {
-                HostReload.NoteSlotBound();
                 if (!NetGate.Host)
                 {
                     PartySaveService.NoteSoloSave();
@@ -84,7 +87,7 @@ namespace SyncRADation.Patches
         }
     }
 
-    /// <summary>New game: the run has no save yet. Forget the previous token; the next level load is the start scene.</summary>
+    /// <summary>New game: the run has no save yet. Forget the previous token and restart point.</summary>
     [HarmonyPatch(typeof(SaveManager), nameof(SaveManager.NewGame))]
     public static class SaveManagerNewGamePatch
     {
@@ -94,7 +97,7 @@ namespace SyncRADation.Patches
             try
             {
                 PartySaveService.OnNewGame();
-                HostReload.NoteNewGame();
+                DeathReload.NoteNewGame();
             }
             catch (System.Exception ex)
             {
@@ -103,19 +106,7 @@ namespace SyncRADation.Patches
         }
     }
 
-    /// <summary>Records the level the game loads right after NewGame: where a wipe of a never-saved run restarts.</summary>
-    [HarmonyPatch(typeof(AsyncLoader), nameof(AsyncLoader.LoadLevel), new[] { typeof(string) })]
-    public static class AsyncLoaderNewGameSceneCapture
-    {
-        [HarmonyPostfix]
-        public static void Postfix(string target)
-        {
-            try { HostReload.NoteLevelLoad(target); }
-            catch (System.Exception ex) { Guard.Swallow("DeathPatches.NewGameScene", ex); }
-        }
-    }
-
-    /// <summary>No native game-over screen while a party lives: the player is downed instead.</summary>
+    /// <summary>No native game-over screen while a party lives: the player reloads the scene on its own instead.</summary>
     [HarmonyPatch(typeof(GameOverHandler), nameof(GameOverHandler.hurt))]
     public static class GameOverHandlerHurtPatch
     {
@@ -150,7 +141,7 @@ namespace SyncRADation.Patches
         {
             __state = false;
             if (!NetworkDamageSystem.PartyLive) return true;
-            if (NetworkDamageSystem.IsDead) return false; // downed: nothing can hurt us
+            if (NetworkDamageSystem.IsDead) return false; // dead and reloading: nothing can hurt us
             // No safe menus in co-op: a hit in the inventory / pause / book / event screen closes it, then lands.
             if (!MenuHit.Intercept(__0, __1, hug: false)) return false;
             __state = NetworkDamageSystem.HurtGateOpen();

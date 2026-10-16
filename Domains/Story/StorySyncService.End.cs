@@ -88,7 +88,7 @@ namespace SyncRADation.Networking
         }
 
         /// <summary>
-        /// SaveManager.Load / NewGame replaced the live slot and the END statics wholesale (wipe reload / Continue): the
+        /// SaveManager.Load / NewGame replaced the live slot and the END statics wholesale (Continue): the
         /// new statics are not a delta, and the host's next full dump is authoritative.
         /// </summary>
         public void OnSlotReplaced()

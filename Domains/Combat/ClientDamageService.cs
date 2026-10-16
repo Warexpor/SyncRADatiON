@@ -166,7 +166,7 @@ namespace SyncRADation.Networking
             {
                 int pid = ids[i];
                 if (!PeerSameScene(net, pid)) continue;
-                if (PartyVitals.IsDown(pid)) continue; // downed peers are not targets
+                if (PartyVitals.IsDown(pid)) continue; // dead (reloading) peers are not targets
                 var proxy = pm.GetProxy(pid);
                 if (proxy == null || proxy.GameObject == null || proxy.LastDead) continue;
                 _targets.Add(new Target { Pid = pid, Pos = proxy.GameObject.transform.position });

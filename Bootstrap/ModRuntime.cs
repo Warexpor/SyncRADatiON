@@ -286,10 +286,6 @@ namespace SyncRADation
             // open F11 window. FinishSpawn / AdoptNativeSpawn harvest on demand, so a session started later still works.
             if (NetGate.Live || Cheats.EntitySpawner.ShowMenu)
                 Cheats.EntitySpawner.HarvestLoaded();
-            // Before the network scene path: a wipe reload that has arrived resets the host's world state first, so the
-            // full snapshot sent after the scene resets is the post-wipe one (clients reset locally on the Wipe message).
-            try { HostReload.OnSceneArrived(scene); }
-            catch (System.Exception e) { Guard.Swallow("ModRuntime.HostReloadArrived", e); }
             try { ChapterWipe.OnSceneArrived(scene); }
             catch (System.Exception e) { Guard.Swallow("ModRuntime.ChapterWipe", e); }
             // Every Scene-scope SessionReset step (Bootstrap/SessionResetRegistrations.cs), then the hello / dump.

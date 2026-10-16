@@ -66,7 +66,7 @@ To pick up something another player dropped, walk up to it and use the normal TA
 - Elevators, radio, pumps and pipes, storage boxes (box contents are shared).
 - Items lying in the world. Each one exists once: whoever picks it up gets it, and if your bag can't hold the whole stack the rest stays there for everyone. Keys and key objects are personal: only the player carrying one can use it, but a door or lock it opens stays open for everyone. Drop a key (G) to hand it to someone.
 - Sounds from world objects.
-- Death and revive (see below).
+- Death (see below).
 
 **Personal (intentionally local):**
 
@@ -79,7 +79,7 @@ To pick up something another player dropped, walk up to it and use the normal TA
 - Cutscenes and event zones in a room you are not in do not play for you.
 - Radio tuner frequency while you turn it.
 
-**Death:** a dead player is **downed**, not game over. They revive next to the nearest living teammate after `DownedRespawnDelay` seconds (default 20). The party only loses when **everyone is down at once**: the host then reloads its last save and clients get their bag back from the last save snapshot. Friendly fire is off by default.
+**Death:** whoever dies (host or client) reloads the area they died in on their own, at the last save point they used there (or the area's entrance if they never saved there), with full health and the bag they had. Nobody else is moved. The world is not rolled back: what the party did since that save (taken items, opened locks, killed enemies, story) stays done for everyone, so no player ever ends up with an older world than the others. Friendly fire is off by default.
 
 **No pause in co-op:** while anyone else is connected, the pause menu, inventory, item views, books and dialogue no longer stop the game for anyone. Menus are not a safe room either: if an enemy hits you while one is open, it closes and the hit lands (an item "take?" prompt counts as no). Find a safe spot before you open the inventory.
 
@@ -87,15 +87,14 @@ A solo game (no session running) behaves like vanilla SIGNALIS.
 
 ## Known limitations
 
-- Pre-release: the whole 0.5.57 to 0.5.76 feature set (death/revive, party save, 3+ players, boss and enemy client hits, puzzle merging, personal keys) is compile- and unit-tested; dual-box sessions have been played through LOV_Reeducation into DET_Detention, the rest of the game has not.
+- Pre-release: the whole 0.5.57 to 0.5.76 feature set (death reload, party save, 3+ players, boss and enemy client hits, puzzle merging, personal keys) is compile- and unit-tested; dual-box sessions have been played through LOV_Reeducation into DET_Detention, the rest of the game has not.
 - A client's "quit to menu" is blocked silently.
 - If a client joins while loading, it may wait up to 6 seconds for the host's state and then start from local defaults. Use **Resync world**.
 - A Falke spear held only by a client may not count as held for the Falke fight.
 - Bag snapshots restore items but not per-weapon ammo.
-- Revive falls back to in-place if no teammate is in the same scene.
 - Another player's dropped items can still be despawned by a client in some edge cases.
 - World sounds triggered locally by a client are not always relayed to other clients.
-- The mod keeps party-save bookkeeping in `UserData/SyncRADation/` (`host_saves.txt`, `bag_snapshots.txt`). Delete those files if a restore after a wipe behaves strangely.
+- The mod keeps party-save bookkeeping in `UserData/SyncRADation/` (`host_saves.txt`, `bag_snapshots.txt`). Delete those files if a bag restore on join behaves strangely.
 
 ## Configuration
 
@@ -106,7 +105,6 @@ Edited in `SIGNALIS/UserData/MelonPreferences.cfg` under `[SyncRADation]` (creat
 | `ConnectAddress` | `127.0.0.1` | Address used by F3 quick connect |
 | `ConnectPort` | `7777` | UDP port |
 | `MaxPlayers` | `4` | Host only. Session size including the host, 2 to 8. Applies the next time you Host Game |
-| `DownedRespawnDelay` | `20` | Seconds a downed player waits before reviving next to a teammate (1 to 600) |
 | `FriendlyFire` | `false` | Allow players to damage each other |
 | `SyncPuzzles` | `true` | Sync puzzles, locks, elevators, radio, storage, interactions |
 | `SyncWorldPickups` | `true` | Sync items lying in the world |

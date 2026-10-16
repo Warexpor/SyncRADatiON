@@ -8,7 +8,8 @@ namespace SyncRADation
         public const string Author = "Warexpor";
         public const string Description = "LAN multiplayer mod for SIGNALIS - host-authoritative world/story, native client UX";
         /// <summary>Protocol v22: v21 + PeerScenes (76: the host's player -> scene table; a scene the host is not in is
-        /// run by the lowest player id there) and WorldRelay (77: that client owner's scene world through the host).
+        /// run by the lowest player id there) and WorldRelay (77: that client owner's scene world through the host);
+        /// PartyLife (40) removed: death is a personal scene reload, no revive / wipe on the wire.
         /// v21: v20 + WorldDigest (75: the host's shared-world digest for the live desync check, and a
         /// client's findings back).
         /// v20: v19 + CutsceneStart request / presentation Text = the author's room (Room WorldId, hex),

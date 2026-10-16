@@ -93,9 +93,6 @@ namespace SyncRADation.Networking
                 ApplyLocal("DeathPolicy", () => CombatHandlers.HandleDeathPolicy(dp));
                 return true;
             }
-            case NetMessageType.PartyLife:
-                PartyHandlers.HandlePartyLife(PartyLifeMessage.Deserialize(reader), senderId);
-                return true;
             case NetMessageType.PartySave:
                 PartyHandlers.HandlePartySave(PartySaveMessage.Deserialize(reader), senderId);
                 return true;

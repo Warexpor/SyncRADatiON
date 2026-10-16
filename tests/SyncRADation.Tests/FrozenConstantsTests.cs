@@ -15,7 +15,7 @@ namespace SyncRADation.Tests
     {
         // NetSchema.StructuralHash (Hash minus the module id, which changes with every rebuild) with the test assembly pinned to AssemblyVersion 9.9.9.9 (see the csproj).
         // Moves whenever PluginInfo.ProtocolVersion or any id of the mixed enums changes.
-        private const uint GoldenSchemaHash = 0x5FD4D5C2U;
+        private const uint GoldenSchemaHash = 0x6D4564AAU;
 
         [Fact]
         public void ProtocolVersion_is_22() => Assert.Equal(22, PluginInfo.ProtocolVersion);
@@ -63,7 +63,6 @@ namespace SyncRADation.Tests
             yield return new object[] { typeof(EnemyActionKind), nameof(FrozenTables.T_EnemyActionKind) };
             yield return new object[] { typeof(BossHitKind), nameof(FrozenTables.T_BossHitKind) };
             yield return new object[] { typeof(BossType), nameof(FrozenTables.T_BossType) };
-            yield return new object[] { typeof(PartyLifeKind), nameof(FrozenTables.T_PartyLifeKind) };
         }
 
         private static (string Name, int Value)[] Table(string field) =>
@@ -98,7 +97,7 @@ namespace SyncRADation.Tests
         public void Enums_keep_their_one_byte_wire_width()
         {
             foreach (Type t in new[] { typeof(NetMessageType), typeof(InteractionKind), typeof(StoryCmd), typeof(DeathKind), typeof(WeaponType),
-                                       typeof(DoorType), typeof(PuzzleType), typeof(EnemyActionKind), typeof(BossHitKind), typeof(BossType), typeof(PartyLifeKind) })
+                                       typeof(DoorType), typeof(PuzzleType), typeof(EnemyActionKind), typeof(BossHitKind), typeof(BossType) })
                 Assert.Equal(typeof(byte), Enum.GetUnderlyingType(t));
             Assert.Equal(typeof(byte), Enum.GetUnderlyingType(typeof(PoseFlags)));
             Assert.Equal(typeof(byte), Enum.GetUnderlyingType(typeof(AvatarCue)));
@@ -110,7 +109,7 @@ namespace SyncRADation.Tests
             int max = Actual(typeof(NetMessageType)).Values.Max();
             Assert.Equal(77, max);
             Assert.Equal((int)NetMessageType._Highest, max);
-            Assert.Equal(41, Actual(typeof(NetMessageType)).Count);
+            Assert.Equal(40, Actual(typeof(NetMessageType)).Count);
         }
 
         [Fact]

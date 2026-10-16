@@ -676,7 +676,7 @@ namespace SyncRADation.Networking
         /// <summary>Another peer now runs this scene: the first snapshot from it halts the local boss controllers.</summary>
         public void OnBecameFollower() => _lastHp.Clear();
 
-        /// <summary>SessionReset (also after a wipe reload in the same scene): the spears are back on the floor, so a
+        /// <summary>SessionReset: the spears are back on the floor, so a
         /// stale first taker must not suppress the next race's duplicate-spear ack.</summary>
         public void ResetSession()
         {
