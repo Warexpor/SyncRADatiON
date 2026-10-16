@@ -35,6 +35,23 @@ namespace SyncRADation.Networking
             });
         }
 
+        /// <summary>
+        /// Client owner of its scene: a peer arriving there gets the cutscene still running (the host's replay rides
+        /// its full commit, which only covers the host's scene).
+        /// </summary>
+        internal void SendSceneReplayTo(LanNetworkManager net, int playerId)
+        {
+            if (net == null || playerId < 0 || _lastCmd != StoryCmd.CutsceneStart || _lastWorldId == 0) return;
+            if (!CutsceneSync.RunningHere(_lastWorldId)) return;
+            PlaytestLog.Event("Story", "replay CutsceneStart id=" + _lastWorldId.ToString("X16") + " to p" + playerId);
+            net.StoryHandlers.SendStoryPresentationTo(playerId, new StoryPresentationMessage
+            {
+                WorldId = unchecked((long)_lastWorldId),
+                Cmd = StoryCmd.CutsceneStart,
+                Text = "replay"
+            });
+        }
+
         void NoteActivePresentation(StoryCmd cmd, ulong worldId)
         {
             // One-shot relays must not displace the active cutscene kept for join replay.
@@ -91,9 +108,19 @@ namespace SyncRADation.Networking
                 PlaytestLog.Verbose("Story", "skip presentation " + msg.Cmd + " (loading)");
                 return;
             }
-            // DetermineEnding is the exception: a client can reach the finale while the host is elsewhere (the host
-            // then settles the ending without a Finale), and it only runs this peer's own Finale if the scene has one.
-            if (net.SceneMismatch && msg.Cmd != StoryCmd.DetermineEnding)
+            // Scene presentations (cutscene, zone, multi-condition, scripted cheat, goToPenny) come from this scene's
+            // owner, which may be a client (the host only sends them on to the peers in that scene): the owner itself
+            // never applies one. DetermineEnding is the host's wherever it is: a client can reach the finale while the
+            // host is elsewhere, and it only runs this peer's own Finale if the scene has one.
+            if (LanNetworkManager.IsSceneCmd(msg.Cmd))
+            {
+                if (SceneOwners.LocalOwns)
+                {
+                    PlaytestLog.Verbose("Story", "skip presentation " + msg.Cmd + " (this player runs the scene)");
+                    return;
+                }
+            }
+            else if (net.SceneMismatch && msg.Cmd != StoryCmd.DetermineEnding)
             {
                 PlaytestLog.Verbose("Story", "skip presentation " + msg.Cmd + " (scene mismatch)");
                 return;

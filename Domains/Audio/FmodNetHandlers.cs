@@ -47,7 +47,7 @@ namespace SyncRADation.Networking
 
         internal void HandleFmodEmitterRequest(FmodEmitterRequestMessage msg, int senderId)
         {
-            if (!NetGate.HostRole || senderId < 1) return;
+            if (!NetGate.SceneOwnerRole || senderId < 1) return;
             FmodEmitterSync.HandleRequest(msg, senderId);
         }
     }

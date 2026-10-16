@@ -26,6 +26,13 @@ namespace SyncRADation.Networking
                 return;
             }
 
+            // A client owner's scene broadcast / a follower's request for a client-owned scene: sent on, not read here.
+            if (_role == NetworkRole.Host && TryHostRoute(reader, type, senderId, channelNumber, deliveryMethod))
+            {
+                Sync.NetStats.Rx(messageType, reader.AvailableBytes + 1);
+                return;
+            }
+
             // Trust boundary: a client may not author host-only world/story/session state.
             if (_role == NetworkRole.Host && IsHostAuthoredOnly(type))
             {

@@ -1,4 +1,4 @@
-// MultiConditionEvent TryOnce / TryTrigger — client emit, host Presentation.
+// MultiConditionEvent TryOnce / TryTrigger — follower request, scene owner Presentation.
 using HarmonyLib;
 using SyncRADation.Networking;
 using SyncRADation.Sync;
@@ -13,8 +13,7 @@ namespace SyncRADation.Patches
         {
             if (NetGate.IsApplying || !NetGate.Party) return true;
             if (__instance == null) return true;
-            if (NetGate.Host) return true;
-            if (SceneFollowService.ClientAwayFromHost()) return true; // the host is in another scene: runs here like solo
+            if (NetGate.SceneOwner) return true;
             LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(
                 WorldId.FromGameObject(__instance.gameObject), InteractionKind.MultiCondition, 0,
                 text: LocalInspect.LocalRoomKey());
@@ -24,7 +23,7 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(MultiConditionEvent __instance)
         {
-            if (!NetGate.Host || NetGate.IsApplying || !NetGate.Party) return;
+            if (!NetGate.SceneOwner || NetGate.IsApplying || !NetGate.Party) return;
             if (__instance == null) return;
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             if (id == 0 || !EventZonePatch.MarkMultiOnce(id)) return;
@@ -42,8 +41,7 @@ namespace SyncRADation.Patches
         {
             if (NetGate.IsApplying || !NetGate.Party) return true;
             if (__instance == null) return true;
-            if (NetGate.Host) return true;
-            if (SceneFollowService.ClientAwayFromHost()) return true; // the host is in another scene: runs here like solo
+            if (NetGate.SceneOwner) return true;
             LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(
                 WorldId.FromGameObject(__instance.gameObject), InteractionKind.MultiCondition, 1);
             return false;

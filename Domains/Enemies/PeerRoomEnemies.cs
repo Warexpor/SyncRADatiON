@@ -129,7 +129,7 @@ namespace SyncRADation.Networking
         /// <summary>Host tick (EnemySyncService.TickHost): enter every manager whose room holds a remote player.</summary>
         public static void Tick(LanNetworkManager net, PlayerProxyManager pm, int[] remote)
         {
-            if (!NetGate.Host || pm == null || remote == null || remote.Length == 0) return;
+            if (!NetGate.SceneOwner || pm == null || remote == null || remote.Length == 0) return;
             float now = Time.unscaledTime;
             if (now < _nextAt) return;
             _nextAt = now + Interval;

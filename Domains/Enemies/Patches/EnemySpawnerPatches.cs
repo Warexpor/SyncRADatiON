@@ -24,15 +24,9 @@ namespace SyncRADation.Patches
             if (__instance == null) return true;
             if (!NetGate.Live) return true;
 
-            // Client must not spawn — dual Instantiates yield divergent WorldIds / map misses.
-            // Exception: personal scene (wreck/hole, airlock). Host snapshots never map there, so the
-            // client's spawners must run natively or the room stays empty.
-            if (NetGate.Client)
-            {
-                var clientNet = LanNetworkManager.Instance;
-                if (clientNet != null && clientNet.SceneMismatch) return true;
-                return false;
-            }
+            // A follower must not spawn — dual Instantiates yield divergent WorldIds / map misses. The scene's owner
+            // (the host, or the client running a scene the host is not in) spawns and sends it.
+            if (NetGate.SceneFollower) return false;
 
             // Host with nobody connected: vanilla spawner.
             if (!NetGate.Party) return true;
@@ -54,7 +48,7 @@ namespace SyncRADation.Patches
 
             // A lone host keeps the native child as is (no SR_Spawn_ rename, no template scan). The child is still
             // _Child when a peer joins, so the first Party tick adopts and broadcasts it then.
-            if (!NetGate.Host || !NetGate.Party || __instance == null) return;
+            if (!NetGate.SceneOwner || !NetGate.Party || __instance == null) return;
             TryAdoptNativeChild(__instance);
         }
 

@@ -56,12 +56,12 @@ namespace SyncRADation.Networking
 
         public void TickHost(LanNetworkManager net)
         {
-            if (NetGate.ClientRole)
+            if (NetGate.SceneFollowerRole)
             {
                 TickClientInterp();
                 return;
             }
-            if (!NetGate.Host) return;
+            if (!NetGate.SceneOwner) return;
 
             // Join/resync dump (unicast to the joiner): one snapshot now. The broadcast clock and a pending forced
             // send stay untouched, so everybody else still gets theirs on schedule.
@@ -737,12 +737,12 @@ namespace SyncRADation.Networking
         public void OnEnemyStateReceived(EnemyStateMessage msg)
         {
             var net = LanNetworkManager.Instance;
-            if (NetGate.HostRole) return;
+            if (NetGate.SceneOwnerRole) return;
             if (msg.Enemies == null) return;
-            // Still loading / in another scene (menu, follow load, personal wreck/hole scene): none of the host's
-            // enemies exist here. Drop the stream instead of resolving every id to a miss; the next snapshot after
-            // the load (and the join dump) carries the full state.
-            if (net != null && (net.SceneMismatch || SceneFollowService.LocalIsTransient())) return;
+            // Still loading: none of the owner's enemies exist here. Drop the stream instead of resolving every id to
+            // a miss; the next snapshot after the load (and the join dump) carries the full state. Only this scene's
+            // owner sends here (the host's own snapshots go to its scene only).
+            if (SceneFollowService.LocalIsTransient()) return;
 
             for (int i = 0; i < msg.Enemies.Length; i++)
                 ApplyEnemyState(msg.Enemies[i]);

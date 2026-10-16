@@ -17,7 +17,7 @@ namespace SyncRADation.Tests
             ("FmodEmitter", 32), ("PlayerRoster", 33), ("BonePose", 34), ("EnemySpawn", 35),
             ("PartyLife", 40), ("PartySave", 41), ("PartyRoom", 42), ("WorldPickupDeny", 60),
             ("AvatarOneShot", 61), ("BossHit", 62), ("EnemyAction", 63), ("FmodEmitterRequest", 67), ("DropRekey", 73),
-            ("SceneDiff", 74), ("WorldDigest", 75),
+            ("SceneDiff", 74), ("WorldDigest", 75), ("PeerScenes", 76), ("WorldRelay", 77),
         };
 
         public static readonly (string Name, int Value)[] T_InteractionKind =

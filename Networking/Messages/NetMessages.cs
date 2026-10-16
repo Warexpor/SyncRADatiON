@@ -59,7 +59,11 @@ namespace SyncRADation.Networking
         SceneDiff = 74,
         /// <summary>Host → all: the host's shared-world digest (chunked). Client → host: what it found different (log lines).</summary>
         WorldDigest = 75,
-        _Highest = 75
+        /// <summary>Host → all: the scene every ready peer is in (scene owners follow from it, SceneOwners).</summary>
+        PeerScenes = 76,
+        /// <summary>World traffic of a scene the host is not in, carried through the host (WorldRelayMessage modes).</summary>
+        WorldRelay = 77,
+        _Highest = 77
     }
 
     public enum InteractionKind : byte
@@ -147,6 +151,97 @@ namespace SyncRADation.Networking
             for (int i = 0; i < n; i++)
                 ids[i] = r.GetInt();
             return new PlayerRosterMessage { PlayerIds = ids, HostFlags = r.GetByte() };
+        }
+    }
+
+    /// <summary>
+    /// Host → all: every ready peer's scene (the host's own included; empty while loading, the host's pending load
+    /// target while it loads). Each peer derives the owner of a scene from it: the host in its scene, otherwise the
+    /// lowest player id there (SceneOwners).
+    /// </summary>
+    public struct PeerScenesMessage
+    {
+        /// <summary>Player ids; Scenes[i] is the scene of PlayerIds[i] ("" = loading / unknown).</summary>
+        public int[] PlayerIds;
+        public string[] Scenes;
+
+        public void Serialize(NetDataWriter w)
+        {
+            int n = PlayerIds != null ? PlayerIds.Length : 0;
+            n = NetWire.ClampCount(n, NetWire.MaxRoster, "PeerScenes ids");
+            w.Put((byte)n);
+            for (int i = 0; i < n; i++)
+                w.Put(PlayerIds[i]);
+            int m = Scenes != null ? Scenes.Length : 0;
+            m = NetWire.ClampCount(m, NetWire.MaxRoster, "PeerScenes scenes");
+            w.Put((byte)m);
+            for (int i = 0; i < m; i++)
+                NetWire.PutString(w, Scenes[i]);
+        }
+
+        public static PeerScenesMessage Deserialize(NetDataReader r)
+        {
+            int n = r.GetByte();
+            if (n > NetWire.MaxRoster)
+                throw new System.IO.InvalidDataException("PeerScenes count " + n);
+            var ids = n > 0 ? new int[n] : Array.Empty<int>();
+            for (int i = 0; i < n; i++)
+                ids[i] = r.GetInt();
+            int m = r.GetByte();
+            if (m > NetWire.MaxRoster)
+                throw new System.IO.InvalidDataException("PeerScenes count " + m);
+            var scenes = m > 0 ? new string[m] : Array.Empty<string>();
+            for (int i = 0; i < m; i++)
+                scenes[i] = r.GetString();
+            return new PeerScenesMessage { PlayerIds = ids, Scenes = scenes };
+        }
+    }
+
+    /// <summary>
+    /// World traffic of a scene a client owns (no host there), carried through the host. Payload is one complete
+    /// message (type byte first). Modes: <see cref="ToScene"/> owner → host, the host sends the payload to every peer
+    /// in the owner's scene but the owner and <see cref="Target"/>; <see cref="ToPlayer"/> owner → host, the host
+    /// sends it to <see cref="Target"/>; <see cref="ToOwner"/> host → owner, a follower's request (<see cref="From"/>)
+    /// the owner handles as the host would.
+    /// </summary>
+    public struct WorldRelayMessage
+    {
+        public const byte ToScene = 0;
+        public const byte ToPlayer = 1;
+        public const byte ToOwner = 2;
+
+        public byte Mode;
+        public int From;
+        public int Target;
+        /// <summary>1: continuous state (Sequenced on the State channel), 0: event (ReliableOrdered).</summary>
+        public byte State;
+        public byte[] Payload;
+
+        public void Serialize(NetDataWriter w)
+        {
+            w.Put(Mode);
+            w.Put(From);
+            w.Put(Target);
+            w.Put(State);
+            int n = Payload != null ? Payload.Length : 0;
+            n = NetWire.ClampCount(n, NetWire.MaxRelayBytes, "WorldRelay");
+            w.Put(n);
+            if (n > 0) w.Put(Payload, 0, n);
+        }
+
+        public static WorldRelayMessage Deserialize(NetDataReader r)
+        {
+            var msg = new WorldRelayMessage
+            {
+                Mode = r.GetByte(),
+                From = r.GetInt(),
+                Target = r.GetInt(),
+                State = r.GetByte()
+            };
+            int n = NetWire.ReadCount(r, NetWire.MaxRelayBytes, "WorldRelay");
+            msg.Payload = n > 0 ? new byte[n] : Array.Empty<byte>();
+            if (n > 0) r.GetBytes(msg.Payload, n);
+            return msg;
         }
     }
 

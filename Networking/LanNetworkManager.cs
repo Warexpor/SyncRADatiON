@@ -470,6 +470,7 @@ namespace SyncRADation.Networking
             if (!HasReadyPeers)
                 return;
 
+            try { SceneOwners.Tick(this); } catch (Exception ex) { TickFailed("owners", ex); }
             try { StateBeat.Tick(this); } catch (Exception ex) { TickFailed("stateBeat", ex); }
             try { NetStats.Tick(this); } catch (Exception ex) { TickFailed("netStats", ex); }
             try { DesyncCheck.TickHost(this); } catch (Exception ex) { TickFailed("desync", ex); }
@@ -623,18 +624,32 @@ namespace SyncRADation.Networking
         /// <summary>Host → every handshaken peer except excludePlayerId. Pre-handshake peers never receive relays.</summary>
         public void RelayRaw(NetDataWriter writer, DeliveryMethod method, int excludePlayerId)
         {
+            if (ClientOwnerSend)
+            {
+                // A client owner relaying a follower's change: the host sends it to the others in this scene.
+                if (ClientOwnerAlone(writer)) return;
+                SendRelayViaHost(WorldRelayMessage.ToScene, excludePlayerId, writer, false);
+                return;
+            }
             if (_role != NetworkRole.Host) return;
+            bool sceneWorld = IsSceneWorld(writer.Data, 0, writer.Length);
             foreach (var kvp in _peers)
             {
                 if (kvp.Key == excludePlayerId) continue;
                 if (kvp.Key == _localPlayerId) continue;
                 if (!_readyPeers.Contains(kvp.Key)) continue;
+                if (sceneWorld && !PeerInHostScene(kvp.Key)) continue;
                 SendPeer(kvp.Value, writer, method, NetChannels.Events);
             }
         }
 
         internal void SendToPlayer(int playerId, NetDataWriter writer, DeliveryMethod method)
         {
+            if (ClientOwnerSend && playerId != 0)
+            {
+                if (playerId != _localPlayerId) SendRelayViaHost(WorldRelayMessage.ToPlayer, playerId, writer, false);
+                return;
+            }
             NetPeer peer;
             if (_readyPeers.Contains(playerId) && _peers.TryGetValue(playerId, out peer))
                 SendPeer(peer, writer, method, NetChannels.Events);
@@ -647,9 +662,14 @@ namespace SyncRADation.Networking
                 SendToPlayer(_unicastPlayerId, writer, method);
                 return;
             }
+            // The host's own scene world goes to the peers in its scene only: a peer elsewhere gets its scene's world
+            // from that scene's owner (SceneRelay).
+            if (ClientOwnerAlone(writer)) return;
+            bool sceneWorld = _role == NetworkRole.Host && IsSceneWorld(writer.Data, 0, writer.Length);
             foreach (var kvp in _peers)
             {
                 if (!_readyPeers.Contains(kvp.Key)) continue;
+                if (sceneWorld && !PeerInHostScene(kvp.Key)) continue;
                 SendPeer(kvp.Value, writer, method, NetChannels.Events);
             }
         }
@@ -660,19 +680,27 @@ namespace SyncRADation.Networking
         /// </summary>
         internal void BroadcastState(NetDataWriter writer)
         {
-            // The snapshots describe the host's scene: a peer in another one (players travel on their own) has none of
-            // those objects and only logged misses for every one of them.
+            // The snapshots describe the sender's scene: a peer in another one has none of those objects.
             if (_unicastPlayerId >= 0)
             {
+                if (ClientOwnerSend)
+                {
+                    if (_unicastPlayerId != 0 && _unicastPlayerId != _localPlayerId)
+                        SendRelayViaHost(WorldRelayMessage.ToPlayer, _unicastPlayerId, writer, true);
+                    return;
+                }
                 NetPeer target;
                 if (_readyPeers.Contains(_unicastPlayerId) && PeerInHostScene(_unicastPlayerId)
                     && _peers.TryGetValue(_unicastPlayerId, out target))
                     SendPeer(target, writer, DeliveryMethod.Sequenced, NetChannels.State);
                 return;
             }
+            // A client owner's snapshot goes to the host as is; the host sends it on to this scene (SceneRelay).
+            bool owner = ClientOwnerSend;
+            if (owner && ClientOwnerAlone(writer)) return;
             foreach (var kvp in _peers)
             {
-                if (!_readyPeers.Contains(kvp.Key) || !PeerInHostScene(kvp.Key)) continue;
+                if (!_readyPeers.Contains(kvp.Key) || (!owner && !PeerInHostScene(kvp.Key))) continue;
                 SendPeer(kvp.Value, writer, DeliveryMethod.Sequenced, NetChannels.State);
             }
         }
@@ -685,10 +713,18 @@ namespace SyncRADation.Networking
                     SendToPlayer(_unicastPlayerId, writer, method);
                 return;
             }
+            if (ClientOwnerSend && exceptPlayerId >= 1 && exceptPlayerId != _localPlayerId)
+            {
+                if (ClientOwnerAlone(writer)) return;
+                SendRelayViaHost(WorldRelayMessage.ToScene, exceptPlayerId, writer, false);
+                return;
+            }
+            bool sceneWorld = _role == NetworkRole.Host && IsSceneWorld(writer.Data, 0, writer.Length);
             foreach (var kvp in _peers)
             {
                 if (kvp.Key == exceptPlayerId) continue;
                 if (!_readyPeers.Contains(kvp.Key)) continue;
+                if (sceneWorld && !PeerInHostScene(kvp.Key)) continue;
                 SendPeer(kvp.Value, writer, method, NetChannels.Events);
             }
         }
@@ -822,6 +858,7 @@ namespace SyncRADation.Networking
                 _peerScenes.Remove(playerId);
                 if (_role == NetworkRole.Host)
                 {
+                    SceneOwners.HostRecompute(this);
                     SessionHandlers.NotePeerGone(playerId);
                     SceneHandlers.NotePeerGone(playerId);
                     RebuildHostSession();
@@ -1052,6 +1089,8 @@ namespace SyncRADation.Networking
                         SessionHandlers.DeferDump(-1);
                     return;
                 }
+                // The owner table first: the dump that follows goes by it.
+                if (_role == NetworkRole.Host) SceneOwners.HostRecompute(this);
                 SceneHandlers.BroadcastSceneHello();
                 if (_role == NetworkRole.Host)
                 {

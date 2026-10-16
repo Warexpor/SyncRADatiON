@@ -115,6 +115,25 @@ namespace SyncRADation.Sync
             }
         }
 
+        // ---- Scene world (Sync/SceneOwners): enemies, bosses, doors, puzzles, scene cutscenes / zones, world sounds.
+        // The host runs its own scene; a scene without the host is run by the lowest player id in it. Story, storage,
+        // key ring, pickups, party life and saves stay Host / Client.
+
+        /// <summary>Live and this peer runs its scene's world: the host, or a client owning a scene the host is not in.</summary>
+        public static bool SceneOwner => Host || (Client && SceneOwners.LocalOwns);
+
+        /// <summary>SceneOwner on the raw role (packet handlers / teardown).</summary>
+        public static bool SceneOwnerRole => HostRole || (ClientRole && SceneOwners.LocalOwns);
+
+        /// <summary>Live client whose scene's world another peer runs (the host, or a lower-id client).</summary>
+        public static bool SceneFollower => Client && !SceneOwners.LocalOwns;
+
+        /// <summary>SceneFollower on the raw role.</summary>
+        public static bool SceneFollowerRole => ClientRole && !SceneOwners.LocalOwns;
+
+        /// <summary>A client running a scene the host is not in (it relays its world through the host).</summary>
+        public static bool ClientSceneOwner => ClientRole && SceneOwners.LocalOwns;
+
         /// <summary>Host or offline / solo: this install owns the world (not a client in any phase). Same as !ClientRole.</summary>
         public static bool WorldOwner => !ClientRole;
     }

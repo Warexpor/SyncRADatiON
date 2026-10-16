@@ -195,6 +195,8 @@ namespace SyncRADation.Networking
             _net.NotePeerScene(msg.SenderPlayerId, msg.SceneName ?? "");
             if (msg.SenderPlayerId == 0)
                 _net.SetHostSceneName(msg.SceneName ?? "");
+            // Before anything this peer sends next (its snapshot request) is routed by it.
+            if (NetGate.HostRole) SceneOwners.HostRecompute(_net);
 
             // WorldId divergence: host compares a client's checksum, a client remembers the host's and self-checks.
             if (NetGate.HostRole)

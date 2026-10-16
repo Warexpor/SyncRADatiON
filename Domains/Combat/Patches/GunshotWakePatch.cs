@@ -1,4 +1,4 @@
-// Gunshot wake — host HandleRequest / client emit Gunshot at player pos.
+// Gunshot wake — scene owner HandleRequest / follower emits Gunshot at player pos.
 using HarmonyLib;
 using SyncRADation.Networking;
 using SyncRADation.Sync;
@@ -25,10 +25,10 @@ namespace SyncRADation.Patches
                 Float1 = pos.y,
                 Float2 = pos.z
             };
-            if (NetGate.Host)
+            // The scene's owner wakes its enemies at once; a follower asks the owner (a client owner through the host).
+            if (NetGate.SceneOwner)
                 InteractionSyncService.HandleRequest(msg);
-            // A client alone in its scene: its own enemies heard the shot natively; the host's are in another scene.
-            else if (!SceneFollowService.ClientAwayFromHost())
+            else
                 LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(
                     0, InteractionKind.Gunshot, 0, 0, pos.x, pos.y, pos.z, "");
         }

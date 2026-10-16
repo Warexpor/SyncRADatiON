@@ -34,7 +34,8 @@ namespace SyncRADation.Networking
             if (kind != InteractionKind.Gunshot)
                 PlaytestLog.Event("Interact", "request " + kind + " id=" + worldId.ToString("X16")
                     + (kind == InteractionKind.InspectFlag ? InteractionSyncService.FlagLabel(int0, int1, f0, text) : ""));
-            if (NetGate.HostRole)
+            // The host answers everything; a client running its scene answers that scene's requests itself.
+            if (NetGate.HostRole || (NetGate.ClientSceneOwner && InteractionSyncService.IsSceneRequest(kind, int0)))
             {
                 InteractionSyncService.HandleRequest(msg);
                 return;
@@ -60,13 +61,13 @@ namespace SyncRADation.Networking
             writer.Put((byte)NetMessageType.InteractionAck);
             msg.Serialize(writer);
             if (targetPlayerId == _net.LocalPlayerId) return;
-            if (_net.TryGetPeer(targetPlayerId, out var peer) && peer.ConnectionState == ConnectionState.Connected)
-                SyncRADation.Sync.NetStats.Send(peer, writer, DeliveryMethod.ReliableOrdered);
+            // A scene owner that is a client reaches the requester through the host (SendToPlayer relays it).
+            _net.SendToPlayer(targetPlayerId, writer, DeliveryMethod.ReliableOrdered);
         }
 
         internal void HandleInteractionRequest(InteractionRequestMessage msg)
         {
-            if (NetGate.HostRole)
+            if (NetGate.HostRole || (NetGate.ClientSceneOwner && InteractionSyncService.IsSceneRequest(msg.Kind, msg.Int0)))
                 InteractionSyncService.HandleRequest(msg);
         }
 

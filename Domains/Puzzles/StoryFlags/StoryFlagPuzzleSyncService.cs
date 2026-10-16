@@ -18,7 +18,7 @@ namespace SyncRADation.Networking
 
         internal static PuzzleStateEntry ReadCutscene(CutsceneManager x, long wid)
         {
-            if (x.completed && NetGate.Host) CutsceneSync.PersistCompleted(x);
+            if (x.completed && NetGate.SceneOwner) CutsceneSync.PersistCompleted(x);
             return Mk(PuzzleType.CutsceneCompleted, wid, x.completed, false, false, 0, 0, 0, 0, 0);
         }
 

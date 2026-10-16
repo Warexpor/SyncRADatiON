@@ -8,10 +8,22 @@ namespace SyncRADation.Networking
 {
     public static partial class InteractionSyncService
     {
+        /// <summary>Interactions the scene's owner answers (the rest are the host's: story, storage, drops, keys).</summary>
+        internal static bool IsSceneKind(InteractionKind k) =>
+            k == InteractionKind.EventZone || k == InteractionKind.CutsceneStart || k == InteractionKind.CutsceneDone
+            || k == InteractionKind.MultiCondition || k == InteractionKind.Gunshot;
+
+        /// <summary>A scene kind, or a story request that belongs to the scene it ran in (party cheat, goToPenny).</summary>
+        internal static bool IsSceneRequest(InteractionKind k, int int0) =>
+            IsSceneKind(k) || (k == InteractionKind.InspectFlag
+                && (int0 == 100 + (int)StoryCmd.PartyCheat || int0 == 100 + (int)StoryCmd.GoToPenny));
+
         public static void HandleRequest(InteractionRequestMessage msg)
         {
             var net = LanNetworkManager.Instance;
-            if (net == null || !NetGate.HostRole) return;
+            if (net == null) return;
+            bool clientOwner = NetGate.ClientSceneOwner && IsSceneRequest(msg.Kind, msg.Int0);
+            if (!NetGate.HostRole && !clientOwner) return;
 
             ulong id = unchecked((ulong)msg.WorldId);
             bool ok = false;
@@ -41,6 +53,9 @@ namespace SyncRADation.Networking
             int prevSender = NetGate.ApplySender;
             if (msg.SenderPlayerId >= 1 && msg.SenderPlayerId != net.LocalPlayerId)
                 NetGate.ApplySender = msg.SenderPlayerId;
+            // A client running its scene: the flags this request's world mutation writes are the shared story's,
+            // so they go to the host like any client consequence (StoryPatches.GateSet author scope).
+            if (clientOwner) StorySyncService.BeginAuthorScope();
             try
             {
                 switch (msg.Kind)
@@ -68,7 +83,7 @@ namespace SyncRADation.Networking
                         break;
                     case InteractionKind.Gunshot:
                         // A shot from a peer in another scene (sent just before either of them loaded) is not here.
-                        if (net.PeerInHostScene(msg.SenderPlayerId))
+                        if (net.PeerInMyScene(msg.SenderPlayerId))
                             ApplyGunshot(new Vector3(msg.Float0, msg.Float1, msg.Float2), net);
                         ok = true;
                         break;
@@ -91,6 +106,7 @@ namespace SyncRADation.Networking
             finally
             {
                 NetGate.ApplySender = prevSender;
+                if (clientOwner) StorySyncService.EndAuthorScope();
             }
 
             if (msg.Kind != InteractionKind.Gunshot)

@@ -353,12 +353,12 @@ namespace SyncRADation.Networking
             if (!IsPartyCheat(cheat)) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected || !net.HasReadyPeers) return;
-            // A client alone in its scene: the goto / sethp is for that scene, nobody else is in it.
-            if (SceneFollowService.ClientAwayFromHost()) return;
             if (CheatRecently(cheat)) return;
-            if (NetGate.HostRole)
+            // The goto / sethp is for the scene it ran in: its owner relays it to the peers there (a client owner
+            // through the host), a follower asks the owner.
+            if (NetGate.SceneOwnerRole)
             {
-                PlaytestLog.Event("Story", "relay party cheat '" + cheat + "' origin=host");
+                PlaytestLog.Event("Story", "relay party cheat '" + cheat + "' origin=p" + net.LocalPlayerId);
                 BroadcastPresentation(StoryCmd.PartyCheat, 0, net.LocalPlayerId, cheat);
                 return;
             }
@@ -366,13 +366,13 @@ namespace SyncRADation.Networking
             net.InteractionHandlers.SendInteractionRequest(0, InteractionKind.InspectFlag, 100 + (int)StoryCmd.PartyCheat, 0, 0f, 0f, 0f, cheat);
         }
 
-        /// <summary>Host: a client ran a scripted cheat; run it here too and relay to the others.</summary>
+        /// <summary>Scene owner: a follower ran a scripted cheat; run it here too and relay to the others there.</summary>
         public void HostPartyCheat(string cheat, int senderId)
         {
             if (!IsPartyCheat(cheat)) return;
             var net = LanNetworkManager.Instance;
-            if (net == null || !NetGate.HostRole) return;
-            if (!net.PeerInHostScene(senderId))
+            if (net == null || !NetGate.SceneOwnerRole) return;
+            if (!net.PeerInMyScene(senderId))
             {
                 PlaytestLog.Event("Story", "drop party cheat '" + cheat + "' from p" + senderId + " (another scene)");
                 return;

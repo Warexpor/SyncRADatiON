@@ -64,7 +64,7 @@ namespace SyncRADation.Networking
         internal static void ApplyAraNest(AraNest x, PuzzleStateEntry e)
         {
             if (x == null) return;
-            if (!Sync.NetGate.Host) SyncRADation.Patches.AraNestUpdatePeerPatch.NoteHost(x, e.Bool0);
+            if (!Sync.NetGate.SceneOwner) SyncRADation.Patches.AraNestUpdatePeerPatch.NoteHost(x, e.Bool0);
             if (e.Bool0)
             {
                 if (!x.triggered)

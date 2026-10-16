@@ -37,7 +37,7 @@ Namespaces stay `SyncRADation.Networking` / `.Patches` / `.Players` / `.ItemSyst
 ## Hard rules
 
 1. Cross-peer identity is `WorldId` (`hash(scene + hierarchy path)`), never `GetInstanceID()`.
-2. Host authority for world state in the host's scene; level loads are personal, and a client alone in another scene runs it locally while its story flags still go to the host. Inventories stay independent, keys included (the storage box is shared).
+2. Scene world authority is per scene (`Sync/SceneOwners`): the host in its scene, else the lowest player id there (`NetGate.SceneOwner` / `SceneFollower`; a client owner's traffic goes through the host). Story, storage, key ring, pickups, party life and saves are always the host's. Level loads are personal. Inventories stay independent, keys included (the storage box is shared).
 3. Reverse-check both arrows (host↔client initiator, in-room vs late-join) before calling a sync path fixed (`.cursor/rules/gamedev-reverse-check.mdc`).
 4. No park / no defer: finish the work in place, bump the protocol when the wire needs it (`.cursor/rules/no-park-no-defer.mdc`). Intentional locals in `docs/SYNC.md` are design, not parked work.
 5. Only sync vanilla fields/methods backed by the decompile.

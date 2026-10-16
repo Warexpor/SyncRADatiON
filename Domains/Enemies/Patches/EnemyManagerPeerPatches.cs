@@ -19,7 +19,7 @@ namespace SyncRADation.Patches
         public static void Prefix(EnemyManager._CheckIfLeft_d__23 __instance, out PeerRoomEnemies.PeerView? __state)
         {
             __state = null;
-            if (!NetGate.Host) return;
+            if (!NetGate.SceneOwner) return;
             try
             {
                 var m = __instance.__4__this;
@@ -111,7 +111,7 @@ namespace SyncRADation.Patches
 
         static bool LiveForPeer(EnemyManager m, Room enterRoom)
         {
-            if (!NetGate.Host || m == null || enterRoom == null || !m.inOperation || m.room != enterRoom) return false;
+            if (!NetGate.SceneOwner || m == null || enterRoom == null || !m.inOperation || m.room != enterRoom) return false;
             if (global::Cheats.tourist) return false;
             var net = LanNetworkManager.Instance;
             return net != null && PeerRoomEnemies.PeerIn(enterRoom, net.ProxyManager, net.GetRemotePlayerIds()) != null;
@@ -173,7 +173,7 @@ namespace SyncRADation.Patches
         public static void Prefix(Room._delayedDisabling_d__28 __instance, out Room __state)
         {
             __state = null;
-            if (!NetGate.Host) return;
+            if (!NetGate.SceneOwner) return;
             try
             {
                 var room = __instance.__4__this;

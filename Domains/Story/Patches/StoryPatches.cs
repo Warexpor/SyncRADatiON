@@ -312,14 +312,13 @@ namespace SyncRADation.Patches
         {
             if (NetGate.IsApplying || !NetGate.Party) return true;
             var net = LanNetworkManager.Instance;
-            if (NetGate.Host)
+            // The finale scene's owner (the host, or the lowest client there) runs it and relays it; a follower asks.
+            if (NetGate.SceneOwner)
             {
                 if (net.StorySync.Throttled("@goToPenny", 5f)) return false;
                 net.StorySync.BroadcastPresentation(StoryCmd.GoToPenny, 0, 0, "");
                 return true;
             }
-            // Alone in the finale scene: the host has no Finale to run it on, and its relay would be dropped here.
-            if (SceneFollowService.ClientAwayFromHost()) return true;
             net.InteractionHandlers.SendInteractionRequest(0, InteractionKind.InspectFlag, 100 + (int)StoryCmd.GoToPenny);
             return false;
         }

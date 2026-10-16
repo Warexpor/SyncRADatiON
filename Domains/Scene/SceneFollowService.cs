@@ -1,7 +1,7 @@
 // Scene follow: every chapter / level load is personal (each player travels on their own). The host still announces
 // its loads (SceneFollow) and its scene (SceneHello); a client only acts on them right after it connects (it goes to
 // the host's scene once) or from a title-flow scene. A party wipe reloads everyone (NetworkDamageSystem.FollowWipeReload).
-// A client in a scene the host is not in runs that scene like solo (ClientAwayFromHost); its SProgress writes still
+// A scene the host is not in is run by the lowest client id there (Sync/SceneOwners); its SProgress writes still
 // reach the host, which is how vanilla keeps a scene's progress across loads.
 using SyncRADation.ItemSystem;
 using SyncRADation.Patches;
@@ -155,6 +155,9 @@ namespace SyncRADation.Networking
                 && Time.unscaledTime - _pendingAt < InflightWindow;
         }
 
+        /// <summary>The scene this peer's load in flight is going to (null when none).</summary>
+        public static string PendingTarget => !string.IsNullOrEmpty(_pending) && Time.unscaledTime - _pendingAt < InflightWindow ? _pending : null;
+
         public static void NoteGoingTo(string sceneName)
         {
             if (IsTransient(sceneName)) return;
@@ -214,17 +217,6 @@ namespace SyncRADation.Networking
 
         /// <summary>Client in a title-flow scene (MainMenu, StartupPC, Profile Select): its level loads are the host's.</summary>
         public static bool LocalInTitleFlow() => IsLeaveGame(ActiveScene());
-
-        /// <summary>
-        /// Client in a scene the host is not in: that scene runs here like solo (cutscenes, EventZones,
-        /// MultiConditions, enemies), its SProgress writes still forward to the host.
-        /// </summary>
-        public static bool ClientAwayFromHost()
-        {
-            if (!NetGate.Client) return false;
-            var net = LanNetworkManager.Instance;
-            return net != null && net.SceneMismatch;
-        }
 
         /// <summary>Client tick: run a held join follow once this player's cutscene is over.</summary>
         public static void TickClient()

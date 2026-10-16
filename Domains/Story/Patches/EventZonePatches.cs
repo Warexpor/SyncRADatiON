@@ -1,4 +1,4 @@
-// Client EventZone → host request; host Presentation broadcast.
+// Follower EventZone → scene owner request; owner Presentation broadcast.
 using HarmonyLib;
 using SyncRADation.Networking;
 using SyncRADation.Sync;
@@ -62,8 +62,8 @@ namespace SyncRADation.Patches
         [HarmonyPrefix]
         public static bool Prefix(EventZone __instance)
         {
-            // The host always runs native Update (keycard-slot / lock zones and its own party zones alike).
-            if (NetGate.IsApplying || !NetGate.Party || NetGate.Host) return true;
+            // The scene's owner always runs native Update (keycard-slot / lock zones and its own party zones alike).
+            if (NetGate.IsApplying || !NetGate.Party || NetGate.SceneOwner) return true;
             if (__instance == null || __instance.triggered) return true;
 
             // Out of range the native Update only checks gameState: nothing to gate.
@@ -75,8 +75,6 @@ namespace SyncRADation.Patches
             // Client skips so airlock titles stay local and are not remoted as a party EventZone.
             if (kind == KindAirlock) return false;
             if (kind == KindLock) return true;
-            // The host is in another scene: it has no such zone, so the request would never fire it.
-            if (SceneFollowService.ClientAwayFromHost()) return true;
 
             try
             {
@@ -96,14 +94,14 @@ namespace SyncRADation.Patches
         [HarmonyPostfix]
         public static void Postfix(EventZone __instance)
         {
-            if (!NetGate.Host || NetGate.IsApplying || !NetGate.Party) return;
+            if (!NetGate.SceneOwner || NetGate.IsApplying || !NetGate.Party) return;
             if (__instance == null || !__instance.triggered) return;
             if (!_handled.Add(__instance.GetInstanceID())) return;
             if (KindOf(__instance) == KindAirlock) return;
             if (LocalInspect.LockWorld(__instance.gameObject)) return;
             ulong id = WorldId.FromGameObject(__instance.gameObject);
             if (!_fired.Add(id)) return;
-            // Host ran onInRange natively in its own room: it counted any END effects.
+            // The owner ran onInRange natively in its own room: it counted any END effects.
             LanNetworkManager.Instance.StorySync.BroadcastPresentation(StoryCmd.EventZoneFire, id, 0,
                 StoryWire.WithRoom(StoryWire.HostCounted, LocalInspect.LocalRoomKey()));
         }

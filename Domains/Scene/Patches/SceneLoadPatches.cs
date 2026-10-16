@@ -45,6 +45,7 @@ namespace SyncRADation.Patches
                 // in a title-flow scene) and a wipe reload.
                 SceneFollowService.NoteGoingTo(scene);
                 PlaytestLog.Event("Scene", "host load '" + scene + "'");
+                SceneOwners.HostRecompute(LanNetworkManager.Instance);
                 LanNetworkManager.Instance.SceneHandlers.SendSceneFollow(scene, false);
                 return true;
             }

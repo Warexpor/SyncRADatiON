@@ -6,7 +6,7 @@ namespace SyncRADation.Networking
 {
     public sealed partial class LanNetworkManager
     {
-        bool TryDispatchPlayers(NetMessageType type, NetPacketReader reader, int senderId)
+        bool TryDispatchPlayers(NetMessageType type, LiteNetLib.Utils.NetDataReader reader, int senderId)
         {
             switch (type)
             {
@@ -22,7 +22,7 @@ namespace SyncRADation.Networking
             case NetMessageType.PlayerVital:
             {
                 var vital = PlayerVitalMessage.Deserialize(reader);
-                if (_role == NetworkRole.Host) vital.SenderPlayerId = senderId; // identity = peer map, not wire
+                if (StampsSender) vital.SenderPlayerId = senderId; // identity = peer map, not wire
                 AvatarHandlers.HandlePlayerVital(vital, senderId);
                 return true;
             }
@@ -80,7 +80,7 @@ namespace SyncRADation.Networking
             case NetMessageType.DeathPolicy:
             {
                 var dp = DeathPolicyMessage.Deserialize(reader);
-                if (_role == NetworkRole.Host) dp.SenderPlayerId = senderId;
+                if (StampsSender) dp.SenderPlayerId = senderId;
                 if (_role == NetworkRole.Host && dp.Kind == DeathKind.ClientDowned)
                 {
                     // Relay (3+ players): every other client learns at once that this one is down, instead of waiting

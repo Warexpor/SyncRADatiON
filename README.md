@@ -2,7 +2,7 @@
 
 LAN/VPN co-op for **SIGNALIS**, for **2 to 8 players** (default 4). One player hosts and owns the world and story. Everyone else plays as a real Elster and their actions go through the host.
 
-**Status: 0.5.75, protocol 21, pre-release.** This build is in the playtest phase. Only LOV_Reeducation into DET_Detention has been played with two players so far, so expect bugs. Back up your saves before you try it.
+**Status: 0.5.76, protocol 22, pre-release.** This build is in the playtest phase. Only LOV_Reeducation into DET_Detention has been played with two players so far, so expect bugs. Back up your saves before you try it.
 
 ## Requirements
 
@@ -87,7 +87,7 @@ A solo game (no session running) behaves like vanilla SIGNALIS.
 
 ## Known limitations
 
-- Pre-release: the whole 0.5.57 to 0.5.75 feature set (death/revive, party save, 3+ players, boss and enemy client hits, puzzle merging, personal keys) is compile- and unit-tested; dual-box sessions have been played through LOV_Reeducation into DET_Detention, the rest of the game has not.
+- Pre-release: the whole 0.5.57 to 0.5.76 feature set (death/revive, party save, 3+ players, boss and enemy client hits, puzzle merging, personal keys) is compile- and unit-tested; dual-box sessions have been played through LOV_Reeducation into DET_Detention, the rest of the game has not.
 - A client's "quit to menu" is blocked silently.
 - If a client joins while loading, it may wait up to 6 seconds for the host's state and then start from local defaults. Use **Resync world**.
 - A Falke spear held only by a client may not count as held for the Falke fight.

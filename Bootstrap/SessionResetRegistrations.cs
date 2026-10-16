@@ -100,6 +100,7 @@ namespace SyncRADation
             SessionReset.Register("WipePlacement", Connection, WipePlacement.Reset);
             SessionReset.Register("DynamicSupply", Scene | Session, DynamicSupplySync.Reset);       // armed by the wipe itself: not on the wipe run
             SessionReset.Register("SceneFollow", Connection, SceneFollowService.Reset);
+            SessionReset.Register("SceneOwners", Connection, SceneOwners.Reset);
             SessionReset.Register("SceneWorldDiff", Connection, () => Net()?.SceneHandlers.Reset()); // WorldId divergence state
             SessionReset.Register("StorageTxn", Connection, StorageTxn.Reset);            // drops an in-flight put/take (a put stays boxed host-side)
             SessionReset.Register("DroppedItems", Connection, DroppedItemRegistry.ClearAll); // wipe clears them in the Load postfix; also DroppedItemTemplateCache
