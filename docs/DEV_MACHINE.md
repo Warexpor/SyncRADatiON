@@ -11,6 +11,8 @@
 
 Proton ignores MelonLoader's `version.dll` unless native wins. Host Steam launch options: `WINEDLLOVERRIDES="version=n,b" %command% -screen-fullscreen 0 -screen-width 1280 -screen-height 720` (also prefix `DllOverrides`); `secondsignalis` uses the same. Hyprland floats both as centered 1280x720 windows: Steam host top (`steam_app_1262350`), Proton client bottom (`SIGNALIS.exe`). The host size also lives in its prefix registry (`Screenmanager Resolution Width/Height`).
 
+**Mouse:** both dev installs run `FreeCursor = true` (the pointer is never trapped in one window). First-person scenes still lock it for mouse look while that window has focus: **F9** frees it, and so does switching windows (Alt+Tab / Hyprland focus keys); it locks again when the window gets focus back. `[Cursor]` lines log F9.
+
 Debug deploy copies the DLL to **both** `Mods/` folders. csproj names: `SignalisDir` = copy, `ClientSignalisDir` = Steam (deploy labels, not playtest roles).
 
 **Audio:** user service `signalis-volume` (`scripts/signalis-volume-watch.sh`) sets each new SIGNALIS stream once: host (prefix `compatdata/1262350`) 60%, client (`compatdata/syncradation-client`) muted. Off: `systemctl --user disable --now signalis-volume`.

@@ -14,6 +14,9 @@ Protocol **v21** (unchanged). From the first 0.5.73 session (LOV_Reeducation, Su
 - **The client froze for over 100 s after the host quit** (`[Stall] main thread stuck 100144ms phase after=pollEvents`): stopping LiteNetLib joins its socket threads, and under Proton that join hung on the game thread. The socket now closes on a background thread. Hosting again waits up to 3 s for the old port, and quitting waits 1.5 s so the disconnect goes out.
 - **First-person scenes could not be played with `FreeCursor` on**: `EventWalking` locks the mouse for mouse look, and the mod rewrote that lock to "free", so the pointer ran into the window edge or out of the window. The lock now stays while the window has focus. **F9** frees the mouse, and so does switching windows (Alt+Tab or the compositor's focus keys). The lock comes back when the window has focus again. Confined (third-person aim) is still never applied.
 
+### Docs
+- README status and known limitations, `docs/PLAYTEST.md` target build (was 0.5.65) and the played range brought up to date; `docs/DEV_MACHINE.md` covers the dev-box mouse (FreeCursor, F9); a stale path in `docs/SYNC.md`.
+
 ## 0.5.73 — 2026-10-10
 
 Protocol **v21** (unchanged). Logging only: the 0.5.72 session had many more bugs on screen than its logs showed.
