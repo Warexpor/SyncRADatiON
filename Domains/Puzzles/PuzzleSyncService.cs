@@ -904,6 +904,9 @@ namespace SyncRADation.Networking
                     // held re-snap on room entry: marked, so the diff reports it apart from awake differences.
                     bool awake = false;
                     try { awake = kvp.Value.gameObject.activeInHierarchy; } catch (Exception ex) { Guard.Swallow(ex); }
+                    // A cutscene still playing here: skips are per player, the watcher's end settles it (not a desync).
+                    if (awake && typeMap.Key == PuzzleType.CutsceneCompleted)
+                        awake = !CutsceneSync.StartedHere(kvp.Value.TryCast<CutsceneManager>());
                     into.Add(PilotLine(e, ci) + (awake ? "" : " asleep"));
                     if (spec != null && spec.FirstInstanceOnly) break;
                 }

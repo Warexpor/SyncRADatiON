@@ -75,8 +75,9 @@ namespace SyncRADation.Sync
                 foreach (var c in Resources.FindObjectsOfTypeAll<CutsceneManager>())
                 {
                     if (c == null || !c.gameObject.scene.IsValid()) continue;
-                    lines.Add("cutscene " + WorldId.FromGameObject(c.gameObject).ToString("X16") + " completed=" + c.completed
-                        + " " + Owner(c));
+                    // Still playing here: skips are per player, the watcher's end settles it ("asleep": not compared).
+                    lines.Add("cutscene " + WorldId.FromGameObject(c.gameObject).ToString("X16") + " completed="
+                        + (CutsceneSync.StartedHere(c) ? "asleep" : c.completed.ToString()) + " " + Owner(c));
                 }
             }
             catch (Exception e) { Guard.Swallow(e); }

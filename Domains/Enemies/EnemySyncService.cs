@@ -202,12 +202,14 @@ namespace SyncRADation.Networking
             float animTime = 0f, fwd = 0f, turn = 0f, hitX = 0f, hitY = 0f;
             bool sleepAnim = false;
             var anim = e.animator;
-            if (anim != null)
+            // A sleeping room chunk: the animator is off and reads its default (standing) state with every parameter
+            // false. Sent, that stood a client's sleeping puppet up until this room woke here (AnimHash 0 = no anim).
+            if (anim != null && anim.isActiveAndEnabled && anim.isInitialized)
             {
                 var si = anim.GetCurrentAnimatorStateInfo(0);
                 animHash = si.fullPathHash;
                 animTime = si.normalizedTime;
-                int mask = HostAnimParams(anim);
+                int mask = Mathf.Max(0, HostAnimParams(anim));
                 if ((mask & ParamForward) != 0) fwd = anim.GetFloat(AnimForward);
                 if ((mask & ParamTurn) != 0) turn = anim.GetFloat(AnimTurn);
                 if ((mask & ParamHitX) != 0) hitX = anim.GetFloat(AnimHitX);
@@ -801,6 +803,7 @@ namespace SyncRADation.Networking
                     enemy.staggerType = stagger;
                     if (enemy.hitbox != null) enemy.hitbox.HP = snap.HP;
                     ApplyHurtboxActive(enemy, state, dead, stagger);
+                    ApplyAliveSfx(enemy, state, dead);
                     return;
                 }
 
@@ -815,6 +818,7 @@ namespace SyncRADation.Networking
                 enemy.state = state;
                 enemy.staggerType = stagger;
                 ApplyHurtboxActive(enemy, state, dead, stagger);
+                ApplyAliveSfx(enemy, state, dead);
                 ApplyStompPrompt(id, p, enemy, dead, stagger);
                 if (enemy.hitbox != null) enemy.hitbox.HP = snap.HP;
                 if (p.ShownHp != snap.HP || p.ShownMaxHp != snap.MaxHP)
@@ -924,6 +928,7 @@ namespace SyncRADation.Networking
         // sleep state and every snapshot forced it back: the sleeping enemy shook. The host's value rides the top bit
         // of EnemySnapshotNet.HurtState.
         static readonly int AnimSleep = Animator.StringToHash("Sleep");
+        static readonly int AnimGoToSleep = Animator.StringToHash("GoToSleep");
         const int ParamSleep = 256;
         const int SleepAnimBit = 0x80;
 
@@ -994,6 +999,14 @@ namespace SyncRADation.Networking
             if ((prm & 1) != 0) anim.SetBool(AnimDead, dead);
             if ((prm & 2) != 0) anim.SetBool(AnimCritical, !dead && hs == EnemyController.hurtState.critical);
             if ((prm & 4) != 0) anim.SetBool(AnimFire, !dead && hs == EnemyController.hurtState.fire);
+            // A customSleep enemy asleep at home: native Awake / Load set Sleep + the GoToSleep trigger (AnyState ->
+            // Sleep, 0 s; Ghidra EnemyController.c, monster_eule_controller), so this client's own Load already holds
+            // the pose when it walks in. The controller keeps it: replaying the host's state hash here only ever
+            // stood the puppet up for the frames the host's animator spent in its default state after its chunk woke.
+            // The trigger fires only when this copy was not asleep yet (a restart would replay the clip).
+            bool sleepPose = !dead && es == EnemyController.enemystate.sleep && (prm & ParamSleep) != 0
+                && (snap.HurtState & SleepAnimBit) != 0;
+            bool asleepHere = (prm & ParamSleep) != 0 && anim.GetBool(AnimSleep);
             if ((prm & ParamSleep) != 0) anim.SetBool(AnimSleep, !dead && (snap.HurtState & SleepAnimBit) != 0);
             if ((prm & 8) != 0)
                 anim.SetBool(AnimPursuit, !dead && (es == EnemyController.enemystate.pursuit || es == EnemyController.enemystate.attack));
@@ -1002,6 +1015,12 @@ namespace SyncRADation.Networking
             if ((prm & ParamTurn) != 0) anim.SetFloat(AnimTurn, snap.AnimTurn);
             if ((prm & ParamHitX) != 0) anim.SetFloat(AnimHitX, snap.AnimHitX);
             if ((prm & ParamHitY) != 0) anim.SetFloat(AnimHitY, snap.AnimHitY);
+            if (sleepPose)
+            {
+                if (!asleepHere) anim.SetTrigger(AnimGoToSleep);
+                p.HasAnim = false;
+                return;
+            }
             var stateInfo = anim.GetCurrentAnimatorStateInfo(0);
             bool restarted = p.HasAnim && snap.AnimTime < p.AnimTime - 0.5f;
             p.HasAnim = true;
@@ -1041,6 +1060,24 @@ namespace SyncRADation.Networking
                 }
                 catch (Exception e) { Guard.Swallow(e); }
             }
+        }
+
+        /// <summary>
+        /// Mirror EnemyController.Update's aliveSFX toggle (Ghidra EnemyController.c: on while awake once startSFXDelay
+        /// ran out, off asleep (Load) and on death). Its emitter (EULR PositionalClue: PlayEvent ObjectEnable, StopEvent
+        /// ObjectDisable) is the replika's constant vocal, downed included. A puppet's Update never runs and the host's
+        /// ObjectEnable start goes through HandleGameEvent, which no relay sees: a client never heard it.
+        /// </summary>
+        static void ApplyAliveSfx(EnemyController enemy, EnemyController.enemystate state, bool dead)
+        {
+            try
+            {
+                var go = enemy.aliveSFX;
+                if (go == null) return;
+                bool want = !dead && state != EnemyController.enemystate.sleep;
+                if (go.activeSelf != want) go.SetActive(want);
+            }
+            catch (Exception e) { Guard.Swallow(e); }
         }
 
         /// <summary>
