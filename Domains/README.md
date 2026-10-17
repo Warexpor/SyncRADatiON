@@ -2,7 +2,7 @@
 
 Composed `*SyncService` / `*NetHandlers` / `Patches/`. Namespaces stay `SyncRADation.Networking` / `.Patches` / `.Players` / `.ItemSystem`.
 
-Authority: `docs/SYNC.md`; reverse-check rule: repo root `AGENTS.md`. Wire in `Networking/Messages/NetMessages.cs` + `PartyMessages.cs` + `NetWire.cs` (schema hash). Version/protocol constants: `Bootstrap/PluginInfo.cs` (version is single-sourced from there).
+Authority: `docs/SYNC.md`; reverse-check rule: repo root `AGENTS.md`. Wire in `Networking/Messages/` (one `*Messages.cs` per domain, ids in `MessageTypes.cs`) + `NetWire.cs` (schema hash). Version/protocol constants: `Bootstrap/PluginInfo.cs` (version is single-sourced from there).
 
 ## Symptom → path
 

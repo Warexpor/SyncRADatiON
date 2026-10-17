@@ -1,5 +1,5 @@
 // Everything the coordinator knows about a PuzzleType, one row per type. Adding a type = one enum value
-// (NetMessages.cs, wire: never renumber) + one row here + its read/apply code. PuzzleSpecTests checks every enum
+// (WorldMessages.cs, wire: never renumber) + one row here + its read/apply code. PuzzleSpecTests checks every enum
 // value has a row or is listed in Retired; PuzzleSpecs.SelfCheck logs the same at startup.
 using System;
 using SyncRADation.Sync;

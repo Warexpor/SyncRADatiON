@@ -1,6 +1,6 @@
 # Protocol history
 
-Current: `Bootstrap/PluginInfo.cs` `ProtocolVersion`. Port default `7777`, connection key `SyncRADation`. Wire: `Networking/Messages/NetMessages.cs`, `PartyMessages.cs`, `NetWire.cs` (schema hash). Bump only when the wire changes, and log the bump here and in `CHANGELOG.md`.
+Current: `Bootstrap/PluginInfo.cs` `ProtocolVersion`. Port default `7777`, connection key `SyncRADation`. Wire: `Networking/Messages/` (`MessageTypes.cs` ids, one `*Messages.cs` per domain), `NetWire.cs` (schema hash). Bump only when the wire changes, and log the bump here and in `CHANGELOG.md`.
 
 - v6: full SProgress dump, UnityEvent presentation, FmodEmitter Play/Stop
 - v7: `PlayerRoster` (3+ peers), recycled client ids, join/resync dump to the requester only
