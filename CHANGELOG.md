@@ -1,3 +1,11 @@
+## Unreleased (dev)
+
+### Fixed
+- A client using an item whose success event opens a reading screen (the LOV microfiche) no longer pulls the host into that screen, cutscene or not. A peer's replayed event never opens a book or event screen on another player; its world changes still apply.
+- A sleeping replika no longer stands up and drops back down on a client walking into its room: the host stopped sending animation state from a room that is switched off on its side, and a puppet asleep at home keeps its own sleep pose.
+- Clients now hear a replika's constant vocal loop (awake and downed): puppets mirror the enemy's `aliveSFX` on/off.
+- The desync check no longer reports a cutscene one player skipped while another is still watching it.
+
 ## 0.5.76 — 2026-10-16
 
 Protocol **v22** (`PeerScenes` 76, `WorldRelay` 77; `PartyLife` 40 removed).
