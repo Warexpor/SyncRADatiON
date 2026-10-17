@@ -30,12 +30,7 @@ namespace SyncRADation.Patches
         /// snapshot, but a cutscene / UnityEvent replay that calls startFightSequence later would run the whole
         /// fight again locally (double shots, local phase edges). A client in the host's scene never starts it.
         /// </summary>
-        static bool ClientInHostScene()
-        {
-            if (!NetGate.Client) return false;
-            var net = LanNetworkManager.Instance;
-            return net != null && !net.SceneMismatch;
-        }
+        static bool ClientInHostScene() => NetGate.SceneFollower;
 
         [HarmonyPatch(typeof(LAB_ChimeraBoss), nameof(LAB_ChimeraBoss.startFightSequence))]
         public static class ChimeraStartFightPatch
@@ -61,12 +56,7 @@ namespace SyncRADation.Patches
             }
         }
 
-        static bool ClientForward(END_Boss b)
-        {
-            if (!NetGate.Client || NetGate.IsApplying) return false;
-            var net = LanNetworkManager.Instance;
-            return net != null && !net.SceneMismatch;
-        }
+        static bool ClientForward(END_Boss b) => NetGate.SceneFollower && !NetGate.IsApplying;
 
         [HarmonyPatch(typeof(END_Boss), nameof(END_Boss.Stab))]
         public static class StabPatch
@@ -90,7 +80,7 @@ namespace SyncRADation.Patches
             [HarmonyPostfix]
             public static void Postfix(END_Boss __instance)
             {
-                if (!NetGate.Host || NetGate.IsApplying) return;
+                if (!NetGate.SceneOwner || NetGate.IsApplying) return;
                 try
                 {
                     var item = __instance != null ? __instance.SpearItem : null;
@@ -121,7 +111,7 @@ namespace SyncRADation.Patches
             {
                 // Native takeSpear decrements ammo on EVERY call (Ghidra END_Boss.c), so a repeat for a
                 // spear that is already gone would corrupt the count the snapshot mirrors.
-                if (NetGate.Host)
+                if (NetGate.SceneOwner)
                 {
                     try { if (spear == null || !spear.activeSelf) return false; }
                     catch (System.Exception e) { Guard.Swallow(e); }
@@ -137,7 +127,7 @@ namespace SyncRADation.Patches
             [HarmonyPostfix]
             public static void Postfix(END_Boss __instance, GameObject spear)
             {
-                if (!NetGate.Host) return;
+                if (!NetGate.SceneOwner) return;
                 long wid;
                 int idx = IndexOf(__instance, spear);
                 if (idx < 0 || !TryBossId(__instance, out wid)) return;
@@ -157,7 +147,7 @@ namespace SyncRADation.Patches
             [HarmonyPrefix]
             public static void Prefix(LAB_ChimeraBoss __instance)
             {
-                if (!NetGate.Host || !NetGate.Party) return;
+                if (!NetGate.SceneOwner || !NetGate.Party) return;
                 try
                 {
                     if (!__instance.gunShot) return;

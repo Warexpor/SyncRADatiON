@@ -15,10 +15,10 @@ namespace SyncRADation.Tests
     {
         // NetSchema.StructuralHash (Hash minus the module id, which changes with every rebuild) with the test assembly pinned to AssemblyVersion 9.9.9.9 (see the csproj).
         // Moves whenever PluginInfo.ProtocolVersion or any id of the mixed enums changes.
-        private const uint GoldenSchemaHash = 0xEAF51DB2U;
+        private const uint GoldenSchemaHash = 0x6D4564AAU;
 
         [Fact]
-        public void ProtocolVersion_is_21() => Assert.Equal(21, PluginInfo.ProtocolVersion);
+        public void ProtocolVersion_is_22() => Assert.Equal(22, PluginInfo.ProtocolVersion);
 
         [Fact]
         public void Channels_and_connection_key_are_frozen()
@@ -63,7 +63,6 @@ namespace SyncRADation.Tests
             yield return new object[] { typeof(EnemyActionKind), nameof(FrozenTables.T_EnemyActionKind) };
             yield return new object[] { typeof(BossHitKind), nameof(FrozenTables.T_BossHitKind) };
             yield return new object[] { typeof(BossType), nameof(FrozenTables.T_BossType) };
-            yield return new object[] { typeof(PartyLifeKind), nameof(FrozenTables.T_PartyLifeKind) };
         }
 
         private static (string Name, int Value)[] Table(string field) =>
@@ -98,7 +97,7 @@ namespace SyncRADation.Tests
         public void Enums_keep_their_one_byte_wire_width()
         {
             foreach (Type t in new[] { typeof(NetMessageType), typeof(InteractionKind), typeof(StoryCmd), typeof(DeathKind), typeof(WeaponType),
-                                       typeof(DoorType), typeof(PuzzleType), typeof(EnemyActionKind), typeof(BossHitKind), typeof(BossType), typeof(PartyLifeKind) })
+                                       typeof(DoorType), typeof(PuzzleType), typeof(EnemyActionKind), typeof(BossHitKind), typeof(BossType) })
                 Assert.Equal(typeof(byte), Enum.GetUnderlyingType(t));
             Assert.Equal(typeof(byte), Enum.GetUnderlyingType(typeof(PoseFlags)));
             Assert.Equal(typeof(byte), Enum.GetUnderlyingType(typeof(AvatarCue)));
@@ -108,9 +107,9 @@ namespace SyncRADation.Tests
         public void NetMessageType_Highest_equals_the_true_maximum()
         {
             int max = Actual(typeof(NetMessageType)).Values.Max();
-            Assert.Equal(75, max);
+            Assert.Equal(77, max);
             Assert.Equal((int)NetMessageType._Highest, max);
-            Assert.Equal(39, Actual(typeof(NetMessageType)).Count);
+            Assert.Equal(40, Actual(typeof(NetMessageType)).Count);
         }
 
         [Fact]
@@ -146,7 +145,7 @@ namespace SyncRADation.Tests
             h = MixS(h, asmVersion);
             h = MixI(h, protocolVersion);
             // Same order as NetSchema.Compute. Enum.GetValues includes the _Highest alias, i.e. NetMessageType's max appears twice.
-            h = MixEnum(h, "NetMessageType", FrozenTables.T_NetMessageType.Select(x => x.Value).Concat(new[] { 75 }));
+            h = MixEnum(h, "NetMessageType", FrozenTables.T_NetMessageType.Select(x => x.Value).Concat(new[] { 77 }));
             h = MixEnum(h, "InteractionKind", FrozenTables.T_InteractionKind.Select(x => x.Value));
             h = MixEnum(h, "StoryCmd", FrozenTables.T_StoryCmd.Select(x => x.Value));
             h = MixEnum(h, "DeathKind", FrozenTables.T_DeathKind.Select(x => x.Value));
@@ -189,7 +188,7 @@ namespace SyncRADation.Tests
         public void SchemaHash_golden_value()
         {
             Assert.Equal(GoldenSchemaHash, NetSchema.StructuralHash);
-            Assert.Equal(GoldenSchemaHash, Replicate("9.9.9.9", 21));
+            Assert.Equal(GoldenSchemaHash, Replicate("9.9.9.9", 22));
         }
 
         [Fact]

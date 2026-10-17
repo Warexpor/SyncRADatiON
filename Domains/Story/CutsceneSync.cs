@@ -21,8 +21,8 @@
 //     still be watching). CutsceneCut.Proceed only sets `proceed` (the cut's events run later in the Cutscene
 //     coroutine), so it needs no hook. A scene-ending cutscene's load waits for the peer still watching
 //     (SceneFollowService: a follow is held while this peer is in a cutscene; the host holds a client's request).
-// Wreck / hole split (AirlockCinematic.ClientSplitFromHost): the host has none of the client's cutscenes, they run
-// locally like solo. PEN_Titles airlock cinematics (LocalInspect.AirlockCinematic) stay local on every path.
+// A scene the host is not in is run by its client owner (Sync/SceneOwners): it plays the host's part above for the
+// peers there (requests reach it through the host). PEN_Titles airlock cinematics (LocalInspect.AirlockCinematic) stay local on every path.
 using SyncRADation.Patches;
 using SyncRADation.Players;
 using SyncRADation.Sync;
@@ -174,7 +174,7 @@ namespace SyncRADation.Networking
                     + " completed=" + done + ")");
                 return;
             }
-            if (NetGate.Client && !_watching.Contains(c)) _watching.Add(c);
+            if (NetGate.SceneFollower && !_watching.Contains(c)) _watching.Add(c);
         }
 
         /// <summary>
@@ -191,7 +191,7 @@ namespace SyncRADation.Networking
                     if (c != null && !c.completed && StartedHere(c)) continue;
                     _watching.RemoveAt(i);
                     // Stopped without completing (its object was switched off): nothing to report.
-                    if (c == null || !c.completed || !NetGate.Client) continue;
+                    if (c == null || !c.completed || !NetGate.SceneFollower) continue;
                     LanNetworkManager.Instance.InteractionHandlers.SendInteractionRequest(
                         WorldId.FromGameObject(c.gameObject), InteractionKind.CutsceneDone);
                 }
@@ -290,8 +290,8 @@ namespace SyncRADation.Networking
                 if (!c.gameObject.activeInHierarchy) return true;
                 ulong id = WorldId.FromGameObject(c.gameObject);
                 if (_stamps.Skipped(id, Now)) return false;
-                if (AirlockCinematic.ClientSplitFromHost()) return true;
-                if (NetGate.Host)
+                // The scene's owner (the host, or the lowest client in a scene the host is not in) starts and relays it.
+                if (NetGate.SceneOwner)
                 {
                     // A client request (HostApplyStart) may have started it already; a second native StartCutscene would
                     // run a second coroutine. That start already broadcast.

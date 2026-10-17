@@ -155,17 +155,10 @@ namespace SyncRADation.Cheats
 
         private static void LoadChapter(LocationEntry loc)
         {
-            if (NetGate.Client)
+            // A chapter jump is this player's own, like every level load: a client only when the host allows client cheats.
+            if (NetGate.Client && !Config.ModConfig.ClientCheatsAllowed)
             {
-                // A client F7 makes the host load the chapter for everyone: only when the host allows client cheats.
-                if (!Config.ModConfig.ClientCheatsAllowed)
-                {
-                    SetStatus("Host does not allow client cheats", true);
-                    return;
-                }
-                SceneFollowService.RequestFollow(loc.Scene);
-                SetStatus("Requested host load: " + loc.Scene);
-                ShowMenu = false;
+                SetStatus("Host does not allow client cheats", true);
                 return;
             }
 

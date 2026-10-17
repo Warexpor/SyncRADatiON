@@ -49,13 +49,8 @@ namespace SyncRADation.Patches
             if (net == null || !net.IsConnected)
                 return true;
 
-            // Host applies real damage locally (this is the authoritative sim).
-            if (NetGate.HostRole)
-                return true;
-
-            // Personal scene (wreck/hole, airlock): this client's enemies are not host puppets, so
-            // the host cannot resolve their WorldIds. Run native TakeDamage or they are invulnerable.
-            if (net.SceneMismatch)
+            // The scene's owner applies real damage locally (it runs the authoritative sim).
+            if (NetGate.SceneOwnerRole)
                 return true;
 
             // Registry reverse map first (the id the host knows this enemy by), else the WorldId pinned at scene load.

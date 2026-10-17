@@ -1,10 +1,8 @@
 // Every scene / session / connection reset, in run order. Registered once at boot (ModRuntime.Start).
 //   Scene      : LanNetworkManager.OnSceneChanged -> SessionReset.RunScene, after ModRuntime.OnSceneChanged's WorldId scan +
-//                WorldRegistry.Rebuild and HostReload.OnSceneArrived, before the scene hello / world dump.
-//   Session    : StopNetwork (StartHost / ConnectToHost run it first) and after a host wipe reload (clients: when the wipe
-//                message lands).
-//   Connection : StopNetwork only. A wipe keeps the same party, and these either touch the bag / key ring (the save
-//                reload just restored them) or are the session itself.
+//                WorldRegistry.Rebuild, before the scene hello / world dump.
+//   Session    : StopNetwork (StartHost / ConnectToHost run it first): the session's world state.
+//   Connection : StopNetwork, same run: the session itself, and the bag / key ring / party save bookkeeping.
 // Order matters where noted: proxies go first; the scene block follows the old LanNetworkManager.OnSceneChanged order
 // (dropped visuals cleared before the respawn, registry fresh before the door / domain scene refreshes, SceneFollow
 // arrival last); NetGate's apply counter is cleared after the session block, before the domain services re-enable AI.
@@ -91,18 +89,18 @@ namespace SyncRADation
 
             // ---- connection scope: the session itself (NetGate first: the service resets below may re-enable AI)
             SessionReset.Register("NetGate", Connection, NetGate.Reset);
-            SessionReset.Register("PartyKeyRing", Connection, PartyKeyRing.Reset);        // wipe re-imports the save's ring
-            // Damage first: its downed-state clear (ClearDownedLocal) may touch the party vitals / save state reset next.
+            SessionReset.Register("PartyKeyRing", Connection, PartyKeyRing.Reset);
+            // Damage first: its dead-state clear (ClearDeadLocal) may touch the party vitals / save state reset next.
             SessionReset.Register("Damage", Connection, NetworkDamageSystem.Reset);
             SessionReset.Register("PartyVitals", Connection, PartyVitals.Reset);
             SessionReset.Register("PartySave", Connection, PartySaveService.Reset);
-            SessionReset.Register("HostReload", Connection, HostReload.Reset);
-            SessionReset.Register("WipePlacement", Connection, WipePlacement.Reset);
-            SessionReset.Register("DynamicSupply", Scene | Session, DynamicSupplySync.Reset);       // armed by the wipe itself: not on the wipe run
+            SessionReset.Register("DeathReload", Connection, DeathReload.Reset);
+            SessionReset.Register("DynamicSupply", Scene | Session, DynamicSupplySync.Reset);
             SessionReset.Register("SceneFollow", Connection, SceneFollowService.Reset);
+            SessionReset.Register("SceneOwners", Connection, SceneOwners.Reset);
             SessionReset.Register("SceneWorldDiff", Connection, () => Net()?.SceneHandlers.Reset()); // WorldId divergence state
             SessionReset.Register("StorageTxn", Connection, StorageTxn.Reset);            // drops an in-flight put/take (a put stays boxed host-side)
-            SessionReset.Register("DroppedItems", Connection, DroppedItemRegistry.ClearAll); // wipe clears them in the Load postfix; also DroppedItemTemplateCache
+            SessionReset.Register("DroppedItems", Connection, DroppedItemRegistry.ClearAll); // also DroppedItemTemplateCache
             SessionReset.Register("PlaytestLog", Connection, PlaytestLog.Reset);
             SessionReset.Register("StateBeat", Scene | Connection, StateBeat.Reset);
             SessionReset.Register("NetStats", Connection, NetStats.Reset);

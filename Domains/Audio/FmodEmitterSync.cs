@@ -347,8 +347,7 @@ namespace SyncRADation.Networking
         public static void Handle(FmodEmitterMessage msg)
         {
             var net = LanNetworkManager.Instance;
-            if (NetGate.HostRole) return;
-            if (net != null && net.SceneMismatch) return;
+            if (NetGate.SceneOwnerRole) return;
             if (SceneFollowService.LocalIsTransient()) return;
 
             NetGate.BeginApply();
@@ -434,8 +433,8 @@ namespace SyncRADation.Networking
         {
             if (emitter == null) return;
             if (PuzzleFx.Active) return; // a peer's puzzle press replayed here: every peer replays it itself
-            if (NetGate.Host) { if (NetGate.Party) HostEmit(emitter, play, nativePlaying); }
-            else if (NetGate.Client && !NetGate.IsApplying) ClientEmit(emitter, play);
+            if (NetGate.SceneOwner) { if (NetGate.Party) HostEmit(emitter, play, nativePlaying); }
+            else if (NetGate.SceneFollower && !NetGate.IsApplying) ClientEmit(emitter, play);
         }
 
         static void HostEmit(StudioEventEmitter emitter, bool play, bool nativePlaying)
@@ -496,7 +495,7 @@ namespace SyncRADation.Networking
         {
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected || !net.HandshakeComplete) return;
-            if (net.SceneMismatch || SceneFollowService.LocalIsTransient()) return;
+            if (SceneFollowService.LocalIsTransient()) return;
             if (Time.unscaledTime - _sceneStartAt < ClientSettleSeconds) return;
             var info = InfoOf(emitter);
             if (info == null) return;
@@ -541,7 +540,7 @@ namespace SyncRADation.Networking
         /// </summary>
         public static void HandleRequest(FmodEmitterRequestMessage req, int senderId)
         {
-            if (!NetGate.Host) return;
+            if (!NetGate.SceneOwner) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
             ulong id = unchecked((ulong)req.WorldId);
@@ -612,7 +611,7 @@ namespace SyncRADation.Networking
         public static void DumpPlaying()
         {
             var net = LanNetworkManager.Instance;
-            if (!NetGate.Host) return;
+            if (!NetGate.SceneOwner) return;
             Sync();
             Rescan();
             foreach (var kvp in _byKey)
@@ -706,7 +705,7 @@ namespace SyncRADation.Networking
         /// <summary>Host relay for world one-shots (string / Guid / attached / fmod helper).</summary>
         public static void TryHostWorldOneShot(string path, Vector3 position)
         {
-            if (!NetGate.Host || !NetGate.Party) return; // a lone host has nobody to tell
+            if (!NetGate.SceneOwner || !NetGate.Party) return; // a lone host has nobody to tell
             if (string.IsNullOrEmpty(path)) return;
             // A peer's puzzle press replayed here: every peer replays it from the puzzle state itself.
             if (PuzzleFx.Active) return;

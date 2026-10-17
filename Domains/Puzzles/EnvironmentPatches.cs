@@ -437,7 +437,7 @@ namespace SyncRADation.Patches
             if (__instance == null || NetGate.IsApplying) return;
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected) return;
-            if (NetGate.HostRole)
+            if (NetGate.SceneOwnerRole)
                 EnvEmit.Read(PuzzleType.DET_RadioCodeLock, __instance);
             else
                 net.PuzzleSync.QueueReapply();

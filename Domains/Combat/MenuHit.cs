@@ -3,7 +3,7 @@
 // has the inventory / pause menu / a book / an event screen / the photo viewer open is held, that screen is closed the
 // way the game closes it (InventoryBase.ToggleInventory, PauseMenu.togglePause, BookScreen.Close,
 // EventScreenInteraction.exitEvent, EideticModule.DisableViewer), and the hit is replayed through HurtElster as soon as
-// the player is back in play: normal hurt reaction, grab, downed + revive timer. Dialogue (incl. item prompts) is
+// the player is back in play: normal hurt reaction, grab, death and reload. Dialogue (incl. item prompts) is
 // already gameState dialogue, where native damage lands and BlackSleekGuiSubs ends the dialogue itself.
 using SyncRADation.ItemSystem;
 using SyncRADation.Sync;

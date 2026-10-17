@@ -1,10 +1,11 @@
 using LiteNetLib;
+using SyncRADation.Sync;
 
 namespace SyncRADation.Networking
 {
     public sealed partial class LanNetworkManager
     {
-        bool TryDispatchSession(NetMessageType type, NetPacketReader reader, int senderId)
+        bool TryDispatchSession(NetMessageType type, LiteNetLib.Utils.NetDataReader reader, int senderId)
         {
             switch (type)
             {
@@ -14,14 +15,14 @@ namespace SyncRADation.Networking
             case NetMessageType.SceneHello:
             {
                 var hello = SceneHelloMessage.Deserialize(reader);
-                if (_role == NetworkRole.Host) hello.SenderPlayerId = senderId;
+                if (StampsSender) hello.SenderPlayerId = senderId;
                 SceneHandlers.HandleSceneHello(hello);
                 return true;
             }
             case NetMessageType.SceneFollow:
             {
                 var follow = SceneFollowMessage.Deserialize(reader);
-                if (_role == NetworkRole.Host) follow.SenderPlayerId = senderId;
+                if (StampsSender) follow.SenderPlayerId = senderId;
                 SceneHandlers.HandleSceneFollow(follow);
                 return true;
             }
@@ -40,10 +41,16 @@ namespace SyncRADation.Networking
             case NetMessageType.SnapshotRequest:
             {
                 var req = SnapshotRequestMessage.Deserialize(reader);
-                if (_role == NetworkRole.Host) req.SenderPlayerId = senderId;
+                if (StampsSender) req.SenderPlayerId = senderId;
                 SessionHandlers.HandleSnapshotRequest(req, senderId);
                 return true;
             }
+            case NetMessageType.PeerScenes:
+                SceneOwners.HandlePeerScenes(this, PeerScenesMessage.Deserialize(reader), senderId);
+                return true;
+            case NetMessageType.WorldRelay:
+                HandleWorldRelay(WorldRelayMessage.Deserialize(reader), senderId);
+                return true;
             case NetMessageType.PlayerRoster:
                 HandlePlayerRoster(PlayerRosterMessage.Deserialize(reader));
                 return true;

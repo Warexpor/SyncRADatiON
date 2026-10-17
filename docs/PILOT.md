@@ -2,7 +2,7 @@
 
 The pilot plays the game with 2 to 4 instances at once, with no one at the keyboard, and checks that every peer holds the same world. It has two halves:
 
-- **In the mod** (`Sync/TestPilot*.cs`): off unless the game starts with `--sync-pilot <mode>`. `host:<Scene>` hosts and loads that chapter the F7 way, `join` connects to `127.0.0.1` and follows the host. In play it runs the lines appended to `<pilot dir>/cmd.txt` and writes what they did to `<pilot dir>/out.txt` and the log (`[Pilot]`). Every command goes through the game function a player's action reaches (the Interactor press, `ItemPickup.pickUp`, `EnemyController.TakeDamage`, `PlayerState.HurtElster`, F6 / F7 / F11), so the mod's patches see what they see in play.
+- **In the mod** (`Sync/TestPilot*.cs`): off unless the game starts with `--sync-pilot <mode>`. `host:<Scene>` hosts and loads that chapter the F7 way, `join` connects to `127.0.0.1` and goes to the host's scene (the one follow a client does). In play it runs the lines appended to `<pilot dir>/cmd.txt` and writes what they did to `<pilot dir>/out.txt` and the log (`[Pilot]`). Every command goes through the game function a player's action reaches (the Interactor press, `ItemPickup.pickUp`, `EnemyController.TakeDamage`, `PlayerState.HurtElster`, F6 / F7 / F11), so the mod's patches see what they see in play.
 - **Scripts** (`scripts/pilot/`): start the instances, send commands, take synchronized world digests and diff them, run scenarios, collect the logs.
 
 ## Where it runs
@@ -21,9 +21,9 @@ MelonLoader's console is off for pilot instances (`--melonloader.hideconsole`): 
 | `pilot-run.sh [Scene]` | Deploy `bin/stage/Debug/SyncRADation.dll` (`PILOT_DLL`) to every instance (md5 checked), start the box, host `Scene` (default `DET_Detention`), join `CLIENTS` clients (default 2 = three players) all at once (`JOIN=serial`: one after another), return when all are in the world |
 | `pcmd.sh <h\|c1\|c2\|c3\|all> <command...>` | Send one command, print its reply |
 | `check.sh <tag>` | Every peer writes its digest at the same moment (`at`), each client's is diffed against the host's (`digest-diff.py`); exit 1 on a difference |
-| `coop-soak.sh` | One chapter, every arrow: a pickup each, all peers racing for one pickup, each peer killing an enemy (clients in rooms the host never entered), a client opening a door, a client downed and revived, a client leaving and rejoining late; a check after each step |
-| `story-run.sh [chapters...]` | The chapters in story order; loads alternate between the host and a client (F7 follow request); in each: settle, skip the opening cutscene, check, a pickup each, each client kills an enemy, check |
-| `soak-all.sh [chapters...]` | The full scope in one session: the chapters in story order (loads alternate as in `story-run.sh`), `coop-soak.sh` in each; a chapter that ends in a menu scene is loaded and checked, not soaked. One boot for every chapter |
+| `coop-soak.sh` | One chapter, every arrow: a pickup each, all peers racing for one pickup, each peer killing an enemy (clients in rooms the host never entered), a client opening a door, a client dying and reloading its scene, a client leaving and rejoining late; a check after each step |
+| `story-run.sh [chapters...]` | The chapters in story order; every peer loads each chapter itself (F7, host first: level loads are personal); in each: settle, skip the opening cutscene, check, a pickup each, each client kills an enemy, check |
+| `soak-all.sh [chapters...]` | The full scope in one session: the chapters in story order (every peer loads, as in `story-run.sh`), `coop-soak.sh` in each; a chapter that ends in a menu scene is loaded and checked, not soaked. One boot for every chapter |
 | `pilot-quit.sh [tag]` | Collect every peer's `Latest.log`, transcript and digests into `artifacts/pilot/<tag>/`, print `report.sh`, quit and take the box down (`KEEP=1`: collect only) |
 | `symbolize.py <log...>` | The `[Stall]` lines with native frames, one frame per line, GameAssembly frames named from the decompile's `@ RVA` lines |
 | `report.sh <dir>` | Per peer: version, handshakes, scenes, registry checksums, warnings by tag, `[Guard]`, divergence, exceptions, Unity errors, failed pilot commands |

@@ -139,7 +139,7 @@ namespace SyncRADation.Networking
             _swingTime.Clear();
         }
 
-        // PeerInHostScene reads (and allocates) the active scene name on every call; the verdict only
+        // PeerInMyScene reads (and allocates) the active scene name on every call; the verdict only
         // changes on a scene change, so cache it per peer for a short window (cleared in OnSceneChanged).
         private struct SceneVerdict { public bool Ok; public float Until; }
         private static readonly Dictionary<int, SceneVerdict> _peerSceneOk = new Dictionary<int, SceneVerdict>();
@@ -150,7 +150,7 @@ namespace SyncRADation.Networking
             float now = Time.unscaledTime;
             SceneVerdict v;
             if (_peerSceneOk.TryGetValue(pid, out v) && now < v.Until) return v.Ok;
-            v = new SceneVerdict { Ok = net.PeerInHostScene(pid), Until = now + SceneVerdictSeconds };
+            v = new SceneVerdict { Ok = net.PeerInMyScene(pid), Until = now + SceneVerdictSeconds };
             _peerSceneOk[pid] = v;
             return v.Ok;
         }
@@ -166,7 +166,7 @@ namespace SyncRADation.Networking
             {
                 int pid = ids[i];
                 if (!PeerSameScene(net, pid)) continue;
-                if (PartyVitals.IsDown(pid)) continue; // downed peers are not targets
+                if (PartyVitals.IsDown(pid)) continue; // dead (reloading) peers are not targets
                 var proxy = pm.GetProxy(pid);
                 if (proxy == null || proxy.GameObject == null || proxy.LastDead) continue;
                 _targets.Add(new Target { Pid = pid, Pos = proxy.GameObject.transform.position });
@@ -184,7 +184,7 @@ namespace SyncRADation.Networking
         /// </summary>
         public static void TickHurtboxes(LanNetworkManager net)
         {
-            if (net == null || !NetGate.Host) return;
+            if (net == null || !NetGate.SceneOwner) return;
             // Solo / lone host: no remote peers, so nothing to hurt — no scans, no list refresh.
             if (net.GetPlayerCount() <= 1)
             {
@@ -277,7 +277,7 @@ namespace SyncRADation.Networking
         public static void OnEnemyHit(EnemyController e)
         {
             var net = LanNetworkManager.Instance;
-            if (!NetGate.Host) return;
+            if (!NetGate.SceneOwner) return;
             if (e == null || net.GetPlayerCount() <= 1) return; // lone host: nothing but native Hit
             // Runs in the EnemyController.Hit prefix: a failure here must never stop the native swing.
             try

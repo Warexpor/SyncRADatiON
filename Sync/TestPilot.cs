@@ -1,6 +1,6 @@
 // Unattended test driver for automated multi-instance runs (scripts/pilot/). Off unless the game starts with
 // --sync-pilot <mode> [--sync-pilot-dir <dir>]: "host[:Scene]" hosts LAN and loads that chapter, "join" connects to
-// 127.0.0.1 and follows the host into its scene. In play it runs the lines appended to <dir>/cmd.txt (default: a
+// 127.0.0.1 and goes to the host's scene (the join follow). In play it runs the lines appended to <dir>/cmd.txt (default: a
 // "pilot" folder next to SIGNALIS_Data) and writes what they did to <dir>/out.txt and the log ([Pilot]). Commands go
 // through the same game functions a player's action would (Interaction.trigger, TakeDamage, HurtElster, ...).
 // TestPilot.Commands.cs: the command table. TestPilot.Digest.cs: the per-peer world digest the scripts diff.

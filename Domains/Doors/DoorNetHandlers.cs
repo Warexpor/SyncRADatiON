@@ -24,17 +24,17 @@ namespace SyncRADation.Networking
 
         internal void HandleDoorState(DoorStateMessage doorMsg, int senderId)
         {
-            // Same gate as PuzzleSyncService.ApplyPuzzleState: a loading / other-scene peer has no matching
-            // doors. The lock fact is held and re-applied when the scene is mounted; the host still relays
-            // so 3+ peers stay in sync.
-            bool canApply = !SceneFollowService.LocalIsTransient() && !_net.SceneMismatch;
+            // Same gate as PuzzleSyncService.ApplyPuzzleState: a loading peer has no matching doors. The lock fact is
+            // held and re-applied when the scene is mounted; the scene's owner still relays so 3+ peers stay in sync.
+            // Door states only come from this scene's owner (or, to the owner, from its followers).
+            bool canApply = !SceneFollowService.LocalIsTransient();
             bool relay = true;
             if (canApply)
                 relay = DoorSyncService.HandleMessage(ref doorMsg);
-            else if (!NetGate.HostRole)
+            else if (!NetGate.SceneOwnerRole)
                 DoorSyncService.HoldMessage(doorMsg); // host state is truth: never adopt an unverified client lock flag
 
-            if (NetGate.HostRole && relay)
+            if (NetGate.SceneOwnerRole && relay)
             {
                 var w = new NetDataWriter();
                 w.Put((byte)NetMessageType.DoorState);

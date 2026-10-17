@@ -79,9 +79,6 @@ namespace SyncRADation.Networking
             FlushRateDeferred();
             if (!_pendingDumpAll && _pendingDumpTargets.Count == 0) return;
             if (SceneFollowService.LocalIsTransient()) return;
-            // A wipe reload has not reset the host's world yet: a dump now would carry the pre-wipe puzzle memory,
-            // floor drops and claims. HostReload.OnLoadFinished / OnSceneArrived (and Abort) queue the post-reset one.
-            if (HostReload.Pending) return;
 
             bool all = _pendingDumpAll;
             int[] targets = null;
@@ -145,7 +142,7 @@ namespace SyncRADation.Networking
         internal void SendFullWorldSnapshot(int targetPlayerId = -1)
         {
             if (!NetGate.Host) return;
-            if (SceneFollowService.LocalIsTransient() || HostReload.Pending)
+            if (SceneFollowService.LocalIsTransient())
             {
                 DeferDump(targetPlayerId);
                 return;
@@ -210,27 +207,23 @@ namespace SyncRADation.Networking
                 + (targetPlayerId >= 0 ? " to player " + targetPlayerId : " to all peers"));
             if (targetPlayerId >= 0 && HasOtherReadyPeer(targetPlayerId))
                 DumpFlush.RunAll();
+            // The scene world goes to a joiner in the host's scene (and to all: the host's scene sends filter by scene).
+            // A joiner in a scene a client owns gets that world from its owner: the host passes the request on.
+            int owner = targetPlayerId >= 0 ? SceneOwners.OwnerOfPlayer(targetPlayerId) : 0;
+            if (targetPlayerId >= 0 && owner >= 1 && owner != targetPlayerId)
+                ForwardWorldDump(owner, targetPlayerId);
             int prevUnicast = _net.BeginUnicast(targetPlayerId);
             try
             {
-                WorldRegistry.RebuildIfStale();
-                DoorSyncService.ForceFullSend();
-                _net.PuzzleSync.ForceFullSend();
-                _net.PuzzleSync.Tick(_net);
+                if (owner <= 0) DumpSceneWorld();
                 _net.PickupSync.RequestFullSend();
                 _net.PickupSync.TickHost(_net);
-                EntitySpawner.DumpLiveSpawns(_net);
-                _net.EnemySync.RequestFullSend();
-                _net.EnemySync.TickHost(_net);
-                _net.BossSync.RequestFullSend();
-                _net.BossSync.TickHost(_net);
                 _net.StorySync.RequestFullSend();
                 _net.StorySync.Send(_net, true, replayPresentation: true);
                 // Inside the unicast scope the box is always sent and not recorded, so an unchanged box still reaches the joiner.
                 _net.StorageSync.SendNow(_net);
                 PartyKeyRing.Broadcast();
                 _net.DroppedItemHandlers.DumpDroppedItems();
-                FmodEmitterSync.DumpPlaying();
                 if (!SceneFollowService.IsTransient(SceneManager.GetActiveScene().name ?? ""))
                     _net.SceneHandlers.SendSceneFollow(SceneManager.GetActiveScene().name ?? "", false);
                 _net.SceneHandlers.BroadcastSceneHello();
@@ -239,6 +232,55 @@ namespace SyncRADation.Networking
             {
                 _net.EndUnicast(prevUnicast);
             }
+        }
+
+        /// <summary>The world of this peer's scene (enemies, bosses, doors, puzzles, world sounds), as its owner sends it.</summary>
+        void DumpSceneWorld()
+        {
+            WorldRegistry.RebuildIfStale();
+            DoorSyncService.ForceFullSend();
+            _net.PuzzleSync.ForceFullSend();
+            _net.PuzzleSync.Tick(_net);
+            EntitySpawner.DumpLiveSpawns(_net);
+            _net.EnemySync.RequestFullSend();
+            _net.EnemySync.TickHost(_net);
+            _net.BossSync.RequestFullSend();
+            _net.BossSync.TickHost(_net);
+            FmodEmitterSync.DumpPlaying();
+        }
+
+        /// <summary>Host: a peer in a scene a client owns asked for the world; the owner sends it.</summary>
+        void ForwardWorldDump(int owner, int targetPlayerId)
+        {
+            var req = new SnapshotRequestMessage { SenderPlayerId = targetPlayerId };
+            var w = new NetDataWriter();
+            w.Put((byte)NetMessageType.SnapshotRequest);
+            req.Serialize(w);
+            PlaytestLog.Event("Owners", "p" + targetPlayerId + " world dump from owner p" + owner);
+            _net.ForwardToOwner(owner, targetPlayerId, w);
+        }
+
+        /// <summary>
+        /// Owner of this scene: send its world to targetPlayerId (&gt;= 0, unicast) or to everyone in it (-1). A client
+        /// owner's sends go through the host to that scene only (SceneRelay).
+        /// </summary>
+        internal void SendSceneWorldDump(int targetPlayerId)
+        {
+            if (!NetGate.SceneOwner || SceneFollowService.LocalIsTransient()) return;
+            if (NetGate.Host)
+            {
+                // The host's whole dump: also what a joiner needs besides the world.
+                if (targetPlayerId >= 0) SendFullWorldSnapshot(targetPlayerId);
+                return;
+            }
+            // Alone in the scene: nobody to send it to (a follower arriving asks for it).
+            if (targetPlayerId < 0 && !SceneOwners.AnyOtherIn(SceneManager.GetActiveScene().name ?? "", _net.LocalPlayerId)) return;
+            PlaytestLog.Event("Owners", "send scene world " + (targetPlayerId >= 0 ? "to p" + targetPlayerId : "to this scene"));
+            int prev = _net.BeginUnicast(targetPlayerId);
+            try { DumpSceneWorld(); }
+            catch (System.Exception ex) { ModRuntime.Log?.Warning("[Owners] scene world dump failed: " + ex.Message); }
+            finally { _net.EndUnicast(prev); }
+            _net.StorySync.SendSceneReplayTo(_net, targetPlayerId);
         }
 
         /// <summary>
@@ -273,7 +315,13 @@ namespace SyncRADation.Networking
 
         internal void HandleSnapshotRequest(SnapshotRequestMessage req, int senderId)
         {
-            if (!NetGate.HostRole) return;
+            if (!NetGate.HostRole)
+            {
+                // The host passed a follower's request on to this owner (SceneRelay): the scene's world only.
+                if (NetGate.ClientSceneOwner && senderId >= 1 && senderId != _net.LocalPlayerId)
+                    SendSceneWorldDump(senderId);
+                return;
+            }
             // Only the requester gets the dump; the wire SenderPlayerId is ignored.
             int target = senderId;
             if (target < 1 || !_net.HasPeer(target)) return;

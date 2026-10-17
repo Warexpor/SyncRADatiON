@@ -17,9 +17,9 @@ namespace SyncRADation.Patches
         static bool Forward(EnemyController enemy, EnemyActionKind kind)
         {
             if (enemy == null) return true;
-            if (!NetGate.Client || NetGate.IsApplying) return true;
+            if (!NetGate.SceneFollower || NetGate.IsApplying) return true;
             var net = LanNetworkManager.Instance;
-            if (net == null || net.SceneMismatch) return true;
+            if (net == null) return true;
             ulong id;
             if (!WorldRegistry.TryGetEnemyId(enemy, out id) || id == 0) return true;
             net.EnemyHandlers.SendEnemyAction(id, kind);
@@ -52,7 +52,7 @@ namespace SyncRADation.Patches
         [HarmonyPrefix, HarmonyPatch(nameof(EnemyController.Hit))]
         public static void HitPrefix(EnemyController __instance)
         {
-            if (!NetGate.Host) return;
+            if (!NetGate.SceneOwner) return;
             ClientDamageService.OnEnemyHit(__instance);
         }
     }

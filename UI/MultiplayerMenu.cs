@@ -65,7 +65,7 @@ namespace SyncRADation.UI
                 + " doors=" + WorldRegistry.DoorCount);
 
             if (net.SceneMismatch)
-                GUI.Label(CR(10, 90, 320, 35), "SCENE MISMATCH — following host chapter…");
+                GUI.Label(CR(10, 90, 320, 35), "Host in '" + net.HostSceneName + "' (you play this area alone)");
             else
                 GUI.Label(CR(10, 90, 320, 20), "Room: " + WorldRegistry.GetLocalRoomName());
 

@@ -1,14 +1,12 @@
 namespace SyncRADation.Networking
 {
-    /// <summary>Party life (downed / revive / wipe) + party save wire ownership.</summary>
+    /// <summary>Party save + room report wire ownership.</summary>
     public sealed partial class LanNetworkManager
     {
         private PartyNetHandlers _partyHandlers;
 
         internal PartyNetHandlers PartyHandlers =>
             _partyHandlers ?? (_partyHandlers = new PartyNetHandlers(this));
-
-        public void SendPartyLife(PartyLifeMessage msg) => PartyHandlers.SendPartyLife(msg);
 
         /// <summary>Last scene this peer announced (host/local included). "" when unknown.</summary>
         internal string SceneOf(int playerId)

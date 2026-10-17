@@ -32,8 +32,6 @@ namespace SyncRADation.Config
         public const int DefaultMaxPlayers = 4;
         public const int MinMaxPlayers = 2;
         public const int HardMaxPlayers = 8;
-        /// <summary>Seconds a downed player waits before respawning next to a living teammate.</summary>
-        public static MelonPreferences_Entry<float> DownedRespawnDelay;
         /// <summary>Host: let clients use the F6 / F7 / F11 cheats that touch the shared world. Default off.</summary>
         public static MelonPreferences_Entry<bool> AllowClientCheats;
 
@@ -77,8 +75,6 @@ namespace SyncRADation.Config
                 "Host session capacity incl. host (2-8). Applies on next Host Game.");
             if (MaxPlayers.Value < MinMaxPlayers || MaxPlayers.Value > HardMaxPlayers)
                 MaxPlayers.Value = System.Math.Max(MinMaxPlayers, System.Math.Min(HardMaxPlayers, MaxPlayers.Value));
-            DownedRespawnDelay = Category.CreateEntry("DownedRespawnDelay", 20f,
-                "Seconds a downed player (host or client) waits before respawning next to the nearest living teammate. The party wipes (host reloads its last save) only when everyone is down.");
 
             RemotePlayerModel = Category.CreateEntry("RemotePlayerModel", 0,
                 "How the other players look on this screen: 0 = Elster, 1 = Ariane (white sleep dress), 2 = Ariane (Penrose uniform). Local display only (F2 menu).");
@@ -110,15 +106,6 @@ namespace SyncRADation.Config
             {
                 int v = DesyncCheckSeconds != null ? DesyncCheckSeconds.Value : 20;
                 return v < 5 ? 5 : (v > 300 ? 300 : v);
-            }
-        }
-
-        public static float DownedRespawnSeconds
-        {
-            get
-            {
-                float v = DownedRespawnDelay != null ? DownedRespawnDelay.Value : 20f;
-                return v < 1f ? 1f : (v > 600f ? 600f : v);
             }
         }
 

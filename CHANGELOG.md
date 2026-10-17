@@ -1,3 +1,43 @@
+## Unreleased (dev)
+
+### Fixed
+- A client using an item whose success event opens a reading screen (the LOV microfiche) no longer pulls the host into that screen, cutscene or not. A peer's replayed event never opens a book or event screen on another player; its world changes still apply.
+- A sleeping replika no longer stands up and drops back down on a client walking into its room: the host stopped sending animation state from a room that is switched off on its side, and a puppet asleep at home keeps its own sleep pose.
+- Clients now hear a replika's constant vocal loop (awake and downed): puppets mirror the enemy's `aliveSFX` on/off.
+- The desync check no longer reports a cutscene one player skipped while another is still watching it.
+
+## 0.5.76 — 2026-10-16
+
+Protocol **v22** (`PeerScenes` 76, `WorldRelay` 77; `PartyLife` 40 removed).
+
+### Changed
+- **Players in an area the host is not in now share it.** In 0.5.75 every client away from the host ran its area on its own, so two clients in the same place saw different enemies, doors and cutscenes. Now the lowest-id player there runs that area for everyone in it, the way the host runs its own: enemies, bosses, doors, puzzles, cutscene starts, event zones, gunshot wakes, scripted `goto` / `sethp`, `goToPenny` and world sounds. Clients only connect to the host, so that player's traffic goes through the host, which passes it on to the players in that area only. The story, the storage box, keys, pickups and saves stay with the host wherever it is.
+- When the area changes hands (the host walks in, or its runner leaves), the new runner's enemies take their own AI back and it sends its world to the others there. The old runner's enemies become puppets. In 0.5.75 a client stayed with frozen puppet enemies after the host left its area; this fixes that.
+- **Death is personal and never rolls the world back.** There is no downed state, revive timer or party wipe any more. Whoever dies (host or client) plays the death, then about 3.5 s later reloads the area they died in on their own, at the last save point they used in it (or the area's entrance if they never saved there), with full health and the bag they had. Nobody else is moved. No save slot is read, so the story, opened locks, taken items and killed enemies stay as the party left them: no player ever ends up with an older world than the others. `DownedRespawnDelay` is gone, and so is the floor drop of a downed player's bag.
+
+### Fixed
+- A client sitting on the title screen at connect no longer counts as running a scene.
+
+### Docs
+- `docs/SYNC.md` (per-scene authority, death), `docs/PROTOCOL.md` v22, `docs/LOGGING.md` `[Owners]`, `docs/PLAYTEST.md` 3-player items and death section, README death / config, AGENTS rule 2; `coop-soak.sh` checks the death reload.
+
+## 0.5.75 — 2026-10-16
+
+Protocol **v21** (unchanged: same messages, the client no longer sends scene requests). From the 0.5.74 session (PEN_Wreck, LOV_Reeducation).
+
+### Changed
+- **Players travel on their own.** One player taking a chapter or area load pulled everyone else into it. Every level load is now personal, host and client alike, F7 included (a client still needs `AllowClientCheats`). A client goes to the host's chapter once when it connects, and a party wipe still reloads everyone.
+- **A client in an area the host is not in plays it like solo**: its enemies, bosses, cutscenes, event zones, doors and gunshots run in its own game. Story flags it writes still go to the host, and the host's story commits now apply to it at once (they used to wait until both were in the same scene), so taken items, opened locks and watched cutscenes are there for whoever loads that area later. When the host walks in, the host's world takes over and the client's enemies become its puppets. Scripted cutscene `goto` / `sethp` and `goToPenny` stay with the player who triggered them when the host is elsewhere.
+- A client that finishes the credits or quits to the title leaves the session (the credits used to wait for the host's). Continue / New Game on a connected client's title screen goes to the host's chapter instead of loading its own slot.
+- The first full story commit after connecting replaces the joiner's shared SProgress: the story from its own save no longer lingers next to the party's.
+
+### Fixed
+- **The client stayed frozen in LOV_Reeducation** (`gs=loading` until quit) after the host's F7 jump pulled it there: that level only leaves the loading state through its intro cutscene, and the client's own save had already marked the intro as seen, so it never played. The joiner's story is now the host's (see above), and any peer still in `gameState` loading 4 s after arriving, with no cutscene running, gets play back (`[Scene] gameState stuck at loading ... play restored`).
+- The F2 menu showed "SCENE MISMATCH — following host chapter" while nothing followed; it now says where the host is.
+
+### Docs / tools
+- `docs/SYNC.md`, README, `docs/PLAYTEST.md` section 5, `docs/PILOT.md`; `scripts/pilot/story-run.sh` and `soak-all.sh` have every peer load each chapter itself.
+
 ## 0.5.74 — 2026-10-16
 
 Protocol **v21** (unchanged). From the first 0.5.73 session (LOV_Reeducation, Surface Access).

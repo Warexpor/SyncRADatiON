@@ -100,7 +100,8 @@ namespace SyncRADation.Tests
             byte[] empty = WireFuzz.Write(WithCount(t, f, cap, 0, new Random(1))).CopyData();
             byte[] one = WireFuzz.Write(WithCount(t, f, cap, 1, new Random(1))).CopyData();
             int at = Enumerable.Range(0, empty.Length).First(i => i >= one.Length || empty[i] != one[i]); // first byte of the count field
-            bool isByteCount = key == "PlayerRosterMessage.PlayerIds" || key.EndsWith(".Stats", StringComparison.Ordinal);
+            bool isByteCount = key == "PlayerRosterMessage.PlayerIds" || key.StartsWith("PeerScenesMessage.", StringComparison.Ordinal)
+                || key.EndsWith(".Stats", StringComparison.Ordinal);
 
             byte[] tooBig = (byte[])empty.Clone();
             if (isByteCount) tooBig[at] = (byte)(cap.Cap + 1);
@@ -165,18 +166,12 @@ namespace SyncRADation.Tests
         [Fact]
         public void Party_Room_and_Scene_strings_use_the_capped_writer_and_truncate_instead_of_throwing()
         {
-            // PartyLife/PartyRoom write Room (and PartyLife Scene) through NetWire.PutString: an absurdly long value is
+            // PartyRoom writes Room through NetWire.PutString: an absurdly long value is
             // truncated to MaxString chars instead of throwing OverflowException inside Serialize.
             string tooLong = new string('r', 70000);
             var room = (PartyRoomMessage)WireFuzz.RoundTrip(new PartyRoomMessage { PlayerId = 7, Room = tooLong }, out var r1, out _);
             Assert.Equal(NetWire.MaxString, room.Room.Length);
             Assert.True(r1.EndOfData);
-
-            var life = (PartyLifeMessage)WireFuzz.RoundTrip(new PartyLifeMessage { Room = tooLong, Scene = tooLong, SaveSlot = 3 }, out var r2, out _);
-            Assert.Equal(NetWire.MaxString, life.Room.Length);
-            Assert.Equal(NetWire.MaxString, life.Scene.Length);
-            Assert.Equal(3, life.SaveSlot); // fields after the strings survive
-            Assert.True(r2.EndOfData);
 
             string ok = new string('r', NetWire.MaxString);
             var back = (PartyRoomMessage)WireFuzz.RoundTrip(new PartyRoomMessage { PlayerId = 7, Room = ok }, out var r, out _);

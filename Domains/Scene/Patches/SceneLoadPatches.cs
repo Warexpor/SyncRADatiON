@@ -1,4 +1,4 @@
-// Host LoadLevel broadcasts SceneFollow; client LoadLevel becomes a request.
+// Level loads are personal: the host announces its own (SceneFollow), a client loads alone (or leaves the party for the title).
 // One Harmony class per method: a missing IL2CPP overload then fails only its own class, not every load gate.
 using HarmonyLib;
 using SyncRADation.Networking;
@@ -29,11 +29,6 @@ namespace SyncRADation.Patches
             if (!NetGate.Party) return true;
             if (string.IsNullOrEmpty(scene)) return true;
             if (SceneFollowService.IsTransient(scene)) return true;
-            if (AirlockCinematic.IsPersonalChapterLoad(scene))
-            {
-                PlaytestLog.Event("Scene", "local airlock load '" + scene + "'");
-                return true;
-            }
 
             if (NetGate.Host)
             {
@@ -46,35 +41,45 @@ namespace SyncRADation.Patches
                     LanNetworkManager.Instance.EndSession("Host returned to the main menu");
                     return true;
                 }
+                // Personal like every level load. The announcement only moves a client that just joined (or sits
+                // in a title-flow scene).
                 SceneFollowService.NoteGoingTo(scene);
                 PlaytestLog.Event("Scene", "host load '" + scene + "'");
+                SceneOwners.HostRecompute(LanNetworkManager.Instance);
                 LanNetworkManager.Instance.SceneHandlers.SendSceneFollow(scene, false);
                 return true;
             }
 
-            // Quit to title (pause menu, restart): this client leaves the party and loads it offline. Stop synchronously
-            // so the load runs ungated. Not after end credits: CreditsEnd re-issues MainMenu2 every frame and the host's
-            // own credits end brings everyone to the menu together (SceneFollowService.TryApplyRequest).
-            if (SceneFollowService.IsLeaveGame(scene) && !SceneFollowService.InEndCredits())
+            // Quit to title (pause menu, restart, own credits done): this client leaves the party and loads it
+            // offline. Stop synchronously so the load runs ungated.
+            if (SceneFollowService.IsLeaveGame(scene))
             {
                 PlaytestLog.Event("Scene", "client load '" + scene + "' - leaving the session");
                 LanNetworkManager.Instance.EndSession("Left to the main menu");
                 return true;
             }
 
-            // This player's scene-ending cutscene finished after the host's: the host is already there.
-            if (SceneFollowService.TryReleaseHeldFollow(scene)) return false;
-
-            // CreditsEnd re-issues its load every frame after the fade: one log line per scene per 5 s.
-            float now = Time.unscaledTime;
-            if (!string.Equals(_lastBlockedScene, scene, System.StringComparison.Ordinal) || now - _lastBlockedLog > 5f)
+            // Continue / New Game from a title-flow scene while connected would load this player's own slot: in a
+            // party the world is the host's, so go there instead.
+            if (SceneFollowService.LocalInTitleFlow())
             {
-                _lastBlockedScene = scene;
-                _lastBlockedLog = now;
-                PlaytestLog.Event("Scene", "client blocked local load, request '" + scene + "'");
+                string host = LanNetworkManager.Instance.HostSceneName;
+                // CreditsEnd-style repeats: one log line per scene per 5 s.
+                float now = Time.unscaledTime;
+                if (!string.Equals(_lastBlockedScene, scene, System.StringComparison.Ordinal) || now - _lastBlockedLog > 5f)
+                {
+                    _lastBlockedScene = scene;
+                    _lastBlockedLog = now;
+                    PlaytestLog.Event("Scene", "client blocked title load '" + scene + "', going to the host's '" + host + "'");
+                }
+                if (!SceneFollowService.IsTransient(host)) SceneFollowService.FollowHost(host);
+                return false;
             }
-            SceneFollowService.RequestFollow(scene);
-            return false;
+
+            // Every other level load is this player's own: the party does not come along.
+            PlaytestLog.Event("Scene", "own load '" + scene + "'");
+            SceneFollowService.NoteOwnLoad(scene);
+            return true;
         }
     }
 
@@ -126,28 +131,6 @@ namespace SyncRADation.Patches
     {
         [HarmonyPrefix]
         public static bool Prefix(string scene) => SceneLoadGate.GateLevel(scene);
-    }
-
-    // CreditsEnd.Update (every frame after the fade) runs ResetGame.ResetNow, then LoadLevel(MainMenu2). On a client in
-    // the party that load is gated into a request, so ResetNow ran natively every frame (statics wiped repeatedly)
-    // until the host's own credits end. The host's follow runs ResetNow itself (SceneFollowService.Apply, apply scope).
-    // ResetGame.ResetNow is a unique RVA (0x776050); only the client's own un-applied call from the EndCredits scene is skipped.
-    [HarmonyPatch(typeof(ResetGame), nameof(ResetGame.ResetNow))]
-    public static class ResetNowCreditsPatch
-    {
-        [HarmonyPrefix]
-        public static bool Prefix()
-        {
-            if (NetGate.IsApplying || !NetGate.Client || !NetGate.Party) return true;
-            try
-            {
-                if (!string.Equals(UnityEngine.SceneManagement.SceneManager.GetActiveScene().name,
-                        SceneFollowService.EndCreditsScene, System.StringComparison.Ordinal))
-                    return true;
-            }
-            catch (System.Exception e) { Guard.Swallow(e); return true; }
-            return false;
-        }
     }
 
     [HarmonyPatch(typeof(UnityEngine.SceneManagement.SceneManager), nameof(UnityEngine.SceneManagement.SceneManager.LoadScene), new[] { typeof(string) })]

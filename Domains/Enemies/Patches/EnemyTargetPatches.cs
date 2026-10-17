@@ -30,7 +30,7 @@ namespace SyncRADation.Patches
         internal static bool Begin(EnemyController e)
         {
             // Nested: Update / TrackAndAttack starting a coroutine runs its first step inside the outer swap.
-            if (!NetGate.Host || _parked != null || e == null) return false;
+            if (!NetGate.SceneOwner || _parked != null || e == null) return false;
             try
             {
                 var target = EnemySyncService.ChaseTargetOf(e);
@@ -178,7 +178,7 @@ namespace SyncRADation.Patches
             [HarmonyPrefix]
             public static bool Prefix()
             {
-                if (!NetGate.Host || _downedStep == null || !EnemySyncService.TakePeerStomp(_downedStep)) return true;
+                if (!NetGate.SceneOwner || _downedStep == null || !EnemySyncService.TakePeerStomp(_downedStep)) return true;
                 try
                 {
                     foreach (var kvp in WorldRegistry.AllEnemies())

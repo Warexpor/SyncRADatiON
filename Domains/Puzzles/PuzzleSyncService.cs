@@ -75,7 +75,7 @@ namespace SyncRADation.Networking
         // Client seeding gate: the host is the only source of initial state. A client stays silent
         // (no seed, no diffs) until the host's full dump for this scene is applied, then snapshots
         // a baseline and only emits real local changes. Timeout covers scenes the host never dumps
-        // (airlock split, SceneMismatch).
+        // (an owner that never sends one).
         private bool _hostDumpApplied;
         private bool _clientLive;
         private float _clientWaitSince = -1f;
@@ -208,6 +208,26 @@ namespace SyncRADation.Networking
             }
             if (restored > 0) _pendingReapply = true;
             ModRuntime.Log?.Msg("[PuzzleSync] Scene refreshed (durable restored=" + restored + ")");
+        }
+
+        /// <summary>
+        /// This client now runs its scene (the previous owner left, or nobody else is here): its state is the truth and
+        /// the next tick sends all of it to the others in the scene.
+        /// </summary>
+        public void OnBecameOwner()
+        {
+            _pending.Clear();
+            _clientLive = false;
+            _needFullSend = true;
+        }
+
+        /// <summary>Another peer now runs this scene: wait for its dump, as on arrival (local edits meanwhile are kept as pending).</summary>
+        public void OnBecameFollower()
+        {
+            _hostDumpApplied = false;
+            _clientLive = false;
+            _clientWaitSince = -1f;
+            _dumpRetries = 0;
         }
 
         /// <summary>Log a swallowed apply/read failure once per call site.</summary>
@@ -461,7 +481,7 @@ namespace SyncRADation.Networking
             // recorded now would be sent to the joiner alone and never reach the other peers (3+ players).
             if (net.UnicastActive)
             {
-                if (_unicastFull && NetGate.HostRole)
+                if (_unicastFull && NetGate.SceneOwnerRole)
                 {
                     _unicastFull = false;
                     SendUnicastSnapshot(net);
@@ -504,7 +524,7 @@ namespace SyncRADation.Networking
             EnsureScanned();
             try
             {
-                if (!NetGate.HostRole)
+                if (!NetGate.SceneOwnerRole)
                     TickClient(net);
                 else
                     TickHost(net, fullNow);
@@ -538,8 +558,7 @@ namespace SyncRADation.Networking
                 float waited = Time.unscaledTime - _clientWaitSince;
                 if (!_hostDumpApplied && waited < ClientDumpWait)
                 {
-                    if (_dumpRetries < ClientDumpMaxRetries && waited >= ClientDumpRetryEvery * (_dumpRetries + 1)
-                        && !net.SceneMismatch && !AirlockCinematic.ShouldIgnoreHostFollow(net.HostSceneName))
+                    if (_dumpRetries < ClientDumpMaxRetries && waited >= ClientDumpRetryEvery * (_dumpRetries + 1))
                     {
                         _dumpRetries++;
                         PlaytestLog.Event("Puzzle", "client dump retry " + _dumpRetries + " (waited " + waited.ToString("0.0") + "s)");
@@ -578,7 +597,7 @@ namespace SyncRADation.Networking
             float t0 = Time.realtimeSinceStartup;
             try
             {
-                if (NetGate.HostRole) TickHost(net, false);
+                if (NetGate.SceneOwnerRole) TickHost(net, false);
                 else if (_clientLive) SendClientDiff(net);
                 _sendTimer = 0f;
             }
@@ -632,10 +651,12 @@ namespace SyncRADation.Networking
             }
         }
 
-        /// <summary>A dump only seeds the gate when it is for the scene this client is in.</summary>
+        /// <summary>A dump only seeds the gate when it is for the scene this client is in (from its owner).</summary>
         bool HostSceneMatches(LanNetworkManager net)
         {
             if (net == null) return true;
+            // A client owner sends only to its own scene: its dump is for this one.
+            if (SceneOwners.OwnerOf(_sceneName) >= 1) return true;
             string hs = net.HostSceneName;
             return string.IsNullOrEmpty(hs) || string.IsNullOrEmpty(_sceneName)
                 || string.Equals(hs, _sceneName, StringComparison.Ordinal);
@@ -643,10 +664,10 @@ namespace SyncRADation.Networking
 
         /// <summary>Emit gate: a client stays silent until seeded by the host dump and only emits client types.</summary>
         bool MayEmit(LanNetworkManager net, PuzzleType type)
-            => NetGate.HostRole || (_clientLive && ClientMayEmit(type));
+            => NetGate.SceneOwnerRole || (_clientLive && ClientMayEmit(type));
 
         bool Unseeded(LanNetworkManager net, PuzzleType type)
-            => !NetGate.HostRole && !_clientLive && ClientMayEmit(type);
+            => !NetGate.SceneOwnerRole && !_clientLive && ClientMayEmit(type);
 
         /// <summary>Client, unseeded: remember the latest local state of a key (first observation = its baseline).</summary>
         void RecordPending(PuzzleStateEntry entry, bool solvedEdge = false, bool explicitEdit = true)
@@ -717,7 +738,7 @@ namespace SyncRADation.Networking
         void FlushPending()
         {
             var net = LanNetworkManager.Instance;
-            if (net == null || NetGate.HostRole || _pendingFlush.Count == 0) { _pendingFlush.Clear(); return; }
+            if (net == null || NetGate.SceneOwnerRole || _pendingFlush.Count == 0) { _pendingFlush.Clear(); return; }
             _pendingOut.Clear();
             for (int i = 0; i < _pendingFlush.Count; i++)
             {
@@ -883,6 +904,9 @@ namespace SyncRADation.Networking
                     // held re-snap on room entry: marked, so the diff reports it apart from awake differences.
                     bool awake = false;
                     try { awake = kvp.Value.gameObject.activeInHierarchy; } catch (Exception ex) { Guard.Swallow(ex); }
+                    // A cutscene still playing here: skips are per player, the watcher's end settles it (not a desync).
+                    if (awake && typeMap.Key == PuzzleType.CutsceneCompleted)
+                        awake = !CutsceneSync.StartedHere(kvp.Value.TryCast<CutsceneManager>());
                     into.Add(PilotLine(e, ci) + (awake ? "" : " asleep"));
                     if (spec != null && spec.FirstInstanceOnly) break;
                 }
@@ -938,7 +962,7 @@ namespace SyncRADation.Networking
                 // the full dump.
                 if (entry.Type == PuzzleType.InteractiveLockSingle)
                 {
-                    if (firstIsBaseline || NetGate.ClientRole)
+                    if (firstIsBaseline || NetGate.SceneFollowerRole)
                         entry.Bool1 = prev.Bool1;
                     else if (entry.Bool1 != prev.Bool1 && entry.Bool0 == prev.Bool0 && entry.Bool2 == prev.Bool2)
                         return false;
@@ -983,9 +1007,9 @@ namespace SyncRADation.Networking
             var net = LanNetworkManager.Instance;
             // A live host edit supersedes a pre-seed local observation. A dump / held re-snap does not: the pending
             // record survives so PrimeClientBaseline can still flush a real local solve the dump left in place.
-            if (!keepPending && net != null && !NetGate.HostRole && !_clientLive)
+            if (!keepPending && net != null && !NetGate.SceneOwnerRole && !_clientLive)
                 _pending.Remove(key);
-            if (net != null && !NetGate.HostRole && entry.Seq != 0 && entry.Seq > CurSeq(key))
+            if (net != null && !NetGate.SceneOwnerRole && entry.Seq != 0 && entry.Seq > CurSeq(key))
                 _seq[key] = entry.Seq;
         }
 
@@ -995,9 +1019,9 @@ namespace SyncRADation.Networking
             if (msg.Entries == null || msg.Entries.Length == 0) return;
             if (net != null && msg.SenderPlayerId == net.LocalPlayerId)
                 return;
-            bool isHost = net != null && NetGate.HostRole;
-            bool canApply = !SceneFollowService.LocalIsTransient()
-                && !(net != null && net.SceneMismatch);
+            bool isHost = net != null && NetGate.SceneOwnerRole;
+            // Puzzle states only come from this scene's owner (or, to the owner, from its followers).
+            bool canApply = !SceneFollowService.LocalIsTransient();
 
             _applyScratch.Clear();
             _relayAll.Clear();
@@ -1055,6 +1079,10 @@ namespace SyncRADation.Networking
                 bool prevMutate = _mutateWorld;
                 _mutateWorld = cinematic;
                 NetGate.BeginApply();
+                // A client owning its scene applying a follower's edit: flags the solve writes are the shared story's,
+                // so they go to the host like any client consequence (StoryPatches.GateSet author scope).
+                bool authorScope = isHost && NetGate.ClientRole;
+                if (authorScope) StorySyncService.BeginAuthorScope();
                 ApplyingPeerPacket = isHost;
                 int prevSender = NetGate.ApplySender;
                 if (isHost && msg.SenderPlayerId >= 1) NetGate.ApplySender = msg.SenderPlayerId;
@@ -1076,6 +1104,7 @@ namespace SyncRADation.Networking
                     NetGate.ApplySender = prevSender;
                     ApplyingPeerPacket = false;
                     _mutateWorld = prevMutate;
+                    if (authorScope) StorySyncService.EndAuthorScope();
                     NetGate.EndApply();
                 }
 
@@ -1440,7 +1469,7 @@ namespace SyncRADation.Networking
         void SendEmit(LanNetworkManager net, PuzzleStateEntry entry, string what)
         {
             if (!ChangedOrFirst(ref entry, false)) return;
-            StampOutgoing(ref entry, NetGate.HostRole, false);
+            StampOutgoing(ref entry, NetGate.SceneOwnerRole, false);
             HoldIfProgressed(entry);
             PlaytestLog.Event("Puzzle", what + entry.Type + " id=" + unchecked((ulong)entry.WorldId).ToString("X16"));
             _emitScratch[0] = entry;

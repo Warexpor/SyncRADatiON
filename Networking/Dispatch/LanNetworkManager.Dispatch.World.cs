@@ -6,14 +6,14 @@ namespace SyncRADation.Networking
 {
     public sealed partial class LanNetworkManager
     {
-        bool TryDispatchWorld(NetMessageType type, NetPacketReader reader, int senderId)
+        bool TryDispatchWorld(NetMessageType type, LiteNetLib.Utils.NetDataReader reader, int senderId)
         {
             switch (type)
             {
             case NetMessageType.DoorState:
             {
                 var door = DoorStateMessage.Deserialize(reader);
-                if (_role == NetworkRole.Host) door.SenderPlayerId = senderId;
+                if (StampsSender) door.SenderPlayerId = senderId;
                 DoorHandlers.HandleDoorState(door, senderId);
                 return true;
             }
@@ -26,7 +26,7 @@ namespace SyncRADation.Networking
             case NetMessageType.EnemyDamage:
             {
                 var dmg = EnemyDamageMessage.Deserialize(reader);
-                if (_role == NetworkRole.Host) dmg.AttackerPlayerId = senderId;
+                if (StampsSender) dmg.AttackerPlayerId = senderId;
                 EnemyHandlers.HandleEnemyDamage(dmg);
                 return true;
             }
@@ -35,7 +35,7 @@ namespace SyncRADation.Networking
                 var puzzle = PuzzleStateMessage.Deserialize(reader);
                 if (ModConfig.PuzzlesEnabled)
                 {
-                    if (_role == NetworkRole.Host) puzzle.SenderPlayerId = senderId;
+                    if (StampsSender) puzzle.SenderPlayerId = senderId;
                     PuzzleHandlers.HandlePuzzleState(puzzle);
                 }
                 return true;
@@ -49,7 +49,7 @@ namespace SyncRADation.Networking
             case NetMessageType.WorldPickupClaim:
             {
                 var claim = WorldPickupClaimMessage.Deserialize(reader);
-                if (_role == NetworkRole.Host) claim.ClaimerPlayerId = senderId;
+                if (StampsSender) claim.ClaimerPlayerId = senderId;
                 WorldPickupHandlers.HandleWorldPickupClaim(claim);
                 return true;
             }

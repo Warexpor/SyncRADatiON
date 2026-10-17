@@ -1,5 +1,5 @@
 // Minimal source-compatible stand-ins for the UnityEngine surface used by the pure game files
-// (NetMessages.cs: Quaternion/Mathf; WorldId.cs: Transform/GameObject/SceneManager). Test-only.
+// (Networking/Messages: Quaternion/Mathf; WorldId.cs: Transform/GameObject/SceneManager). Test-only.
 using System;
 using System.Collections.Generic;
 

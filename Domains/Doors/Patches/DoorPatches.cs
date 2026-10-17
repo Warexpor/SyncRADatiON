@@ -274,6 +274,8 @@ namespace SyncRADation.Patches
         {
             var net = LanNetworkManager.Instance;
             if (net == null || !net.IsConnected || __instance == null) return true;
+            // A peer's replayed event (onSuccessful / onSolved) never opens an event screen on this player.
+            if (BookScreenRemoteOpenPatch.RemoteApply("EventScreen.startEvent")) return false;
             Interaction inter = null;
             try { inter = __instance.inter; } catch (System.Exception e) { Guard.Swallow(e); }
             if (inter == null || !net.PuzzleSync.ShouldKillOverlay(inter)) return true;

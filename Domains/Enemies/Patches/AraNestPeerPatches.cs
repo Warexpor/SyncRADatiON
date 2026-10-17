@@ -57,12 +57,12 @@ namespace SyncRADation.Patches
         public static bool Prefix(AraNest __instance, out PeerRoomEnemies.PeerView? __state)
         {
             __state = null;
-            if (NetGate.Live && !NetGate.Host)
+            if (NetGate.Live && !NetGate.SceneOwner)
             {
                 try { return !ClientSkipsReset(__instance); }
                 catch (System.Exception e) { Guard.Swallow(e); return true; }
             }
-            if (!NetGate.Host) return true;
+            if (!NetGate.SceneOwner) return true;
             try
             {
                 var room = __instance != null ? __instance.room : null;
@@ -99,7 +99,7 @@ namespace SyncRADation.Patches
         public static void Prefix(AraNest._delayedLogic_d__38 __instance, out PeerRoomEnemies.PeerView? __state)
         {
             __state = null;
-            if (!NetGate.Host) return;
+            if (!NetGate.SceneOwner) return;
             try
             {
                 var nest = __instance != null ? __instance.__4__this : null;

@@ -4,14 +4,14 @@ namespace SyncRADation.Networking
 {
     public sealed partial class LanNetworkManager
     {
-        bool TryDispatchStoryAudio(NetMessageType type, NetPacketReader reader, int senderId)
+        bool TryDispatchStoryAudio(NetMessageType type, LiteNetLib.Utils.NetDataReader reader, int senderId)
         {
             switch (type)
             {
             case NetMessageType.InteractionRequest:
             {
                 var req = InteractionRequestMessage.Deserialize(reader);
-                if (_role == NetworkRole.Host) req.SenderPlayerId = senderId;
+                if (StampsSender) req.SenderPlayerId = senderId;
                 InteractionHandlers.HandleInteractionRequest(req);
                 return true;
             }

@@ -37,6 +37,8 @@ namespace SyncRADation.Networking
         public const int MaxSceneDiffTotalIds = 2048;
         /// <summary>Digest lines per WorldDigest chunk (a line is ~60 bytes).</summary>
         public const int MaxDigestLines = 128;
+        /// <summary>Bytes of one message a WorldRelay carries (a chunked puzzle dump is the largest).</summary>
+        public const int MaxRelayBytes = 262144;
 
         // Warn-once keys: intentionally persistent (a wire warning is not repeated every session).
         // persistent: warn-once set

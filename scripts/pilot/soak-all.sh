@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # soak-all.sh [chapters...] : after pilot-run.sh, the full scope in one session: the party walks the chapters in story
-# order (each load alternates between the host and the first client, as story-run.sh) and coop-soak.sh runs every
+# order (every peer loads each chapter itself, as story-run.sh) and coop-soak.sh runs every
 # arrow in each chapter. One boot for the whole run instead of one per chapter. A chapter that ends in a menu scene
 # (LAB_Emptiness -> DeadMenu) is loaded and checked but not soaked. Results: $PILOT_LOG_DIR/soak-all.txt plus each
 # chapter's checks-<scene>.txt.
@@ -18,20 +18,24 @@ fails=0
 k=0
 for ch in "${CHAPTERS[@]}"; do
   k=$((k + 1))
-  who=h; [ $((k % 2)) -eq 0 ] && [ ${#CL[@]} -ge 1 ] && who=${CL[0]}
   t0=$SECONDS
-  note "soak-all $k/${#CHAPTERS[@]}: $ch (load by $who)"
+  note "soak-all $k/${#CHAPTERS[@]}: $ch"
   declare -A from=()
   for n in $(peers); do from[$n]=$(lines "$n"); done
   ok=1
-  if $P h status | tail -1 | grep -q "scene=$ch "; then
-    say "  already in $ch: no load"
-  else
-    $P "$who" scene "$ch" | tail -1
-    for n in $(peers); do
-      if ! waitfor "$n" "settled $ch" 240 "${from[$n]}"; then say "  $n did not settle in $ch ($(tail -1 "$(pdir "$n")/out.txt"))"; ok=0; fi
-    done
-  fi
+  # Level loads are personal: each peer not yet in the chapter loads it, the host first.
+  loaded=()
+  for n in $(peers); do
+    if $P "$n" status | tail -1 | grep -q "scene=$ch "; then
+      say "  $n already in $ch: no load"
+    else
+      $P "$n" scene "$ch" | tail -1
+      loaded+=("$n")
+    fi
+  done
+  for n in "${loaded[@]}"; do
+    if ! waitfor "$n" "settled $ch" 240 "${from[$n]}"; then say "  $n did not settle in $ch ($(tail -1 "$(pdir "$n")/out.txt"))"; ok=0; fi
+  done
   if [ $ok = 0 ]; then fails=$((fails + 1)); continue; fi
   sleep 2
   $P all skip >/dev/null

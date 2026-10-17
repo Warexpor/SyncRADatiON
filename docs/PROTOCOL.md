@@ -1,6 +1,6 @@
 # Protocol history
 
-Current: `Bootstrap/PluginInfo.cs` `ProtocolVersion`. Port default `7777`, connection key `SyncRADation`. Wire: `Networking/Messages/NetMessages.cs`, `PartyMessages.cs`, `NetWire.cs` (schema hash). Bump only when the wire changes, and log the bump here and in `CHANGELOG.md`.
+Current: `Bootstrap/PluginInfo.cs` `ProtocolVersion`. Port default `7777`, connection key `SyncRADation`. Wire: `Networking/Messages/` (`MessageTypes.cs` ids, one `*Messages.cs` per domain), `NetWire.cs` (schema hash). Bump only when the wire changes, and log the bump here and in `CHANGELOG.md`.
 
 - v6: full SProgress dump, UnityEvent presentation, FmodEmitter Play/Stop
 - v7: `PlayerRoster` (3+ peers), recycled client ids, join/resync dump to the requester only
@@ -35,3 +35,4 @@ Current: `Bootstrap/PluginInfo.cs` `ProtocolVersion`. Port default `7777`, conne
   - `EnemyActionKind.Stomp` (6): a client pressed a downed enemy's stomp prompt; the host hands the press to that enemy's native Critical / Fire coroutine.
   - `EnemySnapshotNet.HurtState` bit 7: the host animator's `Sleep` bool (customSleep enemies); bits 0-6 stay `staggerType`.
 - v21 (0.5.71): `WorldDigest` 75. Kind 0, host to every client: the host's shared-world digest (`Sync/TestPilot.Digest.cs` lines, chunks of 128, `Seq` / `Part` / `Parts` / `Scene`) for the live desync check. Kind 1, client to host: the client's findings as log lines.
+- v22 (0.5.76): per-scene authority. `PeerScenes` 76, host to every client: player ids and the scene each is in (the host's pending load target while it loads); every peer derives the same owner per scene from it (the host where it is, else the lowest player id there). `WorldRelay` 77 (`Mode` ToScene 0 / ToPlayer 1 / ToOwner 2, `From`, `Target`, `State` 1 = State channel Sequenced, `Payload` = one whole message, at most 256 KiB): a client owner's sends to one player or to its scene but one, through the host; the host's forward of a follower's scene request (door, puzzle, enemy hit / action, boss hit, FMOD request, scene interaction) to that owner. `PartyLife` 40 (downed revive / party wipe) is gone: a death is a personal scene reload, nothing on the wire but the dead / alive vitals.

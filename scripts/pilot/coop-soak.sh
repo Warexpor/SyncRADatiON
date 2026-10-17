@@ -2,7 +2,7 @@
 # coop-soak.sh : after pilot-run.sh, one pass over the shared world with every peer acting, a digest check
 # (check.sh) after each step. Steps: each peer takes a different pickup; all peers grab the same one at the same
 # moment; each peer kills an enemy (host native, clients through the client damage path); a client opens a door;
-# a client goes down and is revived; the last client leaves, the host changes the world, the client rejoins late.
+# a client dies and reloads its scene on its own; the last client leaves, the host changes the world, the client rejoins late.
 # Every step's result lands in $PILOT_LOG_DIR/checks-<scene>.txt as well.
 set -u
 cd "$(dirname "$0")"
@@ -78,7 +78,7 @@ if [ -n "$DOOR" ] && [ ${#CL[@]} -ge 1 ]; then
   check s4-door
 fi
 
-# --- death: the last client goes down, waits for the revive
+# --- death: the last client dies and reloads its scene on its own (the world stays as it is)
 if [ ${#CL[@]} -ge 1 ]; then
   V=${CL[${#CL[@]} - 1]}
   note "death of $V"
@@ -86,11 +86,11 @@ if [ ${#CL[@]} -ge 1 ]; then
   $P "$V" die | tail -1
   seen=no
   for t in $(seq 1 10); do sleep 1; $P h status | grep -q "| p[0-9]*@[^|]* dead" && { seen=yes; break; }; done
-  echo "  host sees the downed proxy: $seen"
+  echo "  host sees the dead proxy: $seen"
   [ $seen = yes ] || fails=$((fails + 1))
-  if waitplay "$V" 60; then echo "  $V revived: $(st "$V" room) hp=$(st "$V" hp)"; else echo "  $V NOT revived"; fails=$((fails + 1)); fi
+  if waitplay "$V" 90; then echo "  $V back after reload: $(st "$V" room) hp=$(st "$V" hp)"; else echo "  $V NOT back"; fails=$((fails + 1)); fi
   $P "$V" god >/dev/null
-  check s5-revive
+  check s5-death
 fi
 
 # --- late join: the last client leaves, the host takes a pickup, the client comes back

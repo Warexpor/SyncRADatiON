@@ -20,7 +20,7 @@ Six audits against the new pseudo-C (FMODUnity, A*, DialoguerCore, PlatformManag
 | Combat music statics stay per listener | `EnemyManager.c` `<CheckIfLeft>` (currentRoom), `CombatMusic.c` |
 | One-shot GUID paths + 2D one-shots; radio stations local; loop restart; ObjectEnable Stop; TriggerOnce; snapshots | `FMODUnity.RuntimeManager.c` PlayOneShot, `FMODUnity.StudioEventEmitter.c` Play / PlayInstance / HandleGameEvent, `RadioStation.c` SuspendCheck, `Master.strings.tsv` |
 | Client quit-to-title leaves the session | `PauseMenu.c` quit → quitToScene |
-| Wipe reload places clients at the save point | `LoadingManager.c` Start, `Room.c` Awake, `CutsceneManager.c` Start |
+| Death reload places the player at its save point without reading a slot | `LoadingManager.c` Start, `Room.c` Awake, `CutsceneManager.c` Start |
 | Party save token fingerprint | `SaveManager.c` Save / Load (sid, Saves), `SProgress.c`, `ProfileManager.c` |
 | Dialoguer globals not sent | `ItemPickup.c` dialoguerCallback / release, `MedicationCheck.c`, `DialoguerCore.*` |
 | Cutscene `cut <id>` persisted + onGameLoad; OnDisable clears `cutscene` | `CutsceneManager.c` OnEnable / Load / Save / OnDisable |
@@ -34,7 +34,6 @@ Six audits against the new pseudo-C (FMODUnity, A*, DialoguerCore, PlatformManag
 |-----|---------------|----------|
 | `MED_Adler_EVdoors` PuzzleType 77 — DoorL/DoorR local X (Float0/Float1) + Bool0 open; Open/Close emit projected end pose; Apply StopAllCoroutines + snap X | Both arrows + late-join dump | Melon `DoorL`/`DoorR`/`Distance`; dump.cs TypeDef 9811; RES_School closed (0,0,0) → open ±20 |
 | `AdoptNativeSpawn` banks live/`EnemySpawner.EnemyType` via Stash; `TypeKeyOf` uses vanilla `Preset.Type` (not F11 TypeKeys-only); SR_Spawn_* + EnemySpawn when template exists | Host Instantiates → client FinishSpawn same WorldId | `EnemySpawner._Child`; `EntitySpawner.AdoptNativeSpawn` |
-| Death bag: Key/Object stay in the downed player's bag, never floor (keys are personal) | Host wipe + client downed | `NetworkDamageSystem.DropInventoryOnDeath` |
 | `BiodomeDoorLock` IsProgressed Bool0\|\|Int0; Update emit Read/Progressed (not ReadOnce) | Partial KeyLevel remount + late-join | Melon `KeyLevel` / `hasLock` |
 | `MultiConditionEvent` IsProgressed Bool0\|\|Int0 (`tried`) | Partial tries remount + late-join | Melon `tried` / `triedOnce` |
 | `PEN_Reaktor` added to ClientEmitTypes | Client rod mid → host Tick | Dig AG positions pack |
@@ -49,7 +48,7 @@ PuzzleType 64–72 residency/key/safe/drawer; CentralElevator `targetFloor`; mur
 
 ## Intentional local (design — not deferred)
 
-Books / EventScreen / EventOnlyRoom / lock-flavor Dialoguer (0,6,17,20–27,+13 Airlock) / PEN_Titles airlock / wreck↔hole SceneFollow / Music·Cutscenes·Ambience beds / Elster+radio UI emitters / ConnectedDoors traverse / ladders / radio tuner frequency / flavor `DialoguePlayedOnce` / BookScreen UI / SanctuaryFinale·ShootingScene presentation zones / `Interaction.triggered` poll (teleports) / UncoverDelayed cosmetic fog covers / PatternLock FullRefresh `onSolved` exitEvent (EventScreen local; pad+doors still snap) / `LAB_Waage.content` (independent bags) / FakeWall·continuum·nowhere·Gestalt (no durable bool puzzle state).
+Books / EventScreen / EventOnlyRoom / lock-flavor Dialoguer (0,6,17,20–27,+13 Airlock) / PEN_Titles airlock / level loads (personal; join follow once) / Music·Cutscenes·Ambience beds / Elster+radio UI emitters / ConnectedDoors traverse / ladders / radio tuner frequency / flavor `DialoguePlayedOnce` / BookScreen UI / SanctuaryFinale·ShootingScene presentation zones / `Interaction.triggered` poll (teleports) / UncoverDelayed cosmetic fog covers / PatternLock FullRefresh `onSolved` exitEvent (EventScreen local; pad+doors still snap) / `LAB_Waage.content` (independent bags) / FakeWall·continuum·nowhere·Gestalt (no durable bool puzzle state).
 
 ## How to re-run
 

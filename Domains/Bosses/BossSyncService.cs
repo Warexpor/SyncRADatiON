@@ -110,12 +110,12 @@ namespace SyncRADation.Networking
 
         public void TickHost(LanNetworkManager net)
         {
-            if (NetGate.ClientRole)
+            if (NetGate.SceneFollowerRole)
             {
                 TickClient(net);
                 return;
             }
-            if (!NetGate.Host) return;
+            if (!NetGate.SceneOwner) return;
 
             // Join/resync dump (unicast to the joiner): one snapshot now; the broadcast clock and a pending forced
             // send stay untouched so everybody else still gets theirs.
@@ -353,7 +353,7 @@ namespace SyncRADation.Networking
         /// <summary>Client per-frame: forward local hits on halted Falke copies to the host.</summary>
         private void TickClient(LanNetworkManager net)
         {
-            if (!_clientDisabled || net.SceneMismatch || _lastHp.Count == 0) return;
+            if (!_clientDisabled || _lastHp.Count == 0) return;
             for (int i = 0; i < _endBosses.Length; i++)
                 ForwardLocalBossDamage(net, unchecked((long)_endIds[i]), _endBosses[i]);
         }
@@ -379,7 +379,7 @@ namespace SyncRADation.Networking
         public void ApplyBossEventOnClient(BossHitMessage msg)
         {
             var net = LanNetworkManager.Instance;
-            if (net == null || NetGate.HostRole || net.SceneMismatch) return;
+            if (net == null || NetGate.SceneOwnerRole) return;
             if (SceneFollowService.LocalIsTransient()) return;
             BossType type;
             var comp = FindLocalBoss(msg.WorldId, out type);
@@ -411,12 +411,11 @@ namespace SyncRADation.Networking
         public void OnBossStateReceived(BossStateMessage msg)
         {
             var net = LanNetworkManager.Instance;
-            if (NetGate.HostRole) return;
+            if (NetGate.SceneOwnerRole) return;
             if (msg.Bosses == null) return;
             // Join dump / SceneFollow mid-load: applying now would cache an empty boss set and stick
             // _clientDisabled, so later scene bosses would keep local AI and miss phase snaps.
             if (SceneFollowService.LocalIsTransient()) return;
-            if (net != null && net.SceneMismatch) return;
 
             if (!_clientDisabled)
             {
@@ -659,7 +658,25 @@ namespace SyncRADation.Networking
             }
         }
 
-        /// <summary>SessionReset (also after a wipe reload in the same scene): the spears are back on the floor, so a
+        /// <summary>
+        /// This client now runs its scene: its bosses get their controllers back. A fight coroutine the previous
+        /// owner ran does not resume here (StopAllCoroutines ran when they were halted); the boss stands until its own
+        /// logic starts the next phase.
+        /// </summary>
+        public void OnBecameOwner()
+        {
+            if (!_clientDisabled) return;
+            try { EnableLocalAI(); } catch (Exception e) { Guard.Swallow(e); }
+            _clientDisabled = false;
+            _lastHp.Clear();
+            _forceSend = true;
+            PlaytestLog.Event("Boss", "this player runs the scene's bosses now");
+        }
+
+        /// <summary>Another peer now runs this scene: the first snapshot from it halts the local boss controllers.</summary>
+        public void OnBecameFollower() => _lastHp.Clear();
+
+        /// <summary>SessionReset: the spears are back on the floor, so a
         /// stale first taker must not suppress the next race's duplicate-spear ack.</summary>
         public void ResetSession()
         {

@@ -1,14 +1,13 @@
 // The one place that knows how to forget state. Every static (or per-instance service) value that must not leak from one
-// scene, one party-wipe reload or one network session into the next registers a step here with the scopes it belongs to;
+// scene or one network session into the next registers a step here with the scopes it belongs to;
 // statics that are intentionally persistent carry a "// persistent: <reason>" line above the declaration instead
 // (StaticStateGuardTests enforces one or the other). All registrations live in Bootstrap/SessionResetRegistrations.cs.
 //
 // Scopes (a step may carry several):
 //   Scene      : RunScene, from LanNetworkManager.OnSceneChanged on every scene load (after the WorldId scan and the
 //                registry rebuild in ModRuntime.OnSceneChanged), before the scene hello / world dump is sent.
-//   Session    : RunAll on StopNetwork (which StartHost / ConnectToHost run first) and after a host wipe reload.
-//   Connection : RunAll on StopNetwork only. A wipe keeps the same party: the session itself, and state that the save
-//                reload just restored (bag, key ring), must survive it.
+//   Session    : RunAll on StopNetwork (which StartHost / ConnectToHost run first): world state of the session.
+//   Connection : RunAll on StopNetwork, same run: the session itself, the bag / key ring / party save bookkeeping.
 // Order: steps run in registration order inside one run, each isolated (a throwing step never skips the rest).
 using System;
 using System.Collections.Generic;
@@ -21,7 +20,7 @@ namespace SyncRADation.Sync
         None = 0,
         /// <summary>Every scene load (RunScene).</summary>
         Scene = 1,
-        /// <summary>Network stop / start and after a host wipe reload (RunAll stop + wipe).</summary>
+        /// <summary>Network stop / start (RunAll): the session's world state.</summary>
         Session = 2,
         /// <summary>Network stop / start only (RunAll stop).</summary>
         Connection = 4,
@@ -30,7 +29,6 @@ namespace SyncRADation.Sync
     public static class SessionReset
     {
         public const string ReasonStop = "stop";
-        public const string ReasonWipe = "wipe";
 
         private sealed class Entry
         {
@@ -89,7 +87,7 @@ namespace SyncRADation.Sync
         }
 
         /// <summary>
-        /// Network stop (reason stop: Session + Connection steps) or host wipe reload (reason wipe: Session steps).
+        /// Network stop: every Session and Connection step.
         /// One throwing step never skips the others. Re-entrancy safe.
         /// </summary>
         public static void RunAll(string reason)
@@ -98,9 +96,7 @@ namespace SyncRADation.Sync
             _runningAll = true;
             try
             {
-                bool wipe = string.Equals(reason, ReasonWipe, StringComparison.Ordinal);
-                ResetScope mask = wipe ? ResetScope.Session : (ResetScope.Session | ResetScope.Connection);
-                Run(mask, null, "");
+                Run(ResetScope.Session | ResetScope.Connection, null, "");
             }
             finally
             {

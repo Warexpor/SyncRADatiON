@@ -8,7 +8,7 @@
 //   incremental   - keys written since the last broadcast; Dialoguer globals only when they changed.
 //   full          - the whole shared table read from the live slot (join / resync / scene change), globals always.
 //   authoritative - the full broadcast after SaveManager.Load / NewGame replaced the slot: clients drop keys it lacks
-//                   (also every full inside the window after a party wipe).
+//                   (the first full after connecting / a host load is authoritative).
 // A unicast (join / resync dump, ending re-send) is always full and leaves the party's broadcast bookkeeping alone.
 // Per-player keys (StoryWire.IsPerPlayerKey) never ride a commit; END_Manager.memoryTime is the host's clock only.
 using System.Collections.Generic;
@@ -34,10 +34,10 @@ namespace SyncRADation.Networking
         // ---- client: a commit buffered while loading / in a scene the host is not in
         private StoryCommitMessage _pendingCommit;
         private bool _hasPendingCommit;
-        // Until this time every full commit replaces local SProgress wholesale (the host reverted to a save after a party
-        // wipe and may send a pre-reload dump before the post-reload one; each is exact, so the last wins).
-        private float _authoritativeUntil;
-        const float AuthoritativeWindow = 30f;
+        // The first full commit after connecting replaces local SProgress too: a joiner's own save (cutscenes it watched,
+        // doors it opened in its own run) is not the party's story. A stale "intro completed" there left a joiner frozen
+        // in gameState loading when it entered that level (CutsceneManager.Start skips a completed onStart intro).
+        private bool _joinAuthoritative = true;
         // A commit that could not be applied completely asks for one fresh snapshot per scene.
         private bool _healRequested;
 
@@ -78,7 +78,7 @@ namespace SyncRADation.Networking
             _authFull = false;
             _timer = 0f;
             _hasPendingCommit = false;
-            _authoritativeUntil = 0f;
+            _joinAuthoritative = true;
             _healRequested = false;
             _outbox.Clear();
             _outboxSentAt.Clear();
@@ -174,7 +174,7 @@ namespace SyncRADation.Networking
             bool authoritative = false;
             if (full)
             {
-                // The table mirrors the live slot exactly: after SaveManager.Load (wipe reload), SProgress.Load or
+                // The table mirrors the live slot exactly: after SaveManager.Load, SProgress.Load or
                 // ResetProgress, keys the slot no longer has must not be resurrected by stale entries.
                 if (!ProgressSlot.ReadShared(_flags))
                 {
@@ -261,20 +261,6 @@ namespace SyncRADation.Networking
         // ------------------------------------------------------------------ client: commit apply
 
         /// <summary>
-        /// Client: the host reverted the party to a save (wipe reload). The clients never load a slot, so their local
-        /// SProgress still holds keys the reverted progress no longer has: full commits replace it wholesale for a while.
-        /// A commit buffered from before the wipe is stale and dropped.
-        /// </summary>
-        public void OnPartyWipe()
-        {
-            if (!NetGate.ClientRole) return;
-            _authoritativeUntil = Time.unscaledTime + AuthoritativeWindow;
-            _hasPendingCommit = false;
-            _endBaseValid = false;
-            PlaytestLog.Event("Story", "party wipe: full commits are authoritative for " + AuthoritativeWindow + "s");
-        }
-
-        /// <summary>
         /// Buffered commits are cumulative: flags union by key (newer wins; incremental commits only carry changed
         /// keys), scalars are the newest, a FULL refresh / replay target already buffered is never lost.
         /// </summary>
@@ -303,26 +289,26 @@ namespace SyncRADation.Networking
         {
             var net = LanNetworkManager.Instance;
             if (net == null || NetGate.HostRole) return;
-            bool loading = SceneFollowService.LocalIsTransient();
-            if (loading || net.SceneMismatch)
+            // Loading: keep the newest commit, merged, and apply it once the scene is up. A client in a scene the host
+            // is not in applies at once: the flags are the party's story, and that scene reads them when it loads.
+            if (SceneFollowService.LocalIsTransient())
             {
-                // Loading or in a scene the host is not in (the wreck / hole split can stay mismatched for a long
-                // time): keep the newest commit, merged, and apply it once the scene is up / matches.
                 MergePending(ref msg);
                 _pendingCommit = msg;
                 _hasPendingCommit = true;
-                PlaytestLog.Verbose("Story", "buffer commit (" + (loading ? "loading" : "scene mismatch") + ")");
+                PlaytestLog.Verbose("Story", "buffer commit (loading)");
                 return;
             }
             // A live commit supersedes the buffered (older) one: fold it in so TickClient never re-applies it on top.
             MergePending(ref msg);
 
-            // The host stamps the bit on the full that follows its SaveManager.Load / NewGame (it survives buffering);
-            // the window after a PartyLife wipe stays as a fallback for a dump that predates the bit.
-            bool authoritative = msg.FullRefresh && (msg.Authoritative || Time.unscaledTime < _authoritativeUntil);
+            // The host stamps the bit on the full that follows its SaveManager.Load / NewGame (it survives buffering).
+            bool join = msg.FullRefresh && _joinAuthoritative;
+            bool authoritative = msg.FullRefresh && (msg.Authoritative || join);
+            if (msg.FullRefresh) _joinAuthoritative = false;
             if (authoritative)
                 PlaytestLog.Event("Story", "authoritative full commit: clearing local SProgress"
-                    + (msg.Authoritative ? " (host bit)" : " (wipe window)"));
+                    + (msg.Authoritative ? " (host bit)" : " (join)"));
 
             // Unsent local END contributions survive the overwrite (client increments between commits).
             EndContribution unsent = authoritative ? default : UnsentEnd();
@@ -349,7 +335,8 @@ namespace SyncRADation.Networking
                 + " cmd=" + (StoryCmd)msg.ActiveStoryCmd);
             if (!ok) HealAfterFailedApply(net);
 
-            if (msg.FullRefresh && msg.ActiveStoryCmd != 0)
+            // The host's running presentation belongs to its scene.
+            if (msg.FullRefresh && msg.ActiveStoryCmd != 0 && !net.SceneMismatch)
                 ReplayActivePresentation(msg);
         }
 
@@ -375,7 +362,7 @@ namespace SyncRADation.Networking
             SceneFollowService.TickClient();
             if (SceneFollowService.LocalIsTransient()) return;
 
-            if (_hasPendingCommit && !net.SceneMismatch)
+            if (_hasPendingCommit)
             {
                 var m = _pendingCommit;
                 _hasPendingCommit = false;
@@ -386,8 +373,8 @@ namespace SyncRADation.Networking
             _clientTimer += Mathf.Min(Time.unscaledDeltaTime, 0.1f);
             if (_clientTimer < 0.2f) return;
             _clientTimer = 0f;
-            // Not gated on a pending commit: under a permanent scene mismatch (wreck / hole split) the pending commit
-            // never applies. END deltas are relative to the last *applied* baseline, so flushing stays consistent.
+            // Not gated on a pending commit: END deltas are relative to the last *applied* baseline, so flushing stays
+            // consistent.
             FlushOutbox(net);
             FlushEndDelta(net);
         }

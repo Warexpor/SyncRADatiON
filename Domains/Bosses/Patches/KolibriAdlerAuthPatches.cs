@@ -56,20 +56,20 @@ namespace SyncRADation.Patches
 
         public static void HoldKolibri(KolibriManager inst, bool dead, int frequency, float intensity, float radioIntensity)
         {
-            if (inst == null || !NetGate.Live || NetGate.Host) return;
+            if (inst == null || !NetGate.Live || NetGate.SceneOwner) return;
             _kolibri[inst.GetInstanceID()] = new KolibriHold
                 { Dead = dead, Freq = frequency, Intensity = intensity, Radio = radioIntensity };
         }
 
         public static void HoldAdler(BOS_Adler inst, float intensity, float progress)
         {
-            if (inst == null || !NetGate.Live || NetGate.Host) return;
+            if (inst == null || !NetGate.Live || NetGate.SceneOwner) return;
             _adler[inst.GetInstanceID()] = new AdlerHold { Intensity = intensity, Progress = progress };
         }
 
         static bool ApplyKolibriHold(KolibriManager inst)
         {
-            if (inst == null || !NetGate.Live || NetGate.Host) return false;
+            if (inst == null || !NetGate.Live || NetGate.SceneOwner) return false;
             try
             {
                 KolibriHold h;
@@ -85,7 +85,7 @@ namespace SyncRADation.Patches
 
         static void ApplyAdlerHold(BOS_Adler inst)
         {
-            if (inst == null || !NetGate.Live || NetGate.Host) return;
+            if (inst == null || !NetGate.Live || NetGate.SceneOwner) return;
             try
             {
                 AdlerHold h;
@@ -103,7 +103,7 @@ namespace SyncRADation.Patches
             public static void Prefix(KolibriManager __instance)
             {
                 _inUpdate = null;
-                if (ApplyKolibriHold(__instance) && NetGate.Client)
+                if (ApplyKolibriHold(__instance) && NetGate.SceneFollower)
                 {
                     _inUpdate = __instance;
                     _inUpdateFrame = Time.frameCount;
